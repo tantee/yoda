@@ -34,6 +34,14 @@ export async function testDeps(overrides: Partial<AppDeps> = {}): Promise<AppDep
       oidcClientId: TEST_CLIENT_ID,
       staffGroup: '/it-dev',
       bootstrapAdmins: [],
+      aiModelDraft: 'anthropic:claude-opus-5-5',
+      aiModelFast: 'anthropic:claude-haiku-5-5',
+      s3Endpoint: 'http://localhost:9000',
+      s3Region: 'us-east-1',
+      s3Bucket: 'yoda',
+      s3AccessKey: 'yoda', // DEV ONLY (docker-compose MinIO)
+      s3SecretKey: 'yoda-dev-minio', // DEV ONLY
+      aiWorkers: 2,
     },
     db: await testDb(),
     jwks: localJwks,

@@ -117,6 +117,8 @@ async function tasksWithContext(db: Conn, where: SQL | undefined, orderBy: SQL[]
       workItemTitle: r.workItemTitle,
       workItemPriority: r.workItemPriority,
       projectName: r.projectName,
+      inputs: [], // plan 3 task 6 fills these
+      attachments: [],
     }),
   )
 }
@@ -204,6 +206,7 @@ export async function getWorkItemDetail(db: Conn, me: Me, id: string): Promise<W
       EventEntry.parse({
         id: e.id,
         type: e.type,
+        actorKind: e.actorId ? 'person' : 'system', // plan 3 task 2 stores the real kind
         actorId: e.actorId,
         actorName: actorName ?? null,
         taskId: e.taskId,

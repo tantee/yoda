@@ -20,6 +20,7 @@ const toProject = (row: ProjectRow): Project =>
     status: row.status,
     noAi: row.noAi,
     autonomy: row.autonomy,
+    aiBudgetUsd: null, // plan 3 task 2 stores the real budget
     createdAt: row.createdAt.toISOString(),
   })
 
@@ -163,7 +164,7 @@ export function projectRoutes(app: FastifyInstance): void {
     return db().transaction(async (tx) => {
       await lockProject(tx, id)
       if (!(await canManageProject(tx, request.me, id))) throw forbidden()
-      await tx.update(projects).set({ autonomy }).where(eq(projects.id, id))
+      if (autonomy) await tx.update(projects).set({ autonomy }).where(eq(projects.id, id))
       const detail = await loadDetail(tx, id)
       if (!detail) throw notFound()
       return detail
