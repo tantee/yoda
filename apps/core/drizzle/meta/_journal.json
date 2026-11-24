@@ -15,6 +15,13 @@
       "when": 1795504535652,
       "tag": "0001_wild_doomsday",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1795505939396,
+      "tag": "0002_public_strong_guy",
+      "breakpoints": true
     }
   ]
 }

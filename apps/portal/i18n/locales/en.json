@@ -33,7 +33,8 @@
     "person": "Person",
     "roles": "Roles",
     "add": "Add",
-    "lastPm": "A project must keep at least one PM"
+    "lastPm": "A project must keep at least one PM",
+    "notStaff": "Only staff can be added to a project"
   },
   "people": {
     "name": "Name",

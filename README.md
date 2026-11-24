@@ -17,11 +17,16 @@ pnpm --filter @yoda/core db:migrate
 pnpm dev                # core on PORT, portal on PORTAL_PORT
 ```
 
+The root `.env` is loaded automatically by `pnpm --filter @yoda/core dev`, `db:migrate` and
+`pnpm --filter @yoda/portal dev` (so `PORTAL_PORT` and `NUXT_PUBLIC_*` apply). For local dev set
+`BOOTSTRAP_ADMINS=somchai` in your `.env` to get an admin on first login. Never set a common real
+username against the hospital Keycloak.
+
 Keycloak dev realm `yoda` is imported from `infra/keycloak` (dev test users, password `dev`; see
 `infra/keycloak/README.md`). If you change `KEYCLOAK_PORT`, update `OIDC_ISSUER` and
 `NUXT_PUBLIC_KEYCLOAK_URL` to match.
 
-`infra/postgres/init.sql` (extensions, test database) only runs on a fresh Postgres volume. To
+`infra/postgres/init.sql` only creates the `yoda_test` database (the `vector` and `pg_trgm` extensions come from the migrations) and only runs on a fresh Postgres volume. To
 re-run it: `docker compose down -v && docker compose up -d` (this deletes dev data).
 
 ## Tests
@@ -47,8 +52,27 @@ Images: `yoda-core` (runs migrations, then `node dist/server.js`) and `yoda-port
   `NUXT_PUBLIC_KEYCLOAK_CLIENT_ID` (read at runtime, not baked into the image)
 - ports: `CORE_PORT` (4000), `PORTAL_PORT` (3000)
 
+Inside containers:
+
+- `DATABASE_URL` must use the compose service host (`postgres`), not `localhost`, e.g.
+  `postgres://yoda:...@postgres:5432/yoda`. Compose also reads the root `.env` for interpolation, so
+  do not leave the dev `localhost` URL there when running the overlay.
+- `OIDC_ISSUER` must equal the browser-facing token `iss` AND be reachable from the core container
+  (it fetches the JWKS from it). The overlay against the dev Keycloak on `localhost` therefore only
+  smoke-tests; a real deployment needs a Keycloak URL reachable from both the browser and the core
+  container (a separate JWKS URL is planned for plan 8).
+
 Production secrets come only from the deploy environment / CI variables, never from committed files.
 The dev compose services use throwaway credentials and must not be exposed publicly.
+
+## Hospital Keycloak requirements
+
+- Access tokens must include `preferred_username`.
+- A `groups` mapper (Group Membership, **full path** enabled) must add the groups to the access token;
+  `STAFF_GROUP` is matched against those paths.
+- `azp` must equal the client id (`OIDC_CLIENT_ID`).
+- The migrations run `CREATE EXTENSION vector` and `pg_trgm`, which needs a superuser; otherwise a DBA
+  must pre-create both extensions in the database.
 
 ## CI
 

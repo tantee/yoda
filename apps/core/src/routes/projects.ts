@@ -3,7 +3,7 @@ import { MemberRolesPut, Project, ProjectCreate, ProjectDetail } from '@yoda/sha
 import { and, asc, eq, sql } from 'drizzle-orm'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
-import { forbidden, lastPm, notFound, requireAdmin, requireStaff } from '../auth/plugin.js'
+import { forbidden, lastPm, notStaff, notFound, requireAdmin, requireStaff } from '../auth/plugin.js'
 import type { Db } from '../db/client.js'
 import { people, projectMembers, projects } from '../db/schema.js'
 import { canManageProject } from '../projects/access.js'
@@ -18,7 +18,7 @@ const toProject = (row: ProjectRow): Project =>
     status: row.status,
     noAi: row.noAi,
     autonomy: row.autonomy,
-    createdAt: (row.createdAt ?? new Date()).toISOString(),
+    createdAt: row.createdAt.toISOString(),
   })
 
 type Tx = Parameters<Parameters<Db['transaction']>[0]>[0]
@@ -83,7 +83,8 @@ export function projectRoutes(app: FastifyInstance): void {
       .insert(projects)
       .values({ name: body.name, description: body.description, createdBy: request.me.id })
       .returning()
-    return reply.status(201).send(toProject(row!))
+    if (!row) throw new Error('insert returned no row')
+    return reply.status(201).send(toProject(row))
   })
 
   app.get('/projects/:id', async (request) => {
@@ -103,8 +104,16 @@ export function projectRoutes(app: FastifyInstance): void {
     await requireManage(request, id)
     return db().transaction(async (tx) => {
       await lockProject(tx, id)
-      const [person] = await tx.select({ id: people.id }).from(people).where(eq(people.id, personId))
+      const [person] = await tx
+        .select({
+          isAdmin: people.isAdmin,
+          staffOverride: people.staffOverride,
+          lastSeenStaff: people.lastSeenStaff,
+        })
+        .from(people)
+        .where(eq(people.id, personId))
       if (!person) throw notFound()
+      if (!(person.isAdmin || (person.staffOverride ?? person.lastSeenStaff))) throw notStaff()
       if (!roles.includes('PM') && (await isLastPm(tx, id, personId))) {
         const [current] = await tx
           .select({ roles: projectMembers.roles })
@@ -119,7 +128,9 @@ export function projectRoutes(app: FastifyInstance): void {
           target: [projectMembers.projectId, projectMembers.personId],
           set: { roles },
         })
-      return (await loadDetail(tx, id))!
+      const detail = await loadDetail(tx, id)
+      if (!detail) throw notFound()
+      return detail
     })
   })
 

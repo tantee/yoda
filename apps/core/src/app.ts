@@ -21,7 +21,13 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     if (err instanceof ZodError) {
       return reply.status(400).send({ error: 'validation', issues: err.issues })
     }
-    return reply.send(err)
+    // Fastify-generated client errors (bad JSON, 404-ish, etc.) keep their status; no internals leak.
+    const status = (err as { statusCode?: number }).statusCode
+    if (status && status >= 400 && status < 500) {
+      return reply.status(status).send({ error: (err as { code?: string }).code ?? 'bad_request' })
+    }
+    app.log.error(err)
+    return reply.status(500).send({ error: 'internal' })
   })
 
   registerAuth(app)

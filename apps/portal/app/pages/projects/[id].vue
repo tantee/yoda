@@ -33,7 +33,8 @@ async function load() {
 
 function fail(e: unknown) {
   const code = (e as { data?: { error?: string } })?.data?.error
-  error.value = code === 'last_pm' ? t('projects.lastPm') : t('common.error')
+  error.value =
+    code === 'last_pm' ? t('projects.lastPm') : code === 'not_staff' ? t('projects.notStaff') : t('common.error')
 }
 
 async function putRoles(personId: string, roles: ProjectRole[]) {
