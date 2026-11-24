@@ -214,11 +214,13 @@ describe('attachments API', () => {
 
   it('does not 500 on UTF-16 text containing NULs', async () => {
     const p = await newProject()
-    const data = Buffer.from('\uFEFFผลแล็บปกติ', 'utf16le')
+    const data = Buffer.from('\uFEFFlab result normal ผลแล็บ', 'utf16le')
+    expect(data.includes(0)).toBe(true)
     const res = await upload(member, p, { name: 'u16.txt', type: 'text/plain', data })
     expect(res.statusCode).toBe(201)
     const [row] = await (await testDb()).select().from(attachments).where(eq(attachments.id, (res.json() as Attachment).id))
-    expect(row.extractedText ?? '').not.toContain('\u0000')
+    expect(row.extractedText).not.toBeNull()
+    expect(row.extractedText).not.toContain('\u0000')
   })
 
   it('404s a task that belongs to a different work item than the given workItemId', async () => {
