@@ -74,7 +74,7 @@ export async function recordEvent(
     actorId: ctx.actorId,
     actorKind: e.actorKind ?? ctx.actorKind,
     reason: e.reason ?? null,
-    payload: e.payload ?? {},
+    payload: onBehalfOf(ctx, e.actorKind ?? ctx.actorKind, e.payload ?? {}),
   })
   ctx.emitted.push({
     type: e.type,
@@ -84,4 +84,9 @@ export async function recordEvent(
     conversationId: null,
     personId: null,
   })
+}
+
+/** The AI acting for a person (actor kind `ai` with that person's id) records `onBehalfOf` in event payloads. */
+function onBehalfOf(ctx: WorkCtx, kind: ActorKind, payload: Record<string, unknown>): Record<string, unknown> {
+  return kind === 'ai' && ctx.actorId ? { ...payload, onBehalfOf: ctx.actorId } : payload
 }

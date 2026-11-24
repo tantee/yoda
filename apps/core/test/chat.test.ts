@@ -4,7 +4,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { attachments, conversationReads, messages } from '../src/db/schema.js'
 import { InlineJobQueue } from '../src/jobs/queue.js'
-import { interimSecretaryReply } from '../src/chat/service.js'
 import { resetDb, testDb } from './helpers.js'
 import { acceptStepAdvance, auth, login, makeApp, type Who } from './support.js'
 
@@ -17,7 +16,6 @@ let nurse: Who
 let nurse2: Who
 
 const NO_ID = '00000000-0000-4000-8000-000000000000'
-const NOT_READY = '[[secretary.not_ready]]'
 
 const call = (who: Who, method: 'GET' | 'POST' | 'PUT' | 'DELETE', url: string, payload?: unknown) =>
   app.inject({ method, url, headers: auth(who), payload: payload as object | undefined })
@@ -332,7 +330,7 @@ describe('work-item threads stay requester-safe', () => {
   })
 })
 
-describe('interim secretary reply', () => {
+describe('secretary reply', () => {
   let jobs: InlineJobQueue
   beforeEach(async () => {
     await resetDb(await testDb())
@@ -344,26 +342,17 @@ describe('interim secretary reply', () => {
     await app.close()
   })
 
-  it('answers each person message with one system message', async () => {
+  it('answers each person message in personal/intake conversations with one ai message; team threads need @ai', async () => {
     const c = await personal(nurse)
     await post(nurse, c.id, { text: 'สวัสดี' })
     await jobs.drain()
     const msgs = (await call(nurse, 'GET', `/conversations/${c.id}/messages`)).json() as Message[]
     expect(msgs.map((m) => [m.authorKind, m.text])).toEqual([
       ['person', 'สวัสดี'],
-      ['system', NOT_READY],
+      ['ai', 'ok'],
     ])
     expect(msgs[1]!.authorId).toBeNull()
     expect((await call(nurse, 'GET', '/conversations')).json()[0].unread).toBe(1)
-  })
-
-  it('replies only in personal/intake conversations, once per message even when retried', async () => {
-    const c = await personal(nurse)
-    const m = (await post(nurse, c.id, { text: 'สวัสดี' })).json() as Message
-    await jobs.drain()
-    await interimSecretaryReply(app.deps, m.id)
-    const msgs = (await call(nurse, 'GET', `/conversations/${c.id}/messages`)).json() as Message[]
-    expect(msgs.map((x) => x.authorKind)).toEqual(['person', 'system'])
 
     admin = await login(app, 'boss')
     const p = (await call(admin, 'POST', '/projects', { name: 'P' })).json() as { id: string }

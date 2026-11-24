@@ -151,8 +151,8 @@ async function setState(
   await recordDecision(ctx, { ...p, ...extra }, type)
 }
 
-/** The person a `create_work_item` proposal was made for, as the creator of the work item. */
-async function personAsMe(tx: Tx, id: string): Promise<Me | null> {
+/** A person as `Me` (staff from the override or the last seen token), e.g. whom a proposal was made for. */
+export async function personAsMe(tx: Conn, id: string): Promise<Me | null> {
   const [row] = await tx.select().from(people).where(eq(people.id, id))
   if (!row) return null
   return {

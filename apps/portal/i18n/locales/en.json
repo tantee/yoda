@@ -301,7 +301,13 @@
     },
     "textRequired": "Add a message to send the attached files",
     "marker": {
-      "secretaryNotReady": "The assistant is not available yet"
+      "secretaryNotReady": "The assistant is not available yet",
+      "secretaryFailed": {
+        "budget_exceeded": "The assistant can't answer right now: this month's AI budget has been used up. Please ask an administrator.",
+        "no_ai": "The assistant can't answer here: this project is marked \"do not send to AI\".",
+        "ai_unavailable": "The assistant isn't available right now: AI is not set up. Please ask an administrator.",
+        "ai_failed": "The assistant couldn't answer this time. Please try again in a moment."
+      }
     }
   },
   "notifications": {

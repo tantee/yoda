@@ -1,4 +1,4 @@
-import type { ConversationKind, Message } from '@yoda/shared'
+import { mentionsSecretary, type ConversationKind, type Message } from '@yoda/shared'
 
 const dayFormat = new Intl.DateTimeFormat('en-CA', {
   timeZone: 'Asia/Bangkok',
@@ -35,17 +35,15 @@ export function mergeMessages(existing: Message[], incoming: Message[]): Message
 export const TYPING_TIMEOUT_MS = 60_000
 
 /**
- * The secretary only answers in personal/intake threads: "typing" while the latest person message has no
- * later ai/system message, for at most 60 s.
+ * The secretary answers every person message in personal/intake threads, and in project/work_item threads
+ * those that mention it (`@ai` / `@ผู้ช่วย`): "typing" while the latest message is such a person message with
+ * no later ai/system message, for at most 60 s.
  */
 export function isSecretaryTyping(kind: ConversationKind, messages: Message[], now: number): boolean {
-  if (kind !== 'personal' && kind !== 'intake') return false
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i]!
-    if (m.authorKind !== 'person') return false
-    return now - Date.parse(m.createdAt) < TYPING_TIMEOUT_MS
-  }
-  return false
+  const m = messages.at(-1)
+  if (!m || m.authorKind !== 'person') return false
+  if (kind !== 'personal' && kind !== 'intake' && !mentionsSecretary(m.text)) return false
+  return now - Date.parse(m.createdAt) < TYPING_TIMEOUT_MS
 }
 
 /** A just-sent message joins the list only if its conversation is still the open one. */
@@ -70,10 +68,17 @@ export function mergeLatest(
 const SYSTEM_MARKERS: Record<string, string> = {
   'secretary.not_ready': 'chat.marker.secretaryNotReady',
 }
+/** `[[secretary.failed:<reason>]]`: why the secretary could not answer. */
+const SECRETARY_FAILED = new Set(['budget_exceeded', 'no_ai', 'ai_unavailable', 'ai_failed'])
 
-/** The i18n key for a known `[[marker]]` system message, else null (show the text as is). */
+/** The i18n key for a known `[[marker]]` / `[[marker:arg]]` system message, else null (show the text as is). */
 export function systemMarkerKey(m: Pick<Message, 'authorKind' | 'text'>): string | null {
   if (m.authorKind !== 'system') return null
-  const match = /^\[\[([a-z0-9_.]+)\]\]$/.exec(m.text.trim())
-  return (match && SYSTEM_MARKERS[match[1]!]) ?? null
+  const match = /^\[\[([a-z0-9_.]+)(?::([a-z0-9_]+))?\]\]$/.exec(m.text.trim())
+  if (!match) return null
+  const [, name, arg] = match
+  if (name === 'secretary.failed' && arg !== undefined) {
+    return `chat.marker.secretaryFailed.${SECRETARY_FAILED.has(arg) ? arg : 'ai_failed'}`
+  }
+  return arg === undefined ? (SYSTEM_MARKERS[name!] ?? null) : null
 }

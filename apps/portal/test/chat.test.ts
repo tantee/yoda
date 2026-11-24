@@ -50,9 +50,12 @@ describe('isSecretaryTyping', () => {
     expect(isSecretaryTyping('personal', [person], now)).toBe(true)
     expect(isSecretaryTyping('intake', [person], now)).toBe(true)
   })
-  it('is off in project and work_item threads', () => {
+  it('in project and work_item threads only after a message that mentions @ai / @ผู้ช่วย', () => {
     expect(isSecretaryTyping('project', [person], now)).toBe(false)
     expect(isSecretaryTyping('work_item', [person], now)).toBe(false)
+    const asked = msg({ text: '@AI ช่วยสรุป', createdAt: '2026-11-24T10:00:00Z' })
+    expect(isSecretaryTyping('project', [asked], now)).toBe(true)
+    expect(isSecretaryTyping('work_item', [msg({ text: '@ผู้ช่วย สรุป', createdAt: '2026-11-24T10:00:00Z' })], now)).toBe(true)
   })
   it('stops when a later system or ai message arrives', () => {
     const sys = msg({ authorKind: 'system', createdAt: '2026-11-24T10:00:05Z' })
@@ -102,6 +105,15 @@ describe('systemMarkerKey', () => {
     expect(systemMarkerKey(msg({ authorKind: 'system', text: '[[secretary.not_ready]]', createdAt: at }))).toBe(
       'chat.marker.secretaryNotReady',
     )
+  })
+  it('maps secretary failure markers by reason; an unknown reason falls back to the generic failure', () => {
+    const key = (text: string) => systemMarkerKey(msg({ authorKind: 'system', text, createdAt: at }))
+    expect(key('[[secretary.failed:budget_exceeded]]')).toBe('chat.marker.secretaryFailed.budget_exceeded')
+    expect(key('[[secretary.failed:no_ai]]')).toBe('chat.marker.secretaryFailed.no_ai')
+    expect(key('[[secretary.failed:ai_unavailable]]')).toBe('chat.marker.secretaryFailed.ai_unavailable')
+    expect(key('[[secretary.failed:ai_failed]]')).toBe('chat.marker.secretaryFailed.ai_failed')
+    expect(key('[[secretary.failed:something_new]]')).toBe('chat.marker.secretaryFailed.ai_failed')
+    expect(key('[[secretary.not_ready:x]]')).toBeNull()
   })
   it('ignores unknown markers, plain text and non-system authors', () => {
     expect(systemMarkerKey(msg({ authorKind: 'system', text: '[[nope]]', createdAt: at }))).toBeNull()
