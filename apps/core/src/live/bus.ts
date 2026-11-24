@@ -17,6 +17,10 @@ export class LiveBus {
     }
   }
 
+  listenerCount(): number {
+    return this.emitter.listenerCount('event')
+  }
+
   subscribe(fn: (e: LiveEvent) => void): () => void {
     this.emitter.on('event', fn)
     return () => void this.emitter.off('event', fn)

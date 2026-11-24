@@ -1,4 +1,3 @@
-import type { ServerResponse } from 'node:http'
 import type { LiveEvent } from '@yoda/shared'
 import type { FastifyInstance } from 'fastify'
 import { requireStaff } from '../auth/plugin.js'
@@ -7,12 +6,11 @@ import { canSeeProject } from '../work/queries.js'
 const PING_MS = 25_000
 
 export function streamRoutes(app: FastifyInstance): void {
-  const open = new Set<ServerResponse>()
+  const open = new Set<() => void>()
 
   // Fastify's close waits for connections; end live streams so shutdown doesn't hang.
-  app.addHook('onClose', async () => {
-    for (const res of open) res.end()
-    open.clear()
+  app.addHook('preClose', async () => {
+    for (const cleanup of [...open]) cleanup()
   })
 
   app.get('/stream', async (request, reply) => {
@@ -28,33 +26,38 @@ export function streamRoutes(app: FastifyInstance): void {
       'X-Accel-Buffering': 'no',
     })
     raw.write(': connected\n\n')
-    open.add(raw)
-
     let closed = false
-    // Serialize deliveries so events keep their publish order.
-    let chain: Promise<void> = Promise.resolve()
+    const writable = () => !closed && !raw.writableEnded && !raw.destroyed
     const unsubscribe = bus.subscribe((e: LiveEvent) => {
+      // Serialize deliveries so events keep their publish order.
       chain = chain.then(async () => {
-        if (closed) return
+        if (!writable()) return
         try {
           if (!(await canSeeProject(db, me, e.projectId))) return
-          if (!closed) raw.write(`event: live\ndata: ${JSON.stringify(e)}\n\n`)
+          if (writable()) raw.write(`event: live\ndata: ${JSON.stringify(e)}\n\n`)
         } catch (err) {
           app.log.error(err, 'stream delivery failed')
         }
       })
     })
-    const ping = setInterval(() => raw.write(': ping\n\n'), PING_MS)
-    const expiry = setTimeout(() => raw.end(), Math.max(0, request.tokenExp - Date.now()))
+    let chain: Promise<void> = Promise.resolve()
+    const ping = setInterval(() => {
+      if (writable()) raw.write(': ping\n\n')
+    }, PING_MS)
+    const expiry = setTimeout(() => cleanup(), Math.max(0, request.tokenExp - Date.now()))
 
-    const cleanup = () => {
+    // Single exit path: expiry, server close, client close and socket errors all end up here.
+    function cleanup() {
       closed = true
       unsubscribe()
       clearInterval(ping)
       clearTimeout(expiry)
-      open.delete(raw)
+      open.delete(cleanup)
+      if (!raw.writableEnded && !raw.destroyed) raw.end()
     }
+    open.add(cleanup)
     raw.on('close', cleanup)
+    raw.on('error', cleanup)
     request.raw.on('close', cleanup)
   })
 }

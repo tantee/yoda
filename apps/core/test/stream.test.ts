@@ -122,4 +122,24 @@ describe('GET /stream', () => {
     expect(r).toBe('done')
     expect(Date.now() - start).toBeLessThan(4000)
   })
+
+  it('app.close ends open streams without hanging', async () => {
+    const s = await open(member.token)
+    expect(await readUntil(s, (b) => b.includes(': connected'), 1000)).toContain(': connected')
+    await app.close()
+    expect(await s.read(2000)).toBe('done')
+    app = await makeApp() // afterEach closes again
+  })
+
+  it('unsubscribes from the bus when the client disconnects', async () => {
+    const { bus } = app.deps
+    const before = bus.listenerCount()
+    const s = await open(member.token)
+    expect(await readUntil(s, (b) => b.includes(': connected'), 1000)).toContain(': connected')
+    expect(bus.listenerCount()).toBe(before + 1)
+    await s.reader.cancel()
+    const end = Date.now() + 2000
+    while (bus.listenerCount() > before && Date.now() < end) await new Promise((r) => setTimeout(r, 25))
+    expect(bus.listenerCount()).toBe(before)
+  })
 })
