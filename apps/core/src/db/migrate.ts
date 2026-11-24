@@ -1,8 +1,12 @@
+import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { migrate } from 'drizzle-orm/postgres-js/migrator'
 import { createDb, type Db } from './client.js'
 
-const migrationsFolder = fileURLToPath(new URL('../../drizzle', import.meta.url))
+// src/db/migrate.ts (dev/test) or dist/migrate.js (built image): find the drizzle folder either way.
+const migrationsFolder = ['../../drizzle', '../drizzle']
+  .map((p) => fileURLToPath(new URL(p, import.meta.url)))
+  .find((p) => existsSync(p)) as string
 
 export async function runMigrations(db: Db): Promise<void> {
   await migrate(db, { migrationsFolder })
