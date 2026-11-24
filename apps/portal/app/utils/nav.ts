@@ -23,7 +23,7 @@ export function navItemsFor(me: Me): NavItem[] {
   return items
 }
 
-const STAFF_PREFIXES = ['/todo', '/discussions', '/status', '/projects', '/admin']
+const STAFF_PREFIXES = ['/todo', '/discussions', '/status', '/projects', '/work-items', '/admin']
 
 export function isStaffPath(path: string): boolean {
   return STAFF_PREFIXES.some(p => path === p || path.startsWith(p + '/'))

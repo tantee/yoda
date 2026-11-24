@@ -12,3 +12,4 @@ secrets/
 .claude/settings.local.json
 .nuxt/
 .output/
+.playwright-mcp/

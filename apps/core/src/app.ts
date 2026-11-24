@@ -4,11 +4,14 @@ import { ZodError } from 'zod'
 import { HttpError, registerAuth } from './auth/plugin.js'
 import type { Config } from './config.js'
 import type { Db } from './db/client.js'
+import type { LiveBus } from './live/bus.js'
 import { peopleRoutes } from './routes/people.js'
 import { projectRoutes } from './routes/projects.js'
 import { meRoutes } from './routes/me.js'
+import { streamRoutes } from './routes/stream.js'
+import { workRoutes } from './routes/work.js'
 
-export type AppDeps = { config: Config; db: Db; jwks: JWTVerifyGetKey }
+export type AppDeps = { config: Config; db: Db; jwks: JWTVerifyGetKey; bus: LiveBus }
 
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   const app = Fastify({ logger: process.env.VITEST ? false : true })
@@ -36,6 +39,8 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   meRoutes(app)
   peopleRoutes(app)
   projectRoutes(app)
+  workRoutes(app)
+  streamRoutes(app)
 
   return app
 }

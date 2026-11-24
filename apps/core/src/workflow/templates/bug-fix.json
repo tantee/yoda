@@ -1,0 +1,147 @@
+{
+  "key": "bug-fix",
+  "name": {
+    "th": "แก้ไขข้อผิดพลาด",
+    "en": "Bug fix"
+  },
+  "steps": [
+    {
+      "key": "intake",
+      "name": {
+        "th": "รับเรื่อง",
+        "en": "Intake"
+      },
+      "tasks": [
+        {
+          "key": "accept-bug",
+          "type": "approval",
+          "role": "PM",
+          "title": {
+            "th": "รับเรื่องเข้าระบบ",
+            "en": "Accept the request"
+          },
+          "instructions": {
+            "th": "ตรวจสอบรายงานข้อผิดพลาดและรับเข้าสู่กระบวนการ",
+            "en": "Review the bug report and accept it into the workflow"
+          },
+          "dependsOn": []
+        }
+      ]
+    },
+    {
+      "key": "dev",
+      "name": {
+        "th": "พัฒนา",
+        "en": "Development"
+      },
+      "tasks": [
+        {
+          "key": "implement",
+          "type": "ai",
+          "role": "DEV",
+          "title": {
+            "th": "พัฒนาโค้ด",
+            "en": "Implement the change"
+          },
+          "instructions": {
+            "th": "เขียนโค้ดแก้ไขข้อผิดพลาดตามรายงานบนงาน",
+            "en": "Write the code that fixes the bug described in the bug report on the work item"
+          },
+          "dependsOn": []
+        },
+        {
+          "key": "draft-tests",
+          "type": "ai",
+          "role": "QC",
+          "title": {
+            "th": "ร่างกรณีทดสอบ",
+            "en": "Draft test cases"
+          },
+          "instructions": {
+            "th": "ร่างกรณีทดสอบจากรายงานข้อผิดพลาดบนงาน",
+            "en": "Draft test cases from the bug report on the work item"
+          },
+          "dependsOn": []
+        },
+        {
+          "key": "review-code",
+          "type": "review",
+          "role": "DEV",
+          "title": {
+            "th": "ตรวจโค้ด",
+            "en": "Review the code"
+          },
+          "instructions": {
+            "th": "ตรวจโค้ดที่พัฒนา แล้วอนุมัติหรือส่งกลับให้แก้ไข",
+            "en": "Review the implemented code, then approve it or request changes"
+          },
+          "dependsOn": [
+            "implement"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "qc",
+      "name": {
+        "th": "ทดสอบ",
+        "en": "Quality check"
+      },
+      "tasks": [
+        {
+          "key": "verify",
+          "type": "human",
+          "role": "QC",
+          "title": {
+            "th": "ทดสอบระบบ",
+            "en": "Verify the change"
+          },
+          "instructions": {
+            "th": "ทดสอบตามกรณีทดสอบ และบันทึกผลที่พบ",
+            "en": "Run the test cases and record the findings"
+          },
+          "dependsOn": []
+        },
+        {
+          "key": "approve-release",
+          "type": "approval",
+          "role": "QC",
+          "title": {
+            "th": "อนุมัติการปล่อยใช้งาน",
+            "en": "Approve the release"
+          },
+          "instructions": {
+            "th": "ยืนยันว่าผลทดสอบผ่านและพร้อมปล่อยใช้งาน",
+            "en": "Confirm the tests passed and the change is ready to release"
+          },
+          "dependsOn": [
+            "verify"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "close",
+      "name": {
+        "th": "ปิดงาน",
+        "en": "Close"
+      },
+      "tasks": [
+        {
+          "key": "close-bug",
+          "type": "approval",
+          "role": "PM",
+          "title": {
+            "th": "ปิดงาน",
+            "en": "Close the work item"
+          },
+          "instructions": {
+            "th": "ตรวจว่าแก้ไขครบถ้วนแล้วปิดงาน",
+            "en": "Confirm the fix is complete and close the work item"
+          },
+          "dependsOn": []
+        }
+      ]
+    }
+  ]
+}

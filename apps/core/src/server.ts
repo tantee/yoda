@@ -2,13 +2,16 @@ import { createRemoteJWKSet } from 'jose'
 import { buildApp } from './app.js'
 import { loadConfig } from './config.js'
 import { createDb } from './db/client.js'
+import { LiveBus } from './live/bus.js'
+import { seedTemplates } from './workflow/seed.js'
 
 const config = loadConfig(process.env)
 const db = createDb(config.databaseUrl)
+await seedTemplates(db)
 const jwks = createRemoteJWKSet(
   new URL(`${config.oidcIssuer}/protocol/openid-connect/certs`),
 )
-const app = await buildApp({ config, db, jwks })
+const app = await buildApp({ config, db, jwks, bus: new LiveBus() })
 
 let stopping = false
 async function shutdown(signal: string) {

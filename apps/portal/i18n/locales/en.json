@@ -34,7 +34,11 @@
     "roles": "Roles",
     "add": "Add",
     "lastPm": "A project must keep at least one PM",
-    "notStaff": "Only staff can be added to a project"
+    "notStaff": "Only staff can be added to a project",
+    "autonomy": "Autonomy",
+    "autoAssign": "Auto-assign",
+    "propose": "Propose",
+    "autonomyHint": "Propose: assignments wait for a PM to confirm. Auto-assign: assignments happen directly."
   },
   "people": {
     "name": "Name",
@@ -49,6 +53,115 @@
   "errors": {
     "forbidden": "You do not have access to this page",
     "notFound": "The requested item was not found",
-    "generic": "Cannot reach the server. Please try again later."
+    "generic": "Cannot reach the server. Please try again later.",
+    "invalidState": "This task has changed and the action is no longer possible",
+    "notMember": "That person is not a member of this project",
+    "decisionRequired": "Choose approve or request changes",
+    "commentRequired": "Please add a comment when requesting changes"
+  },
+  "todo": {
+    "myTasks": "My tasks",
+    "confirmations": "Waiting for your confirmation",
+    "empty": "Nothing to do right now",
+    "needsAssignee": "Needs an assignee",
+    "waitingForAi": "Waiting for AI — assign to a person",
+    "confirm": "Confirm",
+    "project": "Project",
+    "workItem": "Work item",
+    "back": "Back to to-do"
+  },
+  "task": {
+    "state": {
+      "proposed": "Proposed",
+      "open": "Open",
+      "in_progress": "In progress",
+      "submitted": "Submitted",
+      "accepted": "Accepted",
+      "rejected": "Rejected"
+    },
+    "type": {
+      "ai": "AI",
+      "human": "Human",
+      "review": "Review",
+      "approval": "Approval"
+    },
+    "instructions": "Instructions",
+    "changesRequested": "Changes requested",
+    "result": "Result",
+    "comment": "Comment / result",
+    "start": "Start",
+    "submit": "Submit",
+    "approve": "Approve",
+    "requestChanges": "Request changes",
+    "confirm": "Confirm",
+    "changeAssignee": "Change assignee",
+    "assignee": "Assignee",
+    "assign": "Assign",
+    "unassigned": "Unassigned",
+    "decision": "Decision",
+    "proposedAssignee": "Proposed assignee"
+  },
+  "priority": {
+    "low": "Low",
+    "normal": "Normal",
+    "high": "High",
+    "urgent": "Urgent"
+  },
+  "workItems": {
+    "heading": "Work items",
+    "new": "New work item",
+    "create": "Create",
+    "title": "Title",
+    "description": "Description",
+    "template": "Template",
+    "priority": "Priority",
+    "owner": "Owner",
+    "state": "State",
+    "currentStep": "Current step",
+    "empty": "No work items yet",
+    "back": "Back to project",
+    "tasks": "Tasks",
+    "timeline": "Timeline",
+    "attempt": "Attempt {n}",
+    "executorAi": "AI",
+    "waitingForAi": "Waiting for AI",
+    "assignToPerson": "Assign to person",
+    "cancel": "Cancel work item",
+    "cancelTitle": "Cancel this work item?",
+    "cancelConfirm": "Open tasks will stop and the work item will be marked cancelled. This cannot be undone.",
+    "keep": "Keep",
+    "stateName": {
+      "active": "Active",
+      "done": "Done",
+      "cancelled": "Cancelled"
+    }
+  },
+  "steps": {
+    "done": "Done",
+    "current": "In progress",
+    "pending": "Pending"
+  },
+  "events": {
+    "system": "System",
+    "work_item": {
+      "created": "Work item created",
+      "step_advanced": "Moved to next step",
+      "done": "Work item completed",
+      "cancelled": "Work item cancelled"
+    },
+    "task": {
+      "created": "Task created",
+      "proposed": "Assignee proposed",
+      "assigned": "Task assigned",
+      "unassigned": "Task unassigned",
+      "started": "Task started",
+      "accepted": "Task accepted",
+      "rejected": "Task rejected"
+    },
+    "reason": {
+      "work_item_cancelled": "Work item cancelled",
+      "member_removed": "Member removed from project",
+      "no_candidate": "No eligible person found"
+    }
   }
 }

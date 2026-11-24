@@ -1,6 +1,6 @@
 // Bundles core into dist/. Third-party deps stay external (installed in the image);
 // @yoda/shared ships TypeScript source, so it is inlined.
-import { readFileSync } from 'node:fs'
+import { cpSync, readFileSync } from 'node:fs'
 import { build } from 'esbuild'
 
 const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'))
@@ -16,3 +16,6 @@ await build({
   sourcemap: true,
   external,
 })
+
+// Workflow templates are read from disk at startup (see src/workflow/seed.ts).
+cpSync('src/workflow/templates', 'dist/workflow/templates', { recursive: true })
