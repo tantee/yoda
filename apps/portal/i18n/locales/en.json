@@ -38,7 +38,13 @@
     "autonomy": "Autonomy",
     "autoAssign": "Auto-assign",
     "propose": "Propose",
-    "autonomyHint": "Propose: assignments wait for a PM to confirm. Auto-assign: assignments happen directly."
+    "autonomyHint": "Propose: assignments wait for a PM to confirm. Auto-assign: assignments happen directly.",
+    "tabs": {
+      "overview": "Overview",
+      "items": "Work items",
+      "knowledge": "Knowledge",
+      "ai": "AI settings"
+    }
   },
   "people": {
     "name": "Name",
@@ -57,7 +63,9 @@
     "invalidState": "This task has changed and the action is no longer possible",
     "notMember": "That person is not a member of this project",
     "decisionRequired": "Choose approve or request changes",
-    "commentRequired": "Please add a comment when requesting changes"
+    "commentRequired": "Please add a comment when requesting changes",
+    "tooLarge": "File is larger than 25 MB",
+    "unsupportedType": "This file type is not supported"
   },
   "todo": {
     "myTasks": "My tasks",
@@ -163,5 +171,66 @@
       "member_removed": "Member removed from project",
       "no_candidate": "No eligible person found"
     }
+  },
+  "knowledge": {
+    "search": "Search knowledge",
+    "allTypes": "All types",
+    "allStatuses": "All statuses",
+    "type": "Type",
+    "status": "Status",
+    "types": {
+      "fact": "Fact",
+      "decision": "Decision",
+      "document": "Document",
+      "progress": "Progress",
+      "memory": "Memory"
+    },
+    "statuses": {
+      "draft": "Draft",
+      "confirmed": "Confirmed"
+    },
+    "sources": {
+      "person": "Person",
+      "ai": "AI",
+      "upload": "Upload",
+      "task": "Task"
+    },
+    "noAi": "No AI",
+    "empty": "No knowledge yet",
+    "add": "Add entry",
+    "entryTitle": "Title",
+    "body": "Body",
+    "edit": "Edit",
+    "save": "Save as new version",
+    "confirm": "Confirm",
+    "versions": "Version history",
+    "version": "Version",
+    "current": "Current",
+    "newEntry": "Add knowledge",
+    "close": "Close",
+    "by": "by",
+    "attachments": "Attachments",
+    "noAttachments": "No attachments yet",
+    "download": "Download",
+    "hasText": "Searchable text",
+    "uploadFile": "Upload file",
+    "dropHere": "Drag a file here or click to choose",
+    "uploadNoAi": "Do not send this file to AI",
+    "uploading": "Uploading...",
+    "uploaded": "Uploaded"
+  },
+  "ai": {
+    "title": "AI settings",
+    "noAi": "Do not send this project to AI",
+    "noAiWarning": "When on, AI is never called for this project and AI tasks go back to people.",
+    "budget": "Monthly budget (USD)",
+    "budgetHint": "Empty = no limit",
+    "saveBudget": "Save budget",
+    "invalidBudget": "Enter a non-negative amount",
+    "usage": "This month",
+    "spend": "Spend",
+    "calls": "Calls",
+    "noLimit": "No limit",
+    "readOnly": "Only a PM or admin can change these settings"
   }
 }

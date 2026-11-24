@@ -21,6 +21,9 @@ const itemsError = ref('')
 const autonomyError = ref('')
 const createOpen = ref(false)
 const router = useRouter()
+const TABS = ['overview', 'items', 'knowledge', 'ai'] as const
+const tab = ref<string>(TABS.includes(route.query.tab as never) ? (route.query.tab as string) : 'overview')
+watch(tab, (v) => router.replace({ query: { ...route.query, tab: v } }))
 
 const isMember = computed(() => !!project.value?.members.some(m => m.personId === me.value?.id))
 const canCreate = computed(() => isMember.value || !!me.value?.isAdmin)
@@ -147,6 +150,14 @@ useLiveEvents((e) => {
     <h1 class="text-h5">{{ project.name }}</h1>
     <p class="text-medium-emphasis mb-4">{{ project.description }}</p>
     <v-alert v-if="error" type="error" class="mb-4">{{ error }}</v-alert>
+    <v-tabs v-model="tab" class="mb-4" data-testid="project-tabs">
+      <v-tab value="overview" data-testid="tab-overview">{{ t('projects.tabs.overview') }}</v-tab>
+      <v-tab value="items" data-testid="tab-items">{{ t('projects.tabs.items') }}</v-tab>
+      <v-tab value="knowledge" data-testid="tab-knowledge">{{ t('projects.tabs.knowledge') }}</v-tab>
+      <v-tab value="ai" data-testid="tab-ai">{{ t('projects.tabs.ai') }}</v-tab>
+    </v-tabs>
+    <v-window v-model="tab" :touch="false">
+      <v-window-item value="overview">
     <v-switch
       v-if="canManage"
       :model-value="project.autonomy === 'auto-assign'"
@@ -162,45 +173,6 @@ useLiveEvents((e) => {
       {{ t('projects.autonomy') }}: {{ t(project.autonomy === 'auto-assign' ? 'projects.autoAssign' : 'projects.propose') }}
     </p>
     <v-alert v-if="autonomyError" type="error" class="mb-4" data-testid="autonomy-error">{{ autonomyError }}</v-alert>
-
-    <div class="d-flex align-center mb-2">
-      <h2 class="text-h6">{{ t('workItems.heading') }}</h2>
-      <v-spacer />
-      <v-btn v-if="canCreate" color="primary" prepend-icon="mdi-plus" data-testid="new-work-item" @click="createOpen = true">{{ t('workItems.new') }}</v-btn>
-    </div>
-    <v-alert v-if="itemsError" type="error" class="mb-4" data-testid="items-error">{{ itemsError }}</v-alert>
-    <p v-if="!workItems.length && !itemsError" class="text-medium-emphasis mb-4" data-testid="items-empty">{{ t('workItems.empty') }}</p>
-    <v-table v-else-if="workItems.length" class="mb-6" data-testid="work-items">
-      <thead>
-        <tr>
-          <th>{{ t('workItems.title') }}</th>
-          <th>{{ t('workItems.template') }}</th>
-          <th>{{ t('workItems.currentStep') }}</th>
-          <th>{{ t('workItems.priority') }}</th>
-          <th>{{ t('workItems.state') }}</th>
-          <th>{{ t('workItems.owner') }}</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="w in workItems" :key="w.id" data-testid="work-item-row">
-          <td><NuxtLink :to="`/work-items/${w.id}`">{{ w.title }}</NuxtLink></td>
-          <td>{{ templateName(w) }}</td>
-          <td>{{ stepName(w) }}</td>
-          <td>{{ t(`priority.${w.priority}`) }}</td>
-          <td>{{ t(`workItems.stateName.${w.state}`) }}</td>
-          <td>{{ w.ownerName }}</td>
-        </tr>
-      </tbody>
-    </v-table>
-    <WorkItemCreateDialog
-      v-model="createOpen"
-      :project-id="id"
-      :templates="templates"
-      :members="project.members"
-      :default-owner-id="isMember ? me?.id : (project.members.find(m => m.roles.includes('PM')) ?? project.members[0])?.personId"
-      :owner-required="!isMember"
-      @created="onCreated"
-    />
 
     <h2 class="text-h6 mb-2">{{ t('projects.members') }}</h2>
     <v-table class="mb-4">
@@ -240,6 +212,55 @@ useLiveEvents((e) => {
         <v-btn color="primary" :disabled="!newPerson || !newRoles.length" @click="addMember">{{ t('projects.add') }}</v-btn>
       </v-card-text>
     </v-card>
+      </v-window-item>
+      <v-window-item value="items">
+    <div class="d-flex align-center mb-2">
+      <h2 class="text-h6">{{ t('workItems.heading') }}</h2>
+      <v-spacer />
+      <v-btn v-if="canCreate" color="primary" prepend-icon="mdi-plus" data-testid="new-work-item" @click="createOpen = true">{{ t('workItems.new') }}</v-btn>
+    </div>
+    <v-alert v-if="itemsError" type="error" class="mb-4" data-testid="items-error">{{ itemsError }}</v-alert>
+    <p v-if="!workItems.length && !itemsError" class="text-medium-emphasis mb-4" data-testid="items-empty">{{ t('workItems.empty') }}</p>
+    <v-table v-else-if="workItems.length" class="mb-6" data-testid="work-items">
+      <thead>
+        <tr>
+          <th>{{ t('workItems.title') }}</th>
+          <th>{{ t('workItems.template') }}</th>
+          <th>{{ t('workItems.currentStep') }}</th>
+          <th>{{ t('workItems.priority') }}</th>
+          <th>{{ t('workItems.state') }}</th>
+          <th>{{ t('workItems.owner') }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr v-for="w in workItems" :key="w.id" data-testid="work-item-row">
+          <td><NuxtLink :to="`/work-items/${w.id}`">{{ w.title }}</NuxtLink></td>
+          <td>{{ templateName(w) }}</td>
+          <td>{{ stepName(w) }}</td>
+          <td>{{ t(`priority.${w.priority}`) }}</td>
+          <td>{{ t(`workItems.stateName.${w.state}`) }}</td>
+          <td>{{ w.ownerName }}</td>
+        </tr>
+      </tbody>
+    </v-table>
+    <WorkItemCreateDialog
+      v-model="createOpen"
+      :project-id="id"
+      :templates="templates"
+      :members="project.members"
+      :default-owner-id="isMember ? me?.id : (project.members.find(m => m.roles.includes('PM')) ?? project.members[0])?.personId"
+      :owner-required="!isMember"
+      @created="onCreated"
+    />
+
+      </v-window-item>
+      <v-window-item value="knowledge">
+        <ProjectKnowledgeTab :project-id="id" />
+      </v-window-item>
+      <v-window-item value="ai">
+        <ProjectAiSettings :project="project" :can-manage="canManage" @changed="load" />
+      </v-window-item>
+    </v-window>
     </template>
   </div>
 </template>
