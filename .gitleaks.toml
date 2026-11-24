@@ -1,0 +1,11 @@
+title = "yoda gitleaks config"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Dev-only Keycloak realm and docker-compose throwaway credentials"
+paths = [
+  '''infra/keycloak/yoda-realm\.json''',
+  '''docker-compose\.yml''',
+]
