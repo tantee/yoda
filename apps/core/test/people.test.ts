@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify'
+import { sql } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { resetDb, testDb } from './helpers.js'
 import { auth, login, makeApp } from './support.js'
@@ -87,5 +88,69 @@ describe('people API', () => {
       payload: {},
     })
     expect(badId.statusCode).toBe(400)
+  })
+
+  describe('last admin protection', () => {
+    const demote = (by: { token: string }, id: string) =>
+      app.inject({
+        method: 'PATCH',
+        url: `/people/${id}`,
+        headers: auth(by as never),
+        payload: { isAdmin: false },
+      })
+    const promote = async (admin: Awaited<ReturnType<typeof login>>, id: string) =>
+      app.inject({
+        method: 'PATCH',
+        url: `/people/${id}`,
+        headers: auth(admin),
+        payload: { isAdmin: true },
+      })
+
+    it('sole admin cannot demote self', async () => {
+      const admin = await login(app, 'boss')
+      const res = await demote(admin, admin.id)
+      expect(res.statusCode).toBe(409)
+      expect(res.json()).toEqual({ error: 'last_admin' })
+      const me = await app.inject({ url: '/me', headers: auth(admin) })
+      expect(me.json().isAdmin).toBe(true)
+    })
+
+    it('with two admins, one can demote the other', async () => {
+      const boss = await login(app, 'boss')
+      const second = await login(app, 'second')
+      expect((await promote(boss, second.id)).statusCode).toBe(200)
+      const res = await demote(boss, second.id)
+      expect(res.statusCode).toBe(200)
+      expect(res.json().isAdmin).toBe(false)
+    })
+
+    it('concurrent mutual demotion leaves exactly one admin', async () => {
+      const boss = await login(app, 'boss')
+      const second = await login(app, 'second')
+      await promote(boss, second.id)
+      // Hold the admin-change lock so both requests pass auth and queue behind it,
+      // then release: they must serialize instead of both seeing "another admin exists".
+      const db = await testDb()
+      let release!: () => void
+      const held = new Promise<void>((r) => (release = r))
+      let locked!: () => void
+      const gotLock = new Promise<void>((r) => (locked = r))
+      const holder = db.transaction(async (tx) => {
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtext('people:admin-change'))`)
+        locked()
+        await held
+      })
+      await gotLock
+      const both = Promise.all([demote(boss, second.id), demote(second, boss.id)])
+      await new Promise((r) => setTimeout(r, 300))
+      release()
+      await holder
+      const [a, b] = await both
+      expect([a.statusCode, b.statusCode].sort()).toEqual([200, 409])
+      const rows = await (await testDb()).execute<{ n: string }>(
+        sql`select count(*)::text as n from people where is_admin`,
+      )
+      expect(rows[0].n).toBe('1')
+    })
   })
 })

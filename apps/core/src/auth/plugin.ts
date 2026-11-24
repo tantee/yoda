@@ -8,7 +8,7 @@ import { isStaff, TokenClaims, upsertPersonFromClaims } from './people.js'
 export class HttpError extends Error {
   constructor(
     readonly statusCode: 401 | 403 | 404 | 409,
-    readonly body: { error: 'unauthorized' | 'forbidden' | 'not_found' | 'last_pm' },
+    readonly body: { error: 'unauthorized' | 'forbidden' | 'not_found' | 'last_pm' | 'last_admin' },
   ) {
     super(body.error)
   }
@@ -16,6 +16,7 @@ export class HttpError extends Error {
 
 const unauthorized = () => new HttpError(401, { error: 'unauthorized' })
 export const notFound = () => new HttpError(404, { error: 'not_found' })
+export const lastAdmin = () => new HttpError(409, { error: 'last_admin' })
 export const lastPm = () => new HttpError(409, { error: 'last_pm' })
 export const forbidden = () => new HttpError(403, { error: 'forbidden' })
 
