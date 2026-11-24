@@ -11,7 +11,7 @@ import { InlineJobQueue, type JobName } from '../src/jobs/queue.js'
 import { LiveBus } from '../src/live/bus.js'
 import { textStream } from './ai-mocks.js'
 import { mockModels, resetDb, testDb } from './helpers.js'
-import { auth, login, makeApp, type Who } from './support.js'
+import { acceptStepAdvance, auth, login, makeApp, type Who } from './support.js'
 
 const DRAFT = '# ข้อกำหนด\n\n- DRAFT-REQUIREMENTS-TEXT'
 
@@ -96,6 +96,8 @@ async function approveIntake(itemId: string) {
   const t = await active(itemId, 'accept-intake')
   if (t.assigneeId !== pm.id) expect((await call(pm, 'POST', `/tasks/${t.id}/assign`, { personId: pm.id })).statusCode).toBe(200)
   expect((await call(pm, 'POST', `/tasks/${t.id}/submit`, { decision: 'approve', text: '' })).statusCode).toBe(200)
+  // The finished intake step waits for the PM to confirm the advance (propose projects).
+  expect(await acceptStepAdvance(app, pm, itemId)).toBe(true)
 }
 
 /** Hands the latest attempt of `key` to `who` (as the PM) when needed, then submits it. */
@@ -103,6 +105,7 @@ async function drive(itemId: string, key: string, who: Who, result: Record<strin
   const t = await active(itemId, key)
   if (t.assigneeId !== who.id) expect((await call(pm, 'POST', `/tasks/${t.id}/assign`, { personId: who.id })).statusCode).toBe(200)
   expect((await call(who, 'POST', `/tasks/${t.id}/submit`, result)).statusCode).toBe(200)
+  await acceptStepAdvance(app, pm, itemId)
 }
 
 async function taskEvents(taskId: string) {

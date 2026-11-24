@@ -20,6 +20,7 @@ import { alias } from 'drizzle-orm/pg-core'
 import { forbidden, notFound } from '../auth/plugin.js'
 import { attachmentsByTask } from '../attachments/service.js'
 import type { Db, Tx } from '../db/client.js'
+import { pendingForDecider } from '../proposals/service.js'
 import { events, people, projectMembers, projects, tasks, workflowTemplates, workItems } from '../db/schema.js'
 
 type Conn = Db | Tx
@@ -430,7 +431,7 @@ export async function getTodo(db: Conn, me: Me): Promise<Todo> {
     ),
     order,
   )
-  return Todo.parse({ tasks: mine, confirmations, proposals: [] })
+  return Todo.parse({ tasks: mine, confirmations, proposals: await pendingForDecider(db, me) })
 }
 
 /** "Things I need to answer": my active REQUESTER tasks, oldest first (any signed-in person). */

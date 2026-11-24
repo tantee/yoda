@@ -6,7 +6,7 @@ import { attachments, conversationReads, messages } from '../src/db/schema.js'
 import { InlineJobQueue } from '../src/jobs/queue.js'
 import { interimSecretaryReply } from '../src/chat/service.js'
 import { resetDb, testDb } from './helpers.js'
-import { auth, login, makeApp, type Who } from './support.js'
+import { acceptStepAdvance, auth, login, makeApp, type Who } from './support.js'
 
 let app: FastifyInstance
 let admin: Who
@@ -372,6 +372,7 @@ describe('requester samples from the intake conversation', () => {
       const t = d.tasks.filter((x) => x.templateTaskKey === key).at(-1)!
       if (t.assigneeId !== who.id) await call(pm, 'POST', `/tasks/${t.id}/assign`, { personId: who.id })
       expect((await call(who, 'POST', `/tasks/${t.id}/submit`, result)).statusCode).toBe(200)
+      await acceptStepAdvance(app, pm, wi.id)
     }
     await step('accept-intake', pm, { text: '', decision: 'approve' })
     await step('draft-requirements', ba, { text: 'คำถาม' })

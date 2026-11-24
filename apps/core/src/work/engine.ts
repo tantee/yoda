@@ -8,8 +8,20 @@ import {
   notFound,
   notMember,
 } from '../auth/plugin.js'
-import type { Tx } from '../db/client.js'
-import { attachments, conversations, events, knowledgeEntries, people, projectMembers, projects, tasks, workItems } from '../db/schema.js'
+import type { Db, Tx } from '../db/client.js'
+import {
+  attachments,
+  conversations,
+  events,
+  knowledgeEntries,
+  people,
+  projectMembers,
+  projects,
+  proposals,
+  tasks,
+  workItems,
+} from '../db/schema.js'
+import { createProposal, supersedePending } from '../proposals/service.js'
 import { confirmEntry, createEntry } from '../knowledge/service.js'
 import { lockProject } from '../projects/access.js'
 import { latestTemplate, templateById } from '../workflow/seed.js'
@@ -19,14 +31,14 @@ import { createTaskAttempt } from './tasks.js'
 const ACTIVE_STATES: readonly TaskState[] = ACTIVE_TASK_STATES
 const isActive = (state: string) => (ACTIVE_STATES as readonly string[]).includes(state)
 
-type WorkItemRow = typeof workItems.$inferSelect
+export type WorkItemRow = typeof workItems.$inferSelect
 type TaskRow = typeof tasks.$inferSelect
 
 // Lock order everywhere: project row (only work item creation and member removal), then work_items row
 // FOR UPDATE, then the task row. Serialising on the work item is what makes concurrent sibling
 // completions advance a step once.
 
-async function lockItem(tx: Tx, workItemId: string): Promise<WorkItemRow> {
+export async function lockItem(tx: Tx, workItemId: string): Promise<WorkItemRow> {
   const [row] = await tx.select().from(workItems).where(eq(workItems.id, workItemId)).for('update')
   if (!row) throw notFound()
   return row
@@ -43,7 +55,7 @@ async function lockTask(tx: Tx, taskId: string): Promise<{ item: WorkItemRow; ta
   return { item, task }
 }
 
-async function memberRoles(tx: Tx, projectId: string, personId: string): Promise<string[] | null> {
+export async function memberRoles(tx: Db | Tx, projectId: string, personId: string): Promise<string[] | null> {
   const [row] = await tx
     .select({ roles: projectMembers.roles })
     .from(projectMembers)
@@ -51,7 +63,7 @@ async function memberRoles(tx: Tx, projectId: string, personId: string): Promise
   return row?.roles ?? null
 }
 
-async function isPmOrAdmin(tx: Tx, me: Me, projectId: string): Promise<boolean> {
+export async function isPmOrAdmin(tx: Tx, me: Me, projectId: string): Promise<boolean> {
   if (me.isAdmin) return true
   return (await memberRoles(tx, projectId, me.id))?.includes('PM') ?? false
 }
@@ -124,46 +136,77 @@ export async function startWorkItem(ctx: WorkCtx, workItemId: string): Promise<v
   await progressWorkItem(ctx, workItemId)
 }
 
+export type StepStatus = {
+  def: WorkflowTemplateDef
+  step: WorkflowTemplateDef['steps'][number]
+  next: WorkflowTemplateDef['steps'][number] | undefined
+  latest: Map<string, TaskRow>
+  active: Set<string>
+  satisfied: (key: string) => boolean
+  /** Every task of the current step is accepted (latest attempt). */
+  complete: boolean
+}
+
+/** Where the (locked, active) work item stands on its current step. */
+async function stepStatus(tx: Tx, item: WorkItemRow): Promise<StepStatus> {
+  const def = await definitionOf(tx, item)
+  const stepIndex = def.steps.findIndex((s) => s.key === item.currentStepKey)
+  if (stepIndex < 0) throw new Error(`work item ${item.id} has unknown step ${item.currentStepKey}`)
+  const step = def.steps[stepIndex]!
+  const next = def.steps[stepIndex + 1]
+  const rows = await tx.select().from(tasks).where(eq(tasks.workItemId, item.id))
+  const latest = new Map<string, TaskRow>()
+  const active = new Set<string>()
+  for (const r of rows) {
+    const cur = latest.get(r.templateTaskKey)
+    if (!cur || r.attempt > cur.attempt) latest.set(r.templateTaskKey, r)
+    if (isActive(r.state)) active.add(r.templateTaskKey)
+  }
+  const satisfied = (key: string) => latest.get(key)?.state === 'accepted'
+  return { def, step, next, latest, active, satisfied, complete: step.tasks.every((t) => satisfied(t.key)) }
+}
+
+/**
+ * Moves the locked work item from `status.step` to the next step (or completes it after the last step).
+ * The caller re-runs progressWorkItem to create the new step's tasks.
+ */
+async function advanceStep(ctx: WorkCtx, item: WorkItemRow, status: StepStatus): Promise<void> {
+  const { tx } = ctx
+  const { step, next } = status
+  const base = { projectId: item.projectId, workItemId: item.id, taskId: null }
+  await recordEvent(ctx, {
+    type: 'work_item.step_advanced',
+    ...base,
+    payload: { from: step.key, to: next?.key ?? null },
+  })
+  if (!next) {
+    await tx
+      .update(workItems)
+      .set({ state: 'done', currentStepKey: null, updatedAt: sql`now()` })
+      .where(eq(workItems.id, item.id))
+    await recordEvent(ctx, { type: 'work_item.done', ...base })
+    return
+  }
+  await tx.update(workItems).set({ currentStepKey: next.key, updatedAt: sql`now()` }).where(eq(workItems.id, item.id))
+}
+
 export async function progressWorkItem(ctx: WorkCtx, workItemId: string): Promise<void> {
   const { tx } = ctx
   for (;;) {
     const item = await lockItem(tx, workItemId)
     if (item.state !== 'active') return
-    const def = await definitionOf(tx, item)
-    const stepIndex = def.steps.findIndex((s) => s.key === item.currentStepKey)
-    if (stepIndex < 0) throw new Error(`work item ${workItemId} has unknown step ${item.currentStepKey}`)
-    const step = def.steps[stepIndex]!
-    const next = def.steps[stepIndex + 1]
+    const status = await stepStatus(tx, item)
+    const { step, next, latest, active, satisfied } = status
 
-    const rows = await tx.select().from(tasks).where(eq(tasks.workItemId, workItemId))
-    const latest = new Map<string, TaskRow>()
-    const active = new Set<string>()
-    for (const r of rows) {
-      const cur = latest.get(r.templateTaskKey)
-      if (!cur || r.attempt > cur.attempt) latest.set(r.templateTaskKey, r)
-      if (isActive(r.state)) active.add(r.templateTaskKey)
-    }
-    const satisfied = (key: string) => latest.get(key)?.state === 'accepted'
-
-    if (step.tasks.every((t) => satisfied(t.key))) {
-      const base = { projectId: item.projectId, workItemId, taskId: null }
-      await recordEvent(ctx, {
-        type: 'work_item.step_advanced',
-        ...base,
-        payload: { from: step.key, to: next?.key ?? null },
-      })
-      if (!next) {
-        await tx
-          .update(workItems)
-          .set({ state: 'done', currentStepKey: null, updatedAt: sql`now()` })
-          .where(eq(workItems.id, workItemId))
-        await recordEvent(ctx, { type: 'work_item.done', ...base })
+    if (status.complete) {
+      // `propose` projects confirm each step advance: a pending proposal waits for the PM (decideProposal
+      // advances on accept). The last step always completes the work item directly.
+      if (next && (await projectAutonomy(tx, item.projectId)) === 'propose') {
+        await proposeStepAdvance(ctx, item, step.key, next.key)
         return
       }
-      await tx
-        .update(workItems)
-        .set({ currentStepKey: next.key, updatedAt: sql`now()` })
-        .where(eq(workItems.id, workItemId))
+      await advanceStep(ctx, item, status)
+      if (!next) return
       continue
     }
 
@@ -184,6 +227,58 @@ export async function progressWorkItem(ctx: WorkCtx, workItemId: string): Promis
     }
     return
   }
+}
+
+async function projectAutonomy(tx: Tx, projectId: string): Promise<string> {
+  const [row] = await tx.select({ autonomy: projects.autonomy }).from(projects).where(eq(projects.id, projectId))
+  return row?.autonomy ?? 'propose'
+}
+
+/**
+ * Creates the work item's `step_advance` proposal unless one is pending. Runs under the work item lock, which
+ * every creator holds, so the check cannot race (the partial unique index backs it up).
+ */
+async function proposeStepAdvance(ctx: WorkCtx, item: WorkItemRow, fromStep: string, toStep: string): Promise<void> {
+  const [pending] = await ctx.tx
+    .select({ id: proposals.id })
+    .from(proposals)
+    .where(and(eq(proposals.workItemId, item.id), eq(proposals.kind, 'step_advance'), eq(proposals.state, 'pending')))
+  if (pending) return
+  await createProposal(
+    { ...ctx, actorKind: 'system' },
+    {
+      projectId: item.projectId,
+      workItemId: item.id,
+      kind: 'step_advance',
+      summary: '',
+      reason: '',
+      payload: { fromStep, toStep },
+      onBehalfOf: null,
+    },
+  )
+}
+
+/**
+ * Accepting a `step_advance` proposal (work item locked by the caller): the advance still applies only while
+ * the item is active, on `fromStep`, with every task of that step accepted and `toStep` next. Returns the
+ * step status to pass to applyStepAdvance, or null when the situation changed.
+ */
+export async function stepAdvanceReady(
+  tx: Tx,
+  item: WorkItemRow,
+  fromStep: unknown,
+  toStep: unknown,
+): Promise<StepStatus | null> {
+  if (item.state !== 'active' || item.currentStepKey !== fromStep) return null
+  const status = await stepStatus(tx, item)
+  if (!status.complete || !status.next || status.next.key !== toStep) return null
+  return status
+}
+
+/** Advances the item as checked by stepAdvanceReady and creates the next step's tasks. */
+export async function applyStepAdvance(ctx: WorkCtx, item: WorkItemRow, status: StepStatus): Promise<void> {
+  await advanceStep(ctx, item, status)
+  await progressWorkItem(ctx, item.id)
 }
 
 export async function startTask(ctx: WorkCtx, me: Me, taskId: string): Promise<void> {
@@ -402,7 +497,8 @@ export async function confirmTask(ctx: WorkCtx, me: Me, taskId: string): Promise
 }
 
 /**
- * Called when `personId` leaves the project (after the membership row is deleted, same transaction):
+ * Called when `personId` leaves the project (after the membership row is deleted, same transaction), or with
+ * `roles` when they lose those roles (after the membership row is updated):
  * every active task they hold or are proposed for becomes unassigned `open`, so it lands in the PM's
  * confirmations — except REQUESTER tasks they hold as the work item's requester.
  *
@@ -412,7 +508,14 @@ export async function confirmTask(ctx: WorkCtx, me: Me, taskId: string): Promise
  * item locks means such a task is committed, and therefore visible, before we look for it. New items
  * cannot appear meanwhile because createWorkItem takes the project lock in share mode.
  */
-export async function unassignMemberTasks(ctx: WorkCtx, projectId: string, personId: string): Promise<void> {
+export async function unassignMemberTasks(
+  ctx: WorkCtx,
+  projectId: string,
+  personId: string,
+  /** Role removal: only tasks with one of these roles (reason `role_removed`). Omitted: member removal. */
+  roles?: string[],
+): Promise<void> {
+  if (roles && roles.length === 0) return
   const { tx } = ctx
   await lockProject(tx, projectId)
   await tx
@@ -429,6 +532,7 @@ export async function unassignMemberTasks(ctx: WorkCtx, projectId: string, perso
         eq(tasks.projectId, projectId),
         inArray(tasks.state, [...ACTIVE_STATES]),
         or(eq(tasks.assigneeId, personId), eq(tasks.proposedAssigneeId, personId)),
+        roles ? inArray(tasks.role, roles) : undefined,
         // The work item's requester keeps their requester tasks: those never depended on membership.
         sql`not (${tasks.role} = 'REQUESTER' and ${tasks.assigneeId} is not distinct from (select w.requester_id from work_items w where w.id = ${tasks.workItemId}))`,
       ),
@@ -441,8 +545,8 @@ export async function unassignMemberTasks(ctx: WorkCtx, projectId: string, perso
       projectId,
       workItemId: t.workItemId,
       taskId: t.id,
-      reason: 'member_removed',
-      payload: { personId },
+      reason: roles ? 'role_removed' : 'member_removed',
+      payload: roles ? { personId, roles } : { personId },
     })
   }
 }
@@ -470,6 +574,8 @@ export async function cancelWorkItem(ctx: WorkCtx, me: Me, workItemId: string): 
   }
   await tx.update(workItems).set({ state: 'cancelled', updatedAt: sql`now()` }).where(eq(workItems.id, workItemId))
   await recordEvent(ctx, { type: 'work_item.cancelled', projectId: item.projectId, workItemId, taskId: null })
+  // Nothing left to decide for a cancelled item (work item lock held, so proposals are locked after it).
+  await supersedePending(ctx, workItemId)
 }
 
 /** The AI runner may still act on the task: open, unassigned and executed by the AI. */

@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { attachments } from '../src/db/schema.js'
 import { resetDb, testDb } from './helpers.js'
-import { auth, login, makeApp, type Who } from './support.js'
+import { acceptStepAdvance, auth, login, makeApp, type Who } from './support.js'
 
 let app: FastifyInstance
 let admin: Who
@@ -57,6 +57,8 @@ async function drive(itemId: string, key: string, who: Who, result: Record<strin
   }
   const res = await call(who, 'POST', `/tasks/${t.id}/submit`, result)
   expect(res.statusCode).toBe(200)
+  // A finished step waits for the PM to confirm the advance (propose projects).
+  await acceptStepAdvance(app, pm, itemId)
   return res.json() as TaskWithContext
 }
 
@@ -175,6 +177,10 @@ describe('work API', () => {
     const submitted = await call(pm, 'POST', `/tasks/${t.id}/submit`, approve)
     expect(submitted.statusCode).toBe(200)
     expect(submitted.json()).toMatchObject({ state: 'accepted', result: { decision: 'approve' } })
+    // The finished step waits for the PM to confirm the advance.
+    expect((await detail(pm, wi.id)).currentStepKey).toBe('intake')
+    expect((await todo(pm)).proposals.map((x) => x.kind)).toEqual(['step_advance'])
+    expect(await acceptStepAdvance(app, pm, wi.id)).toBe(true)
     expect((await detail(pm, wi.id)).currentStepKey).toBe('dev')
   })
 

@@ -27,3 +27,24 @@ export async function login(
 }
 
 export const auth = (w: Who) => ({ authorization: `Bearer ${w.token}` })
+
+/**
+ * `propose` projects gate each step advance behind a PM-confirmed proposal. Accepts the work item's pending
+ * `step_advance` proposal as `pm` (a PM or admin), if any; returns whether one was accepted.
+ */
+export async function acceptStepAdvance(app: FastifyInstance, pm: Who, workItemId: string): Promise<boolean> {
+  const res = await app.inject({ url: '/proposals?state=pending', headers: auth(pm) })
+  if (res.statusCode !== 200) throw new Error(`GET /proposals → ${res.statusCode}`)
+  const p = (res.json() as { id: string; workItemId: string | null; kind: string }[]).find(
+    (x) => x.workItemId === workItemId && x.kind === 'step_advance',
+  )
+  if (!p) return false
+  const dec = await app.inject({
+    method: 'POST',
+    url: `/proposals/${p.id}/decide`,
+    headers: auth(pm),
+    payload: { decision: 'accept' },
+  })
+  if (dec.statusCode !== 200) throw new Error(`accept step_advance → ${dec.statusCode} ${dec.body}`)
+  return true
+}
