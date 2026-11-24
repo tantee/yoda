@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import type { Task, TaskWithContext, Todo, WorkItemDetail } from '@yoda/shared'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { eq } from 'drizzle-orm'
 import { attachments } from '../src/db/schema.js'
 import { resetDb, testDb } from './helpers.js'
 import { auth, login, makeApp, type Who } from './support.js'
@@ -341,5 +342,32 @@ describe('work API', () => {
     const wi = await createItem(pm, p)
     expect(wi.events.length).toBeGreaterThan(0)
     expect(wi.events.every((e) => e.actorKind === 'person')).toBe(true)
+  })
+
+  it('a submit never moves files off other tasks; project-level files join the work item', async () => {
+    const p = await project([[pm, ['PM']], [dev, ['DEV']], [qc, ['QC']]])
+    const wi = await createItem(pm, p)
+    const wi2 = await createItem(pm, p, { title: 'งานอื่น' })
+    await drive(wi.id, 'accept-bug', pm, approve)
+    const projectFile = await attach(p, dev)
+    const impl = await drive(wi.id, 'implement', dev, { text: 'แก้แล้ว', attachmentIds: [projectFile] })
+    const listed = (await call(dev, 'GET', `/projects/${p}/attachments?workItemId=${wi.id}`)).json() as { id: string; taskId: string }[]
+    expect(listed).toMatchObject([{ id: projectFile, taskId: impl.id }])
+
+    // Already linked to the accepted implement task → refused, link intact.
+    const tests = await active(pm, wi.id, 'draft-tests')
+    expect((await call(pm, 'POST', `/tasks/${tests.id}/assign`, { personId: qc.id })).statusCode).toBe(200)
+    const stolen = await call(qc, 'POST', `/tasks/${tests.id}/submit`, { text: 't', attachmentIds: [projectFile] })
+    expect(stolen.statusCode).toBe(409)
+    expect(stolen.json()).toEqual({ error: 'invalid_state' })
+    expect((await active(pm, wi.id, 'draft-tests')).state).toBe('open')
+    expect((await call(dev, 'GET', `/tasks/${impl.id}`)).json()).toMatchObject({ attachments: [{ id: projectFile }] })
+
+    // A file on another work item → refused too.
+    const otherItemFile = await attach(p, dev, { workItemId: wi2.id })
+    const res = await call(qc, 'POST', `/tasks/${tests.id}/submit`, { text: 't', attachmentIds: [otherItemFile] })
+    expect(res.statusCode).toBe(409)
+    const [row] = await app.deps.db.select().from(attachments).where(eq(attachments.id, otherItemFile))
+    expect(row).toMatchObject({ workItemId: wi2.id, taskId: null })
   })
 })
