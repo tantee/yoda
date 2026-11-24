@@ -92,6 +92,20 @@ describe('auth', () => {
       expect(res.statusCode).toBe(401)
     })
 
+    it('token without exp', async () => {
+      const a = await makeApp()
+      const res = await me(a, await signToken({ ...base, exp: undefined }))
+      expect(res.statusCode).toBe(401)
+      expect(res.json()).toEqual({ error: 'unauthorized' })
+    })
+
+    it('unknown route without a token', async () => {
+      const a = await makeApp()
+      const res = await a.inject({ url: '/nope' })
+      expect(res.statusCode).toBe(401)
+      expect(res.json()).toEqual({ error: 'unauthorized' })
+    })
+
     it('signed by an unknown key', async () => {
       const a = await makeApp()
       const { privateKey } = await generateKeyPair('RS256')
@@ -116,6 +130,14 @@ describe('auth', () => {
     afterEach(async () => {
       expect(await peopleCount()).toBe(0)
     })
+  })
+
+  it('accepts lowercase bearer scheme', async () => {
+    const a = await makeApp()
+    const token = await signToken({ sub: 'lc1', preferred_username: 'lower' })
+    const res = await a.inject({ url: '/me', headers: { authorization: `bearer ${token}` } })
+    expect(res.statusCode).toBe(200)
+    expect(res.json().username).toBe('lower')
   })
 
   it('/health stays unauthenticated', async () => {
