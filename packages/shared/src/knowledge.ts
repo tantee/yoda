@@ -88,3 +88,36 @@ export const AiUsage = z.object({
   calls: z.number().int(),
 })
 export type AiUsage = z.infer<typeof AiUsage>
+
+/** Bilingual text (declared here, not imported from work.ts, which already imports this file). */
+const PackText = z.object({ th: z.string(), en: z.string() })
+
+export const PackEntry = z.object({
+  id: uuid,
+  title: z.string(),
+  text: z.string(),
+  status: KnowledgeStatus,
+  type: KnowledgeType,
+})
+export type PackEntry = z.infer<typeof PackEntry>
+
+/** Everything an AI session needs for one task; never contains noAi content. */
+export const ContextPack = z.object({
+  task: z.object({
+    id: uuid,
+    title: PackText,
+    instructions: PackText,
+    feedback: z.string().nullable(),
+    stepKey: z.string(),
+    attempt: z.number().int(),
+  }),
+  workItem: z.object({ id: uuid, title: z.string(), description: z.string(), priority: z.string() }),
+  project: z.object({ id: uuid, name: z.string(), description: z.string() }),
+  inputs: z.array(z.object({ title: z.string(), text: z.string() })),
+  documents: z.array(PackEntry),
+  decisions: z.array(PackEntry),
+  progress: z.array(PackEntry),
+  memory: z.array(PackEntry),
+  related: z.array(PackEntry),
+})
+export type ContextPack = z.infer<typeof ContextPack>

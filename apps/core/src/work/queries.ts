@@ -103,7 +103,7 @@ function toTask(row: TaskRow, def: WorkflowTemplateDef | undefined, who: Map<str
 }
 
 /** Tasks joined with their work item / project, in the order the `where`/`orderBy` give. */
-async function tasksWithContext(db: Conn, where: SQL | undefined, orderBy: SQL[]): Promise<TaskWithContext[]> {
+export async function tasksWithContext(db: Conn, where: SQL | undefined, orderBy: SQL[]): Promise<TaskWithContext[]> {
   const rows = await db
     .select({ t: tasks, templateId: workItems.templateId, workItemTitle: workItems.title, workItemPriority: workItems.priority, projectName: projects.name })
     .from(tasks)
