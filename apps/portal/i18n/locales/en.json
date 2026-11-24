@@ -253,5 +253,43 @@
     "drafting": "AI is drafting…",
     "failed": "AI couldn't draft this ({reason})",
     "retry": "Retry AI"
+  },
+  "chat": {
+    "threads": "Conversations",
+    "personal": "My assistant",
+    "intake": "My assistant",
+    "empty": "No messages yet",
+    "select": "Select a conversation",
+    "placeholder": "Type a message (Enter to send, Shift+Enter for a new line)",
+    "send": "Send",
+    "attach": "Attach a file",
+    "typing": "The secretary is typing…",
+    "loadOlder": "Load older messages",
+    "visibleToRequester": "This thread is visible to the requester. Do not post internal notes here.",
+    "sendFailed": "Could not send the message",
+    "ai": "Secretary",
+    "system": "System",
+    "card": {
+      "workItemCreated": "Request created",
+      "knowledgeSaved": "Knowledge saved",
+      "proposal": "Proposal",
+      "open": "Open",
+      "confirm": "Confirm",
+      "dismiss": "Dismiss",
+      "dismissNote": "Reason for dismissing",
+      "state": {
+        "pending": "Waiting for a decision",
+        "accepted": "Confirmed",
+        "rejected": "Dismissed",
+        "superseded": "No longer applies"
+      },
+      "project": "Project",
+      "chooseProject": "Choose a project"
+    }
+  },
+  "notifications": {
+    "title": "Notifications",
+    "empty": "No notifications",
+    "markAllRead": "Mark all as read"
   }
 }
