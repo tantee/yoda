@@ -28,6 +28,8 @@ export const KnowledgeEntry = z.object({
   attachmentId: uuid.nullable(),
   createdById: uuid.nullable(),
   createdByName: z.string().nullable(),
+  /** Set when a newer version replaced this one; superseded versions are kept but never searched. */
+  supersededAt: z.string().nullable(),
   createdAt: z.string(),
 })
 export type KnowledgeEntry = z.infer<typeof KnowledgeEntry>

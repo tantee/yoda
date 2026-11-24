@@ -13,6 +13,8 @@ import {
 } from '../attachments/service.js'
 import { attachments, tasks, workItems } from '../db/schema.js'
 import { canManageProject } from '../projects/access.js'
+import { propagateAttachmentNoAi } from '../knowledge/service.js'
+import { runWork } from '../work/context.js'
 import { canSeeProject } from '../work/queries.js'
 
 const IdParams = z.object({ id: z.string().uuid() })
@@ -136,8 +138,11 @@ export function attachmentRoutes(app: FastifyInstance): void {
     const [row] = await db().select().from(attachments).where(eq(attachments.id, id))
     if (!row || !(await canSeeProject(db(), me, row.projectId))) throw notFound()
     if (row.uploadedBy !== me.id && !(await canManageProject(db(), me, row.projectId))) throw forbidden()
-    await db().update(attachments).set({ noAi: body.noAi }).where(eq(attachments.id, id))
-    // TODO(task 5): propagate to the knowledge entry via the knowledge service.
+    await runWork(app.deps, me.id, async (ctx) => {
+      await ctx.tx.update(attachments).set({ noAi: body.noAi }).where(eq(attachments.id, id))
+      // In place on the current entry: a handling flag, not a content change (see propagateAttachmentNoAi).
+      await propagateAttachmentNoAi(ctx, id, body.noAi)
+    })
     return getAttachment(db(), id)
   })
 }

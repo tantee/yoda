@@ -8,6 +8,8 @@ import { createS3Storage, type Storage } from '../src/storage/s3.js'
 import { AiGateway } from '../src/ai/gateway.js'
 import type { ModelSet } from '../src/ai/models.js'
 import { LiveBus } from '../src/live/bus.js'
+import { registerJobHandlers } from '../src/jobs/handlers.js'
+import { InlineJobQueue } from '../src/jobs/queue.js'
 import { textStream } from './ai-mocks.js'
 import { localJwks, TEST_CLIENT_ID, TEST_ISSUER } from './jwt.js'
 
@@ -73,13 +75,17 @@ export async function testDeps(overrides: Partial<AppDeps> = {}): Promise<AppDep
   }
   const db = await testDb()
   const bus = new LiveBus()
-  return {
+  const deps: AppDeps = {
     config,
     db,
     jwks: localJwks,
     bus,
     ai: new AiGateway({ db, bus, models: mockModels() }),
     storage: await testStorage(config),
+    jobs: new InlineJobQueue({ onError: (err, name, id) => console.warn(`test job ${name} ${id} failed`, err) }),
     ...overrides,
   }
+  // Handlers see the final deps (overrides included). Tests await `(deps.jobs as InlineJobQueue).drain()`.
+  await registerJobHandlers(deps)
+  return deps
 }

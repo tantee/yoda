@@ -27,6 +27,13 @@ const WARN_RATIO = 0.8
 
 const warnedModels = new Set<string>()
 
+/** The gateway only records events; it never enqueues jobs. */
+const NO_JOBS = {
+  send: async (): Promise<void> => {
+    throw new Error('AiGateway does not enqueue jobs')
+  },
+}
+
 export function costOf(model: string, inputTokens: number, outputTokens: number): string | null {
   const p = (prices as Record<string, { inputPerMTok: number; outputPerMTok: number }>)[model]
   if (!p) {
@@ -199,7 +206,7 @@ export class AiGateway {
     costUsd: number,
     budgetUsd: number,
   ): Promise<void> {
-    await runWork(this.deps, null, async (ctx) => {
+    await runWork({ ...this.deps, jobs: NO_JOBS }, null, async (ctx) => {
       // Serialize concurrent callers per project+type so the event is recorded once.
       await ctx.tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`${type}:${projectId}`}))`)
       const existing = await ctx.tx

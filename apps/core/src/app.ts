@@ -8,6 +8,10 @@ import type { Config } from './config.js'
 import type { Db } from './db/client.js'
 import type { LiveBus } from './live/bus.js'
 import type { AiGateway } from './ai/gateway.js'
+import { setOnAttachmentStored } from './attachments/service.js'
+import type { JobQueue } from './jobs/queue.js'
+import { createAttachmentEntry } from './knowledge/service.js'
+import { knowledgeRoutes } from './routes/knowledge.js'
 import { aiRoutes } from './routes/ai.js'
 import { attachmentRoutes } from './routes/attachments.js'
 import type { Storage } from './storage/s3.js'
@@ -17,7 +21,15 @@ import { meRoutes } from './routes/me.js'
 import { streamRoutes } from './routes/stream.js'
 import { workRoutes } from './routes/work.js'
 
-export type AppDeps = { config: Config; db: Db; jwks: JWTVerifyGetKey; bus: LiveBus; storage: Storage; ai: AiGateway }
+export type AppDeps = {
+  config: Config
+  db: Db
+  jwks: JWTVerifyGetKey
+  bus: LiveBus
+  storage: Storage
+  ai: AiGateway
+  jobs: JobQueue
+}
 
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   const app = Fastify({ logger: process.env.VITEST ? false : true })
@@ -55,6 +67,17 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   streamRoutes(app)
   attachmentRoutes(app)
   aiRoutes(app)
+  knowledgeRoutes(app)
+
+  // Text-bearing uploads become `document` entries. The attachment is already committed, so a failure here
+  // is logged rather than failing the upload (a retried upload would duplicate the file).
+  setOnAttachmentStored(async (row, text) => {
+    try {
+      await createAttachmentEntry(app.deps, row, text)
+    } catch (err) {
+      app.log.error({ err, attachmentId: row.id }, 'knowledge entry for attachment failed')
+    }
+  })
 
   return app
 }
