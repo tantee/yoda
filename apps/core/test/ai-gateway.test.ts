@@ -1,7 +1,8 @@
 import { and, eq } from 'drizzle-orm'
 import type { FastifyInstance } from 'fastify'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AiFailed, AiGateway, AiRefused, costOf } from '../src/ai/gateway.js'
+import { buildModels } from '../src/ai/models.js'
 import { buildApp } from '../src/app.js'
 import { aiCalls, events, projectMembers, projects } from '../src/db/schema.js'
 import { embeddingModel, failingModel, textModel } from './ai-mocks.js'
@@ -47,9 +48,23 @@ describe('AiGateway.generateText', () => {
     expect(rows[0]!.error).toContain('boom upstream')
   })
 
-  it('empty output throws AiFailed(empty_output)', async () => {
+  it('empty output logs a billed failed row and throws AiFailed(empty_output)', async () => {
+    const db = await testDb()
     const g = await gateway(mockModels({ draft: textModel('claude-opus-5-5', '') }))
     await expect(gen(g)).rejects.toMatchObject({ reason: 'empty_output' })
+    const [row] = await db.select().from(aiCalls)
+    expect(row).toMatchObject({ ok: false, error: 'empty_output', inputTokens: 1000, outputTokens: 500 })
+    expect(Number(row!.costUsd)).toBeCloseTo(0.014, 6)
+  })
+
+  it('a failing success-log insert propagates and is not a provider_error', async () => {
+    const g = await gateway()
+    const spy = vi.spyOn(g as never, 'log' as never).mockRejectedValue(new Error('db down') as never)
+    const err = await gen(g).catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(Error)
+    expect(err).not.toBeInstanceOf(AiFailed)
+    expect((err as Error).message).toBe('db down')
+    expect(spy).toHaveBeenCalledTimes(1)
   })
 
   it('unavailable model throws not_configured without a row', async () => {
@@ -121,6 +136,29 @@ describe('AiGateway.embed', () => {
     expect(emb.doEmbedCalls[0]!.providerOptions).toMatchObject({ openai: { dimensions: 1024 } })
     const [row] = await db.select().from(aiCalls)
     expect(row).toMatchObject({ job: 'embed', ok: true, inputTokens: 20 })
+  })
+})
+
+describe('embed dimensions and buildModels', () => {
+  it('rejects wrong-sized vectors with bad_dimensions', async () => {
+    const db = await testDb()
+    const g = await gateway(
+      mockModels({
+        embed: embeddingModel('text-embedding-3-small', 3),
+        ids: { draft: OPUS, fast: null, embed: 'openai:text-embedding-3-small' },
+      }),
+    )
+    await expect(g.embed({ projectId, texts: ['a'] })).rejects.toMatchObject({ reason: 'bad_dimensions' })
+    const [row] = await db.select().from(aiCalls)
+    expect(row).toMatchObject({ ok: false, error: 'bad_dimensions' })
+  })
+
+  it('warns when the embedding model is anthropic', async () => {
+    const warns: string[] = []
+    const cfg = { ...(await testDeps()).config, anthropicApiKey: 'k', aiEmbeddingModel: 'anthropic:x' }
+    const m = buildModels(cfg, (w) => warns.push(w))
+    expect(m.embed).toBeNull()
+    expect(warns.filter((w) => w.includes('no embedding models'))).toHaveLength(1)
   })
 })
 

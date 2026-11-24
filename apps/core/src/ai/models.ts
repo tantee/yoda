@@ -50,9 +50,11 @@ export function buildModels(config: Config, warn: Warn = (m) => console.warn(m))
 
   const draft = resolve<LanguageModel>(config.aiModelDraft, chat)
   const fast = resolve<LanguageModel>(config.aiModelFast, chat)
-  const embed = resolve<EmbeddingModel>(config.aiEmbeddingModel, (p, model, provider) =>
-    provider === 'openai' ? (p.openai?.embedding(model) ?? null) : null,
-  )
+  const embed = resolve<EmbeddingModel>(config.aiEmbeddingModel, (p, model, provider) => {
+    if (provider === 'openai') return p.openai?.embedding(model) ?? null
+    warn('AI_EMBEDDING_MODEL: Anthropic has no embedding models; embeddings are disabled')
+    return null
+  })
   return {
     draft: draft.model,
     fast: fast.model,

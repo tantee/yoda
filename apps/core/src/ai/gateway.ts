@@ -76,6 +76,9 @@ export class AiGateway {
     await this.guard(input.projectId, input.taskId ?? null)
 
     const { provider, model } = parseModelId(spec)
+    let text: string
+    let inTok: number
+    let outTok: number
     let streamError: unknown
     try {
       const result = streamText({
@@ -88,20 +91,26 @@ export class AiGateway {
           streamError = error
         },
       })
-      const text = await result.text
+      text = await result.text
       const usage = await result.totalUsage
       if (streamError) throw streamError
-      await this.log(input, provider, model, usage.inputTokens ?? 0, usage.outputTokens ?? 0, true, null)
-      if (!text.trim()) throw new AiFailed('empty_output')
-      await this.warnIfNeeded(input.projectId, input.taskId ?? null)
-      return { text, model }
+      inTok = usage.inputTokens ?? 0
+      outTok = usage.outputTokens ?? 0
     } catch (err) {
-      if (err instanceof AiFailed && err.reason === 'empty_output') throw err
       const e = streamError ?? err
       const message = e instanceof Error ? e.message : String(e)
       await this.log(input, provider, model, null, null, false, message)
       throw new AiFailed('provider_error', message)
     }
+    // Past this point errors (e.g. DB failures while logging) are not provider errors.
+    if (!text.trim()) {
+      // Billed even though unusable: keep tokens and cost.
+      await this.log(input, provider, model, inTok, outTok, false, 'empty_output')
+      throw new AiFailed('empty_output')
+    }
+    await this.log(input, provider, model, inTok, outTok, true, null)
+    await this.warnIfNeeded(input.projectId, input.taskId ?? null)
+    return { text, model }
   }
 
   async embed(input: { projectId: string | null; texts: string[] }): Promise<number[][] | null> {
@@ -111,21 +120,27 @@ export class AiGateway {
     await this.guard(input.projectId, null)
     const { provider, model } = parseModelId(spec)
     const logInput = { job: 'embed' as AiJob, projectId: input.projectId, taskId: null }
+    let res: Awaited<ReturnType<typeof embedMany>>
     try {
-      const res = await embedMany({
+      res = await embedMany({
         model: models.embed,
         values: input.texts,
         maxRetries: 1,
         providerOptions: { openai: { dimensions: EMBEDDING_DIMENSIONS } },
       })
-      await this.log(logInput, provider, model, res.usage.tokens ?? 0, 0, true, null)
-      await this.warnIfNeeded(input.projectId, null)
-      return res.embeddings
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       await this.log(logInput, provider, model, null, null, false, message)
       throw new AiFailed('provider_error', message)
     }
+    const tokens = res.usage.tokens ?? 0
+    if (res.embeddings.some((v) => v.length !== EMBEDDING_DIMENSIONS)) {
+      await this.log(logInput, provider, model, tokens, 0, false, 'bad_dimensions')
+      throw new AiFailed('bad_dimensions')
+    }
+    await this.log(logInput, provider, model, tokens, 0, true, null)
+    await this.warnIfNeeded(input.projectId, null)
+    return res.embeddings
   }
 
   private async log(
