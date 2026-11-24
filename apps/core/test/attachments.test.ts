@@ -1,6 +1,8 @@
 import type { FastifyInstance } from 'fastify'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Attachment } from '@yoda/shared'
+import { eq } from 'drizzle-orm'
+import { attachments, tasks } from '../src/db/schema.js'
 import { buildApp } from '../src/app.js'
 import { setOnAttachmentStored } from '../src/attachments/service.js'
 import type { Storage } from '../src/storage/s3.js'
@@ -127,6 +129,7 @@ describe('attachments API', () => {
     expect(dl.statusCode).toBe(200)
     expect(dl.rawPayload.equals(data)).toBe(true)
     expect(dl.headers['content-type']).toContain('text/plain')
+    expect(dl.headers['x-content-type-options']).toBe('nosniff')
     expect(dl.headers['content-disposition']).toBe(`attachment; filename*=UTF-8''${encodeURIComponent('ผลแล็บ.txt')}`)
 
     const list = (await call(member, 'GET', `/projects/${p}/attachments`)).json() as Attachment[]
@@ -207,6 +210,26 @@ describe('attachments API', () => {
     expect((await upload(member, p, file, { workItemId: NO_ID })).statusCode).toBe(404)
     expect((await upload(member, p, file, { taskId: NO_ID })).statusCode).toBe(404)
     expect(puts).toEqual([])
+  })
+
+  it('does not 500 on UTF-16 text containing NULs', async () => {
+    const p = await newProject()
+    const data = Buffer.from('\uFEFFผลแล็บปกติ', 'utf16le')
+    const res = await upload(member, p, { name: 'u16.txt', type: 'text/plain', data })
+    expect(res.statusCode).toBe(201)
+    const [row] = await (await testDb()).select().from(attachments).where(eq(attachments.id, (res.json() as Attachment).id))
+    expect(row.extractedText ?? '').not.toContain('\u0000')
+  })
+
+  it('404s a task that belongs to a different work item than the given workItemId', async () => {
+    const p = await newProject()
+    const mk = async () =>
+      (await app.inject({ method: 'POST', url: `/projects/${p}/work-items`, headers: auth(pm), payload: { title: 'x', templateKey: 'bug-fix' } })).json() as { id: string }
+    const [w1, w2] = [await mk(), await mk()]
+    const [t] = await (await testDb()).select().from(tasks).where(eq(tasks.workItemId, w1.id))
+    const file = { name: 'a.txt', type: 'text/plain', data: Buffer.from('x') }
+    expect((await upload(member, p, file, { workItemId: w2.id, taskId: t.id })).statusCode).toBe(404)
+    expect((await upload(member, p, file, { workItemId: w1.id, taskId: t.id })).statusCode).toBe(201)
   })
 
   it('links to a work item, filters the list, and honours noAi at upload', async () => {
