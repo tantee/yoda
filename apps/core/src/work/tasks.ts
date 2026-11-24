@@ -2,7 +2,8 @@ import type { TaskExecutor, TemplateTask } from '@yoda/shared'
 import { and, eq } from 'drizzle-orm'
 import type { Tx } from '../db/client.js'
 import { projectMembers, projects, tasks, workItems } from '../db/schema.js'
-import { pickAssignee } from './assign.js'
+import { notifyTaskAssigned } from '../notifications/service.js'
+import { lockAutoAssign, pickAssignee } from './assign.js'
 import { recordEvent, type WorkCtx } from './context.js'
 
 export async function createTaskAttempt(
@@ -23,6 +24,9 @@ export async function createTaskAttempt(
   let assigneeId: string | null = null
   let proposedAssigneeId: string | null = null
   let noCandidate = false
+  let capped = false
+  // Automatic staff assignments carry `auto: true` on their task.assigned event; the daily cap counts those.
+  let auto = false
 
   if (input.task.role === 'REQUESTER') {
     // The person who asked does the work directly: never proposed, no load balancing, no assignee hint.
@@ -40,17 +44,20 @@ export async function createTaskAttempt(
     // The previous attempt's assignee keeps the task only while still a project member.
     if (input.assigneeHint && (await isMember(tx, input.projectId, input.assigneeHint))) {
       assigneeId = input.assigneeHint
+      auto = true
     } else {
-      const candidate = await pickAssignee(tx, input.projectId, input.task.role)
-      if (!candidate) {
-        noCandidate = true
+      const [proj] = await tx.select({ autonomy: projects.autonomy }).from(projects).where(eq(projects.id, input.projectId))
+      if (proj?.autonomy === 'auto-assign') {
+        // Candidates already at today's cap are skipped; with all of them capped the task waits for the PM.
+        await lockAutoAssign(tx)
+        assigneeId = await pickAssignee(tx, input.projectId, input.task.role, { cap: ctx.dailyTaskCap })
+        if (assigneeId) auto = true
+        else if (await pickAssignee(tx, input.projectId, input.task.role)) capped = true
+        else noCandidate = true
       } else {
-        const [proj] = await tx.select({ autonomy: projects.autonomy }).from(projects).where(eq(projects.id, input.projectId))
-        if (proj?.autonomy === 'auto-assign') assigneeId = candidate
-        else {
-          state = 'proposed'
-          proposedAssigneeId = candidate
-        }
+        proposedAssigneeId = await pickAssignee(tx, input.projectId, input.task.role)
+        if (proposedAssigneeId) state = 'proposed'
+        else noCandidate = true
       }
     }
   }
@@ -75,9 +82,19 @@ export async function createTaskAttempt(
   const taskId = row!.id
   const base = { projectId: input.projectId, workItemId: input.workItemId, taskId }
 
-  await recordEvent(ctx, { type: 'task.created', ...base, reason: noCandidate ? 'no_candidate' : null })
-  if (assigneeId) await recordEvent(ctx, { type: 'task.assigned', ...base, payload: { assigneeId } })
-  else if (proposedAssigneeId) await recordEvent(ctx, { type: 'task.proposed', ...base, payload: { proposedAssigneeId } })
+  await recordEvent(ctx, { type: 'task.created', ...base, reason: capped ? 'daily_cap' : noCandidate ? 'no_candidate' : null })
+  if (assigneeId) {
+    await recordEvent(ctx, { type: 'task.assigned', ...base, payload: auto ? { assigneeId, auto: true } : { assigneeId } })
+    await notifyTaskAssigned(ctx, {
+      taskId,
+      workItemId: input.workItemId,
+      role: input.task.role,
+      personId: assigneeId,
+      taskTitle: input.task.title.th,
+    })
+  } else if (proposedAssigneeId) {
+    await recordEvent(ctx, { type: 'task.proposed', ...base, payload: { proposedAssigneeId } })
+  }
 
   // AI drafting runs after commit; a noAi project gets no AI calls at all (its AI tasks wait for a person).
   if (input.executor === 'ai' && input.task.capability === 'draft-text') {

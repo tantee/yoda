@@ -19,6 +19,8 @@ export type Config = {
   s3AccessKey: string
   s3SecretKey: string
   aiWorkers: number
+  /** Most automatic task assignments one person receives per Bangkok calendar day. */
+  dailyTaskCap: number
 }
 
 const modelId = z.string().regex(/^(anthropic|openai):.+$/, 'must be provider:model with provider anthropic or openai')
@@ -44,6 +46,7 @@ const envSchema = z.object({
   S3_ACCESS_KEY: z.string().min(1),
   S3_SECRET_KEY: z.string().min(1),
   AI_WORKERS: z.coerce.number().int().min(1).max(32).default(2),
+  DAILY_TASK_CAP: z.coerce.number().int().min(1).max(1000).default(8),
 })
 
 export function loadConfig(env: NodeJS.ProcessEnv): Config {
@@ -76,5 +79,6 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     s3AccessKey: e.S3_ACCESS_KEY,
     s3SecretKey: e.S3_SECRET_KEY,
     aiWorkers: e.AI_WORKERS,
+    dailyTaskCap: e.DAILY_TASK_CAP,
   }
 }
