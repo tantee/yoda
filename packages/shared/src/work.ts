@@ -112,7 +112,7 @@ export const Task = z.object({
 })
 export type Task = z.infer<typeof Task>
 
-export const TaskWithContext = Task.extend({ workItemTitle: z.string(), projectName: z.string() })
+export const TaskWithContext = Task.extend({ workItemTitle: z.string(), workItemPriority: Priority, projectName: z.string() })
 export type TaskWithContext = z.infer<typeof TaskWithContext>
 
 export const Todo = z.object({ tasks: z.array(TaskWithContext), confirmations: z.array(TaskWithContext) })

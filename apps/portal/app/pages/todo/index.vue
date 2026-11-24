@@ -8,14 +8,27 @@ const todo = ref<Todo | null>(null)
 const loadError = ref('')
 const error = ref('')
 
+let seq = 0
 async function load() {
+  const mine = ++seq
   try {
-    todo.value = await api<Todo>('/me/todo')
+    const result = await api<Todo>('/me/todo')
+    if (mine !== seq) return
+    todo.value = result
     loadError.value = ''
   } catch (e) {
-    loadError.value = t(errorKey(e))
+    if (mine === seq) loadError.value = t(errorKey(e))
   }
 }
+
+let timer: ReturnType<typeof setTimeout> | null = null
+function loadSoon() {
+  if (timer) clearTimeout(timer)
+  timer = setTimeout(load, 200)
+}
+onBeforeUnmount(() => {
+  if (timer) clearTimeout(timer)
+})
 
 async function confirm(id: string) {
   error.value = ''
@@ -28,7 +41,7 @@ async function confirm(id: string) {
 }
 
 onMounted(load)
-useLiveEvents(() => load())
+useLiveEvents(loadSoon, loadSoon)
 
 const isEmpty = computed(() => !todo.value?.tasks.length && !todo.value?.confirmations.length)
 </script>
@@ -48,6 +61,7 @@ const isEmpty = computed(() => !todo.value?.tasks.length && !todo.value?.confirm
             <v-list-item-title>{{ localized(task.title, locale) }}</v-list-item-title>
             <v-list-item-subtitle>{{ task.projectName }} · {{ task.workItemTitle }}</v-list-item-subtitle>
             <template #append>
+              <v-chip size="small" class="mr-1" data-testid="priority-chip">{{ t(`priority.${task.workItemPriority}`) }}</v-chip>
               <v-chip size="small">{{ t(`task.state.${task.state}`) }}</v-chip>
             </template>
           </v-list-item>
@@ -64,6 +78,7 @@ const isEmpty = computed(() => !todo.value?.tasks.length && !todo.value?.confirm
               {{ task.proposedAssigneeName ?? t('todo.needsAssignee') }}
             </v-list-item-subtitle>
             <template #append>
+              <v-chip size="small" class="mr-2" data-testid="priority-chip">{{ t(`priority.${task.workItemPriority}`) }}</v-chip>
               <v-btn
                 v-if="task.state === 'proposed' && task.proposedAssigneeId"
                 color="primary"

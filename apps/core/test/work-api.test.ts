@@ -246,7 +246,9 @@ describe('work API', () => {
     for (const wi of [normal, urgent, low]) {
       expect((await call(pm, 'POST', `/tasks/${wi.tasks[0]!.id}/confirm`)).statusCode).toBe(200)
     }
-    expect((await todo(pm)).tasks.map((t) => t.workItemTitle)).toEqual(['ด่วน', 'ปกติ', 'ไม่รีบ'])
+    const ordered = (await todo(pm)).tasks
+    expect(ordered.map((t) => t.workItemTitle)).toEqual(['ด่วน', 'ปกติ', 'ไม่รีบ'])
+    expect(ordered.map((t) => t.workItemPriority)).toEqual(['urgent', 'normal', 'low'])
     const list = (await call(pm, 'GET', `/projects/${p}/work-items`)).json() as { title: string }[]
     expect(list.map((w) => w.title)).toEqual(['ไม่รีบ', 'ด่วน', 'ปกติ'])
   })

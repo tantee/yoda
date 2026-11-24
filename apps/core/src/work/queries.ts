@@ -103,7 +103,7 @@ function toTask(row: TaskRow, def: WorkflowTemplateDef | undefined, who: Map<str
 /** Tasks joined with their work item / project, in the order the `where`/`orderBy` give. */
 async function tasksWithContext(db: Conn, where: SQL | undefined, orderBy: SQL[]): Promise<TaskWithContext[]> {
   const rows = await db
-    .select({ t: tasks, templateId: workItems.templateId, workItemTitle: workItems.title, projectName: projects.name })
+    .select({ t: tasks, templateId: workItems.templateId, workItemTitle: workItems.title, workItemPriority: workItems.priority, projectName: projects.name })
     .from(tasks)
     .innerJoin(workItems, eq(workItems.id, tasks.workItemId))
     .innerJoin(projects, eq(projects.id, tasks.projectId))
@@ -115,6 +115,7 @@ async function tasksWithContext(db: Conn, where: SQL | undefined, orderBy: SQL[]
     TaskWithContext.parse({
       ...toTask(r.t, defs.get(r.templateId), who),
       workItemTitle: r.workItemTitle,
+      workItemPriority: r.workItemPriority,
       projectName: r.projectName,
     }),
   )
