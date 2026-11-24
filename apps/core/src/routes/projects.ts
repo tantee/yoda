@@ -4,7 +4,7 @@ import { and, asc, eq, sql } from 'drizzle-orm'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { forbidden, lastPm, notStaff, notFound, requireAdmin, requireStaff } from '../auth/plugin.js'
-import type { Db } from '../db/client.js'
+import type { Db, Tx } from '../db/client.js'
 import { people, projectMembers, projects } from '../db/schema.js'
 import { canManageProject } from '../projects/access.js'
 
@@ -20,8 +20,6 @@ const toProject = (row: ProjectRow): Project =>
     autonomy: row.autonomy,
     createdAt: row.createdAt.toISOString(),
   })
-
-type Tx = Parameters<Parameters<Db['transaction']>[0]>[0]
 
 async function loadDetail(db: Db | Tx, id: string): Promise<ProjectDetail | null> {
   const [row] = await db.select().from(projects).where(eq(projects.id, id))

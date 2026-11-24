@@ -2,9 +2,11 @@ import { createRemoteJWKSet } from 'jose'
 import { buildApp } from './app.js'
 import { loadConfig } from './config.js'
 import { createDb } from './db/client.js'
+import { seedTemplates } from './workflow/seed.js'
 
 const config = loadConfig(process.env)
 const db = createDb(config.databaseUrl)
+await seedTemplates(db)
 const jwks = createRemoteJWKSet(
   new URL(`${config.oidcIssuer}/protocol/openid-connect/certs`),
 )

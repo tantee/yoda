@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm'
 import { createDb, type Db } from '../src/db/client.js'
+import { seedTemplates } from '../src/workflow/seed.js'
 import { runMigrations } from '../src/db/migrate.js'
 import type { AppDeps } from '../src/app.js'
 import { localJwks, TEST_CLIENT_ID, TEST_ISSUER } from './jwt.js'
@@ -19,7 +20,8 @@ export function testDb(): Promise<Db> {
 }
 
 export async function resetDb(db: Db): Promise<void> {
-  await db.execute(sql`TRUNCATE people, projects, project_members CASCADE`)
+  await db.execute(sql`TRUNCATE people, projects, project_members, events, tasks, work_items, workflow_templates CASCADE`)
+  await seedTemplates(db)
 }
 
 export async function testDeps(overrides: Partial<AppDeps> = {}): Promise<AppDeps> {
