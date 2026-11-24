@@ -79,6 +79,7 @@
             "en": "Review the draft and the requester's answers, and complete it"
           },
           "dependsOn": [
+            "draft-requirements",
             "answer-questions"
           ]
         },

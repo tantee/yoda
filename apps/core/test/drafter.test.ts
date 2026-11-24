@@ -153,7 +153,10 @@ describe('AI drafter', () => {
     await drive(wi.id, 'answer-questions', requester, { text: 'คำตอบของผู้ขอ' })
     const clarify = await active(wi.id, 'clarify-requirements')
     const forBa = (await call(ba, 'GET', `/tasks/${clarify.id}`)).json() as TaskWithContext
-    expect(forBa.inputs.map((i) => i.result.text)).toEqual(['คำตอบของผู้ขอ'])
+    expect(forBa.inputs.map((i) => [i.templateTaskKey, i.result.text])).toEqual([
+      ['draft-requirements', DRAFT],
+      ['answer-questions', 'คำตอบของผู้ขอ'],
+    ])
 
     const db = await testDb()
     const progress = await db

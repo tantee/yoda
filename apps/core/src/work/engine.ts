@@ -1,4 +1,4 @@
-import type { Me, TaskResult, TaskState, WorkflowTemplateDef, WorkItemCreate } from '@yoda/shared'
+import { ACTIVE_TASK_STATES, type Me, type TaskResult, type TaskState, type WorkflowTemplateDef, type WorkItemCreate } from '@yoda/shared'
 import { and, asc, desc, eq, inArray, isNull, like, or, sql } from 'drizzle-orm'
 import {
   commentRequired,
@@ -16,7 +16,7 @@ import { latestTemplate, templateById } from '../workflow/seed.js'
 import { recordEvent, type WorkCtx } from './context.js'
 import { createTaskAttempt } from './tasks.js'
 
-const ACTIVE_STATES: readonly TaskState[] = ['proposed', 'open', 'in_progress', 'submitted']
+const ACTIVE_STATES: readonly TaskState[] = ACTIVE_TASK_STATES
 const isActive = (state: string) => (ACTIVE_STATES as readonly string[]).includes(state)
 
 type WorkItemRow = typeof workItems.$inferSelect
@@ -344,10 +344,12 @@ export async function recordAcceptedKnowledge(ctx: WorkCtx, item: WorkItemRow, t
 
 export async function assignTask(ctx: WorkCtx, me: Me, taskId: string, personId: string): Promise<void> {
   const { tx } = ctx
-  const { task } = await lockTask(tx, taskId)
+  const { item, task } = await lockTask(tx, taskId)
   if (!(await isPmOrAdmin(tx, me, task.projectId))) throw forbidden()
   if (!isActive(task.state)) throw invalidState()
-  if (!(await memberRoles(tx, task.projectId, personId))) throw notMember()
+  // A REQUESTER task may also go (back) to the work item's requester, who is usually not a member.
+  const toRequester = task.role === 'REQUESTER' && personId === item.requesterId
+  if (!toRequester && !(await memberRoles(tx, task.projectId, personId))) throw notMember()
   const takeover = task.executor === 'ai'
   await tx
     .update(tasks)

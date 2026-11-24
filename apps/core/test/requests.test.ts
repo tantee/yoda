@@ -114,7 +114,11 @@ describe('requesters in the workflow', () => {
     const submitted = await call(nurse, 'POST', `/tasks/${answer.id}/submit`, { text: 'รายวันครับ' })
     expect(submitted.statusCode).toBe(200)
     expect(submitted.json()).toMatchObject({ state: 'accepted', result: { text: 'รายวันครับ' } })
-    expect(await active(wi.id, 'clarify-requirements')).toMatchObject({ state: 'proposed', proposedAssigneeId: ba.id })
+    const clarifyTask = (await active(wi.id, 'clarify-requirements'))!
+    expect(clarifyTask).toMatchObject({ state: 'proposed', proposedAssigneeId: ba.id })
+    // The BA sees both the draft and the requester's answers.
+    const forBa = (await call(pm, 'GET', `/tasks/${clarifyTask.id}`)).json() as TaskWithContext
+    expect(forBa.inputs.map((i) => i.templateTaskKey)).toEqual(['draft-requirements', 'answer-questions'])
     expect((await requests(nurse))[0]!.status).toBe('in_progress')
     expect(await answers(nurse)).toEqual([])
 
@@ -188,6 +192,37 @@ describe('requesters in the workflow', () => {
     expect((await call(outsider, 'POST', `/tasks/${answer.id}/confirm`)).statusCode).toBe(404)
     expect((await call(outsider, 'POST', `/tasks/${answer.id}/submit`, { text: 'ตอบแล้ว' })).statusCode).toBe(200)
     expect((await requests(outsider))[0]).toMatchObject({ workItemId: wi.id, status: 'in_progress' })
+  })
+
+  it('the requester view hides staff files and staff names on attachments', async () => {
+    const p = await project([[pm, ['PM']], [ba, ['BA']]])
+    const wi = await createItem(p, { requesterId: nurse.id })
+    await drive(wi.id, 'accept-intake', pm, approve)
+    const db = await testDb()
+    const file = async (uploadedBy: string, fileName: string, over: Record<string, unknown> = {}) =>
+      (
+        await db
+          .insert(attachments)
+          .values({ projectId: p, storageKey: `k-${Math.random()}`, fileName, contentType: 'text/plain', sizeBytes: 1, uploadedBy, ...over })
+          .returning()
+      )[0]!
+    const internal = await file(ba.id, 'internal-notes.txt')
+    await drive(wi.id, 'draft-requirements', ba, { text: 'คำถาม', attachmentIds: [internal.id] })
+    const draft = (await active(wi.id, 'draft-requirements'))!
+    // A sample the requester gave earlier, sitting on the draft task.
+    await file(nurse.id, 'sample-from-nurse.pdf', { taskId: draft.id, workItemId: wi.id })
+    const answer = (await active(wi.id, 'answer-questions'))!
+    await file(nurse.id, 'my-answer.pdf', { taskId: answer.id, workItemId: wi.id })
+
+    const view = (await call(nurse, 'GET', `/tasks/${answer.id}`)).json() as TaskWithContext
+    expect(view.inputs[0]!.attachments.map((a) => [a.fileName, a.uploadedByName])).toEqual([['sample-from-nurse.pdf', '']])
+    expect(view.attachments.map((a) => [a.fileName, a.uploadedByName])).toEqual([['my-answer.pdf', '']])
+    expect(JSON.stringify(view)).not.toContain('internal-notes')
+    expect(JSON.stringify(await answers(nurse))).not.toContain('internal-notes')
+    // Staff still see everything.
+    const staff = (await call(pm, 'GET', `/tasks/${answer.id}`)).json() as TaskWithContext
+    expect(staff.inputs[0]!.attachments.map((a) => a.fileName).sort()).toEqual(['internal-notes.txt', 'sample-from-nurse.pdf'])
+    expect(staff.inputs[0]!.attachments.every((a) => a.uploadedByName !== '')).toBe(true)
   })
 
   it('a requester cannot pull project files into their task', async () => {

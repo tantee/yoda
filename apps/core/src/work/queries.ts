@@ -1,4 +1,5 @@
 import {
+  ACTIVE_TASK_STATES,
   EventEntry,
   MyRequest,
   Task,
@@ -8,6 +9,7 @@ import {
   WorkflowTemplateSummary,
   WorkItem,
   WorkItemDetail,
+  type Attachment,
   type Me,
   type RequestStatus,
   type TaskInput,
@@ -23,7 +25,7 @@ import { events, people, projectMembers, projects, tasks, workflowTemplates, wor
 type Conn = Db | Tx
 type TaskRow = typeof tasks.$inferSelect
 
-const ACTIVE = ['proposed', 'open', 'in_progress', 'submitted'] as const
+const ACTIVE = ACTIVE_TASK_STATES
 
 const priorityRank = sql`case ${workItems.priority} when 'urgent' then 0 when 'high' then 1 when 'normal' then 2 else 3 end`
 
@@ -222,6 +224,7 @@ export async function tasksWithContext(
   return rows.map((r) => {
     const def = defs.get(r.templateId)
     const inputs: TaskInput[] = []
+    const requesterView = restricted.has(r.t.projectId)
     for (const key of depsOf.get(r.t.id)!) {
       const dep = latestAccepted.get(`${r.t.workItemId}/${key}`)
       if (!dep) continue
@@ -231,7 +234,7 @@ export async function tasksWithContext(
         title: depTask.title,
         executor: dep.executor as TaskInput['executor'],
         result: (dep.result ?? { text: '' }) as TaskInput['result'],
-        attachments: files.get(dep.id) ?? [],
+        attachments: requesterView ? forRequester(files.get(dep.id) ?? [], { uploadedBy: viewer!.id }) : (files.get(dep.id) ?? []),
       })
     }
     return TaskWithContext.parse({
@@ -240,9 +243,19 @@ export async function tasksWithContext(
       workItemPriority: r.workItemPriority,
       projectName: r.projectName,
       inputs,
-      attachments: files.get(r.t.id) ?? [],
+      attachments: requesterView ? forRequester(files.get(r.t.id) ?? []) : (files.get(r.t.id) ?? []),
     })
   })
+}
+
+/**
+ * Attachments as a requester may see them: no staff names, and (with `uploadedBy`) only files that person
+ * uploaded, so staff-internal files on earlier tasks never appear.
+ */
+function forRequester(list: Attachment[], opts: { uploadedBy?: string } = {}): Attachment[] {
+  return list
+    .filter((a) => !opts.uploadedBy || a.uploadedById === opts.uploadedBy)
+    .map((a) => ({ ...a, uploadedByName: '' }))
 }
 
 /** Of `projectIds`, those `me` cannot see as staff (all of them for a requester). */
@@ -424,7 +437,7 @@ export async function getTodo(db: Conn, me: Me): Promise<Todo> {
 export async function getMyAnswers(db: Conn, me: Me): Promise<TaskWithContext[]> {
   return tasksWithContext(
     db,
-    and(eq(tasks.assigneeId, me.id), eq(tasks.role, 'REQUESTER'), inArray(tasks.state, ['open', 'in_progress'])),
+    and(eq(tasks.assigneeId, me.id), eq(tasks.role, 'REQUESTER'), inArray(tasks.state, [...ACTIVE])),
     [asc(tasks.createdAt), asc(tasks.id)],
     me,
   )
