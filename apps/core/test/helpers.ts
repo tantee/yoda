@@ -3,6 +3,7 @@ import { createDb, type Db } from '../src/db/client.js'
 import { seedTemplates } from '../src/workflow/seed.js'
 import { runMigrations } from '../src/db/migrate.js'
 import type { AppDeps } from '../src/app.js'
+import { LiveBus } from '../src/live/bus.js'
 import { localJwks, TEST_CLIENT_ID, TEST_ISSUER } from './jwt.js'
 
 // DEV ONLY: local docker-compose Postgres credentials
@@ -36,6 +37,7 @@ export async function testDeps(overrides: Partial<AppDeps> = {}): Promise<AppDep
     },
     db: await testDb(),
     jwks: localJwks,
+    bus: new LiveBus(),
     ...overrides,
   }
 }
