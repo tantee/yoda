@@ -4,5 +4,8 @@ import { defineConfig } from 'vitest/config'
 export default defineConfig({
   test: {
     projects: ['packages/*', 'apps/*'],
+    // `fileParallelism` is a root-only option (ignored inside project configs).
+    // apps/core test files share one Postgres database, so files must run serially.
+    fileParallelism: false,
   },
 })

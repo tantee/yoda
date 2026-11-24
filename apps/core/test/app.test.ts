@@ -18,6 +18,14 @@ describe('loadConfig', () => {
     expect(c.port).toBe(4000)
     expect(c.staffGroup).toBe('/it-dev')
   })
+  it('strips trailing slashes from OIDC_ISSUER', () => {
+    const c = loadConfig({
+      DATABASE_URL: 'postgres://x',
+      OIDC_ISSUER: 'http://kc.test/realms/hospital/',
+      OIDC_CLIENT_ID: 'c',
+    })
+    expect(c.oidcIssuer).toBe('http://kc.test/realms/hospital')
+  })
 })
 
 describe('app', () => {
