@@ -10,6 +10,7 @@ export const Project = z.object({
   status: z.enum(['active', 'archived']),
   noAi: z.boolean(),
   autonomy: z.enum(['propose', 'auto-assign']),
+  aiBudgetUsd: z.number().nullable(),
   createdAt: z.string(),
 })
 export type Project = z.infer<typeof Project>
@@ -33,5 +34,12 @@ export type ProjectDetail = z.infer<typeof ProjectDetail>
 export const MemberRolesPut = z.object({ roles: z.array(ProjectRole).min(1) })
 export type MemberRolesPut = z.infer<typeof MemberRolesPut>
 
-export const ProjectPatch = z.object({ autonomy: z.enum(['propose', 'auto-assign']) })
+export const ProjectPatch = z
+  .object({
+    autonomy: z.enum(['propose', 'auto-assign']),
+    noAi: z.boolean(),
+    aiBudgetUsd: z.number().min(0).nullable(),
+  })
+  .partial()
+  .refine((v) => Object.keys(v).length > 0, { message: 'at least one field is required' })
 export type ProjectPatch = z.infer<typeof ProjectPatch>
