@@ -1,6 +1,8 @@
-import type { LiveEvent } from '@yoda/shared'
 import type { FastifyInstance } from 'fastify'
-import { requireStaff } from '../auth/plugin.js'
+import type { LiveEvent, Me } from '@yoda/shared'
+import { requireSignedIn } from '../auth/plugin.js'
+import { canSeeConversation } from '../chat/service.js'
+import type { Db } from '../db/client.js'
 import { canSeeProject } from '../work/queries.js'
 
 const PING_MS = 25_000
@@ -14,7 +16,8 @@ export function streamRoutes(app: FastifyInstance): void {
   })
 
   app.get('/stream', async (request, reply) => {
-    requireStaff(request)
+    // Open to requesters too: `deliverable` limits them to their own conversations and person-addressed events.
+    requireSignedIn(request)
     const { bus, db } = app.deps
     const me = request.me
     const raw = reply.raw
@@ -33,8 +36,7 @@ export function streamRoutes(app: FastifyInstance): void {
       chain = chain.then(async () => {
         if (!writable()) return
         try {
-          // Events without a project (conversation/person-addressed) are delivered to nobody yet.
-          if (!e.projectId || !(await canSeeProject(db, me, e.projectId))) return
+          if (!(await deliverable(db, me, e))) return
           if (writable()) raw.write(`event: live\ndata: ${JSON.stringify(e)}\n\n`)
         } catch (err) {
           app.log.error(err, 'stream delivery failed')
@@ -61,4 +63,15 @@ export function streamRoutes(app: FastifyInstance): void {
     raw.on('error', cleanup)
     request.raw.on('close', cleanup)
   })
+}
+
+/**
+ * Who receives an event, by its most specific address: a conversation → whoever can see that conversation;
+ * a person → only that person; otherwise the project → staff who can see it (requesters never get project events).
+ */
+async function deliverable(db: Db, me: Me, e: LiveEvent): Promise<boolean> {
+  if (e.conversationId) return canSeeConversation(db, me, e.conversationId)
+  if (e.personId) return e.personId === me.id
+  if (e.projectId) return me.isStaff && canSeeProject(db, me, e.projectId)
+  return false
 }

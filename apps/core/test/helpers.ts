@@ -85,10 +85,11 @@ export async function testDeps(overrides: Partial<AppDeps> = {}): Promise<AppDep
     bus,
     ai: new AiGateway({ db, bus, models: mockModels() }),
     storage: await testStorage(config),
-    // Most tests drive AI tasks by hand, so drafting jobs are dropped by default; drafter tests pass their own queue.
+    // Most tests drive AI tasks by hand, so drafting and secretary jobs are dropped by default; drafter and
+    // chat tests that assert on them pass their own queue.
     jobs: new InlineJobQueue({
       onError: (err, name, id) => console.warn(`test job ${name} ${id} failed`, err),
-      ignore: ['draft-task'],
+      ignore: ['draft-task', 'secretary-chat'],
     }),
     ...overrides,
   }

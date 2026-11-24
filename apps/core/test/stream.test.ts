@@ -101,9 +101,42 @@ describe('GET /stream', () => {
     expect(await readUntil(o, (b) => b.includes('event: live'), 1000)).not.toContain('event: live')
   })
 
-  it('refuses requesters and anonymous callers', async () => {
-    expect((await fetch(`${base}/stream`, { headers: { authorization: `Bearer ${nurse.token}` } })).status).toBe(403)
+  it('refuses anonymous callers', async () => {
     expect((await fetch(`${base}/stream`)).status).toBe(401)
+  })
+
+  it('requesters connect and get only their own conversation events, never project events', async () => {
+    const projectId = await projectWithMember()
+    const nurse2 = await login(app, 'nurse2')
+    const n = await open(nurse.token)
+    const n2 = await open(nurse2.token)
+    const m = await open(member.token)
+    expect(n.status).toBe(200)
+    for (const s of [n, n2, m]) expect(await readUntil(s, (b) => b.includes(': connected\n\n'), 2000)).toContain(': connected')
+
+    // A project event: members only.
+    await app.inject({ method: 'POST', url: `/projects/${projectId}/work-items`, headers: auth(member), payload: { title: 'x', templateKey: 'bug-fix' } })
+    expect(await readUntil(m, (b) => b.includes('event: live'), 2000)).toContain('work_item.created')
+
+    const c = (await app.inject({ url: '/conversations/personal', headers: auth(nurse) })).json() as { id: string }
+    const res = await app.inject({ method: 'POST', url: `/conversations/${c.id}/messages`, headers: auth(nurse), payload: { text: 'สวัสดี' } })
+    expect(res.statusCode).toBe(201)
+    const buf = await readUntil(n, (b) => b.includes('event: live'), 2000)
+    const ev = JSON.parse(buf.split('\n').find((l) => l.startsWith('data: '))!.slice(6)) as LiveEvent
+    expect(ev).toMatchObject({ type: 'message.created', conversationId: c.id, projectId: null })
+    expect(buf).not.toContain('work_item.created')
+
+    expect(await readUntil(n2, (b) => b.includes('event: live'), 800)).not.toContain('event: live')
+    expect(await readUntil(m, (b) => b.includes('event: live'), 800)).not.toContain('event: live')
+  })
+
+  it('delivers person-addressed events to that person only', async () => {
+    const n = await open(nurse.token)
+    const m = await open(member.token)
+    for (const s of [n, m]) expect(await readUntil(s, (b) => b.includes(': connected\n\n'), 2000)).toContain(': connected')
+    app.deps.bus.publish({ type: 'proposal.created', projectId: null, workItemId: null, taskId: null, conversationId: null, personId: nurse.id })
+    expect(await readUntil(n, (b) => b.includes('event: live'), 2000)).toContain(`"personId":"${nurse.id}"`)
+    expect(await readUntil(m, (b) => b.includes('event: live'), 800)).not.toContain('event: live')
   })
 
   it('ends the stream at token expiry', async () => {

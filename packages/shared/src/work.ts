@@ -200,6 +200,8 @@ export const EventType = z.enum([
   'ai.drafted', 'ai.failed', 'ai.retried', 'ai.budget_warning', 'ai.budget_exceeded',
   'knowledge.created', 'knowledge.updated', 'knowledge.confirmed',
   'proposal.created', 'proposal.accepted', 'proposal.rejected', 'proposal.superseded', 'work_item.priority_changed',
+  /** Live-only (never stored in `events`): a message was posted in `conversationId`. */
+  'message.created',
 ])
 export type EventType = z.infer<typeof EventType>
 
