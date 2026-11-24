@@ -189,6 +189,11 @@ export const WorkItem = z.object({
   requesterId: uuid.nullable(),
   requesterName: z.string().nullable(),
   state: WorkItemState,
+  /**
+   * Active, every task of the current step accepted, a next step exists and no step_advance proposal is
+   * pending (e.g. the PM rejected it): a PM may advance it with POST /work-items/:id/advance.
+   */
+  awaitingAdvance: z.boolean(),
   createdAt: z.string(),
   updatedAt: z.string(),
 })

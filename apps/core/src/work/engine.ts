@@ -271,7 +271,9 @@ export async function stepAdvanceReady(
 ): Promise<StepStatus | null> {
   if (item.state !== 'active' || item.currentStepKey !== fromStep) return null
   const status = await stepStatus(tx, item)
-  if (!status.complete || !status.next || status.next.key !== toStep) return null
+  if (!status.complete || !status.next) return null
+  // `toStep` undefined: a direct advance to whatever step is next.
+  if (toStep !== undefined && status.next.key !== toStep) return null
   return status
 }
 
@@ -279,6 +281,21 @@ export async function stepAdvanceReady(
 export async function applyStepAdvance(ctx: WorkCtx, item: WorkItemRow, status: StepStatus): Promise<void> {
   await advanceStep(ctx, item, status)
   await progressWorkItem(ctx, item.id)
+}
+
+/**
+ * PM/admin: advances a work item whose current step is finished, without (or instead of) a proposal: the way
+ * out after a step_advance proposal was rejected. Re-checked under the work item lock; 409 when not ready.
+ * A pending step_advance proposal is superseded.
+ */
+export async function advanceWorkItem(ctx: WorkCtx, me: Me, workItemId: string): Promise<void> {
+  const { tx } = ctx
+  const item = await lockItem(tx, workItemId)
+  if (!(await isPmOrAdmin(tx, me, item.projectId))) throw forbidden()
+  const status = await stepAdvanceReady(tx, item, item.currentStepKey, undefined)
+  if (!status) throw invalidState()
+  await supersedePending(ctx, workItemId, 'step_advance')
+  await applyStepAdvance(ctx, item, status)
 }
 
 export async function startTask(ctx: WorkCtx, me: Me, taskId: string): Promise<void> {

@@ -353,4 +353,74 @@ describe('proposals', () => {
     const created = (await itemEvents(item.id)).find((e) => e.type === 'work_item.created')!
     expect(created.actorId).toBe(dev.id)
   })
+
+  it('rejecting a step advance needs a note; the item then awaits a direct advance by the PM', async () => {
+    const p = await project()
+    const wi = await createItem(p)
+    await finishIntake(wi)
+    const [prop] = await rows(wi.id)
+    expect((await detail(wi.id)).awaitingAdvance).toBe(false)
+
+    for (const body of [{ decision: 'reject' }, { decision: 'reject', note: '   ' }]) {
+      const bad = await decide(pm, prop!.id, body)
+      expect(bad.statusCode).toBe(422)
+      expect(bad.json()).toEqual({ error: 'comment_required' })
+    }
+    expect((await rows(wi.id))[0]!.state).toBe('pending')
+    expect((await decide(pm, prop!.id, { decision: 'reject', note: 'รอผู้ใช้ยืนยันก่อน' })).statusCode).toBe(200)
+
+    const stuck = await detail(wi.id)
+    expect(stuck).toMatchObject({ currentStepKey: 'intake', awaitingAdvance: true })
+    const listed = (await call(pm, 'GET', `/projects/${p}/work-items`)).json() as { id: string; awaitingAdvance: boolean }[]
+    expect(listed.find((x) => x.id === wi.id)!.awaitingAdvance).toBe(true)
+
+    expect((await call(dev, 'POST', `/work-items/${wi.id}/advance`)).statusCode).toBe(403)
+    expect((await call(outsider, 'POST', `/work-items/${wi.id}/advance`)).statusCode).toBe(404)
+    expect((await call(nurse, 'POST', `/work-items/${wi.id}/advance`)).statusCode).toBe(403)
+
+    const res = await call(pm, 'POST', `/work-items/${wi.id}/advance`)
+    expect(res.statusCode).toBe(200)
+    const after = res.json() as WorkItemDetail
+    expect(after).toMatchObject({ currentStepKey: 'ba', awaitingAdvance: false })
+    expect(after.tasks.map((t) => t.templateTaskKey)).toContain('draft-requirements')
+    const advanced = await advancedFrom(wi.id, 'intake')
+    expect(advanced.map((e) => [e.actorKind, e.actorId])).toEqual([['person', pm.id]])
+    // Now mid-step: not ready.
+    const again = await call(pm, 'POST', `/work-items/${wi.id}/advance`)
+    expect(again.statusCode).toBe(409)
+    expect(again.json()).toEqual({ error: 'invalid_state' })
+  })
+
+  it('advancing directly supersedes a pending step_advance proposal', async () => {
+    const p = await project()
+    const wi = await createItem(p)
+    await finishIntake(wi)
+    const [prop] = await rows(wi.id)
+    // A pending proposal: not awaitingAdvance (the proposal is the way forward), but the PM may still advance.
+    expect((await detail(wi.id)).awaitingAdvance).toBe(false)
+    expect((await call(admin, 'POST', `/work-items/${wi.id}/advance`)).statusCode).toBe(200)
+    expect((await rows(wi.id))[0]).toMatchObject({ id: prop!.id, state: 'superseded' })
+    expect((await decide(pm, prop!.id)).statusCode).toBe(409)
+    expect(await advancedFrom(wi.id, 'intake')).toHaveLength(1)
+  })
+
+  it('advancing a work item that is not ready → 409', async () => {
+    const p = await project()
+    const wi = await createItem(p)
+    expect((await call(pm, 'POST', `/work-items/${wi.id}/advance`)).statusCode).toBe(409)
+    expect((await call(pm, 'POST', '/work-items/00000000-0000-4000-8000-000000000000/advance')).statusCode).toBe(404)
+  })
+
+  it('a decision naming another project than the proposal\'s → 422 invalid_state', async () => {
+    const p = await project()
+    const other = (await call(admin, 'POST', '/projects', { name: 'อื่น' })).json() as { id: string }
+    const wi = await createItem(p)
+    await finishIntake(wi)
+    const [prop] = await rows(wi.id)
+    const res = await decide(pm, prop!.id, { decision: 'accept', projectId: other.id })
+    expect(res.statusCode).toBe(422)
+    expect(res.json()).toEqual({ error: 'invalid_state' })
+    expect((await rows(wi.id))[0]!.state).toBe('pending')
+    expect((await decide(pm, prop!.id, { decision: 'accept', projectId: p })).statusCode).toBe(200)
+  })
 })

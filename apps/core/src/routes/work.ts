@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { notFound, requireSignedIn, requireStaff } from '../auth/plugin.js'
 import { runWork, type WorkCtx } from '../work/context.js'
 import {
+  advanceWorkItem,
   assignTask,
   cancelWorkItem,
   confirmTask,
@@ -62,6 +63,18 @@ export function workRoutes(app: FastifyInstance): void {
     await runWork(app.deps, { id: me.id, kind: 'person' }, async (ctx) => {
       await requireWorkItemVisible(ctx.tx, me, id)
       await cancelWorkItem(ctx, me, id)
+    })
+    return getWorkItemDetail(db(), me, id)
+  })
+
+  /** PM/admin: advance a finished step directly (e.g. after rejecting its step_advance proposal). */
+  app.post('/work-items/:id/advance', async (request) => {
+    requireStaff(request)
+    const { id } = IdParams.parse(request.params)
+    const me = request.me
+    await runWork(app.deps, { id: me.id, kind: 'person' }, async (ctx) => {
+      await requireWorkItemVisible(ctx.tx, me, id)
+      await advanceWorkItem(ctx, me, id)
     })
     return getWorkItemDetail(db(), me, id)
   })

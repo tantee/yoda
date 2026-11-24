@@ -8,7 +8,7 @@ import {
   type ProposalState,
 } from '@yoda/shared'
 import { and, desc, eq, inArray, isNull, or, sql, type SQL } from 'drizzle-orm'
-import { forbidden, invalidState, notFound, projectRequired } from '../auth/plugin.js'
+import { commentRequired, forbidden, HttpError, invalidState, notFound, projectRequired } from '../auth/plugin.js'
 import type { Db, Tx } from '../db/client.js'
 import { people, projectMembers, projects, proposals, workItems } from '../db/schema.js'
 import { lockProject } from '../projects/access.js'
@@ -74,12 +74,18 @@ export async function createProposal(ctx: WorkCtx, input: ProposalCreate): Promi
 /** Task 6 hook: notify the deciders (the project's PMs) of a new pending proposal. No-op until then. */
 async function notifyProposalPending(_ctx: WorkCtx, _proposalId: string): Promise<void> {}
 
-/** Marks the work item's pending proposals superseded (caller holds the work item lock). */
-export async function supersedePending(ctx: WorkCtx, workItemId: string): Promise<void> {
+/** Marks the work item's pending proposals (of `kind`, or all) superseded (caller holds the work item lock). */
+export async function supersedePending(ctx: WorkCtx, workItemId: string, kind?: ProposalKind): Promise<void> {
   const rows = await ctx.tx
     .update(proposals)
     .set({ state: 'superseded', decidedAt: sql`now()` })
-    .where(and(eq(proposals.workItemId, workItemId), eq(proposals.state, 'pending')))
+    .where(
+      and(
+        eq(proposals.workItemId, workItemId),
+        eq(proposals.state, 'pending'),
+        kind ? eq(proposals.kind, kind) : undefined,
+      ),
+    )
     .returning()
   rows.sort((a, b) => a.id.localeCompare(b.id))
   for (const p of rows) await recordDecision(ctx, p, 'proposal.superseded')
@@ -169,6 +175,12 @@ export async function decideProposal(ctx: WorkCtx, me: Me, id: string, decision:
   const [ref] = await tx.select().from(proposals).where(eq(proposals.id, id))
   if (!ref) throw notFound()
   const target = ref.kind === 'create_work_item' ? (ref.projectId ?? decision.projectId ?? null) : ref.projectId
+  // Cheap check before taking any lock (re-checked under the locks below): non-deciders never wait on rows.
+  await requireCanDecide(tx, me, ref, target)
+  // A proposal's project is fixed; choosing another one is a client error, not silently ignored.
+  if (ref.projectId && decision.projectId && decision.projectId !== ref.projectId) {
+    throw new HttpError(422, { error: 'invalid_state' })
+  }
   if (ref.kind === 'create_work_item' && target && decision.decision === 'accept') await lockProject(tx, target, 'share')
   const item: WorkItemRow | null = ref.workItemId ? await lockItem(tx, ref.workItemId) : null
   const [p] = await tx.select().from(proposals).where(eq(proposals.id, id)).for('update')
@@ -178,6 +190,8 @@ export async function decideProposal(ctx: WorkCtx, me: Me, id: string, decision:
   const note = decision.note?.trim() ? decision.note.trim() : null
 
   if (decision.decision === 'reject') {
+    // The item stays on its finished step; the PM says why, and may advance it later (advanceWorkItem).
+    if (p.kind === 'step_advance' && !note) throw commentRequired()
     await setState(ctx, p, 'rejected', me, note)
     return { superseded: false }
   }
@@ -186,7 +200,8 @@ export async function decideProposal(ctx: WorkCtx, me: Me, id: string, decision:
   switch (p.kind) {
     case 'step_advance': {
       if (!item) throw invalidState()
-      const status = await stepAdvanceReady(tx, item, payload.fromStep, payload.toStep)
+      const status =
+        typeof payload.toStep === 'string' ? await stepAdvanceReady(tx, item, payload.fromStep, payload.toStep) : null
       if (!status) {
         await setState(ctx, p, 'superseded', null, null)
         return { superseded: true }
