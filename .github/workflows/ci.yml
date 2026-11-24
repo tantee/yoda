@@ -1,0 +1,50 @@
+name: CI
+on:
+  push:
+    branches: [main]
+    tags: ['*']
+  pull_request:
+
+jobs:
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 } # full history
+      - name: gitleaks
+        run: |
+          docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/repo" zricethezav/gitleaks:v8.30.1 detect \
+            --source /repo --config /repo/.gitleaks.toml --redact --verbose
+
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: yoda # CI-only throwaway database
+          POSTGRES_PASSWORD: yoda-ci
+          POSTGRES_DB: yoda_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U yoda -d yoda_test" --health-interval 5s
+          --health-timeout 3s --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://yoda:yoda-ci@localhost:5432/yoda_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version-file: .nvmrc, cache: pnpm }
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm typecheck
+      - run: pnpm test
+
+  build:
+    if: github.event_name == 'push'
+    needs: [secrets, test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -f apps/core/Dockerfile -t yoda-core .
+      - run: docker build -f apps/portal/Dockerfile -t yoda-portal .
