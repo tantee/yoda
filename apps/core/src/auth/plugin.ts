@@ -7,7 +7,7 @@ import { isStaff, TokenClaims, upsertPersonFromClaims } from './people.js'
 /** Thrown by guards / auth; mapped to `{ error }` bodies by the app error handler. */
 export class HttpError extends Error {
   constructor(
-    readonly statusCode: 401 | 403 | 404 | 409 | 422,
+    readonly statusCode: 401 | 403 | 404 | 409 | 413 | 415 | 422,
     readonly body: {
       error:
         | 'unauthorized'
@@ -20,6 +20,8 @@ export class HttpError extends Error {
         | 'not_member'
         | 'decision_required'
         | 'comment_required'
+        | 'too_large'
+        | 'unsupported_type'
     },
   ) {
     super(body.error)
@@ -35,6 +37,8 @@ export const forbidden = () => new HttpError(403, { error: 'forbidden' })
 export const invalidState = () => new HttpError(409, { error: 'invalid_state' })
 export const notMember = () => new HttpError(422, { error: 'not_member' })
 export const decisionRequired = () => new HttpError(422, { error: 'decision_required' })
+export const tooLarge = () => new HttpError(413, { error: 'too_large' })
+export const unsupportedType = () => new HttpError(415, { error: 'unsupported_type' })
 export const commentRequired = () => new HttpError(422, { error: 'comment_required' })
 
 /**
