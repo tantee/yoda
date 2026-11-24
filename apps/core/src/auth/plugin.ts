@@ -8,7 +8,19 @@ import { isStaff, TokenClaims, upsertPersonFromClaims } from './people.js'
 export class HttpError extends Error {
   constructor(
     readonly statusCode: 401 | 403 | 404 | 409 | 422,
-    readonly body: { error: 'unauthorized' | 'forbidden' | 'not_found' | 'last_pm' | 'last_admin' | 'not_staff' },
+    readonly body: {
+      error:
+        | 'unauthorized'
+        | 'forbidden'
+        | 'not_found'
+        | 'last_pm'
+        | 'last_admin'
+        | 'not_staff'
+        | 'invalid_state'
+        | 'not_member'
+        | 'decision_required'
+        | 'comment_required'
+    },
   ) {
     super(body.error)
   }
@@ -20,6 +32,10 @@ export const lastAdmin = () => new HttpError(409, { error: 'last_admin' })
 export const lastPm = () => new HttpError(409, { error: 'last_pm' })
 export const notStaff = () => new HttpError(422, { error: 'not_staff' })
 export const forbidden = () => new HttpError(403, { error: 'forbidden' })
+export const invalidState = () => new HttpError(409, { error: 'invalid_state' })
+export const notMember = () => new HttpError(422, { error: 'not_member' })
+export const decisionRequired = () => new HttpError(422, { error: 'decision_required' })
+export const commentRequired = () => new HttpError(422, { error: 'comment_required' })
 
 /**
  * Verify the bearer token. Returns validated claims, or null for any failure

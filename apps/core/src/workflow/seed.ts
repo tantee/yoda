@@ -51,3 +51,9 @@ export async function latestTemplate(
   if (!row) return null
   return { id: row.id, version: row.version, definition: row.definition as WorkflowTemplateDef }
 }
+
+/** A specific stored template version (work items keep the version they started with). */
+export async function templateById(db: Db | Tx, id: string): Promise<WorkflowTemplateDef | null> {
+  const [row] = await db.select().from(workflowTemplates).where(eq(workflowTemplates.id, id))
+  return row ? (row.definition as WorkflowTemplateDef) : null
+}
