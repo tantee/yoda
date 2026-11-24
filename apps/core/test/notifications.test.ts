@@ -169,7 +169,9 @@ describe('notifications', () => {
     expect(rows.map((r) => r.personId).sort()).toEqual([pm.id, pm2.id].sort())
     expect(rows.every((r) => /^proposal:[0-9a-f-]{36}$/.test(r.dedupeKey!))).toBe(true)
     expect(await inbox(dev)).toEqual([])
-    expect((await inbox(pm2)).filter((n) => n.kind === 'proposal_pending')).toHaveLength(1)
+    const pending = (await inbox(pm2)).filter((n) => n.kind === 'proposal_pending')
+    expect(pending).toHaveLength(1)
+    expect(pending[0]!.body).toContain('แก้รายงานผิดพลาด')
   })
 
   it('marking read: by ids, then all; others ids are ignored; bad bodies are 400', async () => {
@@ -213,7 +215,7 @@ describe('notifications', () => {
     const wiId = await toDelivery(nurse)
     const mine = await inbox(nurse)
     expect(mine.map((n) => n.kind)).toEqual(['request_update'])
-    expect(mine[0]).toMatchObject({ link: `/work-items/${wiId}` })
+    expect(mine[0]).toMatchObject({ link: `/todo/${(await active(wiId, 'accept-delivery'))!.id}` })
     expect(await inbox(nurse2)).toEqual([])
 
     // The requester asks for changes: the PMs (not the requester, not other staff) are told, once per task.
@@ -239,12 +241,14 @@ describe('notifications', () => {
     expect((await detail(wiId)).state).toBe('done')
     const done = (await inbox(nurse)).filter((n) => n.title.includes('เสร็จ'))
     expect(done).toHaveLength(1)
+    expect(done[0]!.link).toBe('/requests')
 
     const p2 = await project([[pm, ['PM']]])
     const other = await createItem(p2, { requesterId: nurse2.id })
     expect((await call(pm, 'POST', `/work-items/${other.id}/cancel`)).statusCode).toBe(200)
     expect((await inbox(nurse2)).map((n) => n.kind)).toEqual(['request_update'])
     expect((await inbox(nurse2))[0]!.title).toContain('ยกเลิก')
+    expect((await inbox(nurse2))[0]!.link).toBe('/requests')
   })
 
   it('live events address only the notified person and fire only for new notifications', async () => {

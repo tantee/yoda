@@ -4,7 +4,7 @@ import { interimSecretaryReply } from '../chat/service.js'
 import { embedEntry } from '../knowledge/service.js'
 
 /** Registers every job handler on `deps.jobs` (server.ts with pg-boss, tests with InlineJobQueue). */
-export async function registerJobHandlers(deps: Pick<AppDeps, 'db' | 'ai' | 'bus' | 'jobs'>): Promise<void> {
+export async function registerJobHandlers(deps: Pick<AppDeps, 'db' | 'ai' | 'bus' | 'jobs' | 'config'>): Promise<void> {
   await deps.jobs.work('embed-entry', (run) => embedEntry(deps, run))
   await deps.jobs.work('draft-task', (run) => runDraft(deps, run.id, run))
   // Interim: Task 8 replaces this with the secretary.

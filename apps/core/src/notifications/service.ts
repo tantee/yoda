@@ -58,7 +58,7 @@ export async function notifyTaskAssigned(
       kind: 'request_update',
       title: `รอการดำเนินการจากคุณ: ${t.taskTitle}`,
       body: itemTitle,
-      link: `/work-items/${t.workItemId}`,
+      link: `/todo/${t.taskId}`,
       dedupeKey: `request:${t.workItemId}:task:${t.taskId}`,
     })
     return
@@ -85,7 +85,7 @@ export async function notifyRequestEnded(
     kind: 'request_update',
     title: event === 'done' ? 'คำขอของคุณเสร็จสมบูรณ์แล้ว' : 'คำขอของคุณถูกยกเลิก',
     body: item.title,
-    link: `/work-items/${item.id}`,
+    link: '/requests',
     dedupeKey: `request:${item.id}:${event}`,
   })
 }
@@ -130,8 +130,18 @@ const PROPOSAL_TITLE: Record<ProposalKind, string> = {
 /** Deciders of a new proposal: the project's PMs (admins when it has none, and for project-less ones). */
 export async function notifyProposalPending(
   ctx: WorkCtx,
-  p: { id: string; projectId: string | null; kind: ProposalKind; summary: string; onBehalfOf: string | null },
+  p: {
+    id: string
+    projectId: string | null
+    workItemId: string | null
+    kind: ProposalKind
+    summary: string
+    onBehalfOf: string | null
+  },
 ): Promise<void> {
+  // Step advances and priority changes carry no summary of their own: the work item title says what it is about.
+  const itemTitle = p.workItemId ? await workItemTitle(ctx, p.workItemId) : ''
+  const body = [itemTitle, p.summary].filter(Boolean).join(' - ')
   let recipients = p.projectId ? await projectPms(ctx, p.projectId) : []
   if (!recipients.length) recipients = await admins(ctx)
   for (const personId of recipients) {
@@ -140,7 +150,7 @@ export async function notifyProposalPending(
       personId,
       kind: 'proposal_pending',
       title: PROPOSAL_TITLE[p.kind],
-      body: p.summary,
+      body,
       link: '/todo',
       dedupeKey: `proposal:${p.id}`,
     })

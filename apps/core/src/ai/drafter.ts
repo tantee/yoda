@@ -10,7 +10,7 @@ import { SYSTEM_PROMPT } from './prompts.js'
 /** Upper bound for one draft: long documents fit, a runaway generation does not run up the bill. */
 export const DRAFT_MAX_OUTPUT_TOKENS = 16_000
 
-export type DrafterDeps = Pick<AppDeps, 'db' | 'ai' | 'bus' | 'jobs'>
+export type DrafterDeps = Pick<AppDeps, 'db' | 'ai' | 'bus' | 'jobs' | 'config'>
 
 /** Failures that retrying cannot fix: the task goes back to people at once with this reason. */
 function permanentReason(err: unknown): string | null {
