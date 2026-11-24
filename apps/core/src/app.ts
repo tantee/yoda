@@ -8,6 +8,7 @@ import type { LiveBus } from './live/bus.js'
 import { peopleRoutes } from './routes/people.js'
 import { projectRoutes } from './routes/projects.js'
 import { meRoutes } from './routes/me.js'
+import { streamRoutes } from './routes/stream.js'
 import { workRoutes } from './routes/work.js'
 
 export type AppDeps = { config: Config; db: Db; jwks: JWTVerifyGetKey; bus: LiveBus }
@@ -39,6 +40,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   peopleRoutes(app)
   projectRoutes(app)
   workRoutes(app)
+  streamRoutes(app)
 
   return app
 }

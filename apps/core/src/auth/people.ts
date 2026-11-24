@@ -13,6 +13,7 @@ export const TokenClaims = z.object({
   name: z.string().optional(),
   email: z.string().optional(),
   groups: z.array(z.string()).optional(),
+  exp: z.number(),
 })
 export type TokenClaims = z.infer<typeof TokenClaims>
 
