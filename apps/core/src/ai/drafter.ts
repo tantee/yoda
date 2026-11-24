@@ -4,14 +4,18 @@ import { tasks } from '../db/schema.js'
 import { buildContextPack, renderContextPack } from '../knowledge/context-pack.js'
 import { runWork } from '../work/context.js'
 import { failAiTask, submitAiResult } from '../work/engine.js'
-import { AiFailed, AiRefused } from './gateway.js'
+import { AiFailed, AiRefused, errorSummary } from './gateway.js'
 import { SYSTEM_PROMPT } from './prompts.js'
+
+/** Upper bound for one draft: long documents fit, a runaway generation does not run up the bill. */
+export const DRAFT_MAX_OUTPUT_TOKENS = 16_000
 
 export type DrafterDeps = Pick<AppDeps, 'db' | 'ai' | 'bus' | 'jobs'>
 
 /** Failures that retrying cannot fix: the task goes back to people at once with this reason. */
 function permanentReason(err: unknown): string | null {
-  if (err instanceof AiRefused) return err.reason
+  // An unpriced model on a budgeted project is a configuration problem, not a budget one.
+  if (err instanceof AiRefused) return err.reason === 'unpriced_model' ? 'ai_unavailable' : err.reason
   if (err instanceof AiFailed && err.reason === 'not_configured') return 'ai_unavailable'
   // The model answered but with nothing usable; asking again is unlikely to help and costs money.
   if (err instanceof AiFailed && err.reason === 'empty_output') return 'ai_failed'
@@ -29,7 +33,7 @@ const fail = (deps: DrafterDeps, taskId: string, reason: string) =>
 export async function runDraft(
   deps: DrafterDeps,
   taskId: string,
-  run: { isFinalAttempt: boolean } = { isFinalAttempt: true },
+  run: { isFinalAttempt: boolean; signal?: AbortSignal } = { isFinalAttempt: true },
 ): Promise<void> {
   const [task] = await deps.db.select().from(tasks).where(eq(tasks.id, taskId))
   if (!task || task.state !== 'open' || task.executor !== 'ai' || task.assigneeId !== null) return
@@ -41,13 +45,15 @@ export async function runDraft(
       taskId,
       system: SYSTEM_PROMPT,
       prompt: renderContextPack(pack),
+      maxOutputTokens: DRAFT_MAX_OUTPUT_TOKENS,
+      signal: run.signal,
     })
     await runWork(deps, { id: null, kind: 'ai' }, (ctx) => submitAiResult(ctx, taskId, text, { model, overBudget }))
   } catch (err) {
     const reason = permanentReason(err)
     if (reason) return fail(deps, taskId, reason)
     if (!run.isFinalAttempt) throw err
-    console.warn(`draft-task ${taskId}: giving up after the final attempt`, err)
+    console.warn(`draft-task ${taskId}: giving up after the final attempt: ${errorSummary(err)}`)
     await fail(deps, taskId, 'ai_failed')
   }
 }

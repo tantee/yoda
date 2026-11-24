@@ -66,11 +66,12 @@ export async function testDeps(overrides: Partial<AppDeps> = {}): Promise<AppDep
       bootstrapAdmins: [],
       aiModelDraft: 'anthropic:claude-opus-5-5',
       aiModelFast: 'anthropic:claude-haiku-5-5',
-      s3Endpoint: 'http://localhost:9000',
+      // CI sets S3_*; otherwise the dev docker-compose MinIO.
+      s3Endpoint: process.env.S3_ENDPOINT ?? 'http://localhost:9000',
       s3Region: 'us-east-1',
       s3Bucket: 'yoda',
-      s3AccessKey: 'yoda', // DEV ONLY (docker-compose MinIO)
-      s3SecretKey: 'yoda-dev-minio', // DEV ONLY
+      s3AccessKey: process.env.S3_ACCESS_KEY ?? 'yoda', // DEV ONLY (docker-compose MinIO)
+      s3SecretKey: process.env.S3_SECRET_KEY ?? 'yoda-dev-minio', // DEV ONLY
       aiWorkers: 2,
   }
   const db = await testDb()

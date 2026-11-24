@@ -9,7 +9,7 @@ import { EMBEDDING_DIMENSIONS, parseModelId, type AiJob, type ModelSet } from '.
 import prices from './prices.json' with { type: 'json' }
 
 export class AiRefused extends Error {
-  constructor(public reason: 'no_ai' | 'budget_exceeded') {
+  constructor(public reason: 'no_ai' | 'budget_exceeded' | 'unpriced_model') {
     super(reason)
     this.name = 'AiRefused'
   }
@@ -22,10 +22,28 @@ export class AiFailed extends Error {
   }
 }
 
+/**
+ * Loggable one-line summary of an error. Never log AI SDK error objects themselves: they carry the request
+ * body (project content) and response details.
+ */
+export function errorSummary(err: unknown): string {
+  if (!(err instanceof Error)) return String(err)
+  const status = (err as { statusCode?: unknown }).statusCode
+  return `${err.name}${typeof status === 'number' ? ` (${status})` : ''}: ${err.message}`
+}
+
 const MONTH_START = sql`date_trunc('month', now() at time zone 'Asia/Bangkok') at time zone 'Asia/Bangkok'`
 const WARN_RATIO = 0.8
 
 const warnedModels = new Set<string>()
+
+/** Max texts per provider embedding call (each batch is its own ai_calls row). */
+export const EMBED_BATCH_SIZE = 64
+
+const priceOf = (model: string) =>
+  (prices as Record<string, { inputPerMTok: number; outputPerMTok: number } | undefined>)[model]
+
+export const isPriced = (model: string): boolean => priceOf(model) !== undefined
 
 /** The gateway only records events; it never enqueues jobs. */
 const NO_JOBS = {
@@ -35,7 +53,7 @@ const NO_JOBS = {
 }
 
 export function costOf(model: string, inputTokens: number, outputTokens: number): string | null {
-  const p = (prices as Record<string, { inputPerMTok: number; outputPerMTok: number }>)[model]
+  const p = priceOf(model)
   if (!p) {
     if (!warnedModels.has(model)) {
       warnedModels.add(model)
@@ -66,7 +84,20 @@ export async function monthUsage(db: Db, projectId: string): Promise<AiUsage> {
 }
 
 export class AiGateway {
-  constructor(private deps: { db: Db; bus: LiveBus; models: ModelSet }) {}
+  constructor(
+    private deps: { db: Db; bus: LiveBus; models: ModelSet },
+    warn: (msg: string) => void = (m) => console.warn(m),
+  ) {
+    const unpriced = (['draft', 'fast', 'embed'] as const)
+      .map((job) => deps.models.ids[job])
+      .filter((id): id is string => id !== null && !isPriced(parseModelId(id).model))
+    if (unpriced.length) {
+      warn(
+        `ai: no price in prices.json for ${[...new Set(unpriced)].join(', ')}: calls are logged with cost_usd null ` +
+          'and refused for projects that have an AI budget (add the model to apps/core/src/ai/prices.json)',
+      )
+    }
+  }
 
   async generateText(input: {
     job: 'draft' | 'fast'
@@ -75,14 +106,15 @@ export class AiGateway {
     system: string
     prompt: string
     maxOutputTokens?: number
+    signal?: AbortSignal
   }): Promise<{ text: string; model: string }> {
     const { models } = this.deps
     const spec = models.ids[input.job]
     const lm = models[input.job]
     if (!spec || !lm) throw new AiFailed('not_configured')
-    await this.guard(input.projectId, input.taskId ?? null)
-
     const { provider, model } = parseModelId(spec)
+    await this.guard(input.projectId, input.taskId ?? null, model)
+
     let text: string
     let inTok: number
     let outTok: number
@@ -94,6 +126,7 @@ export class AiGateway {
         prompt: input.prompt,
         maxOutputTokens: input.maxOutputTokens,
         maxRetries: 1,
+        abortSignal: input.signal,
         onError: ({ error }) => {
           streamError = error
         },
@@ -124,30 +157,35 @@ export class AiGateway {
     const { models } = this.deps
     const spec = models.ids.embed
     if (!models.embed || !spec) return null
-    await this.guard(input.projectId, null)
     const { provider, model } = parseModelId(spec)
     const logInput = { job: 'embed' as AiJob, projectId: input.projectId, taskId: null }
-    let res: Awaited<ReturnType<typeof embedMany>>
-    try {
-      res = await embedMany({
-        model: models.embed,
-        values: input.texts,
-        maxRetries: 1,
-        providerOptions: { openai: { dimensions: EMBEDDING_DIMENSIONS } },
-      })
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      await this.log(logInput, provider, model, null, null, false, message)
-      throw new AiFailed('provider_error', message)
+    const out: number[][] = []
+    // Batches keep each provider request bounded; the guard runs per batch so a budget hit mid-way stops.
+    for (let i = 0; i < input.texts.length; i += EMBED_BATCH_SIZE) {
+      await this.guard(input.projectId, null, model)
+      let res: Awaited<ReturnType<typeof embedMany>>
+      try {
+        res = await embedMany({
+          model: models.embed,
+          values: input.texts.slice(i, i + EMBED_BATCH_SIZE),
+          maxRetries: 1,
+          providerOptions: { openai: { dimensions: EMBEDDING_DIMENSIONS } },
+        })
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        await this.log(logInput, provider, model, null, null, false, message)
+        throw new AiFailed('provider_error', message)
+      }
+      const tokens = res.usage.tokens ?? 0
+      if (res.embeddings.some((v) => v.length !== EMBEDDING_DIMENSIONS)) {
+        await this.log(logInput, provider, model, tokens, 0, false, 'bad_dimensions')
+        throw new AiFailed('bad_dimensions')
+      }
+      await this.log(logInput, provider, model, tokens, 0, true, null)
+      out.push(...res.embeddings)
     }
-    const tokens = res.usage.tokens ?? 0
-    if (res.embeddings.some((v) => v.length !== EMBEDDING_DIMENSIONS)) {
-      await this.log(logInput, provider, model, tokens, 0, false, 'bad_dimensions')
-      throw new AiFailed('bad_dimensions')
-    }
-    await this.log(logInput, provider, model, tokens, 0, true, null)
     await this.warnIfNeeded(input.projectId, null)
-    return res.embeddings
+    return out
   }
 
   private async log(
@@ -173,8 +211,11 @@ export class AiGateway {
     })
   }
 
-  /** Refuses (before any provider call) for noAi projects and exhausted budgets. */
-  private async guard(projectId: string | null, taskId: string | null): Promise<void> {
+  /**
+   * Refuses (before any provider call) for noAi projects and exhausted budgets. A budgeted project also refuses
+   * unpriced models: their calls cost null, which would silently disable the hard stop.
+   */
+  private async guard(projectId: string | null, taskId: string | null, model: string): Promise<void> {
     if (!projectId) return
     const [p] = await this.deps.db
       .select({ noAi: projects.noAi, budget: projects.aiBudgetUsd })
@@ -183,6 +224,7 @@ export class AiGateway {
     if (!p) return
     if (p.noAi) throw new AiRefused('no_ai')
     if (p.budget === null) return
+    if (!isPriced(model)) throw new AiRefused('unpriced_model')
     const usage = await monthUsage(this.deps.db, projectId)
     if (usage.costUsd >= Number(p.budget)) {
       await this.eventOncePerMonth('ai.budget_exceeded', projectId, taskId, usage.costUsd, Number(p.budget))

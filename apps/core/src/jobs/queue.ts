@@ -4,7 +4,8 @@ export type JobName = 'embed-entry' | 'draft-task'
 export const JOB_NAMES: readonly JobName[] = ['embed-entry', 'draft-task']
 
 /** `attempt` starts at 1; with RETRY_LIMIT 2 the 3rd attempt is final. */
-export type JobRun = { id: string; attempt: number; isFinalAttempt: boolean }
+/** `signal` (pg-boss) aborts when the job expires or is cancelled; the inline test queue omits it. */
+export type JobRun = { id: string; attempt: number; isFinalAttempt: boolean; signal?: AbortSignal }
 export type JobHandler = (run: JobRun) => Promise<void>
 
 export interface JobQueue {
@@ -49,6 +50,7 @@ export async function createPgBossQueue(databaseUrl: string, concurrency: number
             id: job.data.id,
             attempt: job.retryCount + 1,
             isFinalAttempt: job.retryCount >= RETRY_LIMIT,
+            signal: job.signal,
           })
         }
       })

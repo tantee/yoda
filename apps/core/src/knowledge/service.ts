@@ -11,7 +11,7 @@ import type {
 } from '@yoda/shared'
 import { and, asc, desc, eq, inArray, isNull, or, sql, type SQL } from 'drizzle-orm'
 import { forbidden, invalidState, notFound } from '../auth/plugin.js'
-import { AiRefused, type AiGateway } from '../ai/gateway.js'
+import { AiRefused, errorSummary, type AiGateway } from '../ai/gateway.js'
 import type { AttachmentRow } from '../attachments/service.js'
 import type { Db, Tx } from '../db/client.js'
 import { attachments, knowledgeChunks, knowledgeEntries, people, projectMembers, projects, workItems } from '../db/schema.js'
@@ -317,7 +317,7 @@ export async function embedEntry(deps: { db: Db; ai: Pick<AiGateway, 'embed'> },
     } catch (err) {
       if (!(err instanceof AiRefused)) {
         if (!run.isFinalAttempt) throw err
-        console.warn(`embed-entry ${row.id}: storing chunks without embeddings after final attempt`, err)
+        console.warn(`embed-entry ${row.id}: storing chunks without embeddings after final attempt: ${errorSummary(err)}`)
       }
       vectors = null
     }

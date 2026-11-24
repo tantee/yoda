@@ -3,6 +3,7 @@ import type { Task, TaskWithContext, Todo, WorkItemDetail } from '@yoda/shared'
 import { MockLanguageModelV4 } from 'ai/test'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { and, asc, eq } from 'drizzle-orm'
+import { DRAFT_MAX_OUTPUT_TOKENS, runDraft } from '../src/ai/drafter.js'
 import { AiGateway } from '../src/ai/gateway.js'
 import type { ModelSet } from '../src/ai/models.js'
 import { aiCalls, events, knowledgeEntries, projects } from '../src/db/schema.js'
@@ -24,13 +25,15 @@ let outsider: Who
 let requester: Who
 
 /** A draft model whose calls are counted and whose prompts are captured; `fail` makes it throw. */
-function draftModel(text = DRAFT) {
-  const state = { calls: 0, prompts: [] as string[], fail: false }
+function draftModel(text = DRAFT, modelId = 'claude-opus-5-5') {
+  const state = { calls: 0, prompts: [] as string[], fail: false, maxOutputTokens: [] as (number | undefined)[], signals: [] as (AbortSignal | undefined)[] }
   const model = new MockLanguageModelV4({
-    modelId: 'claude-opus-5-5',
+    modelId,
     doStream: async (opts) => {
       state.calls++
       state.prompts.push(JSON.stringify(opts.prompt))
+      state.maxOutputTokens.push(opts.maxOutputTokens)
+      state.signals.push(opts.abortSignal)
       if (state.fail) throw new Error('provider down')
       return { stream: textStream(text) }
     },
@@ -62,7 +65,7 @@ async function boot(models: ModelSet, jobs: InlineJobQueue = new InlineJobQueue(
   requester = await login(app, 'nurse')
 }
 
-const call = (who: Who, method: 'GET' | 'POST' | 'PUT', url: string, payload?: unknown) =>
+const call = (who: Who, method: 'GET' | 'POST' | 'PUT' | 'PATCH', url: string, payload?: unknown) =>
   app.inject({ method, url, headers: auth(who), payload: payload as object | undefined })
 
 async function project(): Promise<string> {
@@ -326,7 +329,7 @@ describe('AI drafter', () => {
     expect(again.json()).toEqual({ error: 'invalid_state' })
   })
 
-  it('retry-ai while the first draft is still pending → 409, no second job', async () => {
+  it('retry-ai with no ai.* event yet (job lost or pending) queues a job; a second retry before it runs → 409', async () => {
     const m = draftModel()
     const held = new HeldQueue()
     await boot(mockModels({ draft: m.model }), held)
@@ -334,13 +337,86 @@ describe('AI drafter', () => {
     const wi = await createItem(p)
     await approveIntake(wi.id)
     const draft = await active(wi.id, 'draft-requirements')
-    const res = await call(pm, 'POST', `/tasks/${draft.id}/retry-ai`)
-    expect(res.statusCode).toBe(409)
-    expect(res.json()).toEqual({ error: 'invalid_state' })
+    held.held.splice(0) // the original job was lost
+    expect((await call(pm, 'POST', `/tasks/${draft.id}/retry-ai`)).statusCode).toBe(200)
+    expect(held.held).toHaveLength(1)
+    const again = await call(pm, 'POST', `/tasks/${draft.id}/retry-ai`)
+    expect(again.statusCode).toBe(409)
+    expect(again.json()).toEqual({ error: 'invalid_state' })
     expect(held.held).toHaveLength(1)
     await held.release()
     await held.drain()
     expect(m.state.calls).toBe(1)
+    expect(await active(wi.id, 'draft-requirements')).toMatchObject({ state: 'accepted', aiStatus: null })
+  })
+
+  it('switching noAi off queues drafting for waiting tasks (marking failed ones as retried)', async () => {
+    const m = draftModel()
+    const held = new HeldQueue()
+    await boot(mockModels({ draft: m.model }), held)
+    const p = await project()
+    const db = await testDb()
+    // Item A: drafted while the project turned noAi → ai.failed(no_ai).
+    const a = await createItem(p)
+    await approveIntake(a.id)
+    await db.update(projects).set({ noAi: true }).where(eq(projects.id, p))
+    await held.release()
+    await held.drain()
+    const draftA = await active(a.id, 'draft-requirements')
+    expect((await taskEvents(draftA.id)).filter((e) => e.type === 'ai.failed').map((e) => e.reason)).toEqual(['no_ai'])
+    // Item B: created while noAi, so never queued.
+    const b = await createItem(p)
+    await approveIntake(b.id)
+    const draftB = await active(b.id, 'draft-requirements')
+    expect(held.held).toHaveLength(0)
+
+    // Unchanged / true → true never queues.
+    expect((await call(pm, 'PATCH', `/projects/${p}`, { noAi: true })).statusCode).toBe(200)
+    expect(held.held).toHaveLength(0)
+    expect((await call(pm, 'PATCH', `/projects/${p}`, { noAi: false })).statusCode).toBe(200)
+    expect(held.held.map((j) => j.id).sort()).toEqual([draftA.id, draftB.id].sort())
+    expect(await active(a.id, 'draft-requirements')).toMatchObject({ aiStatus: 'drafting' })
+    expect((await taskEvents(draftA.id)).at(-1)).toMatchObject({ type: 'ai.retried' })
+    expect((await taskEvents(draftB.id)).map((e) => e.type)).not.toContain('ai.retried')
+    // false → false does not queue again.
+    expect((await call(pm, 'PATCH', `/projects/${p}`, { noAi: false })).statusCode).toBe(200)
+    expect(held.held).toHaveLength(2)
+
+    await held.release()
+    await held.drain()
+    expect(m.state.calls).toBe(2)
+    expect(await active(a.id, 'draft-requirements')).toMatchObject({ state: 'accepted' })
+    expect(await active(b.id, 'draft-requirements')).toMatchObject({ state: 'accepted' })
+  })
+
+  it('drafts with maxOutputTokens 16000 and forwards the job abort signal', async () => {
+    const m = draftModel()
+    const held = new HeldQueue()
+    await boot(mockModels({ draft: m.model }), held)
+    const p = await project()
+    const wi = await createItem(p)
+    await approveIntake(wi.id)
+    const draft = await active(wi.id, 'draft-requirements')
+    const ac = new AbortController()
+    await runDraft(app.deps, draft.id, { isFinalAttempt: true, signal: ac.signal })
+    expect(m.state.maxOutputTokens).toEqual([DRAFT_MAX_OUTPUT_TOKENS])
+    expect(DRAFT_MAX_OUTPUT_TOKENS).toBe(16000)
+    expect(m.state.signals[0]).toBeDefined()
+    held.held.splice(0)
+  })
+
+  it('an unpriced draft model on a budgeted project → ai_unavailable, no model call', async () => {
+    const m = draftModel(DRAFT, 'mystery-model')
+    await boot(mockModels({ draft: m.model, ids: { draft: 'anthropic:mystery-model', fast: null, embed: null } }))
+    const p = await project()
+    const db = await testDb()
+    await db.update(projects).set({ aiBudgetUsd: '100.00' }).where(eq(projects.id, p))
+    const wi = await createItem(p)
+    await approveIntake(wi.id)
+    await queue.drain()
+    expect(m.state.calls).toBe(0)
+    const draft = await active(wi.id, 'draft-requirements')
+    expect(draft).toMatchObject({ state: 'open', aiStatus: 'failed', aiFailReason: 'ai_unavailable' })
   })
 
   it('a noAi project never enqueues drafting; retry-ai → 409 with no job and no event', async () => {

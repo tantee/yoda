@@ -8,7 +8,7 @@ import type { Db, Tx } from '../db/client.js'
 import { people, projectMembers, projects } from '../db/schema.js'
 import { canManageProject, lockProject } from '../projects/access.js'
 import { runWork } from '../work/context.js'
-import { unassignMemberTasks } from '../work/engine.js'
+import { resumeProjectAi, unassignMemberTasks } from '../work/engine.js'
 
 type ProjectRow = typeof projects.$inferSelect
 
@@ -161,9 +161,12 @@ export function projectRoutes(app: FastifyInstance): void {
     const { id } = ProjectParams.parse(request.params)
     const patch = ProjectPatch.parse(request.body)
     await requireManage(request, id)
-    return db().transaction(async (tx) => {
+    // runWork so jobs queued when AI is switched back on are sent after commit.
+    return runWork(app.deps, { id: request.me.id, kind: 'person' }, async (ctx) => {
+      const { tx } = ctx
       await lockProject(tx, id)
       if (!(await canManageProject(tx, request.me, id))) throw forbidden()
+      const [before] = await tx.select({ noAi: projects.noAi }).from(projects).where(eq(projects.id, id))
       const set: Partial<typeof projects.$inferInsert> = {}
       if (patch.autonomy !== undefined) set.autonomy = patch.autonomy
       if (patch.noAi !== undefined) set.noAi = patch.noAi
@@ -171,6 +174,7 @@ export function projectRoutes(app: FastifyInstance): void {
         set.aiBudgetUsd = patch.aiBudgetUsd === null ? null : patch.aiBudgetUsd.toFixed(2)
       }
       if (Object.keys(set).length > 0) await tx.update(projects).set(set).where(eq(projects.id, id))
+      if (before?.noAi && patch.noAi === false) await resumeProjectAi(ctx, id)
       const detail = await loadDetail(tx, id)
       if (!detail) throw notFound()
       return detail

@@ -179,6 +179,25 @@ describe('knowledge API', () => {
     expect(hits2[0]!.id).toBe(lab.id)
   })
 
+  it('switching a project noAi off re-embeds its entries whose chunks lack vectors (not noAi entries)', async () => {
+    await setup({ ai: await gatewayWith(topicEmbedder()) })
+    const p = await newProject()
+    expect((await call(pm, 'PATCH', `/projects/${p}`, { noAi: true })).statusCode).toBe(200)
+    const plain = await create(dev, { scope: 'project', projectId: p, type: 'fact', title: 'ห้องแล็บชั้นสอง', body: 'เปิดแปดโมง' })
+    const secret = await create(dev, { scope: 'project', projectId: p, type: 'fact', title: 'วัคซีน', body: 'ลับ', noAi: true })
+    await drain()
+    const vectors = async (entryId: string) =>
+      (await app.deps.db.select().from(knowledgeChunks).where(eq(knowledgeChunks.entryId, entryId))).map((c) => c.embedding)
+    expect(await vectors(plain.id)).toEqual([null])
+    expect(await vectors(secret.id)).toEqual([null])
+
+    expect((await call(pm, 'PATCH', `/projects/${p}`, { noAi: false })).statusCode).toBe(200)
+    await drain()
+    const [v] = await vectors(plain.id)
+    expect(v).toHaveLength(1024)
+    expect(await vectors(secret.id)).toEqual([null])
+  })
+
   it('never embeds noAi entries; forAi excludes noAi entries, noAi attachments and noAi projects', async () => {
     const embedded: string[] = []
     await setup({

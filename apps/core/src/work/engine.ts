@@ -494,14 +494,68 @@ export async function retryAiTask(ctx: WorkCtx, me: Me, taskId: string): Promise
   if (templateTask?.capability !== 'draft-text') throw invalidState()
   const [proj] = await tx.select({ noAi: projects.noAi }).from(projects).where(eq(projects.id, task.projectId))
   if (!proj || proj.noAi) throw invalidState()
-  // Only after a failed draft: no ai.* event yet means the first job is still pending or running.
+  // After a failed draft, or when no draft was ever attempted (e.g. its job was lost). A pending ai.retried
+  // means a job is already queued. A duplicate job is harmless: the draft-task queue keeps one per task.
   const [last] = await tx
     .select({ type: events.type })
     .from(events)
     .where(and(eq(events.taskId, taskId), like(events.type, 'ai.%')))
     .orderBy(desc(events.seq))
     .limit(1)
-  if (last?.type !== 'ai.failed') throw invalidState()
+  if (last && last.type !== 'ai.failed') throw invalidState()
   await recordEvent(ctx, { type: 'ai.retried', projectId: task.projectId, workItemId: task.workItemId, taskId })
   ctx.jobs.push({ name: 'draft-task', id: taskId })
+}
+
+/**
+ * After a project's noAi is switched off: queues drafting for every `draft-text` task still waiting on the AI
+ * (recording `ai.retried` where the last attempt failed, so the task shows as drafting again) and re-embeds the
+ * project's current entries that have chunks without vectors.
+ */
+export async function resumeProjectAi(ctx: WorkCtx, projectId: string): Promise<void> {
+  const { tx } = ctx
+  const waiting = await tx
+    .select({ task: tasks, item: workItems })
+    .from(tasks)
+    .innerJoin(workItems, eq(workItems.id, tasks.workItemId))
+    .where(
+      and(
+        eq(tasks.projectId, projectId),
+        eq(tasks.state, 'open'),
+        eq(tasks.executor, 'ai'),
+        isNull(tasks.assigneeId),
+        eq(workItems.state, 'active'),
+      ),
+    )
+  const defs = new Map<string, WorkflowTemplateDef>()
+  for (const { task, item } of waiting) {
+    let def = defs.get(item.templateId)
+    if (!def) defs.set(item.templateId, (def = await definitionOf(tx, item)))
+    const tt = def.steps.find((s) => s.key === task.stepKey)?.tasks.find((t) => t.key === task.templateTaskKey)
+    if (tt?.capability !== 'draft-text') continue
+    const [last] = await tx
+      .select({ type: events.type })
+      .from(events)
+      .where(and(eq(events.taskId, task.id), like(events.type, 'ai.%')))
+      .orderBy(desc(events.seq))
+      .limit(1)
+    if (last?.type === 'ai.failed') {
+      await recordEvent(ctx, { type: 'ai.retried', projectId, workItemId: task.workItemId, taskId: task.id })
+    }
+    ctx.jobs.push({ name: 'draft-task', id: task.id })
+  }
+  const unembedded = await tx
+    .select({ id: knowledgeEntries.id })
+    .from(knowledgeEntries)
+    .leftJoin(attachments, eq(attachments.id, knowledgeEntries.attachmentId))
+    .where(
+      and(
+        eq(knowledgeEntries.projectId, projectId),
+        isNull(knowledgeEntries.supersededAt),
+        eq(knowledgeEntries.noAi, false),
+        or(isNull(attachments.id), eq(attachments.noAi, false)),
+        sql`exists (select 1 from knowledge_chunks c where c.entry_id = ${knowledgeEntries.id} and c.embedding is null)`,
+      ),
+    )
+  for (const e of unembedded) ctx.jobs.push({ name: 'embed-entry', id: e.id })
 }

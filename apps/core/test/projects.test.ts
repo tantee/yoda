@@ -156,6 +156,9 @@ describe('projects API', () => {
     expect((await call(somchai, 'GET', `/projects/${p.id}`)).json().noAi).toBe(true)
     const cleared = await call(somchai, 'PATCH', `/projects/${p.id}`, { aiBudgetUsd: null })
     expect(cleared.json().aiBudgetUsd).toBeNull()
+    // numeric(12,2) holds up to 9 999 999 999.99: larger values are a 400, not a database 500.
+    expect((await call(somchai, 'PATCH', `/projects/${p.id}`, { aiBudgetUsd: 9_999_999_999 })).statusCode).toBe(200)
+    expect((await call(somchai, 'PATCH', `/projects/${p.id}`, { aiBudgetUsd: 1e12 })).statusCode).toBe(400)
   })
 
   it('removing a member unassigns their open and proposed tasks into the PM confirmations', async () => {

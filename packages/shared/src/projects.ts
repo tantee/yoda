@@ -38,7 +38,7 @@ export const ProjectPatch = z
   .object({
     autonomy: z.enum(['propose', 'auto-assign']),
     noAi: z.boolean(),
-    aiBudgetUsd: z.number().min(0).nullable(),
+    aiBudgetUsd: z.number().min(0).max(9_999_999_999).nullable(),
   })
   .partial()
   .refine((v) => Object.keys(v).length > 0, { message: 'at least one field is required' })
