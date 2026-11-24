@@ -26,7 +26,11 @@ async function verifyRequest(request: FastifyRequest, deps: AppDeps): Promise<To
   const match = header?.match(/^Bearer\s+(\S+)$/i)
   if (!match) return null
   try {
-    const { payload } = await jwtVerify(match[1], deps.jwks, { issuer: deps.config.oidcIssuer })
+    const { payload } = await jwtVerify(match[1], deps.jwks, {
+      issuer: deps.config.oidcIssuer,
+      algorithms: ['RS256'],
+      requiredClaims: ['exp'],
+    })
     if (payload.azp !== deps.config.oidcClientId) return null
     // Keycloak ID tokens share issuer/azp with access tokens; only accept access tokens.
     if (payload.typ !== undefined && payload.typ !== 'Bearer') return null
@@ -64,7 +68,8 @@ export function registerAuth(app: FastifyInstance): void {
 
 export function requireStaff(request: FastifyRequest): void {
   if (!request.me) throw unauthorized()
-  if (!request.me.isStaff && !request.me.isAdmin) throw forbidden()
+  // me.isStaff already includes admins (computed in the auth hook).
+  if (!request.me.isStaff) throw forbidden()
 }
 
 export function requireAdmin(request: FastifyRequest): void {
