@@ -76,7 +76,44 @@ function templateTask(def: WorkflowTemplateDef | undefined, row: TaskRow): Templ
   return t
 }
 
-function toTask(row: TaskRow, def: WorkflowTemplateDef | undefined, who: Map<string, string>): Task {
+type AiState = { status: 'drafting' | 'failed'; reason: string | null }
+
+/**
+ * AI draft status of the tasks that still await the AI (open, unassigned, `ai` executor, `draft-text`, project
+ * not noAi): 'failed' when the latest `ai.failed` / `ai.retried` event is a failure, else 'drafting'.
+ */
+async function aiStates(db: Conn, items: { row: TaskRow; def: WorkflowTemplateDef | undefined }[]): Promise<Map<string, AiState>> {
+  const waiting = items.filter(
+    ({ row, def }) =>
+      row.state === 'open' && row.executor === 'ai' && !row.assigneeId && templateTask(def, row).capability === 'draft-text',
+  )
+  const out = new Map<string, AiState>()
+  if (!waiting.length) return out
+  const noAi = new Set(
+    (
+      await db
+        .select({ id: projects.id })
+        .from(projects)
+        .where(and(inArray(projects.id, [...new Set(waiting.map((w) => w.row.projectId))]), eq(projects.noAi, true)))
+    ).map((p) => p.id),
+  )
+  const ids = waiting.filter((w) => !noAi.has(w.row.projectId)).map((w) => w.row.id)
+  if (!ids.length) return out
+  const evs = await db
+    .select({ taskId: events.taskId, type: events.type, reason: events.reason })
+    .from(events)
+    .where(and(inArray(events.taskId, ids), inArray(events.type, ['ai.failed', 'ai.retried'])))
+    .orderBy(asc(events.seq))
+  const latest = new Map<string, { type: string; reason: string | null }>()
+  for (const e of evs) latest.set(e.taskId!, e)
+  for (const id of ids) {
+    const e = latest.get(id)
+    out.set(id, e?.type === 'ai.failed' ? { status: 'failed', reason: e.reason } : { status: 'drafting', reason: null })
+  }
+  return out
+}
+
+function toTask(row: TaskRow, def: WorkflowTemplateDef | undefined, who: Map<string, string>, ai: Map<string, AiState>): Task {
   const tt = templateTask(def, row)
   return Task.parse({
     id: row.id,
@@ -97,6 +134,8 @@ function toTask(row: TaskRow, def: WorkflowTemplateDef | undefined, who: Map<str
     proposedAssigneeId: row.proposedAssigneeId,
     proposedAssigneeName: row.proposedAssigneeId ? (who.get(row.proposedAssigneeId) ?? null) : null,
     result: row.result ?? null,
+    aiStatus: ai.get(row.id)?.status ?? null,
+    aiFailReason: ai.get(row.id)?.reason ?? null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   })
@@ -113,6 +152,7 @@ export async function tasksWithContext(db: Conn, where: SQL | undefined, orderBy
     .orderBy(...orderBy)
   const defs = await definitions(db, rows.map((r) => r.templateId))
   const who = await names(db, rows.flatMap((r) => [r.t.assigneeId, r.t.proposedAssigneeId]))
+  const ai = await aiStates(db, rows.map((r) => ({ row: r.t, def: defs.get(r.templateId) })))
 
   // Inputs: for each dependsOn key, the latest accepted attempt of that task in the same work item.
   const depsOf = new Map(rows.map((r) => [r.t.id, templateTask(defs.get(r.templateId), r.t).dependsOn]))
@@ -153,7 +193,7 @@ export async function tasksWithContext(db: Conn, where: SQL | undefined, orderBy
       })
     }
     return TaskWithContext.parse({
-      ...toTask(r.t, def, who),
+      ...toTask(r.t, def, who, ai),
       workItemTitle: r.workItemTitle,
       workItemPriority: r.workItemPriority,
       projectName: r.projectName,
@@ -238,10 +278,11 @@ export async function getWorkItemDetail(db: Conn, me: Me, id: string): Promise<W
     .orderBy(asc(events.seq))
 
   const who = await names(db, taskRows.flatMap((t) => [t.assigneeId, t.proposedAssigneeId]))
+  const ai = await aiStates(db, taskRows.map((row) => ({ row, def })))
   return WorkItemDetail.parse({
     ...toWorkItem(r),
     steps,
-    tasks: taskRows.map((t) => toTask(t, def, who)),
+    tasks: taskRows.map((t) => toTask(t, def, who, ai)),
     events: eventRows.map(({ e, actorName }) =>
       EventEntry.parse({
         id: e.id,

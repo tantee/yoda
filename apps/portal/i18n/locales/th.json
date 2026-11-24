@@ -107,7 +107,13 @@
     "assign": "มอบหมาย",
     "unassigned": "ยังไม่มอบหมาย",
     "decision": "การตัดสินใจ",
-    "proposedAssignee": "ผู้รับผิดชอบที่เสนอ"
+    "proposedAssignee": "ผู้รับผิดชอบที่เสนอ",
+    "fromPrevious": "จากขั้นตอนก่อนหน้า",
+    "aiDraft": "ร่างโดย AI",
+    "copyIntoResult": "คัดลอกไปยังผลงานของฉัน",
+    "attachments": "ไฟล์แนบ",
+    "resultAttachments": "แนบไฟล์กับผลงานของคุณ",
+    "noPreviousText": "(ไม่มีข้อความ)"
   },
   "priority": {
     "low": "ต่ำ",
@@ -169,8 +175,20 @@
     "reason": {
       "work_item_cancelled": "งานถูกยกเลิก",
       "member_removed": "สมาชิกถูกนำออกจากโครงการ",
-      "no_candidate": "ไม่พบผู้ที่มีสิทธิ์รับงาน"
-    }
+      "no_candidate": "ไม่พบผู้ที่มีสิทธิ์รับงาน",
+      "budget_exceeded": "งบ AI ประจำเดือนเต็มแล้ว",
+      "ai_failed": "AI สร้างร่างไม่สำเร็จ",
+      "ai_unavailable": "ยังไม่ได้ตั้งค่า AI",
+      "no_ai": "โครงการนี้ไม่ใช้ AI"
+    },
+    "ai": {
+      "drafted": "AI ร่างผลงานแล้ว",
+      "failed": "AI ร่างไม่สำเร็จ",
+      "retried": "ขอให้ AI ลองใหม่",
+      "budget_warning": "ใช้งบ AI ถึง 80%",
+      "budget_exceeded": "งบ AI เต็มแล้ว"
+    },
+    "aiLabel": "AI"
   },
   "knowledge": {
     "search": "ค้นหาความรู้",
@@ -231,6 +249,9 @@
     "spend": "ค่าใช้จ่าย",
     "calls": "จำนวนครั้ง",
     "noLimit": "ไม่จำกัด",
-    "readOnly": "เฉพาะ PM หรือผู้ดูแลระบบที่แก้ไขได้"
+    "readOnly": "เฉพาะ PM หรือผู้ดูแลระบบที่แก้ไขได้",
+    "drafting": "AI กำลังร่าง…",
+    "failed": "AI ร่างงานนี้ไม่ได้ ({reason})",
+    "retry": "ให้ AI ลองใหม่"
   }
 }

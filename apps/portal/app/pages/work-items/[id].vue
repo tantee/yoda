@@ -168,7 +168,8 @@ useLiveEvents((e) => {
                 </v-chip>
                 <v-chip size="x-small" variant="outlined" data-testid="task-state">{{ t(`task.state.${task.state}`) }}</v-chip>
                 <v-spacer />
-                <v-chip v-if="waitingForAi(task)" size="x-small" color="warning" data-testid="waiting-ai">{{ t('workItems.waitingForAi') }}</v-chip>
+                <v-chip v-if="waitingForAi(task) && !task.aiStatus" size="x-small" color="warning" data-testid="waiting-ai">{{ t('workItems.waitingForAi') }}</v-chip>
+                <AiStatus v-if="task.aiStatus" :task="task" :can-retry="canManage && isActive" @retried="load" />
                 <v-btn v-if="showConfirm(task)" size="small" color="primary" :loading="busy" data-testid="confirm-btn" @click="confirmTask(task.id)">{{ t('task.confirm') }}</v-btn>
                 <v-btn v-if="showAssign(task)" size="small" variant="outlined" data-testid="assign-toggle" @click="toggleAssign(task.id)">
                   {{ waitingForAi(task) ? t('workItems.assignToPerson') : t('task.assign') }}

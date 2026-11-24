@@ -252,6 +252,53 @@ describe('AI drafter', () => {
     expect(types).not.toContain('ai.failed')
   })
 
+  it('aiStatus: drafting while the job is pending, failed with its reason, null for human tasks', async () => {
+    const m = draftModel()
+    const held = new HeldQueue()
+    await boot(mockModels({ draft: m.model }), held)
+    const p = await project()
+    const wi = await createItem(p)
+    const intake = await active(wi.id, 'accept-intake')
+    expect(intake).toMatchObject({ aiStatus: null, aiFailReason: null })
+    await approveIntake(wi.id)
+
+    const pending = await active(wi.id, 'draft-requirements')
+    expect(pending).toMatchObject({ aiStatus: 'drafting', aiFailReason: null })
+    const todo = (await call(pm, 'GET', '/me/todo')).json() as Todo
+    expect(todo.confirmations.find((t) => t.id === pending.id)).toMatchObject({ aiStatus: 'drafting' })
+
+    m.state.fail = true
+    await held.release()
+    await held.drain()
+    expect(await active(wi.id, 'draft-requirements')).toMatchObject({ aiStatus: 'failed', aiFailReason: 'ai_failed' })
+    const one = (await call(pm, 'GET', `/tasks/${pending.id}`)).json() as TaskWithContext
+    expect(one).toMatchObject({ aiStatus: 'failed', aiFailReason: 'ai_failed' })
+
+    // Retry: drafting again until the job finishes, then done (null).
+    m.state.fail = false
+    expect((await call(pm, 'POST', `/tasks/${pending.id}/retry-ai`)).statusCode).toBe(200)
+    expect(await active(wi.id, 'draft-requirements')).toMatchObject({ aiStatus: 'drafting' })
+    await held.release()
+    await held.drain()
+    expect(await active(wi.id, 'draft-requirements')).toMatchObject({ state: 'accepted', aiStatus: null })
+  })
+
+  it('aiStatus is failed with budget_exceeded, null once a person takes the task', async () => {
+    const m = draftModel()
+    await boot(mockModels({ draft: m.model }))
+    const p = await project()
+    const db = await testDb()
+    await db.update(projects).set({ aiBudgetUsd: '1.00' }).where(eq(projects.id, p))
+    await db.insert(aiCalls).values({ projectId: p, job: 'draft', provider: 'anthropic', model: 'x', costUsd: '2.000000', ok: true })
+    const wi = await createItem(p)
+    await approveIntake(wi.id)
+    await queue.drain()
+    const draft = await active(wi.id, 'draft-requirements')
+    expect(draft).toMatchObject({ aiStatus: 'failed', aiFailReason: 'budget_exceeded' })
+    expect((await call(pm, 'POST', `/tasks/${draft.id}/assign`, { personId: ba.id })).statusCode).toBe(200)
+    expect(await active(wi.id, 'draft-requirements')).toMatchObject({ aiStatus: null })
+  })
+
   it('POST /tasks/:id/retry-ai redrafts a failed draft; 409 once accepted; 403 / 404 for others', async () => {
     const m = draftModel()
     m.state.fail = true

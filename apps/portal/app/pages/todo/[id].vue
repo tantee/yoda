@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { ProjectDetail, TaskWithContext } from '@yoda/shared'
+import type { Attachment, ProjectDetail, TaskInput, TaskWithContext } from '@yoda/shared'
 import { localized } from '~/utils/localized'
 
 const { t, locale } = useI18n()
@@ -15,6 +15,7 @@ const error = ref('')
 const busy = ref(false)
 const text = ref('')
 const newAssignee = ref<string | null>(null)
+const attached = ref<Attachment[]>([])
 
 const isAssignee = computed(() => !!task.value?.assigneeId && task.value.assigneeId === me.value?.id)
 const isPm = computed(() => !!project.value?.members.some(m => m.personId === me.value?.id && m.roles.includes('PM')))
@@ -61,6 +62,7 @@ async function act(path: string, body?: Record<string, unknown>) {
     seq++ // drop any in-flight older load
     task.value = updated
     text.value = ''
+    attached.value = []
     newAssignee.value = null
   } catch (e) {
     error.value = t(errorKey(e))
@@ -71,8 +73,12 @@ async function act(path: string, body?: Record<string, unknown>) {
 }
 
 const start = () => act('start')
-const submit = () => act('submit', { text: text.value })
-const decide = (decision: 'approve' | 'changes') => act('submit', { text: text.value, decision })
+const attachmentIds = () => attached.value.map(a => a.id)
+const submit = () => act('submit', { text: text.value, attachmentIds: attachmentIds() })
+const decide = (decision: 'approve' | 'changes') => act('submit', { text: text.value, decision, attachmentIds: attachmentIds() })
+const copyInput = (input: TaskInput) => {
+  text.value = input.result.text
+}
 const confirmTask = () => act('confirm')
 const assign = () => newAssignee.value && act('assign', { personId: newAssignee.value })
 
@@ -109,16 +115,48 @@ useLiveEvents((e) => {
 
       <v-alert v-if="error" type="error" class="mb-4" data-testid="action-error">{{ error }}</v-alert>
 
+      <div v-if="task.aiStatus" class="mb-4" data-testid="ai-status">
+        <AiStatus :task="task" :can-retry="canManage" @retried="load" />
+      </div>
+
+      <template v-if="task.inputs.length">
+        <h2 class="text-h6 mb-2">{{ t('task.fromPrevious') }}</h2>
+        <v-card v-for="input in task.inputs" :key="input.templateTaskKey" variant="outlined" class="mb-3" data-testid="task-input">
+          <v-card-text>
+            <div class="d-flex flex-wrap align-center ga-2 mb-2">
+              <span class="font-weight-medium">{{ localized(input.title, locale) }}</span>
+              <v-chip v-if="input.executor === 'ai'" size="x-small" color="secondary" data-testid="ai-draft-chip">{{ t('task.aiDraft') }}</v-chip>
+              <v-spacer />
+              <v-btn
+                v-if="isAssignee && workable && input.result.text"
+                size="small"
+                variant="outlined"
+                prepend-icon="mdi-content-copy"
+                data-testid="copy-input-btn"
+                @click="copyInput(input)"
+              >{{ t('task.copyIntoResult') }}</v-btn>
+            </div>
+            <MarkdownView v-if="input.result.text" :source="input.result.text" />
+            <p v-else class="text-medium-emphasis">{{ t('task.noPreviousText') }}</p>
+            <AttachmentList :attachments="input.attachments" class="mt-2" />
+          </v-card-text>
+        </v-card>
+      </template>
+
       <template v-if="!active && task.result">
         <h2 class="text-h6 mb-1">{{ t('task.result') }}</h2>
         <p v-if="task.result.decision" class="mb-1">
           {{ t('task.decision') }}: {{ task.result.decision === 'approve' ? t('task.approve') : t('task.requestChanges') }}
         </p>
-        <p style="white-space: pre-wrap" data-testid="result-text">{{ task.result.text }}</p>
+        <MarkdownView :source="task.result.text" data-testid="result-text" />
+        <AttachmentList :attachments="task.attachments" class="mb-4" />
       </template>
 
       <template v-if="isAssignee && workable">
         <v-textarea v-model="text" :label="t('task.comment')" rows="3" auto-grow data-testid="result-input" />
+        <h3 class="text-subtitle-2 mb-1">{{ t('task.resultAttachments') }}</h3>
+        <AttachmentList :attachments="attached" class="mb-2" />
+        <AttachmentUpload class="mb-4" :project-id="task.projectId" :work-item-id="task.workItemId" :task-id="task.id" @uploaded="a => attached.push(a)" />
         <div class="d-flex ga-2 mb-4">
           <v-btn v-if="task.state === 'open'" color="primary" :loading="busy" data-testid="start-btn" @click="start">{{ t('task.start') }}</v-btn>
           <template v-if="isDecision">

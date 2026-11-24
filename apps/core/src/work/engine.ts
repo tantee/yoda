@@ -502,5 +502,6 @@ export async function retryAiTask(ctx: WorkCtx, me: Me, taskId: string): Promise
     .orderBy(desc(events.seq))
     .limit(1)
   if (last?.type !== 'ai.failed') throw invalidState()
+  await recordEvent(ctx, { type: 'ai.retried', projectId: task.projectId, workItemId: task.workItemId, taskId })
   ctx.jobs.push({ name: 'draft-task', id: taskId })
 }
