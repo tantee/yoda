@@ -3,11 +3,12 @@ import type { KnowledgeCreate, KnowledgeEntry, KnowledgeType } from '@yoda/share
 
 const TYPES: KnowledgeType[] = ['fact', 'decision', 'document', 'progress', 'memory']
 
-const props = defineProps<{ modelValue: boolean; projectId: string; entryId: string | null }>()
+const props = defineProps<{ modelValue: boolean; projectId: string; entryId: string | null; isMember: boolean }>()
 const emit = defineEmits<{ 'update:modelValue': [boolean]; saved: [] }>()
 
 const { t } = useI18n()
 const api = useApi()
+const { me } = useMe()
 const entry = ref<KnowledgeEntry | null>(null)
 const versions = ref<KnowledgeEntry[]>([])
 const type = ref<KnowledgeType>('fact')
@@ -18,6 +19,12 @@ const error = ref('')
 const busy = ref(false)
 
 const isNew = computed(() => !props.entryId)
+// Mirrors core: department entries are admin-only to change; project entries need membership (or admin).
+const canEdit = computed(() => {
+  if (isNew.value || !entry.value) return true
+  if (me.value?.isAdmin) return true
+  return entry.value.scope !== 'department' && props.isMember
+})
 const canSubmit = computed(() => !!title.value.trim() && !busy.value)
 
 function fill(e: KnowledgeEntry) {
@@ -28,21 +35,25 @@ function fill(e: KnowledgeEntry) {
   noAi.value = e.noAi
 }
 
+let loadSeq = 0
 async function loadEntry(id: string) {
+  const mine = ++loadSeq
   try {
     const [e, v] = await Promise.all([
       api<KnowledgeEntry>(`/knowledge/${id}`),
       api<KnowledgeEntry[]>(`/knowledge/${id}/versions`),
     ])
+    if (mine !== loadSeq) return
     fill(e)
     versions.value = [...v].sort((a, b) => b.version - a.version)
   } catch (e) {
-    error.value = t(errorKey(e))
+    if (mine === loadSeq) error.value = t(errorKey(e))
   }
 }
 
 watch(() => props.modelValue, (open) => {
   if (!open) return
+  loadSeq++
   error.value = ''
   entry.value = null
   versions.value = []
@@ -114,9 +125,9 @@ async function confirmEntry() {
           </span>
         </div>
         <v-select v-if="isNew" v-model="type" :label="t('knowledge.type')" :items="TYPES.map(x => ({ title: t(`knowledge.types.${x}`), value: x }))" data-testid="entry-type" />
-        <v-text-field v-model="title" :label="t('knowledge.entryTitle')" maxlength="300" data-testid="entry-title" />
-        <v-textarea v-model="body" :label="t('knowledge.body')" rows="8" auto-grow data-testid="entry-body" />
-        <v-checkbox v-model="noAi" :label="t('knowledge.noAi')" density="compact" hide-details data-testid="entry-no-ai" />
+        <v-text-field v-model="title" :readonly="!canEdit" :label="t('knowledge.entryTitle')" maxlength="300" data-testid="entry-title" />
+        <v-textarea v-model="body" :readonly="!canEdit" :label="t('knowledge.body')" rows="8" auto-grow data-testid="entry-body" />
+        <v-checkbox v-model="noAi" :disabled="!canEdit" :label="t('knowledge.noAi')" density="compact" hide-details data-testid="entry-no-ai" />
 
         <template v-if="versions.length">
           <h3 class="text-subtitle-1 mt-4 mb-1">{{ t('knowledge.versions') }}</h3>
@@ -132,10 +143,10 @@ async function confirmEntry() {
         </template>
       </v-card-text>
       <v-card-actions>
-        <v-btn v-if="entry?.status === 'draft'" color="success" :disabled="busy" data-testid="entry-confirm" @click="confirmEntry">{{ t('knowledge.confirm') }}</v-btn>
+        <v-btn v-if="canEdit && entry?.status === 'draft'" color="success" :disabled="busy" data-testid="entry-confirm" @click="confirmEntry">{{ t('knowledge.confirm') }}</v-btn>
         <v-spacer />
         <v-btn @click="emit('update:modelValue', false)">{{ t('knowledge.close') }}</v-btn>
-        <v-btn color="primary" variant="flat" :disabled="!canSubmit" data-testid="entry-save" @click="submit">{{ isNew ? t('common.save') : t('knowledge.save') }}</v-btn>
+        <v-btn v-if="canEdit" color="primary" variant="flat" :disabled="!canSubmit" data-testid="entry-save" @click="submit">{{ isNew ? t('common.save') : t('knowledge.save') }}</v-btn>
       </v-card-actions>
     </v-card>
   </v-dialog>

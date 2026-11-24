@@ -255,7 +255,7 @@ useLiveEvents((e) => {
 
       </v-window-item>
       <v-window-item value="knowledge">
-        <ProjectKnowledgeTab :project-id="id" />
+        <ProjectKnowledgeTab :project-id="id" :is-member="isMember" />
       </v-window-item>
       <v-window-item value="ai">
         <ProjectAiSettings :project="project" :can-manage="canManage" @changed="load" />
