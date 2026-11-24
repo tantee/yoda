@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm'
 import {
+  bigserial,
   boolean,
   check,
   index,
@@ -159,6 +160,7 @@ export const events = pgTable(
   'events',
   {
     id: uuid('id').primaryKey().defaultRandom(),
+    seq: bigserial('seq', { mode: 'number' }).notNull(),
     projectId: uuid('project_id')
       .notNull()
       .references(() => projects.id, { onDelete: 'cascade' }),
@@ -168,7 +170,7 @@ export const events = pgTable(
     actorId: uuid('actor_id').references(() => people.id),
     reason: text('reason'),
     payload: jsonb('payload').notNull().default(sql`'{}'::jsonb`),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().default(sql`clock_timestamp()`),
   },
-  (t) => [index('events_work_item_created_idx').on(t.workItemId, t.createdAt)],
+  (t) => [index('events_work_item_seq_idx').on(t.workItemId, t.seq)],
 )
