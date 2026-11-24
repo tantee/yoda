@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { Conversation, Message } from '@yoda/shared'
-import { isSecretaryTyping, mergeMessages } from '~/utils/chat'
+import { applySent, isSecretaryTyping, mergeLatest, mergeMessages } from '~/utils/chat'
 
 const PAGE = 50
 const { t } = useI18n()
@@ -13,7 +13,7 @@ const selectedId = ref<string | null>(null)
 const messages = ref<Message[]>([])
 const hasMore = ref(false)
 const loadError = ref('')
-const loadingOlder = ref(false)
+const loadingOlderFor = ref<string | null>(null)
 const now = ref(Date.now())
 
 const selected = computed(() => conversations.value.find(c => c.id === selectedId.value) ?? null)
@@ -38,6 +38,7 @@ async function loadConversations() {
 }
 
 let msgSeq = 0
+let latestSeq = 0
 async function selectConversation(id: string) {
   selectedId.value = id
   messages.value = []
@@ -58,11 +59,13 @@ async function selectConversation(id: string) {
 async function loadLatest() {
   const id = selectedId.value
   if (!id) return
-  const mine = ++msgSeq
+  const mine = ++latestSeq
   try {
     const page = await api<Message[]>(`/conversations/${id}/messages`, { query: { limit: PAGE } })
-    if (mine !== msgSeq || id !== selectedId.value) return
-    messages.value = mergeMessages(messages.value, page)
+    if (mine !== latestSeq || id !== selectedId.value) return
+    const merged = mergeLatest(messages.value, hasMore.value, page, PAGE)
+    messages.value = merged.messages
+    hasMore.value = merged.hasMore
     void markRead()
   } catch {
     // live refresh failures are silent; the next event retries
@@ -72,8 +75,8 @@ async function loadLatest() {
 async function loadOlder() {
   const id = selectedId.value
   const first = messages.value[0]
-  if (!id || !first || loadingOlder.value || !hasMore.value) return
-  loadingOlder.value = true
+  if (!id || !first || loadingOlderFor.value === id || !hasMore.value) return
+  loadingOlderFor.value = id
   try {
     const page = await api<Message[]>(`/conversations/${id}/messages`, { query: { before: first.seq, limit: PAGE } })
     if (id !== selectedId.value) return
@@ -82,7 +85,7 @@ async function loadOlder() {
   } catch (e) {
     loadError.value = t(errorKey(e))
   } finally {
-    loadingOlder.value = false
+    if (loadingOlderFor.value === id) loadingOlderFor.value = null
   }
 }
 
@@ -107,7 +110,7 @@ async function markRead() {
 }
 
 function onSent(m: Message) {
-  messages.value = mergeMessages(messages.value, [m])
+  messages.value = applySent(selectedId.value, messages.value, m)
   now.value = Date.now()
   void loadConversations()
 }
@@ -186,7 +189,7 @@ onBeforeUnmount(() => {
               @decided="refreshProposals"
             />
             <v-divider />
-            <ChatComposer :conversation-id="selected.id" @sent="onSent" />
+            <ChatComposer :key="selected.id" :conversation-id="selected.id" @sent="onSent" />
           </template>
           <p v-else class="pa-4 text-medium-emphasis">{{ t('chat.select') }}</p>
         </v-col>

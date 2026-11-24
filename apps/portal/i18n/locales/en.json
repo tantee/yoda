@@ -285,7 +285,8 @@
       },
       "project": "Project",
       "chooseProject": "Choose a project"
-    }
+    },
+    "textRequired": "Add a message to send the attached files"
   },
   "notifications": {
     "title": "Notifications",

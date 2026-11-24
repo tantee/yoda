@@ -47,3 +47,21 @@ export function isSecretaryTyping(kind: ConversationKind, messages: Message[], n
   }
   return false
 }
+
+/** A just-sent message joins the list only if its conversation is still the open one. */
+export function applySent(openId: string | null, list: Message[], sent: Message): Message[] {
+  return sent.conversationId === openId ? mergeMessages(list, [sent]) : list
+}
+
+/**
+ * Merges the newest page into the list. When the list was still empty (the initial load was superseded or
+ * not back yet) this page is the first one, so it also decides whether older messages exist.
+ */
+export function mergeLatest(
+  list: Message[],
+  hasMore: boolean,
+  page: Message[],
+  limit: number,
+): { messages: Message[]; hasMore: boolean } {
+  return { messages: mergeMessages(list, page), hasMore: list.length === 0 ? page.length === limit : hasMore }
+}

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Message } from '@yoda/shared'
-import { groupMessages, isSecretaryTyping, mergeMessages } from '../app/utils/chat'
+import { applySent, groupMessages, isSecretaryTyping, mergeLatest, mergeMessages } from '../app/utils/chat'
 
 let n = 0
 function msg(over: Partial<Message> & { createdAt: string }): Message {
@@ -65,5 +65,33 @@ describe('isSecretaryTyping', () => {
   })
   it('is off when there are no person messages', () => {
     expect(isSecretaryTyping('personal', [], now)).toBe(false)
+  })
+})
+
+describe('applySent', () => {
+  const A = '00000000-0000-4000-8000-00000000000a'
+  const B = '00000000-0000-4000-8000-00000000000b'
+  it('merges a message into its own open conversation', () => {
+    const m = msg({ conversationId: A, createdAt: '2026-11-24T10:00:00Z' })
+    expect(applySent(A, [], m)).toEqual([m])
+  })
+  it('drops a message sent from a conversation that is no longer open', () => {
+    const m = msg({ conversationId: A, createdAt: '2026-11-24T10:00:00Z' })
+    const existing = msg({ conversationId: B, createdAt: '2026-11-24T10:00:00Z' })
+    expect(applySent(B, [existing], m)).toEqual([existing])
+    expect(applySent(null, [], m)).toEqual([])
+  })
+})
+
+describe('mergeLatest', () => {
+  const page = (n: number) => Array.from({ length: n }, () => msg({ createdAt: '2026-11-24T10:00:00Z' }))
+  it('sets hasMore from a full page when the list was empty', () => {
+    expect(mergeLatest([], false, page(50), 50).hasMore).toBe(true)
+    expect(mergeLatest([], false, page(3), 50).hasMore).toBe(false)
+  })
+  it('keeps hasMore once the list is populated', () => {
+    const existing = page(50)
+    expect(mergeLatest(existing, true, page(2), 50).hasMore).toBe(true)
+    expect(mergeLatest(existing, false, page(50), 50).hasMore).toBe(false)
   })
 })
