@@ -34,7 +34,11 @@
     "roles": "Roles",
     "add": "Add",
     "lastPm": "A project must keep at least one PM",
-    "notStaff": "Only staff can be added to a project"
+    "notStaff": "Only staff can be added to a project",
+    "autonomy": "Autonomy",
+    "autoAssign": "Auto-assign",
+    "propose": "Propose",
+    "autonomyHint": "Propose: assignments wait for a PM to confirm. Auto-assign: assignments happen directly."
   },
   "people": {
     "name": "Name",
@@ -101,5 +105,57 @@
     "normal": "Normal",
     "high": "High",
     "urgent": "Urgent"
+  },
+  "workItems": {
+    "heading": "Work items",
+    "new": "New work item",
+    "create": "Create",
+    "title": "Title",
+    "description": "Description",
+    "template": "Template",
+    "priority": "Priority",
+    "owner": "Owner",
+    "state": "State",
+    "currentStep": "Current step",
+    "empty": "No work items yet",
+    "back": "Back to project",
+    "tasks": "Tasks",
+    "timeline": "Timeline",
+    "attempt": "Attempt {n}",
+    "executorAi": "AI",
+    "waitingForAi": "Waiting for AI",
+    "assignToPerson": "Assign to person",
+    "cancel": "Cancel work item",
+    "cancelTitle": "Cancel this work item?",
+    "cancelConfirm": "Open tasks will stop and the work item will be marked cancelled. This cannot be undone.",
+    "keep": "Keep",
+    "stateName": {
+      "active": "Active",
+      "done": "Done",
+      "cancelled": "Cancelled"
+    }
+  },
+  "steps": {
+    "done": "Done",
+    "current": "In progress",
+    "pending": "Pending"
+  },
+  "events": {
+    "system": "System",
+    "work_item": {
+      "created": "Work item created",
+      "step_advanced": "Moved to next step",
+      "done": "Work item completed",
+      "cancelled": "Work item cancelled"
+    },
+    "task": {
+      "created": "Task created",
+      "proposed": "Assignee proposed",
+      "assigned": "Task assigned",
+      "unassigned": "Task unassigned",
+      "started": "Task started",
+      "accepted": "Task accepted",
+      "rejected": "Task rejected"
+    }
   }
 }
