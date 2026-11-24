@@ -31,24 +31,9 @@ jobs:
           --health-timeout 3s --health-retries 10
     env:
       TEST_DATABASE_URL: postgres://yoda:yoda-ci@localhost:5432/yoda_test
-      # CI-only throwaway MinIO credentials (the container lives only for this job).
-      S3_ENDPOINT: http://localhost:9000
-      S3_ACCESS_KEY: yoda-ci
-      S3_SECRET_KEY: yoda-ci-minio
+      TEST_STORAGE: memory
     steps:
       - uses: actions/checkout@v4
-      # Service containers cannot take a command and minio/minio needs `server /data`, so start it here.
-      - name: start minio
-        run: |
-          docker run -d --name minio -p 9000:9000 \
-            -e MINIO_ROOT_USER="$S3_ACCESS_KEY" -e MINIO_ROOT_PASSWORD="$S3_SECRET_KEY" \
-            minio/minio server /data
-          for i in $(seq 1 30); do
-            curl -fsS http://localhost:9000/minio/health/live && exit 0
-            sleep 1
-          done
-          docker logs minio
-          exit 1
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with: { node-version-file: .nvmrc, cache: pnpm }

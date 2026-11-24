@@ -20,19 +20,12 @@ test:
   services:
     - name: pgvector/pgvector:pg17
       alias: postgres
-    - name: minio/minio
-      alias: minio
-      command: ['server', '/data']
   variables:
     POSTGRES_USER: yoda # CI-only throwaway database
     POSTGRES_PASSWORD: yoda-ci
     POSTGRES_DB: yoda_test
     TEST_DATABASE_URL: postgres://yoda:yoda-ci@postgres:5432/yoda_test
-    MINIO_ROOT_USER: yoda-ci # CI-only throwaway object store
-    MINIO_ROOT_PASSWORD: yoda-ci-minio
-    S3_ENDPOINT: http://minio:9000
-    S3_ACCESS_KEY: yoda-ci
-    S3_SECRET_KEY: yoda-ci-minio
+    TEST_STORAGE: memory
     LEFTHOOK: '0'
   before_script:
     - corepack enable
