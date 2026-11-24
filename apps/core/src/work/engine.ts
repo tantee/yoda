@@ -231,32 +231,36 @@ export async function submitTask(ctx: WorkCtx, me: Me, taskId: string, result: T
 }
 
 /**
- * Links attachments to the task. Each must belong to the task's project (and, when it is already on a
- * work item, to the task's work item); otherwise 404, so ids of other projects are never confirmed.
+ * Links attachments to the task. Unknown ids or files of another project → 404 (never confirms other
+ * projects' ids). A file already linked to another task, or on another work item → 409 `invalid_state`,
+ * so a submit never moves files off other tasks. Project-level files join the task's work item.
  */
 async function linkAttachments(tx: Tx, task: TaskRow, ids: string[]): Promise<void> {
   if (!ids.length) return
-  const linked = await tx
+  const rows = await tx
+    .select({ id: attachments.id, taskId: attachments.taskId, workItemId: attachments.workItemId })
+    .from(attachments)
+    .where(and(inArray(attachments.id, ids), eq(attachments.projectId, task.projectId)))
+    .orderBy(asc(attachments.id))
+    .for('update')
+  if (rows.length !== ids.length) throw notFound()
+  const foreign = (r: (typeof rows)[number]) =>
+    (r.taskId !== null && r.taskId !== task.id) || (r.workItemId !== null && r.workItemId !== task.workItemId)
+  if (rows.some(foreign)) throw invalidState()
+  await tx
     .update(attachments)
-    .set({ taskId: task.id })
-    .where(
-      and(
-        inArray(attachments.id, ids),
-        eq(attachments.projectId, task.projectId),
-        or(isNull(attachments.workItemId), eq(attachments.workItemId, task.workItemId)),
-      ),
-    )
-    .returning({ id: attachments.id })
-  if (linked.length !== ids.length) throw notFound()
+    .set({ taskId: task.id, workItemId: task.workItemId })
+    .where(inArray(attachments.id, ids))
 }
 
 /**
  * Knowledge from accepted work (system writes, no permission checks: the submitter's rights were checked).
+ * Call after the task row is `accepted` with `result` (submitTask, and the AI runner's submitAiResult).
  * - An `ai` / `human` task with result text → a `progress` entry; `draft` when the AI did the work.
  * - An approving `review` / `approval` → a confirmed `document` entry for each task it depends on
  *   (latest accepted attempt), and that task's draft progress entries become confirmed.
  */
-async function recordAcceptedKnowledge(ctx: WorkCtx, item: WorkItemRow, task: TaskRow, result: TaskResult): Promise<void> {
+export async function recordAcceptedKnowledge(ctx: WorkCtx, item: WorkItemRow, task: TaskRow, result: TaskResult): Promise<void> {
   const { tx } = ctx
   const def = await definitionOf(tx, item)
   const step = def.steps.find((s) => s.key === task.stepKey)
@@ -309,7 +313,10 @@ async function recordAcceptedKnowledge(ctx: WorkCtx, item: WorkItemRow, task: Ta
           isNull(knowledgeEntries.supersededAt),
         ),
       )
-      .orderBy(asc(knowledgeEntries.createdAt))
+      .orderBy(asc(knowledgeEntries.id))
+      // Locked, and the filter is re-checked after any wait: a draft a person edited or confirmed
+      // meanwhile is no longer a current draft and is skipped instead of failing the approval.
+      .for('update')
     for (const d of drafts) await confirmEntry(ctx, null, d.id)
   }
 }

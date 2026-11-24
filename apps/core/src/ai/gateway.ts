@@ -220,7 +220,6 @@ export class AiGateway {
         projectId,
         workItemId: null,
         taskId,
-        actorKind: 'system',
         payload: { costUsd, budgetUsd },
       })
     })
