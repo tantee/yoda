@@ -79,7 +79,7 @@ export function knowledgeRoutes(app: FastifyInstance): void {
     requireStaff(request)
     const body = KnowledgeCreate.parse(request.body)
     const me = request.me
-    const id = await runWork(app.deps, me.id, (ctx) => createEntry(ctx, me, { ...body, sourceKind: 'person' }))
+    const id = await runWork(app.deps, { id: me.id, kind: 'person' }, (ctx) => createEntry(ctx, me, { ...body, sourceKind: 'person' }))
     return reply.status(201).send(await entryOr404(request, id))
   })
 
@@ -88,7 +88,7 @@ export function knowledgeRoutes(app: FastifyInstance): void {
     const { id } = IdParams.parse(request.params)
     const patch = KnowledgeUpdate.parse(request.body)
     const me = request.me
-    const newId = await runWork(app.deps, me.id, (ctx) => updateEntry(ctx, me, id, patch))
+    const newId = await runWork(app.deps, { id: me.id, kind: 'person' }, (ctx) => updateEntry(ctx, me, id, patch))
     return entryOr404(request, newId)
   })
 
@@ -96,7 +96,7 @@ export function knowledgeRoutes(app: FastifyInstance): void {
     requireStaff(request)
     const { id } = IdParams.parse(request.params)
     const me = request.me
-    const newId = await runWork(app.deps, me.id, (ctx) => confirmEntry(ctx, me, id))
+    const newId = await runWork(app.deps, { id: me.id, kind: 'person' }, (ctx) => confirmEntry(ctx, me, id))
     return entryOr404(request, newId)
   })
 }

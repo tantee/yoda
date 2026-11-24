@@ -137,7 +137,7 @@ export function projectRoutes(app: FastifyInstance): void {
     await requireManage(request, id)
     const me = request.me
     // runWork so the task.unassigned events are published after commit.
-    await runWork(app.deps, me.id, async (ctx) => {
+    await runWork(app.deps, { id: me.id, kind: 'person' }, async (ctx) => {
       const { tx } = ctx
       await lockProject(tx, id)
       if (!(await canManageProject(tx, me, id))) throw forbidden()

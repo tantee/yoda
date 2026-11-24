@@ -1,10 +1,11 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { and, asc, desc, eq, sql } from 'drizzle-orm'
 import type { Me, TaskResult } from '@yoda/shared'
 import type { AppDeps } from '../src/app.js'
 import type { Db } from '../src/db/client.js'
-import { events, people, projectMembers, projects, tasks, workItems } from '../src/db/schema.js'
-import { runWork } from '../src/work/context.js'
+import { events, knowledgeEntries, people, projectMembers, projects, tasks, workItems } from '../src/db/schema.js'
+import { recordEvent, runWork } from '../src/work/context.js'
+import { InlineJobQueue } from '../src/jobs/queue.js'
 import { createTaskAttempt } from '../src/work/tasks.js'
 import {
   assignTask,
@@ -47,7 +48,8 @@ async function setup(db: Db, autonomy: 'propose' | 'auto-assign' = 'auto-assign'
 let deps: AppDeps
 let db: Db
 
-const run = <T>(me: Me | null, fn: Parameters<typeof runWork<T>>[2]) => runWork(deps, me?.id ?? null, fn)
+const run = <T>(me: Me | null, fn: Parameters<typeof runWork<T>>[2]) =>
+  runWork(deps, me ? { id: me.id, kind: 'person' } : { id: null, kind: 'system' }, fn)
 
 const create = (s: Setup, me: Me = s.pm, over: Record<string, unknown> = {}) =>
   run(me, (ctx) =>
@@ -84,7 +86,7 @@ async function itemEvents(id: string) {
 }
 
 const submit = (me: Me, taskId: string, result: Partial<TaskResult> = {}) =>
-  run(me, (ctx) => submitTask(ctx, me, taskId, { text: '', ...result }))
+  run(me, (ctx) => submitTask(ctx, me, taskId, { text: '', attachmentIds: [], ...result }))
 
 /** Completes the latest attempt of `key` as `me`, handing it to `me` first when it is unassigned/AI. */
 async function complete(s: Setup, wi: string, key: string, me: Me, result: Partial<TaskResult> = {}) {
@@ -101,6 +103,10 @@ describe('workflow engine', () => {
     deps = await testDeps()
     db = deps.db
     await resetDb(db)
+  })
+  // Accepted work queues embedding jobs; let them finish before the next test truncates.
+  afterEach(async () => {
+    await (deps.jobs as InlineJobQueue).drain()
   })
 
   it('creating a bug-fix item starts intake with accept-bug assigned to the PM', async () => {
@@ -281,7 +287,7 @@ describe('workflow engine', () => {
         await barrier()
         await submitTask(ctx, me, taskId, result)
       })
-    await Promise.all([concurrently(s.dev, review.id, { text: '', ...approve }), concurrently(s.qc, draft.id, { text: 't' })])
+    await Promise.all([concurrently(s.dev, review.id, { text: '', attachmentIds: [], ...approve }), concurrently(s.qc, draft.id, { text: 't', attachmentIds: [] })])
 
     const advanced = (await itemEvents(wi)).filter(
       (e) => e.type === 'work_item.step_advanced' && (e.payload as { from: string }).from === 'dev',
@@ -433,5 +439,98 @@ describe('workflow engine', () => {
     release()
     await Promise.all([inflight, removal])
     expect(await latest(wi, 'review-code')).toMatchObject({ state: 'open', assigneeId: null, proposedAssigneeId: null })
+  })
+
+  describe('knowledge from accepted work', () => {
+    const entriesFor = (taskId: string) =>
+      db.select().from(knowledgeEntries).where(eq(knowledgeEntries.sourceRef, taskId)).orderBy(asc(knowledgeEntries.version))
+
+    it('a human-accepted task records a confirmed progress entry; approval adds a document entry', async () => {
+      const s = await setup(db)
+      const wi = await create(s)
+      await complete(s, wi, 'accept-bug', s.pm, approve)
+      const implId = await complete(s, wi, 'implement', s.dev, { text: 'แก้ฟังก์ชันคำนวณค่าแล็บ' })
+      const progress = await entriesFor(implId)
+      expect(progress).toHaveLength(1)
+      expect(progress[0]).toMatchObject({
+        type: 'progress',
+        scope: 'work_item',
+        workItemId: wi,
+        projectId: s.projectId,
+        title: 'พัฒนาโค้ด',
+        body: 'แก้ฟังก์ชันคำนวณค่าแล็บ',
+        status: 'confirmed',
+        sourceKind: 'task',
+        sourceRef: implId,
+        createdBy: s.dev.id,
+        supersededAt: null,
+      })
+      // Empty results and the approval itself record nothing.
+      const testsId = await complete(s, wi, 'draft-tests', s.qc, { text: '   ' })
+      expect(await entriesFor(testsId)).toEqual([])
+      const reviewId = await complete(s, wi, 'review-code', s.dev, approve)
+      expect(await entriesFor(reviewId)).toEqual([])
+
+      const after = (await entriesFor(implId)).filter((e) => !e.supersededAt)
+      expect(after.map((e) => [e.type, e.status]).sort()).toEqual([
+        ['document', 'confirmed'],
+        ['progress', 'confirmed'],
+      ])
+      expect(after.find((e) => e.type === 'document')).toMatchObject({ title: 'พัฒนาโค้ด', body: 'แก้ฟังก์ชันคำนวณค่าแล็บ', sourceKind: 'task' })
+    })
+
+    it('an ai-executed task leaves a draft progress entry that the approval confirms', async () => {
+      const s = await setup(db)
+      const wi = await create(s)
+      await complete(s, wi, 'accept-bug', s.pm, approve)
+      const impl = (await latest(wi, 'implement'))!
+      expect(impl.executor).toBe('ai')
+      // Stand-in for the AI runner (plan 3 task 8): the task stays ai-executed while it is submitted.
+      await db.update(tasks).set({ assigneeId: s.dev.id }).where(eq(tasks.id, impl.id))
+      await submit(s.dev, impl.id, { text: 'ร่างโดย AI' })
+      const [draft] = await entriesFor(impl.id)
+      expect(draft).toMatchObject({ type: 'progress', status: 'draft', sourceKind: 'task', version: 1 })
+
+      await complete(s, wi, 'review-code', s.dev, approve)
+      const rows = await entriesFor(impl.id)
+      const current = rows.filter((e) => !e.supersededAt)
+      expect(current.map((e) => [e.type, e.status, e.version]).sort()).toEqual([
+        ['document', 'confirmed', 1],
+        ['progress', 'confirmed', 2],
+      ])
+      expect(current.find((e) => e.type === 'progress')!.lineageId).toBe(draft!.lineageId)
+      const types = (await itemEvents(wi)).map((e) => e.type)
+      expect(types).toContain('knowledge.confirmed')
+    })
+
+    it('review changes record no document; the re-approved attempt does', async () => {
+      const s = await setup(db)
+      const wi = await create(s)
+      await complete(s, wi, 'accept-bug', s.pm, approve)
+      const impl1 = await complete(s, wi, 'implement', s.dev, { text: 'v1' })
+      await complete(s, wi, 'review-code', s.dev, { decision: 'changes', text: 'แก้อีกนิด' })
+      expect((await entriesFor(impl1)).map((e) => e.type)).toEqual(['progress'])
+      const impl2 = await complete(s, wi, 'implement', s.dev, { text: 'v2' })
+      await complete(s, wi, 'review-code', s.dev, approve)
+      expect((await entriesFor(impl1)).map((e) => e.type)).toEqual(['progress'])
+      expect((await entriesFor(impl2)).map((e) => e.type).sort()).toEqual(['document', 'progress'])
+    })
+  })
+
+  describe('actor kinds', () => {
+    it('person events carry person; system runs carry system', async () => {
+      const s = await setup(db)
+      const wi = await create(s)
+      const evs = await itemEvents(wi)
+      expect(evs.length).toBeGreaterThan(0)
+      expect(evs.every((e) => e.actorKind === 'person' && e.actorId === s.pm.id)).toBe(true)
+
+      await run(null, (ctx) => recordEvent(ctx, { type: 'work_item.step_advanced', projectId: s.projectId, workItemId: wi, taskId: null }))
+      expect((await itemEvents(wi)).at(-1)).toMatchObject({ actorKind: 'system', actorId: null })
+      await runWork(deps, { id: null, kind: 'ai' }, (ctx) =>
+        recordEvent(ctx, { type: 'work_item.step_advanced', projectId: s.projectId, workItemId: wi, taskId: null }),
+      )
+      expect((await itemEvents(wi)).at(-1)).toMatchObject({ actorKind: 'ai' })
+    })
   })
 })

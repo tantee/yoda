@@ -298,7 +298,7 @@ describe('knowledge API', () => {
 
     const { createEntry } = await import('../src/knowledge/service.js')
     const { runWork } = await import('../src/work/context.js')
-    const draftId = await runWork(app.deps, null, (ctx) =>
+    const draftId = await runWork(app.deps, { id: null, kind: 'system' }, (ctx) =>
       createEntry(ctx, null, { scope: 'work_item', workItemId, type: 'progress', title: 'ร่างโดย AI', body: 'ร่าง', noAi: false, sourceKind: 'ai' }),
     )
     const draft = (await call(dev, 'GET', `/knowledge/${draftId}`)).json() as KnowledgeEntry

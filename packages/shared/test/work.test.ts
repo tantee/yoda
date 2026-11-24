@@ -37,6 +37,9 @@ it('parses WorkItemCreate with defaults', () => {
     title: 'แก้รายงาน', description: '', templateKey: 'bug-fix', priority: 'normal',
   })
 })
-it('defaults TaskResult text', () => {
-  expect(TaskResult.parse({})).toEqual({ text: '' })
+it('defaults TaskResult text and attachment ids; caps attachments at 20', () => {
+  expect(TaskResult.parse({})).toEqual({ text: '', attachmentIds: [] })
+  const id = '00000000-0000-4000-8000-000000000000'
+  expect(TaskResult.safeParse({ attachmentIds: Array(21).fill(id) }).success).toBe(false)
+  expect(TaskResult.safeParse({ attachmentIds: ['x'] }).success).toBe(false)
 })

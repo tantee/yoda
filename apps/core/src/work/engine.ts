@@ -1,5 +1,5 @@
 import type { Me, TaskResult, TaskState, WorkflowTemplateDef, WorkItemCreate } from '@yoda/shared'
-import { and, asc, desc, eq, inArray, or, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm'
 import {
   commentRequired,
   decisionRequired,
@@ -9,7 +9,8 @@ import {
   notMember,
 } from '../auth/plugin.js'
 import type { Tx } from '../db/client.js'
-import { projectMembers, tasks, workItems } from '../db/schema.js'
+import { attachments, knowledgeEntries, projectMembers, tasks, workItems } from '../db/schema.js'
+import { confirmEntry, createEntry } from '../knowledge/service.js'
 import { lockProject } from '../projects/access.js'
 import { latestTemplate, templateById } from '../workflow/seed.js'
 import { recordEvent, type WorkCtx } from './context.js'
@@ -191,10 +192,13 @@ export async function submitTask(ctx: WorkCtx, me: Me, taskId: string, result: T
     if (result.decision === 'changes' && !result.text.trim()) throw commentRequired()
   }
   const base = { projectId: task.projectId, workItemId: task.workItemId, taskId }
+  result = { ...result, attachmentIds: [...new Set(result.attachmentIds)] }
+  await linkAttachments(tx, task, result.attachmentIds)
 
   if (!decides || result.decision === 'approve') {
     await tx.update(tasks).set({ state: 'accepted', result, updatedAt: sql`now()` }).where(eq(tasks.id, taskId))
     await recordEvent(ctx, { type: 'task.accepted', ...base })
+    await recordAcceptedKnowledge(ctx, item, task, result)
   } else {
     const comment = result.text
     await tx.update(tasks).set({ state: 'rejected', result, updatedAt: sql`now()` }).where(eq(tasks.id, taskId))
@@ -224,6 +228,90 @@ export async function submitTask(ctx: WorkCtx, me: Me, taskId: string, result: T
     }
   }
   await progressWorkItem(ctx, task.workItemId)
+}
+
+/**
+ * Links attachments to the task. Each must belong to the task's project (and, when it is already on a
+ * work item, to the task's work item); otherwise 404, so ids of other projects are never confirmed.
+ */
+async function linkAttachments(tx: Tx, task: TaskRow, ids: string[]): Promise<void> {
+  if (!ids.length) return
+  const linked = await tx
+    .update(attachments)
+    .set({ taskId: task.id })
+    .where(
+      and(
+        inArray(attachments.id, ids),
+        eq(attachments.projectId, task.projectId),
+        or(isNull(attachments.workItemId), eq(attachments.workItemId, task.workItemId)),
+      ),
+    )
+    .returning({ id: attachments.id })
+  if (linked.length !== ids.length) throw notFound()
+}
+
+/**
+ * Knowledge from accepted work (system writes, no permission checks: the submitter's rights were checked).
+ * - An `ai` / `human` task with result text → a `progress` entry; `draft` when the AI did the work.
+ * - An approving `review` / `approval` → a confirmed `document` entry for each task it depends on
+ *   (latest accepted attempt), and that task's draft progress entries become confirmed.
+ */
+async function recordAcceptedKnowledge(ctx: WorkCtx, item: WorkItemRow, task: TaskRow, result: TaskResult): Promise<void> {
+  const { tx } = ctx
+  const def = await definitionOf(tx, item)
+  const step = def.steps.find((s) => s.key === task.stepKey)
+  const templateTask = step?.tasks.find((t) => t.key === task.templateTaskKey)
+  if (!step || !templateTask) return
+  const entry = (sourceTask: TaskRow, title: string, body: string) =>
+    ({
+      scope: 'work_item',
+      projectId: sourceTask.projectId,
+      workItemId: sourceTask.workItemId,
+      title,
+      body,
+      noAi: false,
+      sourceKind: 'task',
+      sourceRef: sourceTask.id,
+    }) as const
+
+  if (task.type === 'ai' || task.type === 'human') {
+    if (!result.text.trim()) return
+    await createEntry(ctx, null, {
+      ...entry(task, templateTask.title.th, result.text),
+      type: 'progress',
+      status: task.executor === 'ai' ? 'draft' : 'confirmed',
+    })
+    return
+  }
+  if (result.decision !== 'approve') return
+  for (const depKey of templateTask.dependsOn) {
+    const depDef = step.tasks.find((t) => t.key === depKey)
+    const [dep] = await tx
+      .select()
+      .from(tasks)
+      .where(and(eq(tasks.workItemId, task.workItemId), eq(tasks.templateTaskKey, depKey), eq(tasks.state, 'accepted')))
+      .orderBy(desc(tasks.attempt))
+      .limit(1)
+    if (!dep || !depDef) continue
+    const text = (dep.result as TaskResult | null)?.text ?? ''
+    if (text.trim()) {
+      await createEntry(ctx, null, { ...entry(dep, depDef.title.th, text), type: 'document', status: 'confirmed' })
+    }
+    const drafts = await tx
+      .select({ id: knowledgeEntries.id })
+      .from(knowledgeEntries)
+      .where(
+        and(
+          eq(knowledgeEntries.sourceKind, 'task'),
+          eq(knowledgeEntries.sourceRef, dep.id),
+          eq(knowledgeEntries.type, 'progress'),
+          eq(knowledgeEntries.status, 'draft'),
+          isNull(knowledgeEntries.supersededAt),
+        ),
+      )
+      .orderBy(asc(knowledgeEntries.createdAt))
+    for (const d of drafts) await confirmEntry(ctx, null, d.id)
+  }
 }
 
 export async function assignTask(ctx: WorkCtx, me: Me, taskId: string, personId: string): Promise<void> {

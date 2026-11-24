@@ -92,6 +92,8 @@ export type WorkflowTemplateSummary = z.infer<typeof WorkflowTemplateSummary>
 export const TaskResult = z.object({
   text: z.string().max(50000).default(''),
   decision: z.enum(['approve', 'changes']).optional(),
+  /** Attachments of the task's project, linked to the task on submit. */
+  attachmentIds: z.array(uuid).max(20).default([]),
 })
 export type TaskResult = z.infer<typeof TaskResult>
 

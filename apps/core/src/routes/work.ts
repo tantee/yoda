@@ -36,7 +36,7 @@ export function workRoutes(app: FastifyInstance): void {
     const body = WorkItemCreate.parse(request.body)
     const me = request.me
     // createWorkItem answers 404 for non-members and unknown projects.
-    const workItemId = await runWork(app.deps, me.id, (ctx) => createWorkItem(ctx, me, id, body))
+    const workItemId = await runWork(app.deps, { id: me.id, kind: 'person' }, (ctx) => createWorkItem(ctx, me, id, body))
     return reply.status(201).send(await getWorkItemDetail(db(), me, workItemId))
   })
 
@@ -50,7 +50,7 @@ export function workRoutes(app: FastifyInstance): void {
     requireStaff(request)
     const { id } = IdParams.parse(request.params)
     const me = request.me
-    await runWork(app.deps, me.id, async (ctx) => {
+    await runWork(app.deps, { id: me.id, kind: 'person' }, async (ctx) => {
       await requireWorkItemVisible(ctx.tx, me, id)
       await cancelWorkItem(ctx, me, id)
     })
@@ -82,7 +82,7 @@ export function workRoutes(app: FastifyInstance): void {
       const { id } = IdParams.parse(request.params)
       const body = parse(request.body)
       const me = request.me
-      await runWork(app.deps, me.id, async (ctx) => {
+      await runWork(app.deps, { id: me.id, kind: 'person' }, async (ctx) => {
         await requireTaskVisible(ctx.tx, me, id)
         await act(ctx, me, id, body)
       })
