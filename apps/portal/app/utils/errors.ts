@@ -3,6 +3,7 @@ const CODES: Record<string, string> = {
   not_member: 'errors.notMember',
   decision_required: 'errors.decisionRequired',
   comment_required: 'errors.commentRequired',
+  project_required: 'errors.projectRequired',
 }
 
 export function errorKey(e: unknown): string {

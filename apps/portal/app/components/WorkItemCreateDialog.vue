@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { Priority, ProjectMember, WorkflowTemplateSummary } from '@yoda/shared'
+import type { Person, Priority, ProjectMember, WorkflowTemplateSummary } from '@yoda/shared'
 import { localized } from '~/utils/localized'
 
 const props = defineProps<{
@@ -21,10 +21,13 @@ const description = ref('')
 const templateKey = ref<string | null>(null)
 const priority = ref<Priority>('normal')
 const ownerId = ref<string | null>(null)
+const requesterId = ref<string | null>(null)
+const people = ref<Person[]>([])
 const error = ref('')
 const busy = ref(false)
 
 const templateItems = computed(() => props.templates.map(x => ({ title: localized(x.name, locale.value), value: x.key })))
+const peopleItems = computed(() => people.value.map(p => ({ title: p.displayName, subtitle: p.username, value: p.id })))
 const canSubmit = computed(() => !!title.value.trim() && !!templateKey.value && (!props.ownerRequired || !!ownerId.value))
 
 watch(() => props.modelValue, (open) => {
@@ -34,7 +37,11 @@ watch(() => props.modelValue, (open) => {
   templateKey.value = props.templates[0]?.key ?? null
   priority.value = 'normal'
   ownerId.value = props.defaultOwnerId ?? null
+  requesterId.value = null
   error.value = ''
+  if (!people.value.length) {
+    api<Person[]>('/people').then((list) => { people.value = list }).catch(() => { people.value = [] })
+  }
 })
 
 async function submit() {
@@ -49,6 +56,7 @@ async function submit() {
       priority: priority.value,
     }
     if (ownerId.value) body.ownerId = ownerId.value
+    if (requesterId.value) body.requesterId = requesterId.value
     const created = await api<{ id: string }>(`/projects/${props.projectId}/work-items`, { method: 'POST', body })
     emit('update:modelValue', false)
     emit('created', created.id)
@@ -82,6 +90,15 @@ async function submit() {
           :label="t('workItems.owner')"
           :clearable="!ownerRequired"
           data-testid="wi-owner"
+        />
+        <v-autocomplete
+          v-model="requesterId"
+          :items="peopleItems"
+          :label="t('workItems.requester')"
+          :hint="t('workItems.requesterHint')"
+          persistent-hint
+          clearable
+          data-testid="wi-requester"
         />
       </v-card-text>
       <v-card-actions>

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { Todo } from '@yoda/shared'
 import { localized } from '~/utils/localized'
+import { proposalFallbackKey } from '~/utils/requests'
 
 const { t, locale } = useI18n()
 const api = useApi()
@@ -43,7 +44,7 @@ async function confirm(id: string) {
 onMounted(load)
 useLiveEvents(loadSoon, loadSoon)
 
-const isEmpty = computed(() => !todo.value?.tasks.length && !todo.value?.confirmations.length)
+const isEmpty = computed(() => !todo.value?.tasks.length && !todo.value?.confirmations.length && !todo.value?.proposals.length)
 </script>
 
 <template>
@@ -66,6 +67,27 @@ const isEmpty = computed(() => !todo.value?.tasks.length && !todo.value?.confirm
             </template>
           </v-list-item>
         </v-list>
+      </template>
+
+      <template v-if="todo.proposals.length">
+        <h2 class="text-h6 mb-2">{{ t('todo.proposals') }}</h2>
+        <v-card
+          v-for="p in todo.proposals"
+          :key="p.id"
+          variant="outlined"
+          class="mb-3"
+          data-testid="proposal-item"
+        >
+          <v-card-text>
+            <div class="font-weight-medium" data-testid="proposal-summary">{{ p.summary || (proposalFallbackKey(p) ? t(proposalFallbackKey(p)!) : '') }}</div>
+            <div v-if="p.reason" class="text-caption text-medium-emphasis">{{ p.reason }}</div>
+            <div v-if="p.workItemId" class="text-caption">
+              <NuxtLink :to="`/work-items/${p.workItemId}`">{{ t('todo.workItem') }}</NuxtLink>
+            </div>
+            <ProposalDecide :proposal="p" @decided="load" />
+          </v-card-text>
+        </v-card>
+        <div class="mb-6" />
       </template>
 
       <template v-if="todo.confirmations.length">
