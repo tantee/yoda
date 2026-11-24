@@ -9,6 +9,7 @@ import { searchKnowledge } from './search.js'
 const DEFAULT_MAX_CHARS = 60_000
 const PROGRESS_LIMIT = 10
 const RELATED_LIMIT = 8
+const ENTRY_LIMIT = 50
 const MARKER = '…[truncated]'
 
 /**
@@ -73,7 +74,7 @@ export async function buildContextPack(
   deps: { db: Db; ai?: Pick<AiGateway, 'embed'> | null },
   taskId: string,
   opts: { maxChars?: number } = {},
-): Promise<ContextPack> {
+): Promise<{ pack: ContextPack; overBudget: boolean }> {
   const { db } = deps
   const [t] = await tasksWithContext(db, eq(tasks.id, taskId), [])
   if (!t) throw new Error(`task ${taskId} not found`)
@@ -95,15 +96,15 @@ export async function buildContextPack(
     const parts = [i.result.text.trim()]
     for (const a of i.attachments) {
       const text = a.noAi ? '' : textOf.get(a.id)?.trim()
-      if (text) parts.push(`File ${a.fileName}:\n${text}`)
+      if (text) parts.push(`File ${oneLine(a.fileName)}:\n${text}`)
     }
-    return { title: i.title.en, text: parts.filter(Boolean).join('\n\n') }
+    return { title: oneLine(i.title.en), text: parts.filter(Boolean).join('\n\n') }
   })
 
   const scope = { workItemId: t.workItemId, projectId: t.projectId }
   const [documents, decisions, progress, memory] = await Promise.all([
-    currentEntries(db, scope, 'document', { confirmedOnly: true }),
-    currentEntries(db, scope, 'decision', { confirmedOnly: true, department: true }),
+    currentEntries(db, scope, 'document', { confirmedOnly: true, limit: ENTRY_LIMIT }),
+    currentEntries(db, scope, 'decision', { confirmedOnly: true, department: true, limit: ENTRY_LIMIT }),
     currentEntries(db, scope, 'progress', { workItemOnly: true, limit: PROGRESS_LIMIT }),
     currentEntries(db, scope, 'memory', { workItemOnly: true }),
   ])
@@ -131,44 +132,68 @@ export async function buildContextPack(
   return fit(pack, opts.maxChars ?? DEFAULT_MAX_CHARS)
 }
 
-/** Shortens `text` by `by` characters, ending with the marker. */
+/** Shortens `text` by exactly `by` characters, the last ones being the marker. */
 function shorten(text: string, by: number): string {
-  const keep = Math.max(0, text.length - by - MARKER.length)
-  return text.slice(0, keep) + MARKER
+  return text.slice(0, Math.max(0, text.length - by - MARKER.length)) + MARKER
 }
 
-/** Drops `related`, then `progress`, then truncates documents, then the remaining optional lists, and inputs last. */
-function fit(pack: ContextPack, maxChars: number): ContextPack {
-  const over = () => renderContextPack(pack).length - maxChars
-  const dropLast = (list: PackEntry[]) => {
-    while (list.length && over() > 0) list.pop()
+/** Collapses newlines so a value is safe inside a heading or bold span. */
+const oneLine = (s: string) => s.replace(/\s*[\r\n]+\s*/g, ' ').trim()
+
+const blockOf = (e: PackEntry) => `### ${draft(e)}${oneLine(e.title)}\n\n${e.text}`.trimEnd()
+/** Characters one entry adds to the rendered document (block plus its line break). */
+const entryCost = (e: PackEntry) => blockOf(e).length + 1
+/** Extra characters a section heading adds when its list is non-empty. */
+const headingCost = (h: string) => `## ${h}`.length + 3
+
+/**
+ * Drops `related`, then `progress`, then truncates documents, then the remaining optional lists, and inputs last.
+ * The overage is tracked arithmetically (each removal subtracts its rendered length) so cost is near-linear;
+ * a real render confirms after each pass. `overBudget` is true when nothing more can go and it still exceeds.
+ */
+function fit(pack: ContextPack, maxChars: number): { pack: ContextPack; overBudget: boolean } {
+  const real = () => renderContextPack(pack).length - maxChars
+  for (let pass = 0; pass < 4; pass++) {
+    let o = real()
+    if (o <= 0) return { pack, overBudget: false }
+    const dropLast = (list: PackEntry[], heading: string) => {
+      while (list.length && o > 0) {
+        o -= entryCost(list.pop()!)
+        if (!list.length) o -= headingCost(heading)
+      }
+    }
+    dropLast(pack.related, 'Related knowledge')
+    dropLast(pack.progress, 'Recent progress')
+    // Truncate document texts, largest first, by exactly what is missing.
+    for (const d of [...pack.documents].sort((x, y) => y.text.length - x.text.length)) {
+      if (o <= 0) break
+      const cut = Math.min(o, d.text.length)
+      if (d.text.length > MARKER.length && cut > 0) {
+        d.text = shorten(d.text, cut)
+        o -= cut
+      }
+    }
+    dropLast(pack.memory, 'Working memory')
+    dropLast(pack.decisions, 'Decisions')
+    dropLast(pack.documents, 'Confirmed documents')
+    // Inputs last, from the final one backwards, cutting exactly the overage.
+    for (const i of [...pack.inputs].reverse()) {
+      if (o <= 0) break
+      const cut = Math.min(o, i.text.length)
+      if (i.text.length > MARKER.length && cut > 0) {
+        i.text = shorten(i.text, cut)
+        o -= cut
+      }
+    }
   }
-  if (over() <= 0) return pack
-  dropLast(pack.related)
-  dropLast(pack.progress)
-  // Truncate document texts, largest first, by exactly what is missing.
-  for (const d of [...pack.documents].sort((a, b) => b.text.length - a.text.length)) {
-    const o = over()
-    if (o <= 0) return pack
-    if (d.text.length > MARKER.length) d.text = shorten(d.text, Math.min(o, d.text.length))
-  }
-  dropLast(pack.memory)
-  dropLast(pack.decisions)
-  dropLast(pack.documents)
-  // Inputs last, from the final one backwards.
-  for (const i of [...pack.inputs].reverse()) {
-    const o = over()
-    if (o <= 0) break
-    if (i.text.length > MARKER.length) i.text = shorten(i.text, Math.min(o + MARKER.length, i.text.length))
-  }
-  return pack
+  return { pack, overBudget: real() > 0 }
 }
 
 const draft = (e: PackEntry) => (e.status === 'draft' ? '[UNVERIFIED DRAFT] ' : '')
 
 function section(heading: string, entries: PackEntry[]): string[] {
   if (!entries.length) return []
-  return [`## ${heading}`, '', ...entries.map((e) => `### ${draft(e)}${e.title}\n\n${e.text}`.trimEnd()), '']
+  return [`## ${heading}`, '', ...entries.map(blockOf), '']
 }
 
 /** Markdown for the prompt. Sections: task, work item, project, inputs, documents, decisions, progress, memory, related. */
@@ -177,7 +202,7 @@ export function renderContextPack(pack: ContextPack): string {
   const lines = [
     '# Task',
     '',
-    `**${task.title.en}** / ${task.title.th}`,
+    `**${oneLine(task.title.en)}** / ${oneLine(task.title.th)}`,
     `Step: ${task.stepKey}, attempt ${task.attempt}`,
     '',
     task.instructions.en,
@@ -186,11 +211,11 @@ export function renderContextPack(pack: ContextPack): string {
     '',
   ]
   if (task.feedback) lines.push('## Changes requested', '', task.feedback, '')
-  lines.push('# Work item', '', `**${workItem.title}** (priority: ${workItem.priority})`, '', workItem.description, '')
-  lines.push('# Project', '', `**${project.name}**`, '', project.description, '')
+  lines.push('# Work item', '', `**${oneLine(workItem.title)}** (priority: ${workItem.priority})`, '', workItem.description, '')
+  lines.push('# Project', '', `**${oneLine(project.name)}**`, '', project.description, '')
   if (pack.inputs.length) {
     lines.push('## Inputs from previous steps', '')
-    for (const i of pack.inputs) lines.push(`### ${i.title}`, '', i.text, '')
+    for (const i of pack.inputs) lines.push(`### ${oneLine(i.title)}`, '', i.text, '')
   }
   lines.push(
     ...section('Confirmed documents', pack.documents),
