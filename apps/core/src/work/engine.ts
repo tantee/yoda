@@ -1,5 +1,5 @@
 import type { Me, TaskResult, TaskState, WorkflowTemplateDef, WorkItemCreate } from '@yoda/shared'
-import { and, asc, desc, eq, inArray, isNull, or, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, isNull, like, or, sql } from 'drizzle-orm'
 import {
   commentRequired,
   decisionRequired,
@@ -9,7 +9,7 @@ import {
   notMember,
 } from '../auth/plugin.js'
 import type { Tx } from '../db/client.js'
-import { attachments, knowledgeEntries, projectMembers, tasks, workItems } from '../db/schema.js'
+import { attachments, events, knowledgeEntries, projectMembers, projects, tasks, workItems } from '../db/schema.js'
 import { confirmEntry, createEntry } from '../knowledge/service.js'
 import { lockProject } from '../projects/access.js'
 import { latestTemplate, templateById } from '../workflow/seed.js'
@@ -480,7 +480,6 @@ export async function failAiTask(ctx: WorkCtx, taskId: string, reason: string): 
     workItemId: task.workItemId,
     taskId,
     reason,
-    actorKind: 'system',
   })
 }
 
@@ -493,5 +492,15 @@ export async function retryAiTask(ctx: WorkCtx, me: Me, taskId: string): Promise
   const def = await definitionOf(tx, item)
   const templateTask = def.steps.find((s) => s.key === task.stepKey)?.tasks.find((t) => t.key === task.templateTaskKey)
   if (templateTask?.capability !== 'draft-text') throw invalidState()
+  const [proj] = await tx.select({ noAi: projects.noAi }).from(projects).where(eq(projects.id, task.projectId))
+  if (!proj || proj.noAi) throw invalidState()
+  // Only after a failed draft: no ai.* event yet means the first job is still pending or running.
+  const [last] = await tx
+    .select({ type: events.type })
+    .from(events)
+    .where(and(eq(events.taskId, taskId), like(events.type, 'ai.%')))
+    .orderBy(desc(events.seq))
+    .limit(1)
+  if (last?.type !== 'ai.failed') throw invalidState()
   ctx.jobs.push({ name: 'draft-task', id: taskId })
 }

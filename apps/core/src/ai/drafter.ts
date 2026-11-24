@@ -13,6 +13,8 @@ export type DrafterDeps = Pick<AppDeps, 'db' | 'ai' | 'bus' | 'jobs'>
 function permanentReason(err: unknown): string | null {
   if (err instanceof AiRefused) return err.reason
   if (err instanceof AiFailed && err.reason === 'not_configured') return 'ai_unavailable'
+  // The model answered but with nothing usable; asking again is unlikely to help and costs money.
+  if (err instanceof AiFailed && err.reason === 'empty_output') return 'ai_failed'
   return null
 }
 
