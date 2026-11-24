@@ -48,6 +48,14 @@ Images: `yoda-core` (runs migrations, then `node dist/server.js`) and `yoda-port
 (`node .output/server/index.mjs`). Configuration is environment-only:
 
 - core: `DATABASE_URL`, `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `STAFF_GROUP`, `BOOTSTRAP_ADMINS`
+- core object storage (the compose `minio` service): `S3_ACCESS_KEY`, `S3_SECRET_KEY` (required; the
+  overlay also uses them as the MinIO root credentials), `S3_REGION` (`us-east-1`), `S3_BUCKET` (`yoda`,
+  created on startup). `S3_ENDPOINT` is fixed to `http://minio:9000` by the overlay.
+- core AI: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENAI_BASE_URL` (all optional; jobs whose provider
+  has no key are unavailable), `AI_MODEL_DRAFT` (`anthropic:claude-opus-5-5`), `AI_MODEL_FAST`
+  (`anthropic:claude-haiku-5-5`), `AI_EMBEDDING_MODEL` (empty = no embeddings, trigram search only),
+  `AI_WORKERS` (2). A model id missing from `apps/core/src/ai/prices.json` is logged at startup and
+  refused for projects with a budget.
 - portal: `NUXT_CORE_URL`, `NUXT_PUBLIC_KEYCLOAK_URL`, `NUXT_PUBLIC_KEYCLOAK_REALM`,
   `NUXT_PUBLIC_KEYCLOAK_CLIENT_ID` (read at runtime, not baked into the image)
 - ports: `CORE_PORT` (4000), `PORTAL_PORT` (3000)

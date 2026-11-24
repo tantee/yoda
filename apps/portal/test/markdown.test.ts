@@ -16,4 +16,8 @@ describe('renderMarkdown', () => {
     expect(renderMarkdown('see https://a.b/c')).toContain('rel="noopener noreferrer"')
     expect(renderMarkdown('[x](javascript:alert(1))')).not.toContain('href="javascript:')
   })
+  it('never renders remote images', () => {
+    const html = renderMarkdown('![a](https://evil.example/?q=1)')
+    expect(html).not.toContain('<img')
+  })
 })

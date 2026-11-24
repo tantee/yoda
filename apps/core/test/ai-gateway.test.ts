@@ -1,10 +1,11 @@
 import { and, eq } from 'drizzle-orm'
 import type { FastifyInstance } from 'fastify'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { AiFailed, AiGateway, AiRefused, costOf } from '../src/ai/gateway.js'
+import { AiFailed, AiGateway, AiRefused, EMBED_BATCH_SIZE, costOf, errorSummary } from '../src/ai/gateway.js'
 import { buildModels } from '../src/ai/models.js'
 import { buildApp } from '../src/app.js'
 import { aiCalls, events, projectMembers, projects } from '../src/db/schema.js'
+import { MockEmbeddingModelV4 } from 'ai/test'
 import { embeddingModel, failingModel, textModel } from './ai-mocks.js'
 import { mockModels, resetDb, testDb, testDeps } from './helpers.js'
 import { auth, login, type Who } from './support.js'
@@ -120,7 +121,91 @@ describe('AiGateway.generateText', () => {
   })
 })
 
+describe('unpriced models', () => {
+  const unpriced = () =>
+    mockModels({ draft: textModel('mystery-1', 'x'), ids: { draft: 'openai:mystery-1', fast: OPUS, embed: null } })
+
+  it('warns once at construction naming each unpriced configured model', async () => {
+    const deps = await testDeps()
+    const warns: string[] = []
+    new AiGateway({ db: deps.db, bus: deps.bus, models: unpriced() }, (w) => warns.push(w))
+    expect(warns).toHaveLength(1)
+    expect(warns[0]).toContain('openai:mystery-1')
+    expect(warns[0]).not.toContain('claude-opus-5-5')
+    const quiet: string[] = []
+    new AiGateway({ db: deps.db, bus: deps.bus, models: mockModels() }, (w) => quiet.push(w))
+    expect(quiet).toHaveLength(0)
+  })
+
+  it('a budgeted project refuses an unpriced model before any call', async () => {
+    const db = await testDb()
+    await db.update(projects).set({ aiBudgetUsd: '5.00' }).where(eq(projects.id, projectId))
+    const models = unpriced()
+    const g = await gateway(models)
+    await expect(gen(g)).rejects.toMatchObject({ name: 'AiRefused', reason: 'unpriced_model' })
+    expect((models.draft as ReturnType<typeof textModel>).doStreamCalls).toHaveLength(0)
+    expect(await db.select().from(aiCalls)).toHaveLength(0)
+    // Without a budget the call goes through (cost null), as before.
+    await db.update(projects).set({ aiBudgetUsd: null }).where(eq(projects.id, projectId))
+    expect(await gen(g)).toMatchObject({ text: 'x' })
+  })
+})
+
+describe('AiGateway.generateText options', () => {
+  it('passes maxOutputTokens and the abort signal to the model', async () => {
+    const model = textModel('claude-opus-5-5', 'hi')
+    const g = await gateway(mockModels({ draft: model }))
+    const ac = new AbortController()
+    await g.generateText({ job: 'draft', projectId, system: 's', prompt: 'p', maxOutputTokens: 16000, signal: ac.signal })
+    expect(model.doStreamCalls[0]!.maxOutputTokens).toBe(16000)
+    expect(model.doStreamCalls[0]!.abortSignal).toBeDefined()
+  })
+
+  it('an aborted signal fails the call as a provider error', async () => {
+    const g = await gateway(mockModels({ draft: textModel('claude-opus-5-5', 'hi') }))
+    const ac = new AbortController()
+    ac.abort()
+    await expect(
+      g.generateText({ job: 'draft', projectId, system: 's', prompt: 'p', signal: ac.signal }),
+    ).rejects.toMatchObject({ name: 'AiFailed', reason: 'provider_error' })
+  })
+})
+
+describe('errorSummary', () => {
+  it('keeps name, status code and message only', () => {
+    const err = Object.assign(new Error('rate limited'), {
+      name: 'AI_APICallError',
+      statusCode: 429,
+      requestBodyValues: { prompt: 'SECRET PROJECT CONTENT' },
+    })
+    expect(errorSummary(err)).toBe('AI_APICallError (429): rate limited')
+    expect(errorSummary('x')).toBe('x')
+  })
+})
+
 describe('AiGateway.embed', () => {
+  it(`splits texts into batches of ${EMBED_BATCH_SIZE}, one ai_calls row each, vectors in order`, async () => {
+    const db = await testDb()
+    const emb = new MockEmbeddingModelV4({
+      modelId: 'text-embedding-3-small',
+      maxEmbeddingsPerCall: 2048,
+      doEmbed: async ({ values }) => ({
+        embeddings: values.map((v) => Array.from({ length: 1024 }, (_, k) => (k === 0 ? Number(v) : 0))),
+        usage: { tokens: values.length },
+        warnings: [],
+      }),
+    })
+    const g = await gateway(mockModels({ embed: emb, ids: { draft: OPUS, fast: null, embed: 'openai:text-embedding-3-small' } }))
+    const texts = Array.from({ length: 130 }, (_, i) => String(i))
+    const out = await g.embed({ projectId, texts })
+    expect(emb.doEmbedCalls.map((c) => c.values.length)).toEqual([64, 64, 2])
+    expect(out).toHaveLength(130)
+    expect(out!.map((v) => v[0])).toEqual(texts.map(Number))
+    const rows = await db.select().from(aiCalls)
+    expect(rows).toHaveLength(3)
+    expect(rows.every((r) => r.ok && r.job === 'embed')).toBe(true)
+  })
+
   it('returns null with no embedding model', async () => {
     const g = await gateway()
     expect(await g.embed({ projectId, texts: ['a'] })).toBeNull()
