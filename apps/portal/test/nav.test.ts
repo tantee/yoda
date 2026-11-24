@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { navItemsFor } from '../app/utils/nav'
+import { isStaffPath, navItemsFor } from '../app/utils/nav'
 
 const base = { id: crypto.randomUUID(), username: 'u', displayName: 'U', email: null }
 
@@ -14,5 +14,11 @@ describe('navItemsFor', () => {
   it('requester nav has no staff areas', () => {
     expect(navItemsFor({ ...base, isStaff: false, isAdmin: false }).map(i => i.key))
       .toEqual(['nav.requests', 'nav.chat', 'nav.answers'])
+  })
+})
+
+describe('isStaffPath', () => {
+  it('work items are staff only', () => {
+    expect(isStaffPath('/work-items/abc')).toBe(true)
   })
 })
