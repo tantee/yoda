@@ -7,15 +7,17 @@ import { isStaff, TokenClaims, upsertPersonFromClaims } from './people.js'
 /** Thrown by guards / auth; mapped to `{ error }` bodies by the app error handler. */
 export class HttpError extends Error {
   constructor(
-    readonly statusCode: 401 | 403,
-    readonly body: { error: 'unauthorized' | 'forbidden' },
+    readonly statusCode: 401 | 403 | 404 | 409,
+    readonly body: { error: 'unauthorized' | 'forbidden' | 'not_found' | 'last_pm' },
   ) {
     super(body.error)
   }
 }
 
 const unauthorized = () => new HttpError(401, { error: 'unauthorized' })
-const forbidden = () => new HttpError(403, { error: 'forbidden' })
+export const notFound = () => new HttpError(404, { error: 'not_found' })
+export const lastPm = () => new HttpError(409, { error: 'last_pm' })
+export const forbidden = () => new HttpError(403, { error: 'forbidden' })
 
 /**
  * Verify the bearer token. Returns validated claims, or null for any failure

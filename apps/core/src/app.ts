@@ -4,6 +4,8 @@ import { ZodError } from 'zod'
 import { HttpError, registerAuth } from './auth/plugin.js'
 import type { Config } from './config.js'
 import type { Db } from './db/client.js'
+import { peopleRoutes } from './routes/people.js'
+import { projectRoutes } from './routes/projects.js'
 import { meRoutes } from './routes/me.js'
 
 export type AppDeps = { config: Config; db: Db; jwks: JWTVerifyGetKey }
@@ -26,6 +28,8 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
 
   app.get('/health', { config: { public: true } }, async () => ({ status: 'ok' }))
   meRoutes(app)
+  peopleRoutes(app)
+  projectRoutes(app)
 
   return app
 }

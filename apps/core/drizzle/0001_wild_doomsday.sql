@@ -1,0 +1,1 @@
+ALTER TABLE "people" ADD COLUMN "last_seen_staff" boolean DEFAULT false NOT NULL;
