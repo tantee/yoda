@@ -19,6 +19,14 @@ export const EXPIRE_IN_SECONDS = 10 * 60
 
 const QUEUE_OPTIONS = { retryLimit: RETRY_LIMIT, retryDelay: RETRY_DELAY_SECONDS, expireInSeconds: EXPIRE_IN_SECONDS }
 
+/**
+ * `draft-task` is sent with `singletonKey` = task id on an `exclusive` queue, so at most one drafting job per
+ * task is queued, retrying or active; a duplicate send is dropped by pg-boss. The policy only applies when the
+ * queue is first created (pg-boss cannot change an existing queue's policy).
+ */
+const POLICY: Partial<Record<JobName, 'exclusive'>> = { 'draft-task': 'exclusive' }
+const SINGLETON: readonly JobName[] = ['draft-task']
+
 /** pg-boss backed queue (its own `pgboss` schema in the app database). Used only by server.ts. */
 export async function createPgBossQueue(databaseUrl: string, concurrency: number): Promise<JobQueue> {
   const boss = new PgBoss(databaseUrl)
@@ -26,12 +34,13 @@ export async function createPgBossQueue(databaseUrl: string, concurrency: number
   await boss.start()
   for (const name of JOB_NAMES) {
     // createQueue is insert-if-absent; updateQueue applies changed retry settings to an existing queue.
-    await boss.createQueue(name, QUEUE_OPTIONS)
+    const policy = POLICY[name]
+    await boss.createQueue(name, policy ? { ...QUEUE_OPTIONS, policy } : QUEUE_OPTIONS)
     await boss.updateQueue(name, QUEUE_OPTIONS)
   }
   return {
     async send(name, data) {
-      await boss.send(name, data, QUEUE_OPTIONS)
+      await boss.send(name, data, SINGLETON.includes(name) ? { ...QUEUE_OPTIONS, singletonKey: data.id } : QUEUE_OPTIONS)
     },
     async work(name, handler) {
       await boss.work<{ id: string }>(name, { localConcurrency: concurrency, batchSize: 1 }, async (jobs) => {

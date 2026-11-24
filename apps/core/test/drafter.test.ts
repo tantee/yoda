@@ -19,6 +19,7 @@ let queue: InlineJobQueue
 let admin: Who
 let pm: Who
 let ba: Who
+let sa: Who
 let outsider: Who
 let requester: Who
 
@@ -56,6 +57,7 @@ async function boot(models: ModelSet, jobs: InlineJobQueue = new InlineJobQueue(
   admin = await login(app, 'boss', { staff: true })
   pm = await login(app, 'pm', { staff: true })
   ba = await login(app, 'ba', { staff: true })
+  sa = await login(app, 'sa', { staff: true })
   outsider = await login(app, 'outsider', { staff: true })
   requester = await login(app, 'nurse')
 }
@@ -65,7 +67,7 @@ const call = (who: Who, method: 'GET' | 'POST' | 'PUT', url: string, payload?: u
 
 async function project(): Promise<string> {
   const { id } = (await call(admin, 'POST', '/projects', { name: 'ระบบรายงานแล็บ' })).json() as { id: string }
-  for (const [who, roles] of [[pm, ['PM']], [ba, ['BA']]] as [Who, string[]][]) {
+  for (const [who, roles] of [[pm, ['PM']], [ba, ['BA']], [sa, ['SA']]] as [Who, string[]][]) {
     expect((await call(admin, 'PUT', `/projects/${id}/members/${who.id}`, { roles })).statusCode).toBe(200)
   }
   return id
@@ -90,6 +92,13 @@ async function approveIntake(itemId: string) {
   const t = await active(itemId, 'accept-intake')
   if (t.assigneeId !== pm.id) expect((await call(pm, 'POST', `/tasks/${t.id}/assign`, { personId: pm.id })).statusCode).toBe(200)
   expect((await call(pm, 'POST', `/tasks/${t.id}/submit`, { decision: 'approve', text: '' })).statusCode).toBe(200)
+}
+
+/** Hands the latest attempt of `key` to `who` (as the PM) when needed, then submits it. */
+async function drive(itemId: string, key: string, who: Who, result: Record<string, unknown>) {
+  const t = await active(itemId, key)
+  if (t.assigneeId !== who.id) expect((await call(pm, 'POST', `/tasks/${t.id}/assign`, { personId: who.id })).statusCode).toBe(200)
+  expect((await call(who, 'POST', `/tasks/${t.id}/submit`, result)).statusCode).toBe(200)
 }
 
 async function taskEvents(taskId: string) {
@@ -268,5 +277,83 @@ describe('AI drafter', () => {
     const again = await call(pm, 'POST', `/tasks/${draft.id}/retry-ai`)
     expect(again.statusCode).toBe(409)
     expect(again.json()).toEqual({ error: 'invalid_state' })
+  })
+
+  it('retry-ai while the first draft is still pending → 409, no second job', async () => {
+    const m = draftModel()
+    const held = new HeldQueue()
+    await boot(mockModels({ draft: m.model }), held)
+    const p = await project()
+    const wi = await createItem(p)
+    await approveIntake(wi.id)
+    const draft = await active(wi.id, 'draft-requirements')
+    const res = await call(pm, 'POST', `/tasks/${draft.id}/retry-ai`)
+    expect(res.statusCode).toBe(409)
+    expect(res.json()).toEqual({ error: 'invalid_state' })
+    expect(held.held).toHaveLength(1)
+    await held.release()
+    await held.drain()
+    expect(m.state.calls).toBe(1)
+  })
+
+  it('a noAi project never enqueues drafting; retry-ai → 409 with no job and no event', async () => {
+    const m = draftModel()
+    const held = new HeldQueue()
+    await boot(mockModels({ draft: m.model }), held)
+    const p = await project()
+    const db = await testDb()
+    await db.update(projects).set({ noAi: true }).where(eq(projects.id, p))
+    const wi = await createItem(p)
+    await approveIntake(wi.id)
+    const draft = await active(wi.id, 'draft-requirements')
+    expect(draft).toMatchObject({ state: 'open', executor: 'ai', assigneeId: null })
+    expect(held.held).toHaveLength(0)
+
+    const before = (await taskEvents(draft.id)).length
+    const res = await call(pm, 'POST', `/tasks/${draft.id}/retry-ai`)
+    expect(res.statusCode).toBe(409)
+    expect(held.held).toHaveLength(0)
+    expect(await taskEvents(draft.id)).toHaveLength(before)
+    await held.release()
+    await held.drain()
+    expect(m.state.calls).toBe(0)
+  })
+
+  it('a "changes" rejection recreates the ai draft-text task, which is drafted again with the feedback', async () => {
+    const m = draftModel()
+    await boot(mockModels({ draft: m.model }))
+    const p = await project()
+    const wi = await createItem(p)
+    await approveIntake(wi.id)
+    await queue.drain()
+    await drive(wi.id, 'clarify-requirements', ba, { text: 'ข้อกำหนดฉบับสมบูรณ์' })
+    await drive(wi.id, 'approve-requirements', ba, { decision: 'approve', text: '' })
+    await queue.drain()
+    const design1 = await active(wi.id, 'draft-design')
+    expect(design1).toMatchObject({ attempt: 1, state: 'accepted', executor: 'ai' })
+
+    await drive(wi.id, 'approve-design', sa, { decision: 'changes', text: 'FEEDBACK-ADD-SEQUENCE-DIAGRAM' })
+    await queue.drain()
+    const design2 = await active(wi.id, 'draft-design')
+    expect(design2).toMatchObject({ attempt: 2, state: 'accepted', executor: 'ai', result: { text: DRAFT } })
+    expect(design2.id).not.toBe(design1.id)
+    expect(m.state.prompts.at(-1)).toContain('FEEDBACK-ADD-SEQUENCE-DIAGRAM')
+    expect((await taskEvents(design2.id)).map((e) => e.type)).toContain('ai.drafted')
+  })
+
+  it('empty model output → ai_failed at once, no retry', async () => {
+    const m = draftModel('')
+    await boot(mockModels({ draft: m.model }))
+    const p = await project()
+    const wi = await createItem(p)
+    await approveIntake(wi.id)
+    await queue.drain()
+
+    expect(m.state.calls).toBe(1)
+    const draft = await active(wi.id, 'draft-requirements')
+    expect(draft).toMatchObject({ state: 'open', assigneeId: null, result: null })
+    const failed = (await taskEvents(draft.id)).filter((e) => e.type === 'ai.failed')
+    expect(failed.map((e) => e.reason)).toEqual(['ai_failed'])
+    expect(await callsFor(draft.id)).toMatchObject([{ ok: false, error: 'empty_output' }])
   })
 })
