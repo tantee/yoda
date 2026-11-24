@@ -60,12 +60,9 @@
     "confirmations": "Waiting for your confirmation",
     "empty": "Nothing to do right now",
     "needsAssignee": "Needs an assignee",
-    "proposed": "Proposed",
     "confirm": "Confirm",
-    "details": "Details",
     "project": "Project",
     "workItem": "Work item",
-    "priority": "Priority",
     "back": "Back to to-do"
   },
   "task": {

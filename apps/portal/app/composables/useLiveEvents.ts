@@ -2,12 +2,13 @@ import { LiveEvent } from '@yoda/shared'
 import { parseSse } from '~/utils/sse'
 
 /** Streams /api/stream with fetch (EventSource cannot send Authorization). Reconnects with backoff. */
-export function useLiveEvents(onEvent: (e: LiveEvent) => void): void {
+export function useLiveEvents(onEvent: (e: LiveEvent) => void, onReconnect?: () => void): void {
   const { $keycloak } = useNuxtApp()
   let stopped = false
   let controller: AbortController | null = null
   let timer: ReturnType<typeof setTimeout> | null = null
   let delay = 1000
+  let connectedBefore = false
 
   async function connect() {
     if (stopped) return
@@ -20,6 +21,8 @@ export function useLiveEvents(onEvent: (e: LiveEvent) => void): void {
       })
       if (!res.ok || !res.body) throw new Error(`stream_${res.status}`)
       delay = 1000
+      if (connectedBefore) onReconnect?.()
+      connectedBefore = true
       const reader = res.body.getReader()
       const decoder = new TextDecoder()
       let buffer = ''

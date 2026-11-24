@@ -24,9 +24,12 @@ const workable = computed(() => task.value?.state === 'open' || task.value?.stat
 const isDecision = computed(() => task.value?.type === 'review' || task.value?.type === 'approval')
 const showConfirm = computed(() => canManage.value && task.value?.state === 'proposed' && !!task.value.proposedAssigneeId)
 
+let seq = 0
 async function load() {
+  const mine = ++seq
   try {
     const loaded = await api<TaskWithContext>(`/tasks/${id}`)
+    if (mine !== seq) return
     task.value = loaded
     loadError.value = ''
     if (!project.value) {
@@ -37,19 +40,31 @@ async function load() {
       }
     }
   } catch (e) {
-    loadError.value = t(errorKey(e))
+    if (mine === seq) loadError.value = t(errorKey(e))
   }
 }
+
+let timer: ReturnType<typeof setTimeout> | null = null
+function loadSoon() {
+  if (timer) clearTimeout(timer)
+  timer = setTimeout(load, 200)
+}
+onBeforeUnmount(() => {
+  if (timer) clearTimeout(timer)
+})
 
 async function act(path: string, body?: Record<string, unknown>) {
   error.value = ''
   busy.value = true
   try {
-    task.value = await api<TaskWithContext>(`/tasks/${id}/${path}`, { method: 'POST', body })
+    const updated = await api<TaskWithContext>(`/tasks/${id}/${path}`, { method: 'POST', body })
+    seq++ // drop any in-flight older load
+    task.value = updated
     text.value = ''
     newAssignee.value = null
   } catch (e) {
     error.value = t(errorKey(e))
+    await load() // drop stale action buttons
   } finally {
     busy.value = false
   }
@@ -63,8 +78,8 @@ const assign = () => newAssignee.value && act('assign', { personId: newAssignee.
 
 onMounted(load)
 useLiveEvents((e) => {
-  if (e.taskId === id || e.workItemId === task.value?.workItemId) load()
-})
+  if (e.taskId === id || e.workItemId === task.value?.workItemId) loadSoon()
+}, loadSoon)
 </script>
 
 <template>
@@ -76,6 +91,7 @@ useLiveEvents((e) => {
       <div class="d-flex ga-2 mb-2">
         <v-chip size="small" data-testid="state-chip">{{ t(`task.state.${task.state}`) }}</v-chip>
         <v-chip size="small" variant="outlined">{{ t(`task.type.${task.type}`) }}</v-chip>
+        <v-chip size="small" variant="outlined" data-testid="priority-chip">{{ t(`priority.${task.workItemPriority}`) }}</v-chip>
       </div>
       <p class="text-medium-emphasis mb-4">
         {{ t('todo.workItem') }}:
