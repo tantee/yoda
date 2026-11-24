@@ -53,9 +53,8 @@ const input = (s: { projectId: string; workItemId: string }, over: Record<string
   ...over,
 })
 
-async function eventTypes(db: Db, taskId: string) {
-  const rows = await db.select().from(events).where(eq(events.taskId, taskId)).orderBy(asc(events.createdAt))
-  return rows
+async function taskEvents(db: Db, taskId: string) {
+  return db.select().from(events).where(eq(events.taskId, taskId)).orderBy(asc(events.seq))
 }
 
 describe('pickAssignee', () => {
@@ -103,7 +102,7 @@ describe('createTaskAttempt', () => {
     const id = await runWork({ db, bus: new LiveBus() }, s.owner, (ctx) => createTaskAttempt(ctx, input(s)))
     const [t] = await db.select().from(tasks).where(eq(tasks.id, id))
     expect(t).toMatchObject({ state: 'proposed', proposedAssigneeId: dev, assigneeId: null, role: 'DEV', type: 'human' })
-    expect((await eventTypes(db, id)).map((e) => e.type)).toEqual(['task.created', 'task.proposed'])
+    expect((await taskEvents(db, id)).map((e) => e.type)).toEqual(['task.created', 'task.proposed'])
   })
 
   it('auto-assign project -> open with assignee', async () => {
@@ -114,7 +113,7 @@ describe('createTaskAttempt', () => {
     const id = await runWork({ db, bus: new LiveBus() }, null, (ctx) => createTaskAttempt(ctx, input(s)))
     const [t] = await db.select().from(tasks).where(eq(tasks.id, id))
     expect(t).toMatchObject({ state: 'open', assigneeId: dev, proposedAssigneeId: null })
-    expect((await eventTypes(db, id)).map((e) => e.type)).toEqual(['task.created', 'task.assigned'])
+    expect((await taskEvents(db, id)).map((e) => e.type)).toEqual(['task.created', 'task.assigned'])
   })
 
   it('assigneeHint is assigned directly', async () => {
@@ -126,7 +125,7 @@ describe('createTaskAttempt', () => {
     )
     const [t] = await db.select().from(tasks).where(eq(tasks.id, id))
     expect(t).toMatchObject({ state: 'open', assigneeId: hint, attempt: 2, feedback: 'redo' })
-    expect((await eventTypes(db, id)).map((e) => e.type)).toEqual(['task.created', 'task.assigned'])
+    expect((await taskEvents(db, id)).map((e) => e.type)).toEqual(['task.created', 'task.assigned'])
   })
 
   it('ai executor -> open, no assignee', async () => {
@@ -139,7 +138,7 @@ describe('createTaskAttempt', () => {
     )
     const [t] = await db.select().from(tasks).where(eq(tasks.id, id))
     expect(t).toMatchObject({ state: 'open', assigneeId: null, proposedAssigneeId: null, executor: 'ai' })
-    expect((await eventTypes(db, id)).map((e) => e.type)).toEqual(['task.created'])
+    expect((await taskEvents(db, id)).map((e) => e.type)).toEqual(['task.created'])
   })
 
   it('no candidate -> open unassigned with reason', async () => {
@@ -148,7 +147,7 @@ describe('createTaskAttempt', () => {
     const id = await runWork({ db, bus: new LiveBus() }, null, (ctx) => createTaskAttempt(ctx, input(s)))
     const [t] = await db.select().from(tasks).where(eq(tasks.id, id))
     expect(t).toMatchObject({ state: 'open', assigneeId: null, proposedAssigneeId: null })
-    const evs = await eventTypes(db, id)
+    const evs = await taskEvents(db, id)
     expect(evs.map((e) => e.type)).toEqual(['task.created'])
     expect(evs[0]!.reason).toBe('no_candidate')
   })
@@ -197,10 +196,14 @@ describe('runWork', () => {
 
     const bus2 = new LiveBus()
     const err = console.error
-    console.error = () => {}
+    const logged: unknown[][] = []
+    console.error = (...a: unknown[]) => void logged.push(a)
     try {
+      bus2.subscribe(async () => { throw new Error('async bad') })
       bus2.subscribe(() => { throw new Error('bad listener') })
       expect(() => bus2.publish({ type: 'task.created', projectId: s.projectId, workItemId: null, taskId: null })).not.toThrow()
+      await new Promise((r) => setTimeout(r, 20))
+      expect(logged.length).toBeGreaterThanOrEqual(2)
     } finally {
       console.error = err
     }
