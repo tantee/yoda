@@ -5,6 +5,7 @@ import { seedTemplates } from '../src/workflow/seed.js'
 import { runMigrations } from '../src/db/migrate.js'
 import type { AppDeps } from '../src/app.js'
 import { createS3Storage, type Storage } from '../src/storage/s3.js'
+import { createMemoryStorage } from '../src/storage/memory.js'
 import { AiGateway } from '../src/ai/gateway.js'
 import type { ModelSet } from '../src/ai/models.js'
 import { LiveBus } from '../src/live/bus.js'
@@ -36,7 +37,8 @@ export async function resetDb(db: Db): Promise<void> {
 const TEST_PREFIX = `test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}/`
 let storagePromise: Promise<Storage> | undefined
 function testStorage(config: AppDeps['config']): Promise<Storage> {
-  storagePromise ??= createS3Storage(config, { prefix: TEST_PREFIX })
+  const useMemory = !process.env.S3_ENDPOINT || process.env.TEST_STORAGE === 'memory'
+  storagePromise ??= useMemory ? Promise.resolve(createMemoryStorage()) : createS3Storage(config, { prefix: TEST_PREFIX })
   return storagePromise
 }
 
@@ -66,7 +68,7 @@ export async function testDeps(overrides: Partial<AppDeps> = {}): Promise<AppDep
       bootstrapAdmins: [],
       aiModelDraft: 'anthropic:claude-opus-5-5',
       aiModelFast: 'anthropic:claude-haiku-5-5',
-      // CI sets S3_*; otherwise the dev docker-compose MinIO.
+      // Real S3 is used only when S3_ENDPOINT is set (and TEST_STORAGE != memory); see testStorage.
       s3Endpoint: process.env.S3_ENDPOINT ?? 'http://localhost:9000',
       s3Region: 'us-east-1',
       s3Bucket: 'yoda',
