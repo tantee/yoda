@@ -74,7 +74,7 @@ export function attachmentRoutes(app: FastifyInstance): void {
       const [t] = await db()
         .select({ id: tasks.id })
         .from(tasks)
-        .where(and(eq(tasks.id, taskId), eq(tasks.projectId, projectId)))
+        .where(and(eq(tasks.id, taskId), eq(tasks.projectId, projectId), workItemId ? eq(tasks.workItemId, workItemId) : undefined))
       if (!t) throw notFound()
     }
 
@@ -123,6 +123,7 @@ export function attachmentRoutes(app: FastifyInstance): void {
     const stream = await storage().get(row.storageKey)
     return reply
       .header('Content-Type', row.contentType)
+      .header('X-Content-Type-Options', 'nosniff')
       .header('Content-Disposition', `attachment; filename*=UTF-8''${encodeRFC5987(row.fileName)}`)
       .send(stream)
   })
