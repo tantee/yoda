@@ -92,6 +92,11 @@ export function registerAuth(app: FastifyInstance): void {
   })
 }
 
+/** Any signed-in person, staff or requester; the route itself must then authorize per resource. */
+export function requireSignedIn(request: FastifyRequest): void {
+  if (!request.me) throw unauthorized()
+}
+
 export function requireStaff(request: FastifyRequest): void {
   if (!request.me) throw unauthorized()
   // me.isStaff already includes admins (computed in the auth hook).

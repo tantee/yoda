@@ -9,7 +9,7 @@ import {
   notMember,
 } from '../auth/plugin.js'
 import type { Tx } from '../db/client.js'
-import { attachments, events, knowledgeEntries, projectMembers, projects, tasks, workItems } from '../db/schema.js'
+import { attachments, events, knowledgeEntries, people, projectMembers, projects, tasks, workItems } from '../db/schema.js'
 import { confirmEntry, createEntry } from '../knowledge/service.js'
 import { lockProject } from '../projects/access.js'
 import { latestTemplate, templateById } from '../workflow/seed.js'
@@ -56,8 +56,16 @@ async function isPmOrAdmin(tx: Tx, me: Me, projectId: string): Promise<boolean> 
   return (await memberRoles(tx, projectId, me.id))?.includes('PM') ?? false
 }
 
-async function requireMemberOrAdmin(tx: Tx, me: Me, projectId: string): Promise<void> {
-  if (!me.isAdmin && !(await memberRoles(tx, projectId, me.id))) throw forbidden()
+/**
+ * May `me` act on (start / submit) this task they are assigned to? Project members and admins may; anyone
+ * else only on a REQUESTER task assigned to them (a requester is not a project member). Returns whether the
+ * requester path was used.
+ */
+async function requireCanActOn(tx: Tx, me: Me, task: TaskRow): Promise<{ asRequester: boolean }> {
+  if (task.assigneeId !== me.id) throw forbidden()
+  if (me.isAdmin || (await memberRoles(tx, task.projectId, me.id))) return { asRequester: false }
+  if (task.role === 'REQUESTER') return { asRequester: true }
+  throw forbidden()
 }
 
 async function definitionOf(tx: Tx, item: WorkItemRow): Promise<WorkflowTemplateDef> {
@@ -78,6 +86,12 @@ export async function createWorkItem(
   if (!me.isAdmin && !(await memberRoles(tx, projectId, me.id))) throw notFound()
   const ownerId = input.ownerId ?? me.id
   if (!(await memberRoles(tx, projectId, ownerId))) throw notMember()
+  // Any person may be the requester (staff or not); they need not be a project member.
+  const requesterId = input.requesterId ?? null
+  if (requesterId) {
+    const [p] = await tx.select({ id: people.id }).from(people).where(eq(people.id, requesterId))
+    if (!p) throw notFound()
+  }
   const template = await latestTemplate(tx, input.templateKey)
   if (!template) throw notFound()
 
@@ -90,6 +104,7 @@ export async function createWorkItem(
       description: input.description,
       priority: input.priority,
       ownerId,
+      requesterId,
       createdBy: me.id,
     })
     .returning({ id: workItems.id })
@@ -173,8 +188,7 @@ export async function progressWorkItem(ctx: WorkCtx, workItemId: string): Promis
 
 export async function startTask(ctx: WorkCtx, me: Me, taskId: string): Promise<void> {
   const { task } = await lockTask(ctx.tx, taskId)
-  if (task.assigneeId !== me.id) throw forbidden()
-  await requireMemberOrAdmin(ctx.tx, me, task.projectId)
+  await requireCanActOn(ctx.tx, me, task)
   if (task.state !== 'open') throw invalidState()
   await ctx.tx.update(tasks).set({ state: 'in_progress', updatedAt: sql`now()` }).where(eq(tasks.id, taskId))
   await recordEvent(ctx, { type: 'task.started', projectId: task.projectId, workItemId: task.workItemId, taskId })
@@ -183,8 +197,7 @@ export async function startTask(ctx: WorkCtx, me: Me, taskId: string): Promise<v
 export async function submitTask(ctx: WorkCtx, me: Me, taskId: string, result: TaskResult): Promise<void> {
   const { tx } = ctx
   const { item, task } = await lockTask(tx, taskId)
-  if (task.assigneeId !== me.id) throw forbidden()
-  await requireMemberOrAdmin(tx, me, task.projectId)
+  const { asRequester } = await requireCanActOn(tx, me, task)
   if (task.state !== 'open' && task.state !== 'in_progress') throw invalidState()
   const decides = task.type === 'review' || task.type === 'approval'
   if (decides) {
@@ -193,7 +206,8 @@ export async function submitTask(ctx: WorkCtx, me: Me, taskId: string, result: T
   }
   const base = { projectId: task.projectId, workItemId: task.workItemId, taskId }
   result = { ...result, attachmentIds: [...new Set(result.attachmentIds)] }
-  await linkAttachments(tx, task, result.attachmentIds)
+  // A requester may only attach files they uploaded themselves, never other project files.
+  await linkAttachments(tx, task, result.attachmentIds, asRequester ? me.id : null)
 
   if (!decides || result.decision === 'approve') {
     await tx.update(tasks).set({ state: 'accepted', result, updatedAt: sql`now()` }).where(eq(tasks.id, taskId))
@@ -231,16 +245,23 @@ export async function submitTask(ctx: WorkCtx, me: Me, taskId: string, result: T
 }
 
 /**
- * Links attachments to the task. Unknown ids or files of another project → 404 (never confirms other
+ * Links attachments to the task. Unknown ids, files of another project, or (with `uploadedBy`) files someone
+ * else uploaded → 404 (never confirms other
  * projects' ids). A file already linked to another task, or on another work item → 409 `invalid_state`,
  * so a submit never moves files off other tasks. Project-level files join the task's work item.
  */
-async function linkAttachments(tx: Tx, task: TaskRow, ids: string[]): Promise<void> {
+async function linkAttachments(tx: Tx, task: TaskRow, ids: string[], uploadedBy: string | null): Promise<void> {
   if (!ids.length) return
   const rows = await tx
     .select({ id: attachments.id, taskId: attachments.taskId, workItemId: attachments.workItemId })
     .from(attachments)
-    .where(and(inArray(attachments.id, ids), eq(attachments.projectId, task.projectId)))
+    .where(
+      and(
+        inArray(attachments.id, ids),
+        eq(attachments.projectId, task.projectId),
+        uploadedBy ? eq(attachments.uploadedBy, uploadedBy) : undefined,
+      ),
+    )
     .orderBy(asc(attachments.id))
     .for('update')
   if (rows.length !== ids.length) throw notFound()
@@ -370,7 +391,7 @@ export async function confirmTask(ctx: WorkCtx, me: Me, taskId: string): Promise
 /**
  * Called when `personId` leaves the project (after the membership row is deleted, same transaction):
  * every active task they hold or are proposed for becomes unassigned `open`, so it lands in the PM's
- * confirmations.
+ * confirmations — except REQUESTER tasks they hold as the work item's requester.
  *
  * Locks the project, then every active work item of the project (not only the ones holding this
  * person's tasks), then reads the tasks. A concurrent progress/assign holds a work item lock while it
@@ -395,6 +416,8 @@ export async function unassignMemberTasks(ctx: WorkCtx, projectId: string, perso
         eq(tasks.projectId, projectId),
         inArray(tasks.state, [...ACTIVE_STATES]),
         or(eq(tasks.assigneeId, personId), eq(tasks.proposedAssigneeId, personId)),
+        // The work item's requester keeps their requester tasks: those never depended on membership.
+        sql`not (${tasks.role} = 'REQUESTER' and ${tasks.assigneeId} is not distinct from (select w.requester_id from work_items w where w.id = ${tasks.workItemId}))`,
       ),
     )
     .returning({ id: tasks.id, workItemId: tasks.workItemId })
