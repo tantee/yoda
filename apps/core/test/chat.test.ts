@@ -2,8 +2,9 @@ import type { FastifyInstance } from 'fastify'
 import type { Attachment, Conversation, Message, TaskWithContext, WorkItemDetail } from '@yoda/shared'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { eq } from 'drizzle-orm'
-import { attachments, messages } from '../src/db/schema.js'
+import { attachments, conversationReads, messages } from '../src/db/schema.js'
 import { InlineJobQueue } from '../src/jobs/queue.js'
+import { interimSecretaryReply } from '../src/chat/service.js'
 import { resetDb, testDb } from './helpers.js'
 import { auth, login, makeApp, type Who } from './support.js'
 
@@ -214,6 +215,98 @@ describe('conversations and messages', () => {
   })
 })
 
+describe('work-item threads stay requester-safe', () => {
+  beforeEach(async () => {
+    await resetDb(await testDb())
+    app = await makeApp()
+    admin = await login(app, 'boss')
+    pm = await login(app, 'pm', { staff: true, name: 'คุณพีเอ็ม' })
+    ba = await login(app, 'ba', { staff: true })
+    nurse = await login(app, 'nurse1', { name: 'พยาบาลหนึ่ง' })
+  })
+  afterEach(async () => {
+    await app.close()
+  })
+
+  async function setup() {
+    const p = await project([[pm, ['PM']], [ba, ['BA']]])
+    const item = async (title: string) =>
+      ((await call(pm, 'POST', `/projects/${p}/work-items`, { title, templateKey: 'software-change', requesterId: nurse.id })).json() as WorkItemDetail).id
+    const wi = await item('รายงาน')
+    const wi2 = await item('งานอื่น')
+    const thread = (await call(pm, 'POST', '/conversations', { kind: 'work_item', workItemId: wi })).json() as Conversation
+    const db = await testDb()
+    const file = async (over: Record<string, unknown>) =>
+      (
+        await db
+          .insert(attachments)
+          .values({ projectId: p, storageKey: `k-${Math.random()}`, fileName: 'f.txt', contentType: 'text/plain', sizeBytes: 1, uploadedBy: pm.id, ...over })
+          .returning()
+      )[0]!
+    return { p, wi, wi2, thread, db, file }
+  }
+
+  it('staff may attach only this work item’s files; requesters only thread files', async () => {
+    const { wi, wi2, thread, file } = await setup()
+    const projectLevel = await file({})
+    const otherItem = await file({ workItemId: wi2 })
+    const thisItem = await file({ workItemId: wi })
+    expect((await post(pm, thread.id, { text: 'x', attachmentIds: [otherItem.id] })).statusCode).toBe(404)
+    expect((await post(pm, thread.id, { text: 'x', attachmentIds: [projectLevel.id] })).statusCode).toBe(404)
+    expect((await post(nurse, thread.id, { text: 'x', attachmentIds: [thisItem.id] })).statusCode).toBe(404)
+    expect((await post(nurse, thread.id, { text: 'x', attachmentIds: [projectLevel.id] })).statusCode).toBe(404)
+    expect((await post(pm, thread.id, { text: 'ไฟล์ของงานนี้', attachmentIds: [thisItem.id] })).statusCode).toBe(201)
+    expect((await call(nurse, 'GET', `/conversations/${thread.id}/attachments/${thisItem.id}/download`)).statusCode).not.toBe(404)
+  })
+
+  it('a requester cannot download another work item’s file even if a message references it', async () => {
+    const { thread, wi2, db, file } = await setup()
+    const otherItem = await file({ workItemId: wi2 })
+    await db.insert(messages).values({ conversationId: thread.id, authorKind: 'person', authorId: pm.id, text: 'x', attachmentIds: [otherItem.id] })
+    expect((await call(nurse, 'GET', `/conversations/${thread.id}/attachments/${otherItem.id}/download`)).statusCode).toBe(404)
+  })
+
+  it('a requester upload to a work-item thread joins that work item', async () => {
+    const { p, wi, thread } = await setup()
+    const res = await uploadTo(nurse, thread.id)
+    expect(res.statusCode).toBe(201)
+    expect(res.json()).toMatchObject({ projectId: p, workItemId: wi, conversationId: thread.id })
+  })
+
+  it('requesters see no staff names or ids', async () => {
+    const { wi, thread, file } = await setup()
+    const thisItem = await file({ workItemId: wi })
+    await post(pm, thread.id, { text: 'สวัสดีครับ', attachmentIds: [thisItem.id] })
+    await post(nurse, thread.id, { text: 'สวัสดีค่ะ' })
+    const conv = (await list(nurse)).find((c) => c.id === thread.id)!
+    expect(conv.ownerName).toBeNull()
+    expect((await list(nurse)).find((c) => c.kind === 'intake')).toBeUndefined()
+    expect((await personal(nurse)).ownerName).toBe('พยาบาลหนึ่ง')
+    const msgs = (await call(nurse, 'GET', `/conversations/${thread.id}/messages`)).json() as Message[]
+    expect(msgs[0]).toMatchObject({ authorId: null, authorName: null, authorKind: 'person' })
+    expect(msgs[0]!.attachments[0]).toMatchObject({ uploadedById: null, uploadedByName: '' })
+    expect(msgs[1]).toMatchObject({ authorId: nurse.id, authorName: 'พยาบาลหนึ่ง' })
+    expect(JSON.stringify(msgs)).not.toContain(pm.id)
+    expect(JSON.stringify(await list(nurse))).not.toContain('คุณพีเอ็ม')
+    // Staff still see everything.
+    expect((await list(pm)).find((c) => c.id === thread.id)!.ownerName).toBe('คุณพีเอ็ม')
+    const staffView = (await call(ba, 'GET', `/conversations/${thread.id}/messages`)).json() as Message[]
+    expect(staffView[0]).toMatchObject({ authorId: pm.id, authorName: 'คุณพีเอ็ม' })
+  })
+
+  it('read markers are clamped to the last message', async () => {
+    const { thread } = await setup()
+    const m = (await post(pm, thread.id, { text: 'x' })).json() as Message
+    expect((await call(nurse, 'POST', `/conversations/${thread.id}/read`, { seq: m.seq + 1_000_000 })).statusCode).toBe(204)
+    const db = await testDb()
+    const [r] = await db.select().from(conversationReads).where(eq(conversationReads.conversationId, thread.id))
+    expect(r!.lastReadSeq).toBe(m.seq)
+    const later = (await post(pm, thread.id, { text: 'y' })).json() as Message
+    expect((await list(nurse)).find((c) => c.id === thread.id)!.unread).toBe(1)
+    expect(later.seq).toBeGreaterThan(m.seq)
+  })
+})
+
 describe('interim secretary reply', () => {
   let jobs: InlineJobQueue
   beforeEach(async () => {
@@ -237,6 +330,23 @@ describe('interim secretary reply', () => {
     ])
     expect(msgs[1]!.authorId).toBeNull()
     expect((await call(nurse, 'GET', '/conversations')).json()[0].unread).toBe(1)
+  })
+
+  it('replies only in personal/intake conversations, once per message even when retried', async () => {
+    const c = await personal(nurse)
+    const m = (await post(nurse, c.id, { text: 'สวัสดี' })).json() as Message
+    await jobs.drain()
+    await interimSecretaryReply(app.deps, m.id)
+    const msgs = (await call(nurse, 'GET', `/conversations/${c.id}/messages`)).json() as Message[]
+    expect(msgs.map((x) => x.authorKind)).toEqual(['person', 'system'])
+
+    admin = await login(app, 'boss')
+    const p = (await call(admin, 'POST', '/projects', { name: 'P' })).json() as { id: string }
+    const thread = (await call(admin, 'POST', '/conversations', { kind: 'project', projectId: p.id })).json() as Conversation
+    await post(admin, thread.id, { text: 'ทีม' })
+    await jobs.drain()
+    const threadMsgs = (await call(admin, 'GET', `/conversations/${thread.id}/messages`)).json() as Message[]
+    expect(threadMsgs.map((x) => x.authorKind)).toEqual(['person'])
   })
 })
 

@@ -77,7 +77,8 @@ export const Attachment = z.object({
   sizeBytes: z.number().int(),
   noAi: z.boolean(),
   hasText: z.boolean(),
-  uploadedById: uuid,
+  /** Null in a requester's view of a file someone else uploaded. */
+  uploadedById: uuid.nullable(),
   uploadedByName: z.string(),
   createdAt: z.string(),
 })

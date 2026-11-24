@@ -10,7 +10,8 @@ export const Conversation = z.object({
   id: uuid,
   kind: ConversationKind,
   ownerId: uuid,
-  ownerName: z.string(),
+  /** Null when a requester views a thread someone else (staff) owns. */
+  ownerName: z.string().nullable(),
   projectId: uuid.nullable(),
   workItemId: uuid.nullable(),
   title: z.string(),
