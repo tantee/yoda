@@ -1,6 +1,6 @@
 import type { Attachment, Conversation, Message, Proposal, WorkItemDetail } from '@yoda/shared'
 import { MockLanguageModelV4 } from 'ai/test'
-import { and, eq } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import type { FastifyInstance } from 'fastify'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { AiGateway } from '../src/ai/gateway.js'
@@ -332,6 +332,8 @@ describe('secretary chat: team threads', () => {
     await doc(dev, other, 'เอกสารข้างเคียง', 'รหัส OTHER-4411 ของโครงการข้างเคียง')
     const wi = (await call(pm, 'POST', `/projects/${p}/work-items`, { title: 'คำขอพยาบาล', templateKey: 'bug-fix', requesterId: nurse.id })).json() as WorkItemDetail
     expect((await call(pm, 'POST', `/tasks/${wi.tasks[0]!.id}/assign`, { personId: pm.id })).statusCode).toBe(200)
+    const sibling = (await call(pm, 'POST', `/projects/${p}/work-items`, { title: 'งานภายในอีกงาน', templateKey: 'bug-fix' })).json() as WorkItemDetail
+    await doc(dev, p, 'เอกสารภายใน', 'บันทึกภายใน INTERNAL-7788 ห้ามให้ผู้ขอเห็น')
     const t = (await call(pm, 'POST', '/conversations', { kind: 'work_item', workItemId: wi.id })).json() as Conversation
     await say(pm, t.id, 'รับเรื่องแล้วครับ')
     await say(nurse, t.id, 'ขอบคุณค่ะ')
@@ -339,9 +341,7 @@ describe('secretary chat: team threads', () => {
       {
         toolCalls: [
           { name: 'work_item', input: { workItemId: wi.id } },
-          { name: 'search_knowledge', input: { query: 'OTHER-4411', projectId: other } },
-          { name: 'search_knowledge', input: { query: 'OTHER-4411' } },
-          { name: 'project_status', input: { projectId: other } },
+          { name: 'work_item', input: { workItemId: sibling.id } },
           { name: 'save_note', input: { projectId: other, type: 'fact', title: 'x', body: 'y' } },
         ],
       },
@@ -355,8 +355,33 @@ describe('secretary chat: team threads', () => {
     expect(all).toContain('visible to the requester')
     expect(all).toContain('Requester: ขอบคุณค่ะ')
     expect(lastToolOutputs()).toContain("only work on the thread")
-    expect(model.doStreamCalls[0]!.tools?.map((x) => x.name)).not.toContain('my_todo')
+    // No tools that return internal content in a requester-visible thread.
+    expect(model.doStreamCalls[0]!.tools?.map((x) => x.name).sort()).toEqual(['propose_priority', 'propose_work_item', 'save_note', 'work_item'])
+    expect(all).not.toContain('INTERNAL-7788')
+    expect(all).not.toContain('งานภายในอีกงาน')
+    expect(all).toContain('คำขอพยาบาล')
     expect(await (await testDb()).select().from(knowledgeEntries).where(eq(knowledgeEntries.title, 'x'))).toHaveLength(0)
+  })
+
+  it('a work_item thread without a requester keeps the project-scoped tools', async () => {
+    const p = await project('ระบบแล็บ', [[pm, ['PM']], [dev, ['DEV']]])
+    const other = await project('โครงการข้างเคียง', [[dev, ['DEV']]])
+    await doc(dev, other, 'เอกสารข้างเคียง', 'รหัส OTHER-4411 ของโครงการข้างเคียง')
+    await doc(dev, p, 'คู่มือแล็บ', 'ค่า HbA1c ปกติต้องต่ำกว่า 5.7')
+    const wi = (await call(pm, 'POST', `/projects/${p}/work-items`, { title: 'งานภายใน', templateKey: 'bug-fix' })).json() as WorkItemDetail
+    const t = (await call(dev, 'POST', '/conversations', { kind: 'work_item', workItemId: wi.id })).json() as Conversation
+    play(
+      { toolCalls: [{ name: 'search_knowledge', input: { query: 'HbA1c' } }, { name: 'search_knowledge', input: { query: 'OTHER-4411', projectId: other } }] },
+      { text: 'ได้ข้อมูลแล้ว' },
+    )
+    await say(dev, t.id, '@ai ค่า HbA1c')
+    const tools = model.doStreamCalls[0]!.tools?.map((x) => x.name) ?? []
+    expect(tools).toContain('search_knowledge')
+    expect(tools).toContain('project_status')
+    expect(tools).not.toContain('my_todo')
+    expect(lastToolOutputs()).toContain('ต่ำกว่า 5.7')
+    expect(lastToolOutputs()).toContain('only work on the thread')
+    expect(sent()).not.toContain('OTHER-4411 ของ')
   })
 
   it('a project thread refuses search_knowledge for another project', async () => {
@@ -535,6 +560,39 @@ describe('secretary chat: failures', () => {
     expect(last.authorKind).toBe('ai')
     expect(last.actions).toEqual([{ type: 'knowledge_saved', entryId: e!.id, title: 'บันทึก' }])
     expect(last.text).toContain('หมายเหตุ')
+  })
+
+  it('a staged action that fails after writing leaves nothing behind (savepoint); the others and the reply commit', async () => {
+    const p = await project('ระบบแล็บ', [[pm, ['PM']], [dev, ['DEV']]])
+    const db = await testDb()
+    // Fails the knowledge.created event of one note, after its entry row was inserted.
+    await db.execute(sql`create or replace function test_fail_note() returns trigger language plpgsql as $$
+      begin
+        if new.type = 'knowledge.created' and new.payload->>'title' = 'FAIL-ME' then raise exception 'boom'; end if;
+        return new;
+      end $$`)
+    await db.execute(sql`create trigger test_fail_note before insert on events for each row execute function test_fail_note()`)
+    try {
+      play(
+        {
+          toolCalls: [
+            { name: 'save_note', input: { projectId: p, type: 'fact', title: 'FAIL-ME', body: 'จะล้มเหลว' } },
+            { name: 'save_note', input: { projectId: p, type: 'fact', title: 'OK-NOTE', body: 'สำเร็จ' } },
+          ],
+        },
+        { text: 'บันทึกแล้ว' },
+      )
+      const c = await personal(dev)
+      await say(dev, c.id, 'จดสองเรื่อง')
+      const entries = await db.select().from(knowledgeEntries)
+      expect(entries.map((e) => e.title)).toEqual(['OK-NOTE'])
+      const last = (await thread(dev, c.id)).at(-1)!
+      expect(last).toMatchObject({ authorKind: 'ai', actions: [{ type: 'knowledge_saved', entryId: entries[0]!.id, title: 'OK-NOTE' }] })
+      expect(last.text).toContain('หมายเหตุ')
+    } finally {
+      await db.execute(sql`drop trigger if exists test_fail_note on events`)
+      await db.execute(sql`drop function if exists test_fail_note()`)
+    }
   })
 
   it('duplicate job delivery → one reply, one model run', async () => {

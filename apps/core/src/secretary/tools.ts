@@ -35,13 +35,29 @@ const OUT_OF_SCOPE = "In this thread I can only work on the thread's own project
 
 /**
  * Team threads (`projectId` set): everyone in the thread reads the reply, so tools work only on that project.
- * `hideStaffNames` (work_item threads, which the requester may read): no staff names or internal notes.
+ * `hideStaffNames` (work_item threads): no staff names or internal notes in tool results.
+ * `requesterVisible` (work_item threads whose item has a requester): no tools that return internal content
+ * (knowledge search, project status, other work items); only this item (sanitized) and confirm-first writes.
  */
-export type ToolScope = { projectId: string | null; hideStaffNames: boolean }
-const PERSONAL: ToolScope = { projectId: null, hideStaffNames: false }
+export type ToolScope = {
+  projectId: string | null
+  /** The thread's work item (work_item threads). */
+  workItemId: string | null
+  hideStaffNames: boolean
+  requesterVisible: boolean
+}
+const PERSONAL: ToolScope = { projectId: null, workItemId: null, hideStaffNames: false, requesterVisible: false }
 
 function requireInScope(scope: ToolScope, projectId: string): void {
   if (scope.projectId && scope.projectId !== projectId) throw new ToolRefusal(OUT_OF_SCOPE)
+}
+
+/**
+ * One loggable line for an error: `errorSummary`'s first line, so database errors log the statement but never
+ * its parameters (project content).
+ */
+export function logLine(err: unknown): string {
+  return errorSummary(err).split('\n')[0]!
 }
 
 /** Maps any failure to a user-safe message; unexpected errors are logged (message only) and generalised. */
@@ -59,7 +75,7 @@ function safeMessage(err: unknown): string {
         return 'That request is not valid.'
     }
   }
-  console.warn(`secretary tool failed: ${errorSummary(err)}`)
+  console.warn(`secretary tool failed: ${logLine(err)}`)
   return 'Something went wrong while doing that.'
 }
 
@@ -198,6 +214,8 @@ function staffTools(deps: ToolDeps, me: Me, pending: PendingAction[], scope: Too
       execute: guarded(async ({ workItemId }) => {
         const { item } = await aiVisibleWorkItem(db, me, workItemId)
         requireInScope(scope, item.projectId)
+        // A requester-visible thread only ever shows its own work item.
+        if (scope.requesterVisible && workItemId !== scope.workItemId) throw new ToolRefusal(OUT_OF_SCOPE)
         const d = await getWorkItemDetail(db, me, workItemId)
         return {
           title: d.title,
@@ -334,6 +352,10 @@ function staffTools(deps: ToolDeps, me: Me, pending: PendingAction[], scope: Too
   }
   // The person's to-do spans all their projects: personal chat only.
   if (scope.projectId) delete tools.my_todo
+  if (scope.requesterVisible) {
+    delete tools.search_knowledge
+    delete tools.project_status
+  }
   return tools
 }
 

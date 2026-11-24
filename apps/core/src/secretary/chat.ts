@@ -2,7 +2,7 @@ import type { ActionCard, Me } from '@yoda/shared'
 import type { ModelMessage } from 'ai'
 import { and, asc, desc, eq, gt, inArray, lte } from 'drizzle-orm'
 import type { AppDeps } from '../app.js'
-import { AiFailed, AiRefused, errorSummary, type BillingTarget } from '../ai/gateway.js'
+import { AiFailed, AiRefused, type BillingTarget } from '../ai/gateway.js'
 import { secretaryAnswers, postMessage, visibleConversation, OWN_KINDS, type ConversationRow } from '../chat/service.js'
 import type { Db, Tx } from '../db/client.js'
 import { attachments, conversations, messages, people, projectMembers, projects, workItems } from '../db/schema.js'
@@ -11,7 +11,7 @@ import { personAsMe } from '../proposals/service.js'
 import { runWork, type WorkCtx } from '../work/context.js'
 import { canSeeProject, getMyRequests, getWorkItemDetail, listTemplates, listWorkItems } from '../work/queries.js'
 import { secretarySystemPrompt } from './prompt.js'
-import { secretaryTools, type PendingAction } from './tools.js'
+import { logLine, secretaryTools, type PendingAction } from './tools.js'
 
 export type SecretaryDeps = Pick<AppDeps, 'db' | 'ai' | 'bus' | 'jobs' | 'config'>
 
@@ -121,7 +121,9 @@ export async function secretaryChat(deps: SecretaryDeps, run: JobRun): Promise<v
       messages: history,
       tools: secretaryTools({ db, ai: deps.ai }, me, pending, {
         projectId: scopeProjectId,
+        workItemId: team ? conversation.workItemId : null,
         hideStaffNames: conversation.kind === 'work_item',
+        requesterVisible: await hasRequester(db, conversation),
       }),
       maxSteps: SECRETARY_MAX_STEPS,
       maxOutputTokens: SECRETARY_MAX_OUTPUT_TOKENS,
@@ -138,9 +140,16 @@ export async function secretaryChat(deps: SecretaryDeps, run: JobRun): Promise<v
     const reason = failureReason(err)
     // Unexpected errors before the model ran (e.g. the database) are retried; after it, retrying would bill again.
     if (!reason && !modelDone && !run.isFinalAttempt) throw err
-    console.warn(`secretary-chat ${run.id}: ${errorSummary(err)}`)
+    console.warn(`secretary-chat ${run.id}: ${logLine(err)}`)
     await postFailure(deps, trigger, reason ?? 'ai_failed')
   }
+}
+
+/** A work_item thread whose work item has a requester: they read the secretary's replies. */
+async function hasRequester(db: Db, c: ConversationRow): Promise<boolean> {
+  if (c.kind !== 'work_item' || !c.workItemId) return false
+  const [w] = await db.select({ requesterId: workItems.requesterId }).from(workItems).where(eq(workItems.id, c.workItemId))
+  return !!w?.requesterId
 }
 
 /**
@@ -160,7 +169,7 @@ async function applyActions(ctx: WorkCtx, pending: PendingAction[]): Promise<{ a
       ctx.jobs.push(...jobs)
     } catch (err) {
       failed++
-      console.warn(`secretary-chat: a staged action failed: ${errorSummary(err)}`)
+      console.warn(`secretary-chat: a staged action failed: ${logLine(err)}`)
     }
   }
   return { actions, failed }
