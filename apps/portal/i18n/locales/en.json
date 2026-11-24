@@ -65,7 +65,8 @@
     "decisionRequired": "Choose approve or request changes",
     "commentRequired": "Please add a comment when requesting changes",
     "tooLarge": "File is larger than 25 MB",
-    "unsupportedType": "This file type is not supported"
+    "unsupportedType": "This file type is not supported",
+    "projectRequired": "Choose a project first"
   },
   "todo": {
     "myTasks": "My tasks",
@@ -76,7 +77,9 @@
     "confirm": "Confirm",
     "project": "Project",
     "workItem": "Work item",
-    "back": "Back to to-do"
+    "back": "Back to to-do",
+    "proposals": "Waiting for your decision",
+    "stepAdvance": "The current step is finished. Move this work item to the next step?"
   },
   "task": {
     "state": {
@@ -148,7 +151,10 @@
       "active": "Active",
       "done": "Done",
       "cancelled": "Cancelled"
-    }
+    },
+    "requester": "Requester",
+    "requesterHint": "Optional: the person this is for",
+    "advance": "Advance to next step"
   },
   "steps": {
     "done": "Done",
@@ -292,5 +298,31 @@
     "title": "Notifications",
     "empty": "No notifications",
     "markAllRead": "Mark all as read"
+  },
+  "answers": {
+    "empty": "Nothing needs your answer right now",
+    "back": "Back to questions"
+  },
+  "requests": {
+    "empty": "You have no requests yet. Tell the assistant what you need.",
+    "startChat": "Talk to the assistant",
+    "back": "Back to my requests",
+    "updated": "Last updated",
+    "yourAnswers": "Questions for you",
+    "openChat": "Open chat",
+    "status": {
+      "submitted": "Received",
+      "in_progress": "In progress",
+      "waiting_for_you": "Waiting for you",
+      "done": "Done",
+      "cancelled": "Cancelled"
+    },
+    "hint": {
+      "submitted": "We received your request.",
+      "in_progress": "The team is working on it.",
+      "waiting_for_you": "We need an answer from you to continue.",
+      "done": "This request is complete.",
+      "cancelled": "This request was cancelled."
+    }
   }
 }

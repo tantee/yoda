@@ -97,6 +97,9 @@ async function assign(taskId: string) {
   assigningId.value = null
   assignee.value = null
 }
+async function advance() {
+  await act(() => api(`/work-items/${id}/advance`, { method: 'POST' }))
+}
 async function cancelItem() {
   cancelOpen.value = false
   await act(() => api(`/work-items/${id}/cancel`, { method: 'POST' }))
@@ -125,6 +128,14 @@ useLiveEvents((e) => {
       <div class="d-flex align-center mb-2">
         <h1 class="text-h5">{{ item.title }}</h1>
         <v-spacer />
+        <v-btn
+          v-if="canManage && item.awaitingAdvance"
+          color="primary"
+          class="mr-2"
+          :loading="busy"
+          data-testid="advance-btn"
+          @click="advance"
+        >{{ t('workItems.advance') }}</v-btn>
         <v-btn v-if="canCancel" color="error" variant="outlined" data-testid="cancel-btn" @click="cancelOpen = true">{{ t('workItems.cancel') }}</v-btn>
       </div>
       <div class="d-flex flex-wrap ga-2 mb-2">
@@ -132,6 +143,9 @@ useLiveEvents((e) => {
         <v-chip size="small" variant="outlined" data-testid="priority-chip">{{ t(`priority.${item.priority}`) }}</v-chip>
         <v-chip size="small" variant="outlined" data-testid="template-chip">{{ templateName }}</v-chip>
         <v-chip size="small" variant="outlined" data-testid="owner-chip" prepend-icon="mdi-account-outline">{{ item.ownerName }}</v-chip>
+        <v-chip v-if="item.requesterName" size="small" variant="outlined" data-testid="requester-chip" prepend-icon="mdi-account-voice">
+          {{ t('workItems.requester') }}: {{ item.requesterName }}
+        </v-chip>
       </div>
       <p v-if="item.description" class="mb-4" style="white-space: pre-wrap">{{ item.description }}</p>
       <v-alert v-if="error" type="error" class="mb-4" data-testid="action-error">{{ error }}</v-alert>

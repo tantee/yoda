@@ -2,11 +2,12 @@
 import type { Attachment } from '@yoda/shared'
 import { validateUpload } from '~/utils/upload'
 
-const props = defineProps<{ projectId: string; workItemId?: string; taskId?: string }>()
+/** With `conversationId` the file goes into that conversation (requesters); otherwise into the project. */
+const props = defineProps<{ projectId?: string; conversationId?: string; workItemId?: string; taskId?: string }>()
 const emit = defineEmits<{ uploaded: [Attachment] }>()
 
 const { t } = useI18n()
-const { upload } = useUpload()
+const { upload, uploadToConversation } = useUpload()
 const noAi = ref(false)
 const busy = ref(false)
 const over = ref(false)
@@ -26,7 +27,9 @@ async function send(files: FileList | File[] | null | undefined) {
   }
   busy.value = true
   try {
-    const a = await upload(props.projectId, file, { workItemId: props.workItemId, taskId: props.taskId, noAi: noAi.value })
+    const a = props.conversationId
+      ? await uploadToConversation(props.conversationId, file, { noAi: noAi.value })
+      : await upload(props.projectId!, file, { workItemId: props.workItemId, taskId: props.taskId, noAi: noAi.value })
     done.value = `${t('knowledge.uploaded')}: ${a.fileName}`
     emit('uploaded', a)
   } catch (e) {

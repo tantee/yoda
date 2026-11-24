@@ -21,4 +21,9 @@ describe('isStaffPath', () => {
   it('work items are staff only', () => {
     expect(isStaffPath('/work-items/abc')).toBe(true)
   })
+  it('the to-do list is staff only but a single task is reachable by requesters', () => {
+    expect(isStaffPath('/todo')).toBe(true)
+    expect(isStaffPath('/todo/')).toBe(true)
+    expect(isStaffPath('/todo/3f2c')).toBe(false)
+  })
 })
