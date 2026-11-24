@@ -188,7 +188,7 @@ describe('runWork', () => {
     expect(seen).toHaveLength(1)
     expect(seen[0]!.count).toBe(1)
     expect(seen[0]!.e).toEqual({
-      type: 'work_item.created', projectId: s.projectId, workItemId: s.workItemId, taskId: null,
+      type: 'work_item.created', projectId: s.projectId, workItemId: s.workItemId, taskId: null, conversationId: null, personId: null,
     })
     const [row] = await db.select().from(events)
     expect(row!.actorId).toBe(s.owner)
@@ -241,7 +241,7 @@ describe('runWork', () => {
     try {
       bus2.subscribe(async () => { throw new Error('async bad') })
       bus2.subscribe(() => { throw new Error('bad listener') })
-      expect(() => bus2.publish({ type: 'task.created', projectId: s.projectId, workItemId: null, taskId: null })).not.toThrow()
+      expect(() => bus2.publish({ type: 'task.created', projectId: s.projectId, workItemId: null, taskId: null, conversationId: null, personId: null })).not.toThrow()
       await new Promise((r) => setTimeout(r, 20))
       expect(logged.length).toBeGreaterThanOrEqual(2)
     } finally {

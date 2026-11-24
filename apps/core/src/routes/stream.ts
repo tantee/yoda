@@ -33,7 +33,8 @@ export function streamRoutes(app: FastifyInstance): void {
       chain = chain.then(async () => {
         if (!writable()) return
         try {
-          if (!(await canSeeProject(db, me, e.projectId))) return
+          // Events without a project (conversation/person-addressed) are delivered to nobody yet.
+          if (!e.projectId || !(await canSeeProject(db, me, e.projectId))) return
           if (writable()) raw.write(`event: live\ndata: ${JSON.stringify(e)}\n\n`)
         } catch (err) {
           app.log.error(err, 'stream delivery failed')

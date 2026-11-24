@@ -1,6 +1,10 @@
 import { z } from 'zod'
 import { ProjectRole } from './projects.js'
 import { Attachment } from './knowledge.js'
+import { ActorKind } from './actors.js'
+import { Proposal } from './proposals.js'
+
+export { ActorKind }
 
 const uuid = z.string().uuid()
 const keyRe = /^[a-z0-9-]+$/
@@ -23,10 +27,14 @@ export type WorkItemState = z.infer<typeof WorkItemState>
 export const TaskCapability = z.enum(['draft-text', 'analyze-repo', 'code-change', 'run-tests'])
 export type TaskCapability = z.infer<typeof TaskCapability>
 
+/** Project roles plus REQUESTER: the person who asked for the work. */
+export const TemplateRole = z.enum([...ProjectRole.options, 'REQUESTER'])
+export type TemplateRole = z.infer<typeof TemplateRole>
+
 export const TemplateTask = z.object({
   key: z.string().regex(keyRe),
   type: TaskType,
-  role: ProjectRole,
+  role: TemplateRole,
   title: LocalizedText,
   instructions: LocalizedText,
   dependsOn: z.array(z.string()).default([]),
@@ -105,7 +113,7 @@ export const Task = z.object({
   templateTaskKey: z.string(),
   attempt: z.number().int().min(1),
   type: TaskType,
-  role: ProjectRole,
+  role: TemplateRole,
   executor: TaskExecutor,
   title: LocalizedText,
   instructions: LocalizedText,
@@ -142,7 +150,11 @@ export const TaskWithContext = Task.extend({
 })
 export type TaskWithContext = z.infer<typeof TaskWithContext>
 
-export const Todo = z.object({ tasks: z.array(TaskWithContext), confirmations: z.array(TaskWithContext) })
+export const Todo = z.object({
+  tasks: z.array(TaskWithContext),
+  confirmations: z.array(TaskWithContext),
+  proposals: z.array(Proposal),
+})
 export type Todo = z.infer<typeof Todo>
 
 export const TaskAssign = z.object({ personId: uuid })
@@ -154,6 +166,7 @@ export const WorkItemCreate = z.object({
   templateKey: z.string(),
   priority: Priority.default('normal'),
   ownerId: uuid.optional(),
+  requesterId: uuid.optional(),
 })
 export type WorkItemCreate = z.infer<typeof WorkItemCreate>
 
@@ -168,6 +181,8 @@ export const WorkItem = z.object({
   priority: Priority,
   ownerId: uuid,
   ownerName: z.string(),
+  requesterId: uuid.nullable(),
+  requesterName: z.string().nullable(),
   state: WorkItemState,
   createdAt: z.string(),
   updatedAt: z.string(),
@@ -179,11 +194,9 @@ export const EventType = z.enum([
   'task.created', 'task.proposed', 'task.assigned', 'task.unassigned', 'task.started', 'task.accepted', 'task.rejected',
   'ai.drafted', 'ai.failed', 'ai.retried', 'ai.budget_warning', 'ai.budget_exceeded',
   'knowledge.created', 'knowledge.updated', 'knowledge.confirmed',
+  'proposal.created', 'proposal.accepted', 'proposal.rejected', 'proposal.superseded', 'work_item.priority_changed',
 ])
 export type EventType = z.infer<typeof EventType>
-
-export const ActorKind = z.enum(['person', 'system', 'ai'])
-export type ActorKind = z.infer<typeof ActorKind>
 
 export const EventEntry = z.object({
   id: uuid,
@@ -207,8 +220,24 @@ export type WorkItemDetail = z.infer<typeof WorkItemDetail>
 
 export const LiveEvent = z.object({
   type: EventType,
-  projectId: uuid,
+  projectId: uuid.nullable(),
   workItemId: uuid.nullable(),
   taskId: uuid.nullable(),
+  conversationId: uuid.nullable(),
+  /** Set for person-addressed events such as notifications. */
+  personId: uuid.nullable(),
 })
 export type LiveEvent = z.infer<typeof LiveEvent>
+
+export const RequestStatus = z.enum(['submitted', 'in_progress', 'waiting_for_you', 'done', 'cancelled'])
+export type RequestStatus = z.infer<typeof RequestStatus>
+
+export const MyRequest = z.object({
+  workItemId: uuid,
+  title: z.string(),
+  projectName: z.string(),
+  status: RequestStatus,
+  currentStepName: LocalizedText.nullable(),
+  updatedAt: z.string(),
+})
+export type MyRequest = z.infer<typeof MyRequest>
