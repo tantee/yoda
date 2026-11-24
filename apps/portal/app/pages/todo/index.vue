@@ -31,6 +31,20 @@ onBeforeUnmount(() => {
   if (timer) clearTimeout(timer)
 })
 
+async function advance(workItemId: string) {
+  error.value = ''
+  advancing.value = workItemId
+  try {
+    await api(`/work-items/${workItemId}/advance`, { method: 'POST' })
+  } catch (e) {
+    error.value = t(errorKey(e))
+  } finally {
+    advancing.value = null
+  }
+  await load()
+}
+const advancing = ref<string | null>(null)
+
 async function confirm(id: string) {
   error.value = ''
   try {
@@ -44,7 +58,13 @@ async function confirm(id: string) {
 onMounted(load)
 useLiveEvents(loadSoon, loadSoon)
 
-const isEmpty = computed(() => !todo.value?.tasks.length && !todo.value?.confirmations.length && !todo.value?.proposals.length)
+const isEmpty = computed(
+  () =>
+    !todo.value?.tasks.length &&
+    !todo.value?.confirmations.length &&
+    !todo.value?.proposals.length &&
+    !todo.value?.awaitingAdvance.length,
+)
 </script>
 
 <template>
@@ -69,8 +89,30 @@ const isEmpty = computed(() => !todo.value?.tasks.length && !todo.value?.confirm
         </v-list>
       </template>
 
-      <template v-if="todo.proposals.length">
+      <template v-if="todo.proposals.length || todo.awaitingAdvance.length">
         <h2 class="text-h6 mb-2">{{ t('todo.proposals') }}</h2>
+        <v-card
+          v-for="w in todo.awaitingAdvance"
+          :key="w.id"
+          variant="outlined"
+          class="mb-3"
+          data-testid="awaiting-advance-item"
+        >
+          <v-card-text class="d-flex flex-wrap align-center ga-2">
+            <div>
+              <div class="font-weight-medium">{{ t('todo.awaitingAdvance') }}</div>
+              <NuxtLink :to="`/work-items/${w.id}`" class="text-caption">{{ w.title }}</NuxtLink>
+            </div>
+            <v-spacer />
+            <v-btn
+              color="primary"
+              size="small"
+              :loading="advancing === w.id"
+              data-testid="todo-advance-btn"
+              @click="advance(w.id)"
+            >{{ t('workItems.advance') }}</v-btn>
+          </v-card-text>
+        </v-card>
         <v-card
           v-for="p in todo.proposals"
           :key="p.id"

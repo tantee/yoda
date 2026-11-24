@@ -15,7 +15,7 @@ const OPUS = 'anthropic:claude-opus-5-5'
 
 async function gateway(models = mockModels()) {
   const deps = await testDeps()
-  return new AiGateway({ db: deps.db, bus: deps.bus, models })
+  return new AiGateway({ db: deps.db, bus: deps.bus, models, config: deps.config })
 }
 const gen = (g: AiGateway, pid: string | null = projectId) =>
   g.generateText({ job: 'draft', projectId: pid, system: 's', prompt: 'p' })
@@ -128,12 +128,12 @@ describe('unpriced models', () => {
   it('warns once at construction naming each unpriced configured model', async () => {
     const deps = await testDeps()
     const warns: string[] = []
-    new AiGateway({ db: deps.db, bus: deps.bus, models: unpriced() }, (w) => warns.push(w))
+    new AiGateway({ db: deps.db, bus: deps.bus, models: unpriced(), config: deps.config }, (w) => warns.push(w))
     expect(warns).toHaveLength(1)
     expect(warns[0]).toContain('openai:mystery-1')
     expect(warns[0]).not.toContain('claude-opus-5-5')
     const quiet: string[] = []
-    new AiGateway({ db: deps.db, bus: deps.bus, models: mockModels() }, (w) => quiet.push(w))
+    new AiGateway({ db: deps.db, bus: deps.bus, models: mockModels(), config: deps.config }, (w) => quiet.push(w))
     expect(quiet).toHaveLength(0)
   })
 

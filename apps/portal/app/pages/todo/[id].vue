@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { Attachment, Conversation, ProjectDetail, TaskInput, TaskWithContext } from '@yoda/shared'
 import { localized } from '~/utils/localized'
+import { taskViewFor } from '~/utils/requests'
 
 const { t, locale } = useI18n()
 const { me } = useMe()
@@ -18,8 +19,12 @@ const newAssignee = ref<string | null>(null)
 const attached = ref<Attachment[]>([])
 const intakeId = ref<string | null>(null)
 
-/** Requesters get a trimmed view: no project, work item or staff controls. */
-const staff = computed(() => !!me.value?.isStaff)
+/**
+ * Requesters, and staff who see this task only as its requester (outside the project), get a trimmed view:
+ * no project, work item or staff controls; uploads go to their own conversation.
+ */
+const view = computed(() => taskViewFor(me.value, task.value))
+const staff = computed(() => !view.value.requesterView)
 
 const isAssignee = computed(() => !!task.value?.assigneeId && task.value.assigneeId === me.value?.id)
 const isPm = computed(() => !!project.value?.members.some(m => m.personId === me.value?.id && m.roles.includes('PM')))
@@ -37,7 +42,8 @@ async function load() {
     if (mine !== seq) return
     task.value = loaded
     loadError.value = ''
-    if (staff.value && !project.value) {
+    if (!staff.value) void loadIntake()
+    else if (!project.value) {
       try {
         project.value = await api<ProjectDetail>(`/projects/${loaded.projectId}`)
       } catch {
@@ -90,7 +96,7 @@ const confirmTask = () => act('confirm')
 const assign = () => newAssignee.value && act('assign', { personId: newAssignee.value })
 
 async function loadIntake() {
-  if (staff.value) return
+  if (intakeId.value) return
   try {
     intakeId.value = (await api<Conversation>('/conversations/personal')).id
   } catch {
@@ -98,10 +104,7 @@ async function loadIntake() {
   }
 }
 
-onMounted(() => {
-  load()
-  loadIntake()
-})
+onMounted(load)
 useLiveEvents((e) => {
   if (e.taskId === id || e.workItemId === task.value?.workItemId) loadSoon()
 }, loadSoon)
@@ -109,7 +112,7 @@ useLiveEvents((e) => {
 
 <template>
   <div>
-    <v-btn variant="text" prepend-icon="mdi-arrow-left" :to="staff ? '/todo' : '/answers'" class="mb-2">{{ staff ? t('todo.back') : t('answers.back') }}</v-btn>
+    <v-btn variant="text" prepend-icon="mdi-arrow-left" :to="view.back" class="mb-2">{{ view.back === '/todo' ? t('todo.back') : t('answers.back') }}</v-btn>
     <v-alert v-if="loadError" type="error" class="mb-4" data-testid="load-error">{{ loadError }}</v-alert>
     <template v-if="task">
       <h1 class="text-h5 mb-2">{{ localized(task.title, locale) }}</h1>

@@ -3,6 +3,8 @@ import type { LiveEvent, Notification, Task, WorkItemDetail } from '@yoda/shared
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { and, eq } from 'drizzle-orm'
 import { events, notifications } from '../src/db/schema.js'
+import { createProposal } from '../src/proposals/service.js'
+import { runWork } from '../src/work/context.js'
 import { resetDb, testDb } from './helpers.js'
 import { acceptStepAdvance, auth, login, makeApp, type Who } from './support.js'
 
@@ -172,6 +174,31 @@ describe('notifications', () => {
     const pending = (await inbox(pm2)).filter((n) => n.kind === 'proposal_pending')
     expect(pending).toHaveLength(1)
     expect(pending[0]!.body).toContain('แก้รายงานผิดพลาด')
+  })
+
+  it('project-less proposals notify every admin and every PM of any project, once each', async () => {
+    // pm is PM of two projects and an admin is also a PM: each person is notified once.
+    await project([[pm, ['PM']], [dev, ['DEV']]])
+    await project([[pm, ['PM']], [pm2, ['PM']], [admin, ['PM']], [qc, ['QC']]])
+    const id = await runWork(app.deps, { id: null, kind: 'ai' }, (ctx) =>
+      createProposal(ctx, {
+        projectId: null,
+        workItemId: null,
+        kind: 'create_work_item',
+        summary: 'แจ้งปัญหา',
+        reason: '',
+        payload: { title: 'รายงานช้า', description: '', templateKey: 'bug-fix', priority: 'normal' },
+        onBehalfOf: nurse.id,
+      }),
+    )
+    const db = await testDb()
+    const rows = await db.select().from(notifications).where(eq(notifications.kind, 'proposal_pending'))
+    expect(rows.map((r) => r.personId).sort()).toEqual([admin.id, pm.id, pm2.id].sort())
+    expect(rows.every((r) => r.dedupeKey === `proposal:${id}`)).toBe(true)
+    // Not the requester it was made for, nor staff who are not PMs.
+    expect(await inbox(dev)).toEqual([])
+    expect(await inbox(qc)).toEqual([])
+    expect(await inbox(nurse)).toEqual([])
   })
 
   it('marking read: by ids, then all; others ids are ignored; bad bodies are 400', async () => {

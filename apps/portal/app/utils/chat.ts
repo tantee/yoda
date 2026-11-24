@@ -65,3 +65,15 @@ export function mergeLatest(
 ): { messages: Message[]; hasMore: boolean } {
   return { messages: mergeMessages(list, page), hasMore: list.length === 0 ? page.length === limit : hasMore }
 }
+
+/** Stable markers the core stores as system message text, mapped to i18n keys. */
+const SYSTEM_MARKERS: Record<string, string> = {
+  'secretary.not_ready': 'chat.marker.secretaryNotReady',
+}
+
+/** The i18n key for a known `[[marker]]` system message, else null (show the text as is). */
+export function systemMarkerKey(m: Pick<Message, 'authorKind' | 'text'>): string | null {
+  if (m.authorKind !== 'system') return null
+  const match = /^\[\[([a-z0-9_.]+)\]\]$/.exec(m.text.trim())
+  return (match && SYSTEM_MARKERS[match[1]!]) ?? null
+}

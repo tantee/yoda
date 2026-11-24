@@ -152,18 +152,20 @@ export const TaskWithContext = Task.extend({
   projectName: z.string(),
   inputs: z.array(TaskInput),
   attachments: z.array(Attachment),
+  /**
+   * The viewer sees this task only as its requester (a requester, or staff outside the project): the portal
+   * shows the trimmed requester view (no project / work item links, uploads go to their own conversation).
+   */
+  viewerIsRequester: z.boolean(),
 })
 export type TaskWithContext = z.infer<typeof TaskWithContext>
 
-export const Todo = z.object({
-  tasks: z.array(TaskWithContext),
-  confirmations: z.array(TaskWithContext),
-  proposals: z.array(Proposal),
-})
-export type Todo = z.infer<typeof Todo>
-
 export const TaskAssign = z.object({ personId: uuid })
 export type TaskAssign = z.infer<typeof TaskAssign>
+
+/** POST /work-items/:id/reopen: send the item back to an earlier step of its template. */
+export const WorkItemReopen = z.object({ stepKey: z.string().min(1) })
+export type WorkItemReopen = z.infer<typeof WorkItemReopen>
 
 export const WorkItemCreate = z.object({
   title: z.string().trim().min(1).max(200),
@@ -199,8 +201,19 @@ export const WorkItem = z.object({
 })
 export type WorkItem = z.infer<typeof WorkItem>
 
+export const Todo = z.object({
+  tasks: z.array(TaskWithContext),
+  confirmations: z.array(TaskWithContext),
+  proposals: z.array(Proposal),
+  /** Work items (where the caller decides, as for confirmations) whose finished step waits to be advanced. */
+  awaitingAdvance: z.array(WorkItem),
+})
+export type Todo = z.infer<typeof Todo>
+
 export const EventType = z.enum([
   'work_item.created', 'work_item.step_advanced', 'work_item.done', 'work_item.cancelled',
+  /** A PM sent the item back to an earlier step (payload `{ from, to }`). */
+  'work_item.reopened',
   'task.created', 'task.proposed', 'task.assigned', 'task.unassigned', 'task.started', 'task.accepted', 'task.rejected',
   'ai.drafted', 'ai.failed', 'ai.retried', 'ai.budget_warning', 'ai.budget_exceeded',
   'knowledge.created', 'knowledge.updated', 'knowledge.confirmed',

@@ -32,5 +32,5 @@ export function isStaffPath(path: string): boolean {
 }
 
 export function homeFor(me: Me): string {
-  return me.isStaff ? '/chat' : '/requests'
+  return me.isStaff ? '/todo' : '/requests'
 }

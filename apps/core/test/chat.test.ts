@@ -17,9 +17,9 @@ let nurse: Who
 let nurse2: Who
 
 const NO_ID = '00000000-0000-4000-8000-000000000000'
-const NOT_READY = 'ผู้ช่วยยังไม่พร้อมใช้งาน'
+const NOT_READY = '[[secretary.not_ready]]'
 
-const call = (who: Who, method: 'GET' | 'POST' | 'PUT', url: string, payload?: unknown) =>
+const call = (who: Who, method: 'GET' | 'POST' | 'PUT' | 'DELETE', url: string, payload?: unknown) =>
   app.inject({ method, url, headers: auth(who), payload: payload as object | undefined })
 
 function multipart(file: { name: string; type: string; data: Buffer }): { payload: Buffer; headers: Record<string, string> } {
@@ -121,6 +121,31 @@ describe('conversations and messages', () => {
       expect((await call(who, 'GET', `/conversations/${c.id}/messages`)).statusCode).toBe(404)
       expect((await list(who)).map((x) => x.id)).not.toContain(c.id)
     }
+  })
+
+  it('a staff creator removed from the project loses the threads they started there', async () => {
+    const p = await project([[pm, ['PM']], [ba, ['BA']]])
+    const wi = (await call(pm, 'POST', `/projects/${p}/work-items`, { title: 'รายงาน', templateKey: 'software-change' })).json() as WorkItemDetail
+    const thread = (await call(ba, 'POST', '/conversations', { kind: 'project', projectId: p })).json() as Conversation
+    const itemThread = (await call(ba, 'POST', '/conversations', { kind: 'work_item', workItemId: wi.id })).json() as Conversation
+    const up = await uploadTo(ba, thread.id)
+    expect(up.statusCode).toBe(201)
+    const file = up.json() as Attachment
+    expect((await post(ba, thread.id, { text: 'ดูไฟล์', attachmentIds: [file.id] })).statusCode).toBe(201)
+    expect((await call(ba, 'GET', `/conversations/${thread.id}/attachments/${file.id}/download`)).statusCode).toBe(200)
+
+    expect((await call(admin, 'DELETE', `/projects/${p}/members/${ba.id}`)).statusCode).toBeLessThan(300)
+    for (const c of [thread, itemThread]) {
+      expect((await call(ba, 'GET', `/conversations/${c.id}/messages`)).statusCode).toBe(404)
+      expect((await post(ba, c.id, { text: 'x' })).statusCode).toBe(404)
+      expect((await call(ba, 'GET', `/conversations/${c.id}`)).statusCode).toBe(404)
+    }
+    expect((await call(ba, 'GET', `/conversations/${thread.id}/attachments/${file.id}/download`)).statusCode).toBe(404)
+    expect((await list(ba)).map((x) => x.id)).not.toContain(thread.id)
+    expect((await list(ba)).map((x) => x.id)).not.toContain(itemThread.id)
+    // The project's members still see them.
+    expect((await call(pm, 'GET', `/conversations/${thread.id}/messages`)).statusCode).toBe(200)
+    expect((await list(pm)).map((x) => x.id)).toEqual(expect.arrayContaining([thread.id, itemThread.id]))
   })
 
   it('work-item threads: members and the requester; project must match the item', async () => {

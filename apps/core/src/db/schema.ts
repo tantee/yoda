@@ -154,6 +154,11 @@ export const tasks = pgTable(
     assigneeId: uuid('assignee_id').references(() => people.id),
     proposedAssigneeId: uuid('proposed_assignee_id').references(() => people.id),
     result: jsonb('result').$type<TaskResult>(),
+    /**
+     * Set when a PM reopened the work item to this task's step or an earlier one: the attempt is history and
+     * no longer counts toward its step (an accepted one must be done again).
+     */
+    supersededAt: timestamp('superseded_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },

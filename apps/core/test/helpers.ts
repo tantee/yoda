@@ -84,7 +84,7 @@ export async function testDeps(overrides: Partial<AppDeps> = {}): Promise<AppDep
     db,
     jwks: localJwks,
     bus,
-    ai: new AiGateway({ db, bus, models: mockModels() }),
+    ai: new AiGateway({ db, bus, models: mockModels(), config }),
     storage: await testStorage(config),
     // Most tests drive AI tasks by hand, so drafting and secretary jobs are dropped by default; drafter and
     // chat tests that assert on them pass their own queue.

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Message } from '@yoda/shared'
-import { applySent, groupMessages, isSecretaryTyping, mergeLatest, mergeMessages } from '../app/utils/chat'
+import { applySent, groupMessages, isSecretaryTyping, mergeLatest, mergeMessages, systemMarkerKey } from '../app/utils/chat'
 
 let n = 0
 function msg(over: Partial<Message> & { createdAt: string }): Message {
@@ -93,5 +93,20 @@ describe('mergeLatest', () => {
     const existing = page(50)
     expect(mergeLatest(existing, true, page(2), 50).hasMore).toBe(true)
     expect(mergeLatest(existing, false, page(50), 50).hasMore).toBe(false)
+  })
+})
+
+describe('systemMarkerKey', () => {
+  const at = '2026-11-24T10:00:00Z'
+  it('maps a known marker in a system message to its i18n key', () => {
+    expect(systemMarkerKey(msg({ authorKind: 'system', text: '[[secretary.not_ready]]', createdAt: at }))).toBe(
+      'chat.marker.secretaryNotReady',
+    )
+  })
+  it('ignores unknown markers, plain text and non-system authors', () => {
+    expect(systemMarkerKey(msg({ authorKind: 'system', text: '[[nope]]', createdAt: at }))).toBeNull()
+    expect(systemMarkerKey(msg({ authorKind: 'system', text: 'hello', createdAt: at }))).toBeNull()
+    expect(systemMarkerKey(msg({ authorKind: 'person', text: '[[secretary.not_ready]]', createdAt: at }))).toBeNull()
+    expect(systemMarkerKey(msg({ authorKind: 'ai', text: '[[secretary.not_ready]]', createdAt: at }))).toBeNull()
   })
 })
