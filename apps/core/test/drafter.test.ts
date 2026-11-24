@@ -56,7 +56,7 @@ class HeldQueue extends InlineJobQueue {
 async function boot(models: ModelSet, jobs: InlineJobQueue = new InlineJobQueue()) {
   const db = await testDb()
   queue = jobs
-  app = await makeApp({ ai: new AiGateway({ db, bus: new LiveBus(), models }), jobs })
+  app = await makeApp({ ai: new AiGateway({ db, bus: new LiveBus(), models, config: { dailyTaskCap: 8 } }), jobs })
   admin = await login(app, 'boss', { staff: true })
   pm = await login(app, 'pm', { staff: true })
   ba = await login(app, 'ba', { staff: true })

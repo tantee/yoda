@@ -57,6 +57,13 @@
       "when": 1795541821472,
       "tag": "0007_clammy_sway",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1795543913161,
+      "tag": "0008_task_superseded",
+      "breakpoints": true
     }
   ]
 }

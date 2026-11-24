@@ -373,6 +373,11 @@ describe('proposals', () => {
     expect(stuck).toMatchObject({ currentStepKey: 'intake', awaitingAdvance: true })
     const listed = (await call(pm, 'GET', `/projects/${p}/work-items`)).json() as { id: string; awaitingAdvance: boolean }[]
     expect(listed.find((x) => x.id === wi.id)!.awaitingAdvance).toBe(true)
+    // It waits in the deciders' to-do (the project's PMs; admins only for PM-less projects), not other members'.
+    expect((await todo(pm)).awaitingAdvance.map((x) => [x.id, x.awaitingAdvance])).toEqual([[wi.id, true]])
+    expect((await todo(pm2)).awaitingAdvance.map((x) => x.id)).toEqual([wi.id])
+    expect((await todo(dev)).awaitingAdvance).toEqual([])
+    expect((await todo(admin)).awaitingAdvance).toEqual([])
 
     expect((await call(dev, 'POST', `/work-items/${wi.id}/advance`)).statusCode).toBe(403)
     expect((await call(outsider, 'POST', `/work-items/${wi.id}/advance`)).statusCode).toBe(404)
@@ -382,6 +387,7 @@ describe('proposals', () => {
     expect(res.statusCode).toBe(200)
     const after = res.json() as WorkItemDetail
     expect(after).toMatchObject({ currentStepKey: 'ba', awaitingAdvance: false })
+    expect((await todo(pm)).awaitingAdvance).toEqual([])
     expect(after.tasks.map((t) => t.templateTaskKey)).toContain('draft-requirements')
     const advanced = await advancedFrom(wi.id, 'intake')
     expect(advanced.map((e) => [e.actorKind, e.actorId])).toEqual([['person', pm.id]])

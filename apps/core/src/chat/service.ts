@@ -12,8 +12,11 @@ export type ConversationRow = typeof conversations.$inferSelect
 
 /** Stored title of a personal/intake conversation; the portal localizes it. */
 export const PERSONAL_TITLE = 'ผู้ช่วย'
-/** Interim secretary reply until the real secretary (plan 4, Task 8) replaces the job handler. */
-export const SECRETARY_NOT_READY = 'ผู้ช่วยยังไม่พร้อมใช้งาน'
+/**
+ * Interim secretary reply until the real secretary (plan 4, Task 8) replaces the job handler. A stable marker,
+ * not prose: the portal shows it in the reader's language (system messages only).
+ */
+export const SECRETARY_NOT_READY = '[[secretary.not_ready]]'
 
 const OWN_KINDS = ['personal', 'intake'] as const
 
@@ -49,7 +52,9 @@ export async function ensurePersonalConversation(db: Db, me: Me): Promise<string
 export async function visibleConversation(db: Conn, me: Me, conversationId: string): Promise<ConversationRow | null> {
   const [c] = await db.select().from(conversations).where(eq(conversations.id, conversationId))
   if (!c) return null
-  if (c.ownerId === me.id) return c
+  // Only personal/intake threads belong to their owner; team threads need current access, even for their
+  // creator (a staff member removed from the project loses the threads they started there).
+  if ((OWN_KINDS as readonly string[]).includes(c.kind)) return c.ownerId === me.id ? c : null
   if (c.kind !== 'project' && c.kind !== 'work_item') return null
   // Requesters are never project members; checked anyway so a stray membership can't open project threads.
   if (me.isStaff && c.projectId && (await canSeeProject(db, me, c.projectId))) return c
@@ -61,8 +66,8 @@ export async function visibleConversation(db: Conn, me: Me, conversationId: stri
 }
 
 /**
- * Owner always; `project` threads: staff project members and admins; `work_item` threads: the same, plus the
- * work item's requester. Personal and intake conversations: the owner only.
+ * Personal and intake conversations: the owner only. `project` threads: staff project members and admins;
+ * `work_item` threads: the same, plus the work item's requester. Creating a team thread grants nothing.
  */
 export async function canSeeConversation(db: Conn, me: Me, conversationId: string): Promise<boolean> {
   return (await visibleConversation(db, me, conversationId)) !== null
@@ -92,7 +97,8 @@ function visibleWhere(db: Conn, me: Me): SQL {
     eq(conversations.kind, 'work_item'),
     inArray(conversations.workItemId, db.select({ id: workItems.id }).from(workItems).where(eq(workItems.requesterId, me.id))),
   )
-  return or(eq(conversations.ownerId, me.id), staff, asRequester)!
+  const own = and(eq(conversations.ownerId, me.id), inArray(conversations.kind, [...OWN_KINDS]))
+  return or(own, staff, asRequester)!
 }
 
 async function queryConversations(db: Conn, me: Me, extra?: SQL): Promise<Conversation[]> {

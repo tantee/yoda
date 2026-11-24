@@ -4,6 +4,7 @@ import {
   commentRequired,
   decisionRequired,
   forbidden,
+  HttpError,
   invalidState,
   notFound,
   notMember,
@@ -145,7 +146,10 @@ export type StepStatus = {
   def: WorkflowTemplateDef
   step: WorkflowTemplateDef['steps'][number]
   next: WorkflowTemplateDef['steps'][number] | undefined
+  /** Latest current (not superseded) attempt per task key. */
   latest: Map<string, TaskRow>
+  /** Latest attempt per task key, superseded ones included (attempt numbers never repeat). */
+  lastAttempt: Map<string, TaskRow>
   active: Set<string>
   satisfied: (key: string) => boolean
   /** Every task of the current step is accepted (latest attempt). */
@@ -161,14 +165,18 @@ async function stepStatus(tx: Tx, item: WorkItemRow): Promise<StepStatus> {
   const next = def.steps[stepIndex + 1]
   const rows = await tx.select().from(tasks).where(eq(tasks.workItemId, item.id))
   const latest = new Map<string, TaskRow>()
+  const lastAttempt = new Map<string, TaskRow>()
   const active = new Set<string>()
   for (const r of rows) {
+    const last = lastAttempt.get(r.templateTaskKey)
+    if (!last || r.attempt > last.attempt) lastAttempt.set(r.templateTaskKey, r)
+    if (isActive(r.state)) active.add(r.templateTaskKey)
+    if (r.supersededAt) continue
     const cur = latest.get(r.templateTaskKey)
     if (!cur || r.attempt > cur.attempt) latest.set(r.templateTaskKey, r)
-    if (isActive(r.state)) active.add(r.templateTaskKey)
   }
   const satisfied = (key: string) => latest.get(key)?.state === 'accepted'
-  return { def, step, next, latest, active, satisfied, complete: step.tasks.every((t) => satisfied(t.key)) }
+  return { def, step, next, latest, lastAttempt, active, satisfied, complete: step.tasks.every((t) => satisfied(t.key)) }
 }
 
 /**
@@ -202,7 +210,7 @@ export async function progressWorkItem(ctx: WorkCtx, workItemId: string): Promis
     const item = await lockItem(tx, workItemId)
     if (item.state !== 'active') return
     const status = await stepStatus(tx, item)
-    const { step, next, latest, active, satisfied } = status
+    const { step, next, latest, lastAttempt, active, satisfied } = status
 
     if (status.complete) {
       // `propose` projects confirm each step advance: a pending proposal waits for the PM (decideProposal
@@ -220,14 +228,16 @@ export async function progressWorkItem(ctx: WorkCtx, workItemId: string): Promis
       if (satisfied(t.key) || active.has(t.key) || !t.dependsOn.every(satisfied)) continue
       const prev = latest.get(t.key)
       const prevText = prev?.state === 'rejected' ? (prev.result as { text?: string } | null)?.text : undefined
+      // After a reopen the superseded attempt still names who did it last.
+      const last = lastAttempt.get(t.key)
       await createTaskAttempt(ctx, {
         workItemId,
         projectId: item.projectId,
         stepKey: step.key,
         task: t,
-        attempt: (prev?.attempt ?? 0) + 1,
+        attempt: (last?.attempt ?? 0) + 1,
         feedback: prevText && prevText.trim() ? prevText : null,
-        assigneeHint: prev?.assigneeId ?? null,
+        assigneeHint: last?.assigneeId ?? null,
         executor: t.type === 'ai' ? 'ai' : 'human',
       })
     }
@@ -302,6 +312,95 @@ export async function advanceWorkItem(ctx: WorkCtx, me: Me, workItemId: string):
   if (!status) throw invalidState()
   await supersedePending(ctx, workItemId, 'step_advance')
   await applyStepAdvance(ctx, item, status)
+}
+
+/**
+ * PM/admin: sends an active work item back to `stepKey`, an earlier step of its template (else 422
+ * `invalid_state`; 409 when the item is no longer active), e.g. after the requester asked for changes on the
+ * delivery. Under the work item lock: rejects every active task from `stepKey` on (reason `reopened`),
+ * supersedes every attempt of `stepKey` and later steps (they must be done again), moves the item to
+ * `stepKey`, and creates new attempts of that step's root tasks (no `dependsOn`) carrying the requester's
+ * latest change request as feedback and the previous attempt's assignee as hint. Pending step_advance
+ * proposals are superseded.
+ */
+export async function reopenWorkItem(ctx: WorkCtx, me: Me, workItemId: string, stepKey: string): Promise<void> {
+  const { tx } = ctx
+  const item = await lockItem(tx, workItemId)
+  if (!(await isPmOrAdmin(tx, me, item.projectId))) throw forbidden()
+  if (item.state !== 'active') throw invalidState()
+  const def = await definitionOf(tx, item)
+  const current = def.steps.findIndex((s) => s.key === item.currentStepKey)
+  const target = def.steps.findIndex((s) => s.key === stepKey)
+  // Not an earlier step: a bad request about this item's template rather than a race.
+  if (current < 0 || target < 0 || target >= current) throw new HttpError(422, { error: 'invalid_state' })
+  const base = { projectId: item.projectId, workItemId, taskId: null }
+
+  const rejected = await tx
+    .update(tasks)
+    .set({ state: 'rejected', updatedAt: sql`now()` })
+    .where(
+      and(
+        eq(tasks.workItemId, workItemId),
+        inArray(tasks.state, [...ACTIVE_STATES]),
+        // Current and later steps (from the target on, in case an earlier step still had one open).
+        inArray(tasks.stepKey, def.steps.slice(target).map((s) => s.key)),
+      ),
+    )
+    .returning({ id: tasks.id })
+  rejected.sort((a, b) => a.id.localeCompare(b.id))
+  for (const r of rejected) await recordEvent(ctx, { type: 'task.rejected', ...base, taskId: r.id, reason: 'reopened' })
+  await supersedePending(ctx, workItemId, 'step_advance')
+
+  // Everything from the target step on is redone: earlier attempts no longer satisfy their step.
+  await tx
+    .update(tasks)
+    .set({ supersededAt: sql`now()` })
+    .where(
+      and(
+        eq(tasks.workItemId, workItemId),
+        isNull(tasks.supersededAt),
+        inArray(tasks.stepKey, def.steps.slice(target).map((s) => s.key)),
+      ),
+    )
+  await tx.update(workItems).set({ currentStepKey: stepKey, updatedAt: sql`now()` }).where(eq(workItems.id, workItemId))
+  await recordEvent(ctx, { type: 'work_item.reopened', ...base, payload: { from: item.currentStepKey, to: stepKey } })
+
+  const [change] = await tx
+    .select({ result: tasks.result })
+    .from(tasks)
+    .where(
+      and(
+        eq(tasks.workItemId, workItemId),
+        eq(tasks.role, 'REQUESTER'),
+        eq(tasks.state, 'rejected'),
+        sql`${tasks.result}->>'decision' = 'changes'`,
+      ),
+    )
+    .orderBy(desc(tasks.updatedAt), desc(tasks.id))
+    .limit(1)
+  const comment = change?.result?.text?.trim() ? change.result.text : null
+
+  const step = def.steps[target]!
+  for (const t of step.tasks.filter((x) => x.dependsOn.length === 0)) {
+    const [prev] = await tx
+      .select()
+      .from(tasks)
+      .where(and(eq(tasks.workItemId, workItemId), eq(tasks.templateTaskKey, t.key)))
+      .orderBy(desc(tasks.attempt))
+      .limit(1)
+    await createTaskAttempt(ctx, {
+      workItemId,
+      projectId: item.projectId,
+      stepKey: step.key,
+      task: t,
+      attempt: (prev?.attempt ?? 0) + 1,
+      feedback: comment,
+      assigneeHint: prev?.assigneeId ?? null,
+      // A task a person took over from the AI stays with people.
+      executor: (prev?.executor as 'ai' | 'human' | undefined) ?? (t.type === 'ai' ? 'ai' : 'human'),
+    })
+  }
+  await progressWorkItem(ctx, workItemId)
 }
 
 export async function startTask(ctx: WorkCtx, me: Me, taskId: string): Promise<void> {

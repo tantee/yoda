@@ -79,7 +79,8 @@
     "workItem": "Work item",
     "back": "Back to to-do",
     "proposals": "Waiting for your decision",
-    "stepAdvance": "The current step is finished. Move this work item to the next step?"
+    "stepAdvance": "The current step is finished. Move this work item to the next step?",
+    "awaitingAdvance": "This work item finished its current step and is waiting to move on"
   },
   "task": {
     "state": {
@@ -154,7 +155,11 @@
     },
     "requester": "Requester",
     "requesterHint": "Optional: the person this is for",
-    "advance": "Advance to next step"
+    "advance": "Advance to next step",
+    "reopen": "Reopen step",
+    "reopenTitle": "Send this work item back to an earlier step?",
+    "reopenConfirm": "Open tasks in the current and later steps will stop. The chosen step starts again, with the requester's latest change request as feedback, and the steps after it are done again.",
+    "reopenStep": "Step to reopen"
   },
   "steps": {
     "done": "Done",
@@ -167,7 +172,8 @@
       "created": "Work item created",
       "step_advanced": "Moved to next step",
       "done": "Work item completed",
-      "cancelled": "Work item cancelled"
+      "cancelled": "Work item cancelled",
+      "reopened": "Sent back to an earlier step"
     },
     "task": {
       "created": "Task created",
@@ -185,7 +191,8 @@
       "budget_exceeded": "Monthly AI budget reached",
       "ai_failed": "The AI could not produce a draft",
       "ai_unavailable": "AI is not configured",
-      "no_ai": "This project does not use AI"
+      "no_ai": "This project does not use AI",
+      "reopened": "Work item reopened to an earlier step"
     },
     "ai": {
       "drafted": "AI drafted a result",
@@ -292,7 +299,10 @@
       "project": "Project",
       "chooseProject": "Choose a project"
     },
-    "textRequired": "Add a message to send the attached files"
+    "textRequired": "Add a message to send the attached files",
+    "marker": {
+      "secretaryNotReady": "The assistant is not available yet"
+    }
   },
   "notifications": {
     "title": "Notifications",

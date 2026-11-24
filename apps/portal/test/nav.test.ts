@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isStaffPath, navItemsFor } from '../app/utils/nav'
+import { homeFor, isStaffPath, navItemsFor } from '../app/utils/nav'
 
 const base = { id: crypto.randomUUID(), username: 'u', displayName: 'U', email: null }
 
@@ -25,5 +25,13 @@ describe('isStaffPath', () => {
     expect(isStaffPath('/todo')).toBe(true)
     expect(isStaffPath('/todo/')).toBe(true)
     expect(isStaffPath('/todo/3f2c')).toBe(false)
+  })
+})
+
+describe('homeFor', () => {
+  it('staff land on their to-do list, requesters on their requests', () => {
+    expect(homeFor({ ...base, isStaff: true, isAdmin: false })).toBe('/todo')
+    expect(homeFor({ ...base, isStaff: true, isAdmin: true })).toBe('/todo')
+    expect(homeFor({ ...base, isStaff: false, isAdmin: false })).toBe('/requests')
   })
 })

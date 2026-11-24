@@ -85,7 +85,7 @@ export async function monthUsage(db: Db, projectId: string): Promise<AiUsage> {
 
 export class AiGateway {
   constructor(
-    private deps: { db: Db; bus: LiveBus; models: ModelSet },
+    private deps: { db: Db; bus: LiveBus; models: ModelSet; config: { dailyTaskCap: number } },
     warn: (msg: string) => void = (m) => console.warn(m),
   ) {
     const unpriced = (['draft', 'fast', 'embed'] as const)
@@ -248,8 +248,7 @@ export class AiGateway {
     costUsd: number,
     budgetUsd: number,
   ): Promise<void> {
-    // The gateway never creates tasks, so the assignment cap is moot here.
-    await runWork({ ...this.deps, jobs: NO_JOBS, config: { dailyTaskCap: 0 } }, { id: null, kind: 'system' }, async (ctx) => {
+    await runWork({ ...this.deps, jobs: NO_JOBS }, { id: null, kind: 'system' }, async (ctx) => {
       // Serialize concurrent callers per project+type so the event is recorded once.
       await ctx.tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`${type}:${projectId}`}))`)
       const existing = await ctx.tx

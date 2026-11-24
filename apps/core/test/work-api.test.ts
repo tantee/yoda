@@ -378,4 +378,96 @@ describe('work API', () => {
     const [row] = await app.deps.db.select().from(attachments).where(eq(attachments.id, otherItemFile))
     expect(row).toMatchObject({ workItemId: wi2.id, taskId: null })
   })
+
+  describe('reopen', () => {
+    const reopen = (who: Who, id: string, stepKey: unknown) => call(who, 'POST', `/work-items/${id}/reopen`, { stepKey })
+
+    /** A bug fix for `nurse` up to the delivery check, where the requester asks for changes. */
+    async function changesRequested(): Promise<{ p: string; wi: WorkItemDetail }> {
+      const p = await project([[pm, ['PM']], [dev, ['DEV']], [qc, ['QC']]])
+      const wi = await createItem(pm, p, { requesterId: nurse.id })
+      await drive(wi.id, 'accept-bug', pm, approve)
+      await drive(wi.id, 'implement', dev, { text: 'x' })
+      await drive(wi.id, 'draft-tests', qc, { text: 't' })
+      await drive(wi.id, 'review-code', dev, approve)
+      await drive(wi.id, 'verify', qc, { text: 'ok' })
+      await drive(wi.id, 'approve-release', qc, approve)
+      const accept = await active(pm, wi.id, 'accept-delivery')
+      expect(accept.assigneeId).toBe(nurse.id)
+      const res = await call(nurse, 'POST', `/tasks/${accept.id}/submit`, { text: 'สีรายงานยังผิด', decision: 'changes' })
+      expect(res.statusCode).toBe(200)
+      // The requester's recreated attempt is kept: they may still accept as is.
+      expect(await active(pm, wi.id, 'accept-delivery')).toMatchObject({ attempt: 2, state: 'open', assigneeId: nurse.id, feedback: 'สีรายงานยังผิด' })
+      return { p, wi }
+    }
+
+    it('PM reopens to dev: root tasks redone with the change request, close tasks rejected, later steps redone', async () => {
+      const { wi } = await changesRequested()
+      const res = await reopen(pm, wi.id, 'dev')
+      expect(res.statusCode).toBe(200)
+      const d = res.json() as WorkItemDetail
+      expect(d.currentStepKey).toBe('dev')
+      expect(d.steps.map((s) => s.status)).toEqual(['done', 'current', 'pending', 'pending'])
+
+      const latest = (key: string) => d.tasks.filter((t) => t.templateTaskKey === key).at(-1)!
+      expect(latest('implement')).toMatchObject({ attempt: 2, state: 'open', feedback: 'สีรายงานยังผิด', assigneeId: dev.id, executor: 'human' })
+      expect(latest('draft-tests')).toMatchObject({ attempt: 2, state: 'open', feedback: 'สีรายงานยังผิด', assigneeId: qc.id })
+      // Non-root tasks wait for their dependencies again.
+      expect(latest('review-code')).toMatchObject({ attempt: 1, state: 'accepted' })
+      expect(latest('accept-delivery')).toMatchObject({ attempt: 2, state: 'rejected' })
+      expect(d.tasks.filter((t) => ['accept-delivery', 'close-bug'].includes(t.templateTaskKey)).every((t) => t.state !== 'open')).toBe(true)
+      const rejected = d.events.filter((e) => e.type === 'task.rejected' && e.reason === 'reopened')
+      expect(rejected.map((e) => e.taskId)).toEqual([latest('accept-delivery').id])
+      expect(d.events.filter((e) => e.type === 'work_item.reopened').map((e) => [e.payload, e.actorId])).toEqual([[{ from: 'close', to: 'dev' }, pm.id]])
+
+      // Reopening to the current or a later step, or an unknown one, is refused.
+      for (const step of ['dev', 'qc', 'close', 'nope']) {
+        const bad = await reopen(pm, wi.id, step)
+        expect(bad.statusCode).toBe(422)
+        expect(bad.json()).toEqual({ error: 'invalid_state' })
+      }
+      expect((await call(pm, 'POST', `/work-items/${wi.id}/reopen`, {})).statusCode).toBe(400)
+
+      // The whole step is redone: the code review comes back, and QC is not skipped.
+      await drive(wi.id, 'implement', dev, { text: 'แก้สีแล้ว' })
+      await drive(wi.id, 'draft-tests', qc, { text: 't2' })
+      expect((await detail(pm, wi.id)).currentStepKey).toBe('dev')
+      expect(await active(pm, wi.id, 'review-code')).toMatchObject({ attempt: 2, state: 'open' })
+      await drive(wi.id, 'review-code', dev, approve)
+      expect((await detail(pm, wi.id)).currentStepKey).toBe('qc')
+      expect(await active(pm, wi.id, 'verify')).toMatchObject({ attempt: 2, state: 'open' })
+      await drive(wi.id, 'verify', qc, { text: 'ok' })
+      await drive(wi.id, 'approve-release', qc, approve)
+      expect(await active(pm, wi.id, 'accept-delivery')).toMatchObject({ attempt: 3, state: 'open', assigneeId: nurse.id })
+    })
+
+    it('only the PM or an admin may reopen; non-members get 404; pending step advances are superseded', async () => {
+      const { wi } = await changesRequested()
+      expect((await reopen(dev, wi.id, 'dev')).statusCode).toBe(403)
+      expect((await reopen(nurse, wi.id, 'dev')).statusCode).toBe(403)
+      expect((await reopen(outsider, wi.id, 'dev')).statusCode).toBe(404)
+      expect((await reopen(pm, NO_ID, 'dev')).statusCode).toBe(404)
+      expect((await detail(pm, wi.id)).currentStepKey).toBe('close')
+
+      // Back to dev, finish it, and leave the advance to QC pending: reopening supersedes it.
+      expect((await reopen(admin, wi.id, 'dev')).statusCode).toBe(200)
+      await drive(wi.id, 'implement', dev, { text: 'x' })
+      await drive(wi.id, 'draft-tests', qc, { text: 't' })
+      const review = await active(pm, wi.id, 'review-code')
+      expect((await call(dev, 'POST', `/tasks/${review.id}/submit`, approve)).statusCode).toBe(200)
+      const pending = (await todo(pm)).proposals.filter((x) => x.workItemId === wi.id && x.kind === 'step_advance')
+      expect(pending).toHaveLength(1)
+      expect((await reopen(pm, wi.id, 'intake')).statusCode).toBe(200)
+      expect((await todo(pm)).proposals.filter((x) => x.workItemId === wi.id)).toEqual([])
+      const d = await detail(pm, wi.id)
+      expect(d.currentStepKey).toBe('intake')
+      expect(d.events.some((e) => e.type === 'proposal.superseded')).toBe(true)
+      // No requester change request after the last one? The latest REQUESTER rejection is still the feedback.
+      expect(await active(pm, wi.id, 'accept-bug')).toMatchObject({ attempt: 2, state: 'open', feedback: 'สีรายงานยังผิด' })
+
+      // A cancelled item cannot be reopened.
+      expect((await call(pm, 'POST', `/work-items/${wi.id}/cancel`)).statusCode).toBe(200)
+      expect((await reopen(pm, wi.id, 'intake')).statusCode).toBe(409)
+    })
+  })
 })

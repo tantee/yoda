@@ -1,4 +1,4 @@
-import { TaskAssign, TaskResult, WorkItemCreate, type Me } from '@yoda/shared'
+import { TaskAssign, TaskResult, WorkItemCreate, WorkItemReopen, type Me } from '@yoda/shared'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { notFound, requireSignedIn, requireStaff } from '../auth/plugin.js'
@@ -9,6 +9,7 @@ import {
   cancelWorkItem,
   confirmTask,
   createWorkItem,
+  reopenWorkItem,
   retryAiTask,
   startTask,
   submitTask,
@@ -75,6 +76,19 @@ export function workRoutes(app: FastifyInstance): void {
     await runWork(app.deps, { id: me.id, kind: 'person' }, async (ctx) => {
       await requireWorkItemVisible(ctx.tx, me, id)
       await advanceWorkItem(ctx, me, id)
+    })
+    return getWorkItemDetail(db(), me, id)
+  })
+
+  /** PM/admin: send the item back to an earlier step (e.g. the requester asked for changes on the delivery). */
+  app.post('/work-items/:id/reopen', async (request) => {
+    requireStaff(request)
+    const { id } = IdParams.parse(request.params)
+    const { stepKey } = WorkItemReopen.parse(request.body ?? {})
+    const me = request.me
+    await runWork(app.deps, { id: me.id, kind: 'person' }, async (ctx) => {
+      await requireWorkItemVisible(ctx.tx, me, id)
+      await reopenWorkItem(ctx, me, id, stepKey)
     })
     return getWorkItemDetail(db(), me, id)
   })

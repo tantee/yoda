@@ -130,6 +130,22 @@ describe('GET /stream', () => {
     expect(await readUntil(m, (b) => b.includes('event: live'), 800)).not.toContain('event: live')
   })
 
+  it('a staff thread creator removed from the project gets no more events from that thread', async () => {
+    const projectId = await projectWithMember()
+    const call = (who: Who, method: 'POST' | 'PUT' | 'DELETE', url: string, payload?: object) =>
+      app.inject({ method, url, headers: auth(who), payload })
+    expect((await call(admin, 'PUT', `/projects/${projectId}/members/${outsider.id}`, { roles: ['DEV'] })).statusCode).toBe(200)
+    const thread = (await call(outsider, 'POST', '/conversations', { kind: 'project', projectId })).json() as { id: string }
+    expect((await call(admin, 'DELETE', `/projects/${projectId}/members/${outsider.id}`)).statusCode).toBeLessThan(300)
+
+    const o = await open(outsider.token)
+    const m = await open(member.token)
+    for (const s of [o, m]) expect(await readUntil(s, (b) => b.includes(': connected\n\n'), 2000)).toContain(': connected')
+    expect((await call(member, 'POST', `/conversations/${thread.id}/messages`, { text: 'สวัสดี' })).statusCode).toBe(201)
+    expect(await readUntil(m, (b) => b.includes(thread.id), 2000)).toContain(thread.id)
+    expect(await readUntil(o, (b) => b.includes('event: live'), 800)).not.toContain('event: live')
+  })
+
   it('delivers person-addressed events to that person only', async () => {
     const n = await open(nurse.token)
     const m = await open(member.token)

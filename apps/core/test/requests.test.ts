@@ -186,6 +186,14 @@ describe('requesters in the workflow', () => {
 
     const todo = (await call(outsider, 'GET', '/me/todo')).json() as Todo
     expect(todo.tasks.map((t) => t.id)).toEqual([answer.id])
+    // Core tells the portal to show the requester view; project members and admins get the staff view.
+    expect(todo.tasks[0]!.viewerIsRequester).toBe(true)
+    expect(((await call(outsider, 'GET', `/tasks/${answer.id}`)).json() as TaskWithContext).viewerIsRequester).toBe(true)
+    expect((await answers(outsider))[0]!.viewerIsRequester).toBe(true)
+    for (const staff of [pm, ba, admin]) {
+      expect(((await call(staff, 'GET', `/tasks/${answer.id}`)).json() as TaskWithContext).viewerIsRequester).toBe(false)
+    }
+    expect(((await call(pm, 'GET', '/me/todo')).json() as Todo).confirmations.every((t) => !t.viewerIsRequester)).toBe(true)
     expect((await answers(outsider)).map((t) => t.id)).toEqual([answer.id])
     expect((await call(outsider, 'GET', `/tasks/${answer.id}`)).statusCode).toBe(200)
     // Still no access to the rest of the project.
@@ -215,16 +223,29 @@ describe('requesters in the workflow', () => {
     await file(nurse.id, 'sample-from-nurse.pdf', { taskId: draft.id, workItemId: wi.id })
     const answer = (await active(wi.id, 'answer-questions'))!
     await file(nurse.id, 'my-answer.pdf', { taskId: answer.id, workItemId: wi.id })
+    // A file staff put on the requester's own task: visible, but not who uploaded it.
+    await file(ba.id, 'staff-on-answer.pdf', { taskId: answer.id, workItemId: wi.id })
 
     const view = (await call(nurse, 'GET', `/tasks/${answer.id}`)).json() as TaskWithContext
-    expect(view.inputs[0]!.attachments.map((a) => [a.fileName, a.uploadedByName])).toEqual([['sample-from-nurse.pdf', '']])
-    expect(view.attachments.map((a) => [a.fileName, a.uploadedByName])).toEqual([['my-answer.pdf', '']])
-    expect(JSON.stringify(view)).not.toContain('internal-notes')
-    expect(JSON.stringify(await answers(nurse))).not.toContain('internal-notes')
+    expect(view.inputs[0]!.attachments.map((a) => [a.fileName, a.uploadedByName, a.uploadedById])).toEqual([
+      ['sample-from-nurse.pdf', '', nurse.id],
+    ])
+    // The staff file's id is dropped from the input's result too.
+    expect(view.inputs[0]!.result.attachmentIds).toEqual([])
+    expect(view.attachments.map((a) => [a.fileName, a.uploadedByName, a.uploadedById]).sort()).toEqual([
+      ['my-answer.pdf', '', nurse.id],
+      ['staff-on-answer.pdf', '', null],
+    ])
+    for (const body of [JSON.stringify(view), JSON.stringify(await answers(nurse))]) {
+      expect(body).not.toContain('internal-notes')
+      expect(body).not.toContain(internal.id)
+      expect(body).not.toContain(ba.id)
+    }
     // Staff still see everything.
     const staff = (await call(pm, 'GET', `/tasks/${answer.id}`)).json() as TaskWithContext
     expect(staff.inputs[0]!.attachments.map((a) => a.fileName).sort()).toEqual(['internal-notes.txt', 'sample-from-nurse.pdf'])
     expect(staff.inputs[0]!.attachments.every((a) => a.uploadedByName !== '')).toBe(true)
+    expect(staff.inputs[0]!.result.attachmentIds).toEqual([internal.id])
   })
 
   it('a requester cannot pull project files into their task', async () => {

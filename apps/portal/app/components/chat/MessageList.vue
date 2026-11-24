@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { ConversationKind, Message, Proposal } from '@yoda/shared'
-import { groupMessages } from '~/utils/chat'
+import { groupMessages, systemMarkerKey } from '~/utils/chat'
 
 const props = defineProps<{
   messages: Message[]
@@ -35,6 +35,10 @@ function author(m: Message): string {
   if (m.authorKind === 'ai') return t('chat.ai')
   if (m.authorKind === 'system') return t('chat.system')
   return m.authorName ?? ''
+}
+function text(m: Message): string {
+  const key = systemMarkerKey(m)
+  return key ? t(key) : m.text
 }
 const mine = (m: Message) => m.authorKind === 'person' && !!me.value && m.authorId === me.value.id
 
@@ -91,7 +95,7 @@ function onScroll() {
         >
           <div class="text-caption opacity-80">{{ author(m) }} · {{ timeLabel(m.createdAt) }}</div>
           <MarkdownView v-if="m.authorKind === 'ai'" :source="m.text" />
-          <div v-else class="message-text" :class="{ 'font-italic': m.authorKind === 'system' }">{{ m.text }}</div>
+          <div v-else class="message-text" :class="{ 'font-italic': m.authorKind === 'system' }">{{ text(m) }}</div>
           <AttachmentList :attachments="m.attachments" :conversation-id="conversationId" class="mt-1" />
           <ChatActionCard
             v-for="(card, i) in m.actions"

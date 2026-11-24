@@ -103,6 +103,15 @@ async function admins(ctx: WorkCtx): Promise<string[]> {
   return rows.map((r) => r.id)
 }
 
+/** PMs of any project: they may decide project-less proposals (as PM of the project they choose). */
+async function anyProjectPms(ctx: WorkCtx): Promise<string[]> {
+  const rows = await ctx.tx
+    .selectDistinct({ id: projectMembers.personId })
+    .from(projectMembers)
+    .where(sql`'PM' = any(${projectMembers.roles})`)
+  return rows.map((r) => r.id)
+}
+
 /** A requester asked for changes on their delivery: the project's PMs hear about it. */
 export async function notifyChangesRequested(
   ctx: WorkCtx,
@@ -127,7 +136,10 @@ const PROPOSAL_TITLE: Record<ProposalKind, string> = {
   create_work_item: 'รอยืนยันการสร้างงานใหม่',
 }
 
-/** Deciders of a new proposal: the project's PMs (admins when it has none, and for project-less ones). */
+/**
+ * Deciders of a new proposal: the project's PMs (admins when it has none); for project-less ones, every
+ * admin and every PM of any project (each may decide it). One notification per person and proposal.
+ */
 export async function notifyProposalPending(
   ctx: WorkCtx,
   p: {
@@ -142,9 +154,14 @@ export async function notifyProposalPending(
   // Step advances and priority changes carry no summary of their own: the work item title says what it is about.
   const itemTitle = p.workItemId ? await workItemTitle(ctx, p.workItemId) : ''
   const body = [itemTitle, p.summary].filter(Boolean).join(' - ')
-  let recipients = p.projectId ? await projectPms(ctx, p.projectId) : []
-  if (!recipients.length) recipients = await admins(ctx)
-  for (const personId of recipients) {
+  let recipients: string[]
+  if (p.projectId) {
+    recipients = await projectPms(ctx, p.projectId)
+    if (!recipients.length) recipients = await admins(ctx)
+  } else {
+    recipients = [...(await admins(ctx)), ...(await anyProjectPms(ctx))]
+  }
+  for (const personId of [...new Set(recipients)].sort()) {
     if (personId === p.onBehalfOf) continue
     await notify(ctx, {
       personId,

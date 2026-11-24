@@ -211,6 +211,7 @@ export async function tasksWithContext(
             inArray(tasks.workItemId, [...new Set(withDeps.map((r) => r.t.workItemId))]),
             inArray(tasks.templateTaskKey, [...new Set(withDeps.flatMap((r) => depsOf.get(r.t.id)!))]),
             eq(tasks.state, 'accepted'),
+            isNull(tasks.supersededAt),
           ),
         )
     : []
@@ -230,12 +231,15 @@ export async function tasksWithContext(
       const dep = latestAccepted.get(`${r.t.workItemId}/${key}`)
       if (!dep) continue
       const depTask = templateTask(def, dep)
+      const result = (dep.result ?? { text: '' }) as TaskInput['result']
+      const depFiles = requesterView ? forRequester(files.get(dep.id) ?? [], viewer!.id, { onlyOwn: true }) : (files.get(dep.id) ?? [])
       inputs.push({
         templateTaskKey: key,
         title: depTask.title,
         executor: dep.executor as TaskInput['executor'],
-        result: (dep.result ?? { text: '' }) as TaskInput['result'],
-        attachments: requesterView ? forRequester(files.get(dep.id) ?? [], { uploadedBy: viewer!.id }) : (files.get(dep.id) ?? []),
+        // A requester never learns the ids of staff files they cannot see.
+        result: requesterView ? { ...result, attachmentIds: visibleIds(result.attachmentIds, depFiles) } : result,
+        attachments: depFiles,
       })
     }
     return TaskWithContext.parse({
@@ -244,19 +248,27 @@ export async function tasksWithContext(
       workItemPriority: r.workItemPriority,
       projectName: r.projectName,
       inputs,
-      attachments: requesterView ? forRequester(files.get(r.t.id) ?? []) : (files.get(r.t.id) ?? []),
+      viewerIsRequester: requesterView,
+      attachments: requesterView ? forRequester(files.get(r.t.id) ?? [], viewer!.id) : (files.get(r.t.id) ?? []),
     })
   })
 }
 
 /**
- * Attachments as a requester may see them: no staff names, and (with `uploadedBy`) only files that person
- * uploaded, so staff-internal files on earlier tasks never appear.
+ * Attachments as requester `viewerId` may see them: no staff names or ids (another uploader's `uploadedById`
+ * is null), and with `onlyOwn` only files the viewer uploaded, so staff-internal files on earlier tasks never
+ * appear.
  */
-function forRequester(list: Attachment[], opts: { uploadedBy?: string } = {}): Attachment[] {
+function forRequester(list: Attachment[], viewerId: string, opts: { onlyOwn?: boolean } = {}): Attachment[] {
   return list
-    .filter((a) => !opts.uploadedBy || a.uploadedById === opts.uploadedBy)
-    .map((a) => ({ ...a, uploadedByName: '' }))
+    .filter((a) => !opts.onlyOwn || a.uploadedById === viewerId)
+    .map((a) => ({ ...a, uploadedById: a.uploadedById === viewerId ? a.uploadedById : null, uploadedByName: '' }))
+}
+
+/** Of `ids`, those among the visible `files`, in order. */
+function visibleIds(ids: string[] | undefined, files: Attachment[]): string[] {
+  const seen = new Set(files.map((f) => f.id))
+  return (ids ?? []).filter((id) => seen.has(id))
 }
 
 /** Of `projectIds`, those `me` cannot see as staff (all of them for a requester). */
@@ -310,7 +322,7 @@ async function awaitingAdvance(db: Conn, rows: WorkItemJoined[]): Promise<Set<st
   const taskRows = await db
     .select({ workItemId: tasks.workItemId, key: tasks.templateTaskKey, attempt: tasks.attempt, state: tasks.state })
     .from(tasks)
-    .where(inArray(tasks.workItemId, ids))
+    .where(and(inArray(tasks.workItemId, ids), isNull(tasks.supersededAt)))
   const pending = await db
     .select({ workItemId: proposals.workItemId })
     .from(proposals)
@@ -453,9 +465,9 @@ export async function getTodo(db: Conn, me: Me): Promise<Todo> {
     .where(
       sql`not exists (select 1 from ${projectMembers} pm where pm.project_id = ${projects.id} and 'PM' = any(pm.roles))`,
     )
-  const scope = me.isAdmin
-    ? or(inArray(tasks.projectId, pmProjects), inArray(tasks.projectId, pmlessProjects))
-    : inArray(tasks.projectId, pmProjects)
+  const inScope = (col: typeof tasks.projectId | typeof workItems.projectId) =>
+    me.isAdmin ? or(inArray(col, pmProjects), inArray(col, pmlessProjects)) : inArray(col, pmProjects)
+  const scope = inScope(tasks.projectId)
 
   const confirmations = await tasksWithContext(
     db,
@@ -470,7 +482,17 @@ export async function getTodo(db: Conn, me: Me): Promise<Todo> {
     ),
     order,
   )
-  return Todo.parse({ tasks: mine, confirmations, proposals: await pendingForDecider(db, me) })
+  // Finished steps waiting for a PM to advance them (e.g. after the step_advance proposal was rejected).
+  const items = await workItemQuery(db)
+    .where(and(inScope(workItems.projectId), eq(workItems.state, 'active')))
+    .orderBy(priorityRank, asc(workItems.updatedAt), asc(workItems.id))
+  const awaiting = await awaitingAdvance(db, items)
+  return Todo.parse({
+    tasks: mine,
+    confirmations,
+    proposals: await pendingForDecider(db, me),
+    awaitingAdvance: items.filter((r) => awaiting.has(r.w.id)).map((r) => toWorkItem(r, awaiting)),
+  })
 }
 
 /** "Things I need to answer": my active REQUESTER tasks, oldest first (any signed-in person). */

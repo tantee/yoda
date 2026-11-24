@@ -64,7 +64,7 @@ function topicEmbedder() {
 
 async function gatewayWith(embed: MockEmbeddingModelV4): Promise<AiGateway> {
   const models = mockModels({ embed, ids: { draft: 'anthropic:claude-opus-5-5', fast: 'anthropic:claude-haiku-5-5', embed: 'openai:mock-embed' } })
-  return new AiGateway({ db: await testDb(), bus: new LiveBus(), models })
+  return new AiGateway({ db: await testDb(), bus: new LiveBus(), models, config: { dailyTaskCap: 8 } })
 }
 
 /** Uploads a UTF-8 .txt as `dev`; returns the attachment id. */
