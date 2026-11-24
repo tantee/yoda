@@ -5,10 +5,10 @@ import { AiFailed, AiGateway, AiRefused, EMBED_BATCH_SIZE, costOf, errorSummary 
 import { buildModels } from '../src/ai/models.js'
 import { buildApp } from '../src/app.js'
 import { aiCalls, departmentSettings, events, notifications, people, projectMembers, projects } from '../src/db/schema.js'
-import { MockEmbeddingModelV4 } from 'ai/test'
+import { MockEmbeddingModelV4, MockLanguageModelV4 } from 'ai/test'
 import { tool, type ModelMessage } from 'ai'
 import { z } from 'zod'
-import { embeddingModel, failingModel, scriptedModel, textModel } from './ai-mocks.js'
+import { embeddingModel, failingModel, scriptedModel, textModel, turnStream } from './ai-mocks.js'
 import { mockModels, resetDb, testDb, testDeps } from './helpers.js'
 import { auth, login, type Who } from './support.js'
 
@@ -163,13 +163,15 @@ describe('AiGateway.generateText options', () => {
     expect(model.doStreamCalls[0]!.abortSignal).toBeDefined()
   })
 
-  it('an aborted signal fails the call as a provider error', async () => {
+  it('an aborted signal fails the call as AiFailed(aborted) with a failed row', async () => {
     const g = await gateway(mockModels({ draft: textModel('claude-opus-5-5', 'hi') }))
     const ac = new AbortController()
     ac.abort()
     await expect(
       g.generateText({ job: 'draft', projectId, system: 's', prompt: 'p', signal: ac.signal }),
-    ).rejects.toMatchObject({ name: 'AiFailed', reason: 'provider_error' })
+    ).rejects.toMatchObject({ name: 'AiFailed', reason: 'aborted' })
+    const [row] = await (await testDb()).select().from(aiCalls)
+    expect(row).toMatchObject({ ok: false, error: 'aborted' })
   })
 })
 
@@ -410,6 +412,45 @@ describe('AiGateway.chat', () => {
     ).rejects.toMatchObject({ name: 'AiFailed', reason: 'empty_output' })
     const [row] = await (await testDb()).select().from(aiCalls)
     expect(row).toMatchObject({ ok: false, error: 'empty_output', inputTokens: 2000 })
+  })
+
+  it('aborted after the first step → AiFailed(aborted), completed steps logged as a failed row', async () => {
+    const ac = new AbortController()
+    const model = scriptedModel('claude-haiku-5-5', [{ text: 'partial', toolCalls: [{ name: 'stop', input: {} }] }, { text: 'never' }])
+    const stop = tool({
+      inputSchema: z.object({}),
+      execute: async () => {
+        ac.abort()
+        return 'stopped'
+      },
+    })
+    const g = await gateway(mockModels({ fast: model }))
+    await expect(
+      g.chat({ job: 'fast', billing: { projectId }, system: 's', messages, tools: { stop }, maxSteps: 5, signal: ac.signal }),
+    ).rejects.toMatchObject({ name: 'AiFailed', reason: 'aborted' })
+    expect(model.doStreamCalls).toHaveLength(1)
+    const rows = await (await testDb()).select().from(aiCalls)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ ok: false, error: 'aborted', inputTokens: 1000, outputTokens: 500 })
+    expect(Number(rows[0]!.costUsd)).toBeGreaterThan(0)
+  })
+
+  it('a provider failure in a later step logs the tokens already billed', async () => {
+    let n = 0
+    const model = new MockLanguageModelV4({
+      modelId: 'claude-haiku-5-5',
+      doStream: async () => {
+        if (n++ === 0) return { stream: turnStream({ toolCalls: [{ name: 'echo', input: { text: 'x' } }] }) }
+        throw new Error('upstream died')
+      },
+    })
+    const g = await gateway(mockModels({ fast: model }))
+    await expect(
+      g.chat({ job: 'fast', billing: { department: true }, system: 's', messages, tools: { echo }, maxSteps: 5 }),
+    ).rejects.toMatchObject({ name: 'AiFailed', reason: 'provider_error' })
+    const [row] = await (await testDb()).select().from(aiCalls)
+    expect(row).toMatchObject({ ok: false, inputTokens: 1000, outputTokens: 500 })
+    expect(row!.error).toContain('upstream died')
   })
 
   it('billed to a noAi project → AiRefused(no_ai) before contact', async () => {

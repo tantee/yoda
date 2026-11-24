@@ -154,11 +154,14 @@ export class AiGateway {
       inTok = usage.inputTokens ?? 0
       outTok = usage.outputTokens ?? 0
     } catch (err) {
+      if (input.signal?.aborted) return this.abort(input, provider, model, null, null)
       const e = streamError ?? err
       const message = e instanceof Error ? e.message : String(e)
       await this.log(input, provider, model, null, null, false, message)
       throw new AiFailed('provider_error', message)
     }
+    // An abort can also end the stream early without an error: never return a partial result as success.
+    if (input.signal?.aborted) return this.abort(input, provider, model, inTok, outTok)
     // Past this point errors (e.g. DB failures while logging) are not provider errors.
     if (!text.trim()) {
       // Billed even though unusable: keep tokens and cost.
@@ -194,7 +197,8 @@ export class AiGateway {
     await this.guard(projectId, null, model)
     const logInput = { job: input.job, projectId, taskId: null }
 
-    // Usage of finished steps, so a failure in a later step still records what the provider billed.
+    // Usage of every finished provider call (per call, not per step: a step whose tools are still running when
+    // the call fails or is aborted has already been billed), so a failure still records what was billed.
     let stepIn = 0
     let stepOut = 0
     let text: string
@@ -216,9 +220,9 @@ export class AiGateway {
         onError: ({ error }) => {
           streamError = error
         },
-        onStepEnd: (step) => {
-          stepIn += step.usage.inputTokens ?? 0
-          stepOut += step.usage.outputTokens ?? 0
+        onLanguageModelCallEnd: (call) => {
+          stepIn += call.usage.inputTokens ?? 0
+          stepOut += call.usage.outputTokens ?? 0
         },
       })
       text = await result.text
@@ -239,12 +243,16 @@ export class AiGateway {
         }),
       )
     } catch (err) {
+      const billed = stepIn > 0 || stepOut > 0
+      const [doneIn, doneOut] = billed ? [stepIn, stepOut] : [null, null]
+      if (input.signal?.aborted) return this.abort(logInput, provider, model, doneIn, doneOut)
       const e = streamError ?? err
       const message = e instanceof Error ? e.message : String(e)
-      const billed = stepIn > 0 || stepOut > 0
-      await this.log(logInput, provider, model, billed ? stepIn : null, billed ? stepOut : null, false, message)
+      await this.log(logInput, provider, model, doneIn, doneOut, false, message)
       throw new AiFailed('provider_error', message)
     }
+    // An abort can also end the loop early without an error: never return a partial result as success.
+    if (input.signal?.aborted) return this.abort(logInput, provider, model, inTok, outTok)
     if (!text.trim()) {
       await this.log(logInput, provider, model, inTok, outTok, false, 'empty_output')
       throw new AiFailed('empty_output')
@@ -287,6 +295,18 @@ export class AiGateway {
     }
     await this.warnIfNeeded(input.projectId, null)
     return out
+  }
+
+  /** The caller aborted: log what was billed (ok false, error 'aborted') and throw AiFailed('aborted'). */
+  private async abort(
+    input: { job: AiJob; projectId: string | null; taskId?: string | null },
+    provider: string,
+    model: string,
+    inputTokens: number | null,
+    outputTokens: number | null,
+  ): Promise<never> {
+    await this.log(input, provider, model, inputTokens, outputTokens, false, 'aborted')
+    throw new AiFailed('aborted')
   }
 
   private async log(
