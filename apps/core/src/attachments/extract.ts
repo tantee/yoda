@@ -17,7 +17,7 @@ export async function extractText(buf: Buffer, contentType: string, _fileName: s
       text = (await mammoth.extractRawText({ buffer: buf })).value
     }
     if (text == null) return null
-    const trimmed = text.replace(/^﻿/, '').trim()
+    const trimmed = text.replace(/\u0000/g, '').replace(/^\uFEFF/, '').trim()
     return trimmed ? trimmed.slice(0, MAX_CHARS) : null
   } catch {
     return null
