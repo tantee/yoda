@@ -1,5 +1,5 @@
 import type { ActionCard, Attachment, AuthorKind, Conversation, ConversationCreate, Me, Message } from '@yoda/shared'
-import { and, asc, desc, eq, inArray, lt, or, sql, type SQL } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, inArray, lt, or, sql, type SQL } from 'drizzle-orm'
 import { notFound } from '../auth/plugin.js'
 import { attachmentsByIds } from '../attachments/service.js'
 import type { Db, Tx } from '../db/client.js'
@@ -113,11 +113,13 @@ async function queryConversations(db: Conn, me: Me, extra?: SQL): Promise<Conver
     )
     .where(and(visibleWhere(db, me), extra))
     .orderBy(desc(sql`coalesce(${conversations.lastMessageAt}, ${conversations.createdAt})`), desc(conversations.id))
+  // Requesters never see staff names: only their own name on threads they own.
+  const hideOwner = (ownerId: string) => !me.isStaff && ownerId !== me.id
   return rows.map(({ c, ownerName, unread }) => ({
     id: c.id,
     kind: c.kind as Conversation['kind'],
     ownerId: c.ownerId,
-    ownerName,
+    ownerName: hideOwner(c.ownerId) ? null : ownerName,
     projectId: c.projectId,
     workItemId: c.workItemId,
     title: c.title,
@@ -166,27 +168,43 @@ export async function createConversation(db: Db, me: Me, body: ConversationCreat
 }
 
 /**
- * Message attachments must be files of this conversation or, for staff who can see the project, of the
- * conversation's project. Anything else → 404 (never confirms other ids).
+ * Files that may be shared into the thread besides its own uploads: the whole project in `project` threads,
+ * only the work item's files in `work_item` threads (the requester sees those), none in personal/intake.
+ */
+function shareableScope(c: ConversationRow): SQL | undefined {
+  if (c.kind === 'project' && c.projectId) return eq(attachments.projectId, c.projectId)
+  if (c.kind === 'work_item' && c.projectId && c.workItemId) {
+    return and(eq(attachments.projectId, c.projectId), eq(attachments.workItemId, c.workItemId))
+  }
+  return undefined
+}
+
+/**
+ * Message attachments must be files uploaded to this conversation or, for staff who can see the project,
+ * files in the thread's shareable scope. Anything else → 404 (never confirms other ids).
  */
 export async function checkMessageAttachments(db: Conn, me: Me, c: ConversationRow, ids: string[]): Promise<void> {
   const set = [...new Set(ids)]
   if (!set.length) return
-  const projectFiles = me.isStaff && c.projectId && (await canSeeProject(db, me, c.projectId))
+  const staffShares = me.isStaff && c.projectId && (await canSeeProject(db, me, c.projectId))
   const rows = await db
     .select({ id: attachments.id })
     .from(attachments)
     .where(
       and(
         inArray(attachments.id, set),
-        or(eq(attachments.conversationId, c.id), projectFiles ? eq(attachments.projectId, c.projectId!) : undefined),
+        or(eq(attachments.conversationId, c.id), staffShares ? shareableScope(c) : undefined),
       ),
     )
   if (rows.length !== set.length) throw notFound()
 }
 
-/** True when the attachment belongs to the conversation: uploaded there, or posted in one of its messages. */
-export async function attachmentInConversation(db: Conn, conversationId: string, attachmentId: string): Promise<boolean> {
+/**
+ * True when the attachment belongs to the conversation: uploaded there, or posted in one of its messages and
+ * still within the thread's shareable scope (so a work-item thread never serves another item's files).
+ */
+export async function attachmentInConversation(db: Conn, c: ConversationRow, attachmentId: string): Promise<boolean> {
+  const scope = shareableScope(c)
   const [row] = await db
     .select({ id: attachments.id })
     .from(attachments)
@@ -194,9 +212,14 @@ export async function attachmentInConversation(db: Conn, conversationId: string,
       and(
         eq(attachments.id, attachmentId),
         or(
-          eq(attachments.conversationId, conversationId),
-          sql`exists (select 1 from ${messages} m where m.conversation_id = ${conversationId}
-            and ${attachmentId}::uuid = any(m.attachment_ids))`,
+          eq(attachments.conversationId, c.id),
+          scope
+            ? and(
+                scope,
+                sql`exists (select 1 from ${messages} m where m.conversation_id = ${c.id}
+                  and ${attachmentId}::uuid = any(m.attachment_ids))`,
+              )
+            : undefined,
         ),
       ),
     )
@@ -255,8 +278,9 @@ export async function postMessage(
 }
 
 /**
- * Messages as `me` sees them. Requesters see no staff names (as on their task pages): another person's
- * `authorName` is null and attachment uploader names are blank unless they uploaded the file.
+ * Messages as `me` sees them. Requesters see no staff identities (as on their task pages): another person's
+ * `authorId`/`authorName` are null, and attachment `uploadedById` null / `uploadedByName` blank unless they
+ * uploaded the file.
  */
 async function queryMessages(
   db: Conn,
@@ -277,14 +301,15 @@ async function queryMessages(
   )
   const asRequester = !me.isStaff
   const file = (a: Attachment): Attachment =>
-    asRequester && a.uploadedById !== me.id ? { ...a, uploadedByName: '' } : a
+    asRequester && a.uploadedById !== me.id ? { ...a, uploadedById: null, uploadedByName: '' } : a
+  const other = (authorId: string | null) => asRequester && authorId !== me.id
   return rows.map(({ m, authorName }) => ({
     id: m.id,
     conversationId: m.conversationId,
     seq: Number(m.seq),
     authorKind: m.authorKind as AuthorKind,
-    authorId: m.authorId,
-    authorName: asRequester && m.authorId !== me.id ? null : (authorName ?? null),
+    authorId: other(m.authorId) ? null : m.authorId,
+    authorName: other(m.authorId) ? null : (authorName ?? null),
     text: m.text,
     attachments: m.attachmentIds.flatMap((id) => {
       const a = files.get(id)
@@ -316,11 +341,18 @@ export async function getMessage(db: Conn, me: Me, id: string): Promise<Message>
   return m
 }
 
-/** Moves `me`'s read marker forward to `seq` (never backwards). Callers check visibility. */
+/**
+ * Moves `me`'s read marker forward to `seq` (never backwards), clamped to the conversation's last message so
+ * a too-large seq can't pre-read future messages. Callers check visibility.
+ */
 export async function markRead(db: Conn, me: Me, conversationId: string, seq: number): Promise<void> {
+  const [{ max }] = await db
+    .select({ max: sql<number>`coalesce(max(${messages.seq}), 0)::bigint` })
+    .from(messages)
+    .where(eq(messages.conversationId, conversationId))
   await db
     .insert(conversationReads)
-    .values({ conversationId, personId: me.id, lastReadSeq: seq })
+    .values({ conversationId, personId: me.id, lastReadSeq: Math.min(seq, Number(max)) })
     .onConflictDoUpdate({
       target: [conversationReads.conversationId, conversationReads.personId],
       set: { lastReadSeq: sql`greatest(${conversationReads.lastReadSeq}, excluded.last_read_seq)` },
@@ -328,16 +360,33 @@ export async function markRead(db: Conn, me: Me, conversationId: string, seq: nu
 }
 
 /**
- * `secretary-chat` job until the real secretary lands (plan 4, Task 8): one `system` reply per person
- * message, so the portal's typing indicator ends.
+ * `secretary-chat` job until the real secretary lands (plan 4, Task 8): one `system` reply to a person
+ * message in a personal/intake conversation, so the portal's typing indicator ends. Team threads get no
+ * reply. Idempotent: skipped when a `system`/`ai` message already follows (a retry, or a reply to a later
+ * message that also ends the typing indicator).
  */
 export async function interimSecretaryReply(deps: WorkDeps, messageId: string): Promise<void> {
   const [m] = await deps.db
-    .select({ conversationId: messages.conversationId, authorKind: messages.authorKind })
+    .select({ conversationId: messages.conversationId, seq: messages.seq, authorKind: messages.authorKind, kind: conversations.kind })
     .from(messages)
+    .innerJoin(conversations, eq(conversations.id, messages.conversationId))
     .where(eq(messages.id, messageId))
-  if (!m || m.authorKind !== 'person') return
-  await runWork(deps, { id: null, kind: 'system' }, (ctx) =>
-    postMessage(ctx, { conversationId: m.conversationId, authorKind: 'system', authorId: null, text: SECRETARY_NOT_READY }),
-  )
+  if (!m || m.authorKind !== 'person' || !(OWN_KINDS as readonly string[]).includes(m.kind)) return
+  await runWork(deps, { id: null, kind: 'system' }, async (ctx) => {
+    // Serializes replies within the conversation so concurrent retries can't both post.
+    await ctx.tx.select({ id: conversations.id }).from(conversations).where(eq(conversations.id, m.conversationId)).for('update')
+    const [answered] = await ctx.tx
+      .select({ id: messages.id })
+      .from(messages)
+      .where(
+        and(
+          eq(messages.conversationId, m.conversationId),
+          gt(messages.seq, m.seq),
+          inArray(messages.authorKind, ['system', 'ai']),
+        ),
+      )
+      .limit(1)
+    if (answered) return
+    await postMessage(ctx, { conversationId: m.conversationId, authorKind: 'system', authorId: null, text: SECRETARY_NOT_READY })
+  })
 }

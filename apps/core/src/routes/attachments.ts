@@ -127,7 +127,10 @@ export function attachmentRoutes(app: FastifyInstance, opts: { onStored: Attachm
     return reply.status(201).send(await getAttachment(db(), row.id))
   })
 
-  /** Chat uploads: no knowledge entry; `project_id` is the conversation's project (null for personal/intake). */
+  /**
+   * Chat uploads: no knowledge entry; `project_id` / `work_item_id` are the conversation's (null for
+   * personal/intake).
+   */
   app.post('/conversations/:id/attachments', async (request, reply) => {
     requireSignedIn(request)
     const { id: conversationId } = IdParams.parse(request.params)
@@ -137,6 +140,7 @@ export function attachmentRoutes(app: FastifyInstance, opts: { onStored: Attachm
     const noAi = z.enum(['true', 'false']).optional().parse(fields.noAi || undefined) === 'true'
     const { row } = await storeUpload(`conversations/${conversationId}`, file, {
       projectId: conversation.projectId,
+      workItemId: conversation.workItemId,
       conversationId,
       noAi,
       uploadedBy: me.id,
@@ -147,8 +151,8 @@ export function attachmentRoutes(app: FastifyInstance, opts: { onStored: Attachm
   app.get('/conversations/:conversationId/attachments/:id/download', async (request, reply) => {
     requireSignedIn(request)
     const { conversationId, id } = ConversationFileParams.parse(request.params)
-    await requireConversation(db(), request.me, conversationId)
-    if (!(await attachmentInConversation(db(), conversationId, id))) throw notFound()
+    const conversation = await requireConversation(db(), request.me, conversationId)
+    if (!(await attachmentInConversation(db(), conversation, id))) throw notFound()
     const [row] = await db().select().from(attachments).where(eq(attachments.id, id))
     if (!row) throw notFound()
     return sendFile(reply, row)
