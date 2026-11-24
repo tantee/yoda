@@ -3,7 +3,8 @@ import { and, asc, desc, eq, sql } from 'drizzle-orm'
 import type { Me, TaskResult } from '@yoda/shared'
 import type { AppDeps } from '../src/app.js'
 import type { Db } from '../src/db/client.js'
-import { events, knowledgeEntries, people, projectMembers, projects, tasks, workItems } from '../src/db/schema.js'
+import { events, knowledgeEntries, people, projectMembers, projects, proposals, tasks, workItems } from '../src/db/schema.js'
+import { decideProposal } from '../src/proposals/service.js'
 import { recordEvent, runWork } from '../src/work/context.js'
 import { InlineJobQueue } from '../src/jobs/queue.js'
 import { createTaskAttempt } from '../src/work/tasks.js'
@@ -94,6 +95,12 @@ async function complete(s: Setup, wi: string, key: string, me: Me, result: Parti
   const t = (await latest(wi, key))!
   if (t.assigneeId !== me.id) await run(s.pm, (ctx) => assignTask(ctx, s.pm, t.id, me.id))
   await submit(me, t.id, result)
+  // In propose projects a finished step waits for the PM to confirm the advance.
+  const [pending] = await db
+    .select({ id: proposals.id })
+    .from(proposals)
+    .where(and(eq(proposals.workItemId, wi), eq(proposals.kind, 'step_advance'), eq(proposals.state, 'pending')))
+  if (pending) await run(s.pm, (ctx) => decideProposal(ctx, s.pm, pending.id, { decision: 'accept' }))
   return t.id
 }
 

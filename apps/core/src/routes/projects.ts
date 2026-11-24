@@ -97,7 +97,9 @@ export function projectRoutes(app: FastifyInstance): void {
     const { id, personId } = MemberParams.parse(request.params)
     const { roles } = MemberRolesPut.parse(request.body)
     await requireManage(request, id)
-    return db().transaction(async (tx) => {
+    // runWork so task.unassigned events (roles dropped) are published after commit.
+    return runWork(app.deps, { id: request.me.id, kind: 'person' }, async (ctx) => {
+      const { tx } = ctx
       await lockProject(tx, id)
       // Re-check under the lock: the caller may have been demoted or removed meanwhile.
       if (!(await canManageProject(tx, request.me, id))) throw forbidden()
@@ -111,13 +113,11 @@ export function projectRoutes(app: FastifyInstance): void {
         .where(eq(people.id, personId))
       if (!person) throw notFound()
       if (!(person.isAdmin || (person.staffOverride ?? person.lastSeenStaff))) throw notStaff()
-      if (!roles.includes('PM') && (await isLastPm(tx, id, personId))) {
-        const [current] = await tx
-          .select({ roles: projectMembers.roles })
-          .from(projectMembers)
-          .where(and(eq(projectMembers.projectId, id), eq(projectMembers.personId, personId)))
-        if (current?.roles.includes('PM')) throw lastPm()
-      }
+      const [current] = await tx
+        .select({ roles: projectMembers.roles })
+        .from(projectMembers)
+        .where(and(eq(projectMembers.projectId, id), eq(projectMembers.personId, personId)))
+      if (!roles.includes('PM') && current?.roles.includes('PM') && (await isLastPm(tx, id, personId))) throw lastPm()
       await tx
         .insert(projectMembers)
         .values({ projectId: id, personId, roles })
@@ -125,6 +125,9 @@ export function projectRoutes(app: FastifyInstance): void {
           target: [projectMembers.projectId, projectMembers.personId],
           set: { roles },
         })
+      // Roles taken away: their active tasks in those roles go back to the PM (after the update, like removal).
+      const dropped = (current?.roles ?? []).filter((r) => !(roles as string[]).includes(r))
+      if (dropped.length) await unassignMemberTasks(ctx, id, personId, dropped)
       const detail = await loadDetail(tx, id)
       if (!detail) throw notFound()
       return detail

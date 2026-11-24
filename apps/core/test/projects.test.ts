@@ -4,7 +4,7 @@ import type { Todo, WorkItemDetail } from '@yoda/shared'
 import { and, asc, eq } from 'drizzle-orm'
 import { events, projectMembers } from '../src/db/schema.js'
 import { resetDb, testDb } from './helpers.js'
-import { auth, login, makeApp, type Who } from './support.js'
+import { acceptStepAdvance, auth, login, makeApp, type Who } from './support.js'
 
 let app: FastifyInstance
 let admin: Who
@@ -169,6 +169,7 @@ describe('projects API', () => {
     const accept = wi.tasks[0]!.id
     await call(somchai, 'POST', `/tasks/${accept}/confirm`)
     await call(somchai, 'POST', `/tasks/${accept}/submit`, { decision: 'approve' })
+    expect(await acceptStepAdvance(app, somchai, wi.id)).toBe(true)
     const key = async (k: string) =>
       ((await call(somchai, 'GET', `/work-items/${wi.id}`)).json() as WorkItemDetail).tasks.find((t) => t.templateTaskKey === k)!
     const impl = await key('implement')
@@ -198,5 +199,39 @@ describe('projects API', () => {
     expect(unassigned.every((e) => e.reason === 'member_removed' && e.actorId === somchai.id)).toBe(true)
     // The removed member can no longer see the project's tasks.
     expect((await call(other, 'GET', `/tasks/${draft.id}`)).statusCode).toBe(404)
+  })
+
+  it('removing a role unassigns that person\'s active tasks with that role (reason role_removed)', async () => {
+    const p = await createProject()
+    await call(admin, 'PUT', `/projects/${p.id}/members/${somchai.id}`, { roles: ['PM'] })
+    await call(admin, 'PUT', `/projects/${p.id}/members/${other.id}`, { roles: ['DEV', 'QC'] })
+    await call(somchai, 'PATCH', `/projects/${p.id}`, { autonomy: 'auto-assign' })
+    const wi = (await call(somchai, 'POST', `/projects/${p.id}/work-items`, { title: 'แก้รายงานแล็บ', templateKey: 'bug-fix' })).json() as WorkItemDetail
+    await call(somchai, 'POST', `/tasks/${wi.tasks[0]!.id}/submit`, { decision: 'approve' })
+    const key = async (k: string) =>
+      ((await call(somchai, 'GET', `/work-items/${wi.id}`)).json() as WorkItemDetail).tasks.find((t) => t.templateTaskKey === k)!
+    const impl = await key('implement')
+    const tests = await key('draft-tests')
+    await call(somchai, 'POST', `/tasks/${impl.id}/assign`, { personId: other.id })
+    await call(somchai, 'POST', `/tasks/${tests.id}/assign`, { personId: other.id })
+    expect(await key('implement')).toMatchObject({ state: 'open', assigneeId: other.id })
+
+    // Unchanged roles: nothing happens.
+    expect((await call(somchai, 'PUT', `/projects/${p.id}/members/${other.id}`, { roles: ['DEV', 'QC'] })).statusCode).toBe(200)
+    expect(await key('implement')).toMatchObject({ assigneeId: other.id })
+
+    const put = await call(somchai, 'PUT', `/projects/${p.id}/members/${other.id}`, { roles: ['QC'] })
+    expect(put.statusCode).toBe(200)
+    expect(await key('implement')).toMatchObject({ state: 'open', assigneeId: null, proposedAssigneeId: null })
+    // The QC task they still hold stays theirs.
+    expect(await key('draft-tests')).toMatchObject({ state: 'open', assigneeId: other.id })
+    expect(((await call(somchai, 'GET', '/me/todo')).json() as Todo).confirmations.map((c) => c.id)).toContain(impl.id)
+    const db = await testDb()
+    const unassigned = await db
+      .select()
+      .from(events)
+      .where(and(eq(events.workItemId, wi.id), eq(events.type, 'task.unassigned')))
+    expect(unassigned.map((e) => [e.taskId, e.reason, e.actorId])).toEqual([[impl.id, 'role_removed', somchai.id]])
+    expect(unassigned[0]!.payload).toEqual({ personId: other.id, roles: ['DEV'] })
   })
 })
