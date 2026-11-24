@@ -1,0 +1,43 @@
+{
+  "app": { "title": "AI Work Portal", "logout": "Log out" },
+  "common": {
+    "comingSoon": "Coming soon",
+    "save": "Save",
+    "cancel": "Cancel",
+    "error": "Something went wrong. Please try again."
+  },
+  "nav": {
+    "chat": "Chat",
+    "todo": "To-do",
+    "discussions": "Discussions",
+    "status": "Status",
+    "projects": "Projects",
+    "requests": "My requests",
+    "answers": "Things to answer",
+    "admin": { "people": "People admin" }
+  },
+  "projects": {
+    "title": "Projects",
+    "create": "Create project",
+    "empty": "No projects yet",
+    "name": "Project name",
+    "description": "Description",
+    "members": "Members",
+    "addMember": "Add member",
+    "removeMember": "Remove member",
+    "person": "Person",
+    "roles": "Roles",
+    "add": "Add",
+    "lastPm": "A project must keep at least one PM"
+  },
+  "people": {
+    "name": "Name",
+    "skills": "Skills",
+    "staffOverride": "Staff status",
+    "overrideAuto": "Follow Keycloak group",
+    "overrideStaff": "Force staff",
+    "overrideRequester": "Force requester",
+    "admin": "Admin",
+    "lastAdmin": "There must be at least one admin"
+  }
+}
