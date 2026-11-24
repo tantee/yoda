@@ -30,7 +30,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
   return {
     port: e.PORT,
     databaseUrl: e.DATABASE_URL,
-    oidcIssuer: e.OIDC_ISSUER,
+    oidcIssuer: e.OIDC_ISSUER.replace(/\/+$/, ''),
     oidcClientId: e.OIDC_CLIENT_ID,
     staffGroup: e.STAFF_GROUP,
     bootstrapAdmins: e.BOOTSTRAP_ADMINS.split(',')
