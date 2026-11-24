@@ -435,3 +435,63 @@ export async function cancelWorkItem(ctx: WorkCtx, me: Me, workItemId: string): 
   await tx.update(workItems).set({ state: 'cancelled', updatedAt: sql`now()` }).where(eq(workItems.id, workItemId))
   await recordEvent(ctx, { type: 'work_item.cancelled', projectId: item.projectId, workItemId, taskId: null })
 }
+
+/** The AI runner may still act on the task: open, unassigned and executed by the AI. */
+const awaitingAi = (task: TaskRow) => task.state === 'open' && task.assigneeId === null && task.executor === 'ai'
+
+/**
+ * Stores an AI draft as the task's result (actor kind `ai`). No-op when the task was taken over, cancelled or
+ * already finished meanwhile. Records `ai.drafted` then `task.accepted`, a draft progress entry, then advances
+ * the work item so the next (human) task appears.
+ */
+export async function submitAiResult(
+  ctx: WorkCtx,
+  taskId: string,
+  text: string,
+  meta: { model: string; overBudget?: boolean },
+): Promise<boolean> {
+  const { tx } = ctx
+  const { item, task } = await lockTask(tx, taskId)
+  if (item.state !== 'active' || !awaitingAi(task)) return false
+  const result: TaskResult = { text, attachmentIds: [] }
+  const base = { projectId: task.projectId, workItemId: task.workItemId, taskId }
+  await tx.update(tasks).set({ state: 'accepted', result, updatedAt: sql`now()` }).where(eq(tasks.id, taskId))
+  await recordEvent(ctx, {
+    type: 'ai.drafted',
+    ...base,
+    payload: meta.overBudget ? { model: meta.model, overBudget: true } : { model: meta.model },
+  })
+  await recordEvent(ctx, { type: 'task.accepted', ...base })
+  await recordAcceptedKnowledge(ctx, item, task, result)
+  await progressWorkItem(ctx, task.workItemId)
+  return true
+}
+
+/**
+ * Records that the AI could not draft the task (`ai.failed` with `reason`, actor kind `system`). The task stays
+ * open and unassigned, so it remains in the PM's confirmations. No-op when it no longer awaits the AI.
+ */
+export async function failAiTask(ctx: WorkCtx, taskId: string, reason: string): Promise<void> {
+  const { item, task } = await lockTask(ctx.tx, taskId)
+  if (item.state !== 'active' || !awaitingAi(task)) return
+  await recordEvent(ctx, {
+    type: 'ai.failed',
+    projectId: task.projectId,
+    workItemId: task.workItemId,
+    taskId,
+    reason,
+    actorKind: 'system',
+  })
+}
+
+/** PM/admin: queue another drafting attempt for an open, unassigned `draft-text` AI task. */
+export async function retryAiTask(ctx: WorkCtx, me: Me, taskId: string): Promise<void> {
+  const { tx } = ctx
+  const { item, task } = await lockTask(tx, taskId)
+  if (!(await isPmOrAdmin(tx, me, task.projectId))) throw forbidden()
+  if (item.state !== 'active' || !awaitingAi(task)) throw invalidState()
+  const def = await definitionOf(tx, item)
+  const templateTask = def.steps.find((s) => s.key === task.stepKey)?.tasks.find((t) => t.key === task.templateTaskKey)
+  if (templateTask?.capability !== 'draft-text') throw invalidState()
+  ctx.jobs.push({ name: 'draft-task', id: taskId })
+}

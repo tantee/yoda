@@ -1,0 +1,272 @@
+import type { FastifyInstance } from 'fastify'
+import type { Task, TaskWithContext, Todo, WorkItemDetail } from '@yoda/shared'
+import { MockLanguageModelV4 } from 'ai/test'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { and, asc, eq } from 'drizzle-orm'
+import { AiGateway } from '../src/ai/gateway.js'
+import type { ModelSet } from '../src/ai/models.js'
+import { aiCalls, events, knowledgeEntries, projects } from '../src/db/schema.js'
+import { InlineJobQueue, type JobName } from '../src/jobs/queue.js'
+import { LiveBus } from '../src/live/bus.js'
+import { textStream } from './ai-mocks.js'
+import { mockModels, resetDb, testDb } from './helpers.js'
+import { auth, login, makeApp, type Who } from './support.js'
+
+const DRAFT = '# ข้อกำหนด\n\n- DRAFT-REQUIREMENTS-TEXT'
+
+let app: FastifyInstance
+let queue: InlineJobQueue
+let admin: Who
+let pm: Who
+let ba: Who
+let outsider: Who
+let requester: Who
+
+/** A draft model whose calls are counted and whose prompts are captured; `fail` makes it throw. */
+function draftModel(text = DRAFT) {
+  const state = { calls: 0, prompts: [] as string[], fail: false }
+  const model = new MockLanguageModelV4({
+    modelId: 'claude-opus-5-5',
+    doStream: async (opts) => {
+      state.calls++
+      state.prompts.push(JSON.stringify(opts.prompt))
+      if (state.fail) throw new Error('provider down')
+      return { stream: textStream(text) }
+    },
+  })
+  return { model, state }
+}
+
+/** Holds draft-task jobs until `release()`, so a test can act before the drafter runs. */
+class HeldQueue extends InlineJobQueue {
+  held: { name: JobName; id: string }[] = []
+  override async send(name: JobName, data: { id: string }): Promise<void> {
+    if (name === 'draft-task') this.held.push({ name, id: data.id })
+    else await super.send(name, data)
+  }
+  async release(): Promise<void> {
+    for (const j of this.held.splice(0)) await super.send(j.name, { id: j.id })
+  }
+}
+
+async function boot(models: ModelSet, jobs: InlineJobQueue = new InlineJobQueue()) {
+  const db = await testDb()
+  queue = jobs
+  app = await makeApp({ ai: new AiGateway({ db, bus: new LiveBus(), models }), jobs })
+  admin = await login(app, 'boss', { staff: true })
+  pm = await login(app, 'pm', { staff: true })
+  ba = await login(app, 'ba', { staff: true })
+  outsider = await login(app, 'outsider', { staff: true })
+  requester = await login(app, 'nurse')
+}
+
+const call = (who: Who, method: 'GET' | 'POST' | 'PUT', url: string, payload?: unknown) =>
+  app.inject({ method, url, headers: auth(who), payload: payload as object | undefined })
+
+async function project(): Promise<string> {
+  const { id } = (await call(admin, 'POST', '/projects', { name: 'ระบบรายงานแล็บ' })).json() as { id: string }
+  for (const [who, roles] of [[pm, ['PM']], [ba, ['BA']]] as [Who, string[]][]) {
+    expect((await call(admin, 'PUT', `/projects/${id}/members/${who.id}`, { roles })).statusCode).toBe(200)
+  }
+  return id
+}
+
+async function createItem(projectId: string): Promise<WorkItemDetail> {
+  const res = await call(pm, 'POST', `/projects/${projectId}/work-items`, {
+    title: 'เพิ่มรายงาน HbA1c',
+    description: 'ต้องการรายงานใหม่',
+    templateKey: 'software-change',
+  })
+  expect(res.statusCode).toBe(201)
+  return res.json()
+}
+
+async function active(itemId: string, key: string): Promise<Task> {
+  const d = (await call(pm, 'GET', `/work-items/${itemId}`)).json() as WorkItemDetail
+  return d.tasks.filter((t) => t.templateTaskKey === key).at(-1)!
+}
+
+async function approveIntake(itemId: string) {
+  const t = await active(itemId, 'accept-intake')
+  if (t.assigneeId !== pm.id) expect((await call(pm, 'POST', `/tasks/${t.id}/assign`, { personId: pm.id })).statusCode).toBe(200)
+  expect((await call(pm, 'POST', `/tasks/${t.id}/submit`, { decision: 'approve', text: '' })).statusCode).toBe(200)
+}
+
+async function taskEvents(taskId: string) {
+  const db = await testDb()
+  return db.select().from(events).where(eq(events.taskId, taskId)).orderBy(asc(events.seq))
+}
+
+async function callsFor(taskId: string) {
+  const db = await testDb()
+  return db.select().from(aiCalls).where(eq(aiCalls.taskId, taskId))
+}
+
+async function confirmations(): Promise<string[]> {
+  return ((await call(pm, 'GET', '/me/todo')).json() as Todo).confirmations.map((t) => t.id)
+}
+
+describe('AI drafter', () => {
+  beforeEach(async () => {
+    await resetDb(await testDb())
+  })
+  afterEach(async () => {
+    await queue.drain()
+    await app.close()
+  })
+
+  it('drafts draft-requirements after intake approval and opens clarify-requirements with the draft', async () => {
+    const m = draftModel()
+    await boot(mockModels({ draft: m.model }))
+    const p = await project()
+    const wi = await createItem(p)
+    await approveIntake(wi.id)
+    await queue.drain()
+
+    const draft = await active(wi.id, 'draft-requirements')
+    expect(draft).toMatchObject({ state: 'accepted', executor: 'ai', assigneeId: null })
+    expect(draft.result).toMatchObject({ text: DRAFT })
+    const evs = await taskEvents(draft.id)
+    const drafted = evs.find((e) => e.type === 'ai.drafted')
+    const accepted = evs.find((e) => e.type === 'task.accepted')
+    expect(drafted).toMatchObject({ actorKind: 'ai', actorId: null, payload: { model: 'claude-opus-5-5' } })
+    expect(accepted).toMatchObject({ actorKind: 'ai', actorId: null })
+    expect(drafted!.seq).toBeLessThan(accepted!.seq)
+
+    const clarify = await active(wi.id, 'clarify-requirements')
+    expect(clarify).toBeTruthy()
+    const detail = (await call(ba, 'GET', `/tasks/${clarify.id}`)).json() as TaskWithContext
+    expect(detail.inputs.map((i) => i.result.text)).toContain(DRAFT)
+
+    const db = await testDb()
+    const progress = await db
+      .select()
+      .from(knowledgeEntries)
+      .where(and(eq(knowledgeEntries.sourceRef, draft.id), eq(knowledgeEntries.type, 'progress')))
+    expect(progress).toHaveLength(1)
+    expect(progress[0]).toMatchObject({ status: 'draft', body: DRAFT })
+    expect(await callsFor(draft.id)).toMatchObject([{ ok: true, job: 'draft' }])
+  })
+
+  it('the prompt carries the work item title but never a noAi document body', async () => {
+    const m = draftModel()
+    await boot(mockModels({ draft: m.model }))
+    const p = await project()
+    const wi = await createItem(p)
+    const db = await testDb()
+    await db.insert(knowledgeEntries).values([
+      { lineageId: crypto.randomUUID(), version: 1, scope: 'work_item', projectId: p, workItemId: wi.id, type: 'document',
+        title: 'ลับ', body: 'SECRET-NOAI-BODY HbA1c', status: 'confirmed', sourceKind: 'person', noAi: true },
+      { lineageId: crypto.randomUUID(), version: 1, scope: 'work_item', projectId: p, workItemId: wi.id, type: 'document',
+        title: 'เปิด', body: 'VISIBLE-DOC-BODY', status: 'confirmed', sourceKind: 'person' },
+    ])
+    await approveIntake(wi.id)
+    await queue.drain()
+
+    expect(m.state.calls).toBe(1)
+    const prompt = m.state.prompts[0]!
+    expect(prompt).toContain('เพิ่มรายงาน HbA1c')
+    expect(prompt).toContain('VISIBLE-DOC-BODY')
+    expect(prompt).not.toContain('SECRET-NOAI-BODY')
+  })
+
+  it('a project over budget gets no model call; the task returns to the PM with budget_exceeded', async () => {
+    const m = draftModel()
+    await boot(mockModels({ draft: m.model }))
+    const p = await project()
+    const db = await testDb()
+    await db.update(projects).set({ aiBudgetUsd: '1.00' }).where(eq(projects.id, p))
+    await db.insert(aiCalls).values({ projectId: p, job: 'draft', provider: 'anthropic', model: 'x', costUsd: '2.000000', ok: true })
+    const wi = await createItem(p)
+    await approveIntake(wi.id)
+    await queue.drain()
+
+    expect(m.state.calls).toBe(0)
+    const draft = await active(wi.id, 'draft-requirements')
+    expect(draft).toMatchObject({ state: 'open', assigneeId: null, executor: 'ai', result: null })
+    const failed = (await taskEvents(draft.id)).filter((e) => e.type === 'ai.failed')
+    expect(failed).toHaveLength(1)
+    expect(failed[0]).toMatchObject({ reason: 'budget_exceeded', actorKind: 'system' })
+    expect(await confirmations()).toContain(draft.id)
+  })
+
+  it('no draft model configured → ai_unavailable at once, no ai_calls row', async () => {
+    await boot(mockModels({ draft: null, ids: { draft: null, fast: 'anthropic:claude-haiku-5-5', embed: null } }))
+    const p = await project()
+    const wi = await createItem(p)
+    await approveIntake(wi.id)
+    await queue.drain()
+
+    const draft = await active(wi.id, 'draft-requirements')
+    expect(draft).toMatchObject({ state: 'open', assigneeId: null })
+    const failed = (await taskEvents(draft.id)).filter((e) => e.type === 'ai.failed')
+    expect(failed.map((e) => e.reason)).toEqual(['ai_unavailable'])
+    expect(await callsFor(draft.id)).toHaveLength(0)
+  })
+
+  it('a model failing every time → ai_failed after the final retry, 3 failed calls, no result', async () => {
+    const m = draftModel()
+    m.state.fail = true
+    await boot(mockModels({ draft: m.model }))
+    const p = await project()
+    const wi = await createItem(p)
+    await approveIntake(wi.id)
+    await queue.drain()
+
+    const draft = await active(wi.id, 'draft-requirements')
+    expect(draft).toMatchObject({ state: 'open', assigneeId: null, result: null })
+    const failed = (await taskEvents(draft.id)).filter((e) => e.type === 'ai.failed')
+    expect(failed.map((e) => e.reason)).toEqual(['ai_failed'])
+    const calls = await callsFor(draft.id)
+    expect(calls).toHaveLength(3)
+    expect(calls.every((c) => !c.ok)).toBe(true)
+    expect(await confirmations()).toContain(draft.id)
+  })
+
+  it('a PM taking the ai task over before the job runs → the job does nothing', async () => {
+    const m = draftModel()
+    const held = new HeldQueue()
+    await boot(mockModels({ draft: m.model }), held)
+    const p = await project()
+    const wi = await createItem(p)
+    await approveIntake(wi.id)
+    expect(held.held).toHaveLength(1)
+    const draft = await active(wi.id, 'draft-requirements')
+    expect((await call(pm, 'POST', `/tasks/${draft.id}/assign`, { personId: ba.id })).statusCode).toBe(200)
+    await held.release()
+    await held.drain()
+
+    expect(m.state.calls).toBe(0)
+    expect(await active(wi.id, 'draft-requirements')).toMatchObject({ state: 'open', executor: 'human', assigneeId: ba.id })
+    const types = (await taskEvents(draft.id)).map((e) => e.type)
+    expect(types).not.toContain('ai.drafted')
+    expect(types).not.toContain('ai.failed')
+  })
+
+  it('POST /tasks/:id/retry-ai redrafts a failed draft; 409 once accepted; 403 / 404 for others', async () => {
+    const m = draftModel()
+    m.state.fail = true
+    await boot(mockModels({ draft: m.model }))
+    const p = await project()
+    const wi = await createItem(p)
+    await approveIntake(wi.id)
+    await queue.drain()
+    const draft = await active(wi.id, 'draft-requirements')
+    expect(draft.state).toBe('open')
+
+    expect((await call(ba, 'POST', `/tasks/${draft.id}/retry-ai`)).statusCode).toBe(403)
+    expect((await call(requester, 'POST', `/tasks/${draft.id}/retry-ai`)).statusCode).toBe(403)
+    expect((await call(outsider, 'POST', `/tasks/${draft.id}/retry-ai`)).statusCode).toBe(404)
+
+    m.state.fail = false
+    const res = await call(pm, 'POST', `/tasks/${draft.id}/retry-ai`)
+    expect(res.statusCode).toBe(200)
+    await queue.drain()
+    expect(await active(wi.id, 'draft-requirements')).toMatchObject({ id: draft.id, state: 'accepted', result: { text: DRAFT } })
+    expect(await active(wi.id, 'clarify-requirements')).toBeTruthy()
+
+    const again = await call(pm, 'POST', `/tasks/${draft.id}/retry-ai`)
+    expect(again.statusCode).toBe(409)
+    expect(again.json()).toEqual({ error: 'invalid_state' })
+  })
+})
