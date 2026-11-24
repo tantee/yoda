@@ -15,7 +15,13 @@ const overrideItems = computed(() => [
 ])
 
 async function load() {
-  people.value = await api<Person[]>('/people')
+  try {
+    people.value = await api<Person[]>('/people')
+    error.value = ''
+  } catch (e) {
+    error.value = t(errorKey(e))
+    return
+  }
   for (const p of people.value) skillDrafts[p.id] = [...p.skills]
 }
 
@@ -28,6 +34,12 @@ async function patch(id: string, body: PersonPatch) {
     error.value = code === 'last_admin' ? t('people.lastAdmin') : t('common.error')
   }
   await load()
+}
+
+function saveSkills(p: Person) {
+  const next = skillDrafts[p.id] ?? []
+  if (next.length === p.skills.length && next.every((x, i) => x === p.skills[i])) return
+  return patch(p.id, { skills: next })
 }
 
 onMounted(load)
@@ -57,7 +69,7 @@ onMounted(load)
               closable-chips
               density="compact"
               hide-details
-              @blur="patch(p.id, { skills: skillDrafts[p.id] ?? [] })"
+              @blur="saveSkills(p)"
             />
           </td>
           <td style="min-width: 200px">

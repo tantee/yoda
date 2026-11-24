@@ -9,6 +9,7 @@ const route = useRoute()
 const api = useApi()
 const id = route.params.id as string
 const project = ref<ProjectDetail | null>(null)
+const loadError = ref('')
 const people = ref<Person[]>([])
 const error = ref('')
 const newPerson = ref<string | null>(null)
@@ -21,8 +22,13 @@ const candidates = computed(() =>
 )
 
 async function load() {
-  project.value = await api<ProjectDetail>(`/projects/${id}`)
-  if (canManage.value) people.value = await api<Person[]>('/people')
+  try {
+    project.value = await api<ProjectDetail>(`/projects/${id}`)
+    loadError.value = ''
+    if (canManage.value) people.value = await api<Person[]>('/people')
+  } catch (e) {
+    loadError.value = t(errorKey(e))
+  }
 }
 
 function fail(e: unknown) {
@@ -61,7 +67,10 @@ onMounted(load)
 </script>
 
 <template>
-  <div v-if="project">
+  <div>
+    <v-btn v-if="!project" variant="text" prepend-icon="mdi-arrow-left" to="/projects" class="mb-2">{{ t('nav.projects') }}</v-btn>
+    <v-alert v-if="loadError" type="error" class="mb-4" data-testid="load-error">{{ loadError }}</v-alert>
+    <template v-if="project">
     <v-btn variant="text" prepend-icon="mdi-arrow-left" to="/projects" class="mb-2">{{ t('nav.projects') }}</v-btn>
     <h1 class="text-h5">{{ project.name }}</h1>
     <p class="text-medium-emphasis mb-4">{{ project.description }}</p>
@@ -104,5 +113,6 @@ onMounted(load)
         <v-btn color="primary" :disabled="!newPerson || !newRoles.length" @click="addMember">{{ t('projects.add') }}</v-btn>
       </v-card-text>
     </v-card>
+    </template>
   </div>
 </template>

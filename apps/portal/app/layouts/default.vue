@@ -4,7 +4,9 @@ import { navItemsFor } from '~/utils/nav'
 const { me } = useMe()
 const { $keycloak } = useNuxtApp()
 const { t, locale, locales, setLocale } = useI18n()
-const drawer = ref(true)
+// null lets Vuetify open it on desktop and keep it closed on narrow screens
+const drawer = ref<boolean | null>(null)
+const meError = useState<string>('meError', () => '')
 const items = computed(() => (me.value ? navItemsFor(me.value) : []))
 
 function logout() {
@@ -45,7 +47,8 @@ function logout() {
   </v-navigation-drawer>
   <v-main>
     <v-container>
-      <slot />
+      <v-alert v-if="meError" type="error" data-testid="me-error">{{ t(meError) }}</v-alert>
+      <slot v-else />
     </v-container>
   </v-main>
 </template>
