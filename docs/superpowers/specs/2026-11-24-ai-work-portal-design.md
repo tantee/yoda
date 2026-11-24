@@ -336,9 +336,11 @@ with full context.
   ephemeral workdir; runs Claude Agent SDK (API key or Bedrock/Vertex/Foundry);
   pushes a branch and opens an MR via GitLab API; sandboxed (no access beyond
   GitLab and core).
-- **Dev-machine runner** — same protocol, started by a developer (e.g. as an
-  Orca automation or a CLI); uses their local Claude Code/Codex and their own
-  subscription; the developer stays in the loop.
+- **Dev-machine runner** — same protocol, running on a developer's machine
+  with their local Claude Code/Codex. Two modes: on-demand (developer starts
+  each task) and unattended (background service that claims and finishes
+  tasks, parking only those that need a human). See §17 item 4 for safeguards
+  and the account caveat.
 
 Runner auth: each runner has a token tied to a person or service account;
 results are attributed accordingly.
@@ -445,10 +447,24 @@ endpoints; daily Postgres backups. Kubernetes is not required for v1.
    overwritten. No bulk import of existing GitLab issues in v1: projects are
    linked and start fresh; an individual issue can be imported by hand into a
    new WorkItem.
-4. **Dev-machine runners are on-demand only:** a developer starts each task
-   (e.g. "work task 123" from the portal, Orca, or CLI). No unattended polling
-   on personal subscriptions. Unattended work runs only on the server runner
-   with API keys.
+4. **Dev-machine runners have two modes** (changed at the requester's request):
+   - *On-demand:* the developer starts a task ("work task 123").
+   - *Unattended (opt-in per machine):* the runner runs as a background
+     service, claims tasks matching its capabilities, and works them headless
+     (Claude Code / Codex, in an isolated Orca or git worktree). When a task
+     needs a person (`ask_human`, failing checks it can't fix, ambiguity), it
+     parks the task and the question goes to the developer's to-do; the runner
+     moves on to the next task.
+   - Safeguards: max concurrent tasks per machine; optional working-hours
+     window; global and per-machine pause switch in the portal; branch + MR
+     only, never push to default branch; lease/heartbeat so a sleeping laptop
+     returns the task to the queue.
+   - Account caveat: unattended use must run under an account whose terms
+     allow automated use (API key, or an organization Team/Enterprise plan
+     whose terms cover it). Whether a *personal* consumer subscription may be
+     used unattended must be confirmed against the provider's current terms
+     before enabling it; the runner records which account type each machine
+     uses so this can be enforced by policy.
 5. **"Run automatable tests" in v1** = read GitLab CI pipeline results and have
    AI generate test cases (and, where the repo has a test suite, add tests in
    the MR). No deployment of test environments or end-to-end runs by the system
