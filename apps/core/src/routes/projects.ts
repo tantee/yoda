@@ -1,12 +1,14 @@
 import type { Me } from '@yoda/shared'
-import { MemberRolesPut, Project, ProjectCreate, ProjectDetail } from '@yoda/shared'
-import { and, asc, eq, sql } from 'drizzle-orm'
+import { MemberRolesPut, Project, ProjectCreate, ProjectDetail, ProjectPatch } from '@yoda/shared'
+import { and, asc, eq } from 'drizzle-orm'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { forbidden, lastPm, notStaff, notFound, requireAdmin, requireStaff } from '../auth/plugin.js'
-import type { Db } from '../db/client.js'
+import type { Db, Tx } from '../db/client.js'
 import { people, projectMembers, projects } from '../db/schema.js'
-import { canManageProject } from '../projects/access.js'
+import { canManageProject, lockProject } from '../projects/access.js'
+import { runWork } from '../work/context.js'
+import { unassignMemberTasks } from '../work/engine.js'
 
 type ProjectRow = typeof projects.$inferSelect
 
@@ -20,8 +22,6 @@ const toProject = (row: ProjectRow): Project =>
     autonomy: row.autonomy,
     createdAt: row.createdAt.toISOString(),
   })
-
-type Tx = Parameters<Parameters<Db['transaction']>[0]>[0]
 
 async function loadDetail(db: Db | Tx, id: string): Promise<ProjectDetail | null> {
   const [row] = await db.select().from(projects).where(eq(projects.id, id))
@@ -41,12 +41,6 @@ async function loadDetail(db: Db | Tx, id: string): Promise<ProjectDetail | null
 
 const ProjectParams = z.object({ id: z.string().uuid() })
 const MemberParams = z.object({ id: z.string().uuid(), personId: z.string().uuid() })
-
-/** Lock the project row so concurrent membership changes serialize. */
-async function lockProject(tx: Tx, id: string): Promise<void> {
-  const rows = await tx.execute(sql`select 1 from projects where id = ${id} for update`)
-  if (rows.length === 0) throw notFound()
-}
 
 /** True if `personId` is a PM and no other PM exists while other members remain. */
 async function isLastPm(tx: Tx, projectId: string, personId: string): Promise<boolean> {
@@ -104,6 +98,8 @@ export function projectRoutes(app: FastifyInstance): void {
     await requireManage(request, id)
     return db().transaction(async (tx) => {
       await lockProject(tx, id)
+      // Re-check under the lock: the caller may have been demoted or removed meanwhile.
+      if (!(await canManageProject(tx, request.me, id))) throw forbidden()
       const [person] = await tx
         .select({
           isAdmin: people.isAdmin,
@@ -138,8 +134,12 @@ export function projectRoutes(app: FastifyInstance): void {
     requireStaff(request)
     const { id, personId } = MemberParams.parse(request.params)
     await requireManage(request, id)
-    await db().transaction(async (tx) => {
+    const me = request.me
+    // runWork so the task.unassigned events are published after commit.
+    await runWork(app.deps, me.id, async (ctx) => {
+      const { tx } = ctx
       await lockProject(tx, id)
+      if (!(await canManageProject(tx, me, id))) throw forbidden()
       const [current] = await tx
         .select({ roles: projectMembers.roles })
         .from(projectMembers)
@@ -149,8 +149,25 @@ export function projectRoutes(app: FastifyInstance): void {
       await tx
         .delete(projectMembers)
         .where(and(eq(projectMembers.projectId, id), eq(projectMembers.personId, personId)))
+      // After the delete: work in flight that still sees the member is waited for inside.
+      await unassignMemberTasks(ctx, id, personId)
     })
     return reply.status(204).send()
+  })
+
+  app.patch('/projects/:id', async (request) => {
+    requireStaff(request)
+    const { id } = ProjectParams.parse(request.params)
+    const { autonomy } = ProjectPatch.parse(request.body)
+    await requireManage(request, id)
+    return db().transaction(async (tx) => {
+      await lockProject(tx, id)
+      if (!(await canManageProject(tx, request.me, id))) throw forbidden()
+      await tx.update(projects).set({ autonomy }).where(eq(projects.id, id))
+      const detail = await loadDetail(tx, id)
+      if (!detail) throw notFound()
+      return detail
+    })
   })
 
   /** Admin or project PM; otherwise 403. Admins on an unknown project get 404 from the lock. */

@@ -22,6 +22,20 @@
       "when": 1795505939396,
       "tag": "0002_public_strong_guy",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1795514943652,
+      "tag": "0003_flat_miek",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1795515162926,
+      "tag": "0004_marvelous_moon_knight",
+      "breakpoints": true
     }
   ]
 }

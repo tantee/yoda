@@ -1,5 +1,19 @@
+const CODES: Record<string, string> = {
+  invalid_state: 'errors.invalidState',
+  not_member: 'errors.notMember',
+  decision_required: 'errors.decisionRequired',
+  comment_required: 'errors.commentRequired',
+}
+
 export function errorKey(e: unknown): string {
-  const err = e as { statusCode?: number; status?: number; response?: { status?: number } }
+  const err = e as {
+    statusCode?: number
+    status?: number
+    response?: { status?: number }
+    data?: { error?: string }
+  }
+  const code = err?.data?.error
+  if (code && CODES[code]) return CODES[code]
   const status = err?.statusCode ?? err?.status ?? err?.response?.status
   if (status === 403) return 'errors.forbidden'
   if (status === 404) return 'errors.notFound'

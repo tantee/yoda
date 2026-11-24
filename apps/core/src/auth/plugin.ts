@@ -8,7 +8,19 @@ import { isStaff, TokenClaims, upsertPersonFromClaims } from './people.js'
 export class HttpError extends Error {
   constructor(
     readonly statusCode: 401 | 403 | 404 | 409 | 422,
-    readonly body: { error: 'unauthorized' | 'forbidden' | 'not_found' | 'last_pm' | 'last_admin' | 'not_staff' },
+    readonly body: {
+      error:
+        | 'unauthorized'
+        | 'forbidden'
+        | 'not_found'
+        | 'last_pm'
+        | 'last_admin'
+        | 'not_staff'
+        | 'invalid_state'
+        | 'not_member'
+        | 'decision_required'
+        | 'comment_required'
+    },
   ) {
     super(body.error)
   }
@@ -20,6 +32,10 @@ export const lastAdmin = () => new HttpError(409, { error: 'last_admin' })
 export const lastPm = () => new HttpError(409, { error: 'last_pm' })
 export const notStaff = () => new HttpError(422, { error: 'not_staff' })
 export const forbidden = () => new HttpError(403, { error: 'forbidden' })
+export const invalidState = () => new HttpError(409, { error: 'invalid_state' })
+export const notMember = () => new HttpError(422, { error: 'not_member' })
+export const decisionRequired = () => new HttpError(422, { error: 'decision_required' })
+export const commentRequired = () => new HttpError(422, { error: 'comment_required' })
 
 /**
  * Verify the bearer token. Returns validated claims, or null for any failure
@@ -51,6 +67,7 @@ async function verifyRequest(request: FastifyRequest, deps: AppDeps): Promise<To
  */
 export function registerAuth(app: FastifyInstance): void {
   app.decorateRequest('me', null as unknown as Me)
+  app.decorateRequest('tokenExp', 0)
 
   app.addHook('onRequest', async (request) => {
     if (request.routeOptions.config?.public === true) return
@@ -58,6 +75,7 @@ export function registerAuth(app: FastifyInstance): void {
     const claims = await verifyRequest(request, deps)
     if (!claims) throw unauthorized()
     const person = await upsertPersonFromClaims(deps.db, claims, deps.config)
+    request.tokenExp = claims.exp * 1000
     request.me = {
       id: person.id,
       username: person.username,
@@ -84,6 +102,8 @@ export function requireAdmin(request: FastifyRequest): void {
 declare module 'fastify' {
   interface FastifyRequest {
     me: Me
+    /** Access-token expiry, epoch ms. */
+    tokenExp: number
   }
   interface FastifyContextConfig {
     public?: boolean
