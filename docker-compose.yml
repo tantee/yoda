@@ -1,0 +1,46 @@
+# DEV ONLY: every credential in this file is a throwaway local default.
+# Host ports are overridable (e.g. KEYCLOAK_PORT=18080) if the defaults are taken.
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    ports:
+      - '${POSTGRES_PORT:-5432}:5432'
+    environment:
+      POSTGRES_USER: yoda          # DEV ONLY
+      POSTGRES_PASSWORD: yoda      # DEV ONLY
+      POSTGRES_DB: yoda
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U yoda -d yoda']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio:
+    image: minio/minio
+    command: server /data --console-address :9001
+    ports:
+      - '${MINIO_PORT:-9000}:9000'
+      - '${MINIO_CONSOLE_PORT:-9001}:9001'
+    environment:
+      MINIO_ROOT_USER: yoda          # DEV ONLY
+      MINIO_ROOT_PASSWORD: yoda-dev-minio   # DEV ONLY
+    volumes:
+      - miniodata:/data
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    command: start-dev --import-realm
+    ports:
+      - '${KEYCLOAK_PORT:-8080}:8080'
+    environment:
+      KEYCLOAK_ADMIN: admin          # DEV ONLY
+      KEYCLOAK_ADMIN_PASSWORD: admin # DEV ONLY
+    volumes:
+      - ./infra/keycloak:/opt/keycloak/data/import:ro
+
+volumes:
+  pgdata:
+  miniodata:
