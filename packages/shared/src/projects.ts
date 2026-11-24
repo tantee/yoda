@@ -32,3 +32,6 @@ export type ProjectDetail = z.infer<typeof ProjectDetail>
 
 export const MemberRolesPut = z.object({ roles: z.array(ProjectRole).min(1) })
 export type MemberRolesPut = z.infer<typeof MemberRolesPut>
+
+export const ProjectPatch = z.object({ autonomy: z.enum(['propose', 'auto-assign']) })
+export type ProjectPatch = z.infer<typeof ProjectPatch>

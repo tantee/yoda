@@ -1,6 +1,7 @@
 import type { TaskExecutor, TemplateTask } from '@yoda/shared'
-import { eq } from 'drizzle-orm'
-import { projects, tasks } from '../db/schema.js'
+import { and, eq } from 'drizzle-orm'
+import type { Tx } from '../db/client.js'
+import { projectMembers, projects, tasks } from '../db/schema.js'
 import { pickAssignee } from './assign.js'
 import { recordEvent, type WorkCtx } from './context.js'
 
@@ -24,7 +25,8 @@ export async function createTaskAttempt(
   let noCandidate = false
 
   if (input.executor !== 'ai') {
-    if (input.assigneeHint) {
+    // The previous attempt's assignee keeps the task only while still a project member.
+    if (input.assigneeHint && (await isMember(tx, input.projectId, input.assigneeHint))) {
       assigneeId = input.assigneeHint
     } else {
       const candidate = await pickAssignee(tx, input.projectId, input.task.role)
@@ -65,4 +67,12 @@ export async function createTaskAttempt(
   if (assigneeId) await recordEvent(ctx, { type: 'task.assigned', ...base, payload: { assigneeId } })
   else if (proposedAssigneeId) await recordEvent(ctx, { type: 'task.proposed', ...base, payload: { proposedAssigneeId } })
   return taskId
+}
+
+export async function isMember(tx: Tx, projectId: string, personId: string): Promise<boolean> {
+  const [row] = await tx
+    .select({ personId: projectMembers.personId })
+    .from(projectMembers)
+    .where(and(eq(projectMembers.projectId, projectId), eq(projectMembers.personId, personId)))
+  return !!row
 }

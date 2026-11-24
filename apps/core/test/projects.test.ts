@@ -1,6 +1,8 @@
 import type { FastifyInstance } from 'fastify'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { projectMembers } from '../src/db/schema.js'
+import type { Todo, WorkItemDetail } from '@yoda/shared'
+import { and, asc, eq } from 'drizzle-orm'
+import { events, projectMembers } from '../src/db/schema.js'
 import { resetDb, testDb } from './helpers.js'
 import { auth, login, makeApp, type Who } from './support.js'
 
@@ -10,7 +12,7 @@ let somchai: Who
 let other: Who
 let nurse: Who
 
-const call = (who: Who, method: 'GET' | 'POST' | 'PUT' | 'DELETE', url: string, payload?: unknown) =>
+const call = (who: Who, method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE', url: string, payload?: unknown) =>
   app.inject({ method, url, headers: auth(who), payload: payload as object | undefined })
 
 async function createProject(name = 'ระบบรายงานแล็บ') {
@@ -127,5 +129,57 @@ describe('projects API', () => {
   it('DELETE of a non-member is 404', async () => {
     const p = await createProject()
     expect((await call(admin, 'DELETE', `/projects/${p.id}/members/${other.id}`)).statusCode).toBe(404)
+  })
+  it('PATCH sets autonomy for the PM or an admin only', async () => {
+    const p = await createProject()
+    await call(admin, 'PUT', `/projects/${p.id}/members/${somchai.id}`, { roles: ['PM'] })
+    await call(admin, 'PUT', `/projects/${p.id}/members/${other.id}`, { roles: ['DEV'] })
+    const res = await call(somchai, 'PATCH', `/projects/${p.id}`, { autonomy: 'auto-assign' })
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toMatchObject({ id: p.id, autonomy: 'auto-assign', members: [{}, {}] })
+    expect((await call(other, 'PATCH', `/projects/${p.id}`, { autonomy: 'propose' })).statusCode).toBe(403)
+    expect((await call(nurse, 'PATCH', `/projects/${p.id}`, { autonomy: 'propose' })).statusCode).toBe(403)
+    expect((await call(somchai, 'PATCH', `/projects/${p.id}`, { autonomy: 'sometimes' })).statusCode).toBe(400)
+    expect((await call(admin, 'PATCH', `/projects/${p.id}`, { autonomy: 'propose' })).json().autonomy).toBe('propose')
+    expect((await call(admin, 'PATCH', '/projects/00000000-0000-4000-8000-000000000000', { autonomy: 'propose' })).statusCode).toBe(404)
+  })
+
+  it('removing a member unassigns their open and proposed tasks into the PM confirmations', async () => {
+    const p = await createProject()
+    await call(admin, 'PUT', `/projects/${p.id}/members/${somchai.id}`, { roles: ['PM'] })
+    await call(admin, 'PUT', `/projects/${p.id}/members/${other.id}`, { roles: ['DEV'] })
+    const wi = (await call(somchai, 'POST', `/projects/${p.id}/work-items`, { title: 'แก้รายงานแล็บ', templateKey: 'bug-fix' })).json() as WorkItemDetail
+    const accept = wi.tasks[0]!.id
+    await call(somchai, 'POST', `/tasks/${accept}/confirm`)
+    await call(somchai, 'POST', `/tasks/${accept}/submit`, { decision: 'approve' })
+    const key = async (k: string) =>
+      ((await call(somchai, 'GET', `/work-items/${wi.id}`)).json() as WorkItemDetail).tasks.find((t) => t.templateTaskKey === k)!
+    const impl = await key('implement')
+    const draft = await key('draft-tests')
+    await call(somchai, 'POST', `/tasks/${impl.id}/assign`, { personId: other.id })
+    await call(somchai, 'POST', `/tasks/${draft.id}/assign`, { personId: other.id })
+    await call(other, 'POST', `/tasks/${impl.id}/submit`, { text: 'code' })
+    const review = await key('review-code')
+    expect(review).toMatchObject({ state: 'proposed', proposedAssigneeId: other.id })
+    expect(await key('draft-tests')).toMatchObject({ state: 'open', assigneeId: other.id })
+
+    expect((await call(somchai, 'DELETE', `/projects/${p.id}/members/${other.id}`)).statusCode).toBe(204)
+
+    for (const id of [draft.id, review.id]) {
+      const t = (await call(somchai, 'GET', `/tasks/${id}`)).json()
+      expect(t).toMatchObject({ state: 'open', assigneeId: null, proposedAssigneeId: null })
+    }
+    const todo = (await call(somchai, 'GET', '/me/todo')).json() as Todo
+    expect(todo.confirmations.map((c) => c.id).sort()).toEqual([draft.id, review.id].sort())
+    const db = await testDb()
+    const unassigned = await db
+      .select()
+      .from(events)
+      .where(and(eq(events.workItemId, wi.id), eq(events.type, 'task.unassigned')))
+      .orderBy(asc(events.seq))
+    expect(unassigned.map((e) => e.taskId).sort()).toEqual([draft.id, review.id].sort())
+    expect(unassigned.every((e) => e.reason === 'member_removed' && e.actorId === somchai.id)).toBe(true)
+    // The removed member can no longer see the project's tasks.
+    expect((await call(other, 'GET', `/tasks/${draft.id}`)).statusCode).toBe(404)
   })
 })

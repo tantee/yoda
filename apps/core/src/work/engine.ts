@@ -1,5 +1,5 @@
 import type { Me, TaskResult, TaskState, WorkflowTemplateDef, WorkItemCreate } from '@yoda/shared'
-import { and, desc, eq, inArray, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, or, sql } from 'drizzle-orm'
 import {
   commentRequired,
   decisionRequired,
@@ -10,6 +10,7 @@ import {
 } from '../auth/plugin.js'
 import type { Tx } from '../db/client.js'
 import { projectMembers, tasks, workItems } from '../db/schema.js'
+import { lockProject } from '../projects/access.js'
 import { latestTemplate, templateById } from '../workflow/seed.js'
 import { recordEvent, type WorkCtx } from './context.js'
 import { createTaskAttempt } from './tasks.js'
@@ -20,8 +21,9 @@ const isActive = (state: string) => (ACTIVE_STATES as readonly string[]).include
 type WorkItemRow = typeof workItems.$inferSelect
 type TaskRow = typeof tasks.$inferSelect
 
-// Lock order everywhere: work_items row FOR UPDATE first, then the task row.
-// Serialising on the work item is what makes concurrent sibling completions advance a step once.
+// Lock order everywhere: project row (only work item creation and member removal), then work_items row
+// FOR UPDATE, then the task row. Serialising on the work item is what makes concurrent sibling
+// completions advance a step once.
 
 async function lockItem(tx: Tx, workItemId: string): Promise<WorkItemRow> {
   const [row] = await tx.select().from(workItems).where(eq(workItems.id, workItemId)).for('update')
@@ -53,6 +55,10 @@ async function isPmOrAdmin(tx: Tx, me: Me, projectId: string): Promise<boolean> 
   return (await memberRoles(tx, projectId, me.id))?.includes('PM') ?? false
 }
 
+async function requireMemberOrAdmin(tx: Tx, me: Me, projectId: string): Promise<void> {
+  if (!me.isAdmin && !(await memberRoles(tx, projectId, me.id))) throw forbidden()
+}
+
 async function definitionOf(tx: Tx, item: WorkItemRow): Promise<WorkflowTemplateDef> {
   const def = await templateById(tx, item.templateId)
   if (!def) throw new Error(`workflow template ${item.templateId} missing`)
@@ -66,6 +72,8 @@ export async function createWorkItem(
   input: WorkItemCreate,
 ): Promise<string> {
   const { tx } = ctx
+  // Waits for any in-flight member removal, so the new item's tasks never go to a departing member.
+  await lockProject(tx, projectId, 'share')
   if (!me.isAdmin && !(await memberRoles(tx, projectId, me.id))) throw notFound()
   const ownerId = input.ownerId ?? me.id
   if (!(await memberRoles(tx, projectId, ownerId))) throw notMember()
@@ -164,6 +172,7 @@ export async function progressWorkItem(ctx: WorkCtx, workItemId: string): Promis
 export async function startTask(ctx: WorkCtx, me: Me, taskId: string): Promise<void> {
   const { task } = await lockTask(ctx.tx, taskId)
   if (task.assigneeId !== me.id) throw forbidden()
+  await requireMemberOrAdmin(ctx.tx, me, task.projectId)
   if (task.state !== 'open') throw invalidState()
   await ctx.tx.update(tasks).set({ state: 'in_progress', updatedAt: sql`now()` }).where(eq(tasks.id, taskId))
   await recordEvent(ctx, { type: 'task.started', projectId: task.projectId, workItemId: task.workItemId, taskId })
@@ -173,6 +182,7 @@ export async function submitTask(ctx: WorkCtx, me: Me, taskId: string, result: T
   const { tx } = ctx
   const { item, task } = await lockTask(tx, taskId)
   if (task.assigneeId !== me.id) throw forbidden()
+  await requireMemberOrAdmin(tx, me, task.projectId)
   if (task.state !== 'open' && task.state !== 'in_progress') throw invalidState()
   const decides = task.type === 'review' || task.type === 'approval'
   if (decides) {
@@ -241,10 +251,75 @@ export async function assignTask(ctx: WorkCtx, me: Me, taskId: string, personId:
   })
 }
 
+export async function confirmTask(ctx: WorkCtx, me: Me, taskId: string): Promise<void> {
+  const { tx } = ctx
+  const { task } = await lockTask(tx, taskId)
+  if (!(await isPmOrAdmin(tx, me, task.projectId))) throw forbidden()
+  if (task.state !== 'proposed' || !task.proposedAssigneeId) throw invalidState()
+  const assigneeId = task.proposedAssigneeId
+  if (!(await memberRoles(tx, task.projectId, assigneeId))) throw notMember()
+  await tx
+    .update(tasks)
+    .set({ assigneeId, proposedAssigneeId: null, state: 'open', updatedAt: sql`now()` })
+    .where(eq(tasks.id, taskId))
+  await recordEvent(ctx, {
+    type: 'task.assigned',
+    projectId: task.projectId,
+    workItemId: task.workItemId,
+    taskId,
+    payload: { assigneeId },
+  })
+}
+
+/**
+ * Called when `personId` leaves the project (after the membership row is deleted, same transaction):
+ * every active task they hold or are proposed for becomes unassigned `open`, so it lands in the PM's
+ * confirmations.
+ *
+ * Locks the project, then every active work item of the project (not only the ones holding this
+ * person's tasks), then reads the tasks. A concurrent progress/assign holds a work item lock while it
+ * picks an assignee from a membership snapshot that may still include this person; waiting for all
+ * item locks means such a task is committed, and therefore visible, before we look for it. New items
+ * cannot appear meanwhile because createWorkItem takes the project lock in share mode.
+ */
+export async function unassignMemberTasks(ctx: WorkCtx, projectId: string, personId: string): Promise<void> {
+  const { tx } = ctx
+  await lockProject(tx, projectId)
+  await tx
+    .select({ id: workItems.id })
+    .from(workItems)
+    .where(and(eq(workItems.projectId, projectId), eq(workItems.state, 'active')))
+    .orderBy(asc(workItems.id))
+    .for('update')
+  const cleared = await tx
+    .update(tasks)
+    .set({ assigneeId: null, proposedAssigneeId: null, state: 'open', updatedAt: sql`now()` })
+    .where(
+      and(
+        eq(tasks.projectId, projectId),
+        inArray(tasks.state, [...ACTIVE_STATES]),
+        or(eq(tasks.assigneeId, personId), eq(tasks.proposedAssigneeId, personId)),
+      ),
+    )
+    .returning({ id: tasks.id, workItemId: tasks.workItemId })
+  cleared.sort((a, b) => (a.workItemId + a.id).localeCompare(b.workItemId + b.id))
+  for (const t of cleared) {
+    await recordEvent(ctx, {
+      type: 'task.unassigned',
+      projectId,
+      workItemId: t.workItemId,
+      taskId: t.id,
+      reason: 'member_removed',
+      payload: { personId },
+    })
+  }
+}
+
 export async function cancelWorkItem(ctx: WorkCtx, me: Me, workItemId: string): Promise<void> {
   const { tx } = ctx
   const item = await lockItem(tx, workItemId)
-  if (item.ownerId !== me.id && !(await isPmOrAdmin(tx, me, item.projectId))) throw forbidden()
+  const ownerStillMember = item.ownerId === me.id && (await memberRoles(tx, item.projectId, me.id)) !== null
+  if (!ownerStillMember && !(await isPmOrAdmin(tx, me, item.projectId))) throw forbidden()
   if (item.state !== 'active') throw invalidState()
 
   const rejected = await tx

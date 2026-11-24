@@ -1,17 +1,20 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { and, asc, desc, eq } from 'drizzle-orm'
+import { and, asc, desc, eq, sql } from 'drizzle-orm'
 import type { Me, TaskResult } from '@yoda/shared'
 import type { AppDeps } from '../src/app.js'
 import type { Db } from '../src/db/client.js'
 import { events, people, projectMembers, projects, tasks, workItems } from '../src/db/schema.js'
 import { runWork } from '../src/work/context.js'
+import { createTaskAttempt } from '../src/work/tasks.js'
 import {
   assignTask,
   cancelWorkItem,
+  confirmTask,
   createWorkItem,
   progressWorkItem,
   startTask,
   submitTask,
+  unassignMemberTasks,
 } from '../src/work/engine.js'
 import { resetDb, testDb, testDeps } from './helpers.js'
 
@@ -321,5 +324,101 @@ describe('workflow engine', () => {
 
     await run(s.pm, (ctx) => assignTask(ctx, s.pm, t.id, s.pm.id))
     expect(await latest(wi, 'accept-bug')).toMatchObject({ state: 'open', assigneeId: s.pm.id, proposedAssigneeId: null })
+  })
+  it('startTask and submitTask require the assignee to still be a member', async () => {
+    const s = await setup(db)
+    const wi = await create(s)
+    await complete(s, wi, 'accept-bug', s.pm, approve)
+    const impl = (await latest(wi, 'implement'))!
+    await run(s.pm, (ctx) => assignTask(ctx, s.pm, impl.id, s.dev.id))
+    // Membership row removed without going through unassignMemberTasks.
+    await db.delete(projectMembers).where(and(eq(projectMembers.projectId, s.projectId), eq(projectMembers.personId, s.dev.id)))
+    await expect(run(s.dev, (ctx) => startTask(ctx, s.dev, impl.id))).rejects.toMatchObject({ statusCode: 403 })
+    await expect(submit(s.dev, impl.id, { text: 'x' })).rejects.toMatchObject({ statusCode: 403 })
+    expect((await latest(wi, 'implement'))!.state).toBe('open')
+  })
+
+  it('an owner who left the project cannot cancel; the PM still can', async () => {
+    const s = await setup(db)
+    const wi = await create(s, s.pm, { ownerId: s.dev.id })
+    await db.delete(projectMembers).where(and(eq(projectMembers.projectId, s.projectId), eq(projectMembers.personId, s.dev.id)))
+    await expect(run(s.dev, (ctx) => cancelWorkItem(ctx, s.dev, wi))).rejects.toMatchObject({ statusCode: 403 })
+    await run(s.pm, (ctx) => cancelWorkItem(ctx, s.pm, wi))
+    expect((await item(wi)).state).toBe('cancelled')
+  })
+
+  it('confirmTask moves a proposed task to its proposed assignee (PM or admin only)', async () => {
+    const s = await setup(db, 'propose')
+    const wi = await create(s)
+    const t = (await latest(wi, 'accept-bug'))!
+    await expect(run(s.dev, (ctx) => confirmTask(ctx, s.dev, t.id))).rejects.toMatchObject({ statusCode: 403 })
+    await run(s.admin, (ctx) => confirmTask(ctx, s.admin, t.id))
+    expect(await latest(wi, 'accept-bug')).toMatchObject({ state: 'open', assigneeId: s.pm.id, proposedAssigneeId: null })
+    const ev = (await itemEvents(wi)).at(-1)!
+    expect(ev).toMatchObject({ type: 'task.assigned', taskId: t.id, actorId: s.admin.id })
+    await expect(run(s.pm, (ctx) => confirmTask(ctx, s.pm, t.id))).rejects.toMatchObject({
+      statusCode: 409,
+      body: { error: 'invalid_state' },
+    })
+  })
+
+  it('unassignMemberTasks clears active assignments and proposals, leaving finished tasks', async () => {
+    const s = await setup(db, 'propose')
+    const wi = await create(s)
+    const accept = (await latest(wi, 'accept-bug'))!
+    await run(s.pm, (ctx) => confirmTask(ctx, s.pm, accept.id))
+    await run(s.pm, (ctx) => startTask(ctx, s.pm, accept.id))
+    const other = await create(s)
+    const proposed = (await latest(other, 'accept-bug'))!
+    const done = await create(s)
+    await complete(s, done, 'accept-bug', s.pm, approve)
+
+    await run(s.admin, (ctx) => unassignMemberTasks(ctx, s.projectId, s.pm.id))
+
+    expect(await latest(wi, 'accept-bug')).toMatchObject({ state: 'open', assigneeId: null, proposedAssigneeId: null })
+    expect(await latest(other, 'accept-bug')).toMatchObject({ id: proposed.id, state: 'open', assigneeId: null, proposedAssigneeId: null })
+    expect(await latest(done, 'accept-bug')).toMatchObject({ state: 'accepted', assigneeId: s.pm.id })
+    const ev = (await itemEvents(wi)).at(-1)!
+    expect(ev).toMatchObject({ type: 'task.unassigned', reason: 'member_removed', actorId: s.admin.id })
+  })
+
+  it('member removal waits for an in-flight assignment on another work item', async () => {
+    const s = await setup(db, 'propose')
+    const wi = await create(s)
+    const t = (await latest(wi, 'accept-bug'))!
+    await run(s.pm, (ctx) => confirmTask(ctx, s.pm, t.id))
+    // wi holds no task of dev's. A transaction locks it and proposes a DEV task to dev, then stalls.
+    let release!: () => void
+    const stalled = new Promise<void>((r) => (release = r))
+    let proposedTo: string | null = null
+    const inflight = run(s.pm, async (ctx) => {
+      await ctx.tx.select().from(workItems).where(eq(workItems.id, wi)).for('update')
+      const id = await createTaskAttempt(ctx, {
+        workItemId: wi, projectId: s.projectId, stepKey: 'dev',
+        task: { key: 'review-code', type: 'review', role: 'DEV', title: { th: 'x', en: 'x' }, instructions: { th: 'x', en: 'x' }, dependsOn: [] },
+        attempt: 1, feedback: null, assigneeHint: null, executor: 'human',
+      })
+      const [row] = await ctx.tx.select().from(tasks).where(eq(tasks.id, id))
+      proposedTo = row!.proposedAssigneeId
+      await stalled
+    })
+    while (proposedTo === null) await new Promise((r) => setTimeout(r, 5))
+    expect(proposedTo).toBe(s.dev.id)
+
+    const removal = run(s.pm, async (ctx) => {
+      await ctx.tx.delete(projectMembers).where(and(eq(projectMembers.projectId, s.projectId), eq(projectMembers.personId, s.dev.id)))
+      await unassignMemberTasks(ctx, s.projectId, s.dev.id)
+    })
+    // Wait (bounded) until the removal is blocked on a lock, then let the in-flight work commit.
+    let done = false
+    void removal.finally(() => (done = true))
+    for (let i = 0; i < 400 && !done; i++) {
+      const rows = await db.execute(sql`select 1 from pg_stat_activity where wait_event_type = 'Lock' and datname = current_database()`)
+      if (rows.length > 0) break
+      await new Promise((r) => setTimeout(r, 5))
+    }
+    release()
+    await Promise.all([inflight, removal])
+    expect(await latest(wi, 'review-code')).toMatchObject({ state: 'open', assigneeId: null, proposedAssigneeId: null })
   })
 })

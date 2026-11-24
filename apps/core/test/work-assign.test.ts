@@ -120,12 +120,26 @@ describe('createTaskAttempt', () => {
     const db = await testDb()
     const s = await setup(db, 'propose')
     const hint = await person(db, 'Hint')
+    await member(db, s.projectId, hint, ['BA'])
     const id = await runWork({ db, bus: new LiveBus() }, null, (ctx) =>
       createTaskAttempt(ctx, input(s, { assigneeHint: hint, attempt: 2, feedback: 'redo' })),
     )
     const [t] = await db.select().from(tasks).where(eq(tasks.id, id))
     expect(t).toMatchObject({ state: 'open', assigneeId: hint, attempt: 2, feedback: 'redo' })
     expect((await taskEvents(db, id)).map((e) => e.type)).toEqual(['task.created', 'task.assigned'])
+  })
+
+  it('assigneeHint who left the project falls back to the candidate flow', async () => {
+    const db = await testDb()
+    const s = await setup(db, 'propose')
+    const gone = await person(db, 'Gone')
+    const dev = await person(db, 'Dev')
+    await member(db, s.projectId, dev, ['DEV'])
+    const id = await runWork({ db, bus: new LiveBus() }, null, (ctx) =>
+      createTaskAttempt(ctx, input(s, { assigneeHint: gone, attempt: 2 })),
+    )
+    const [t] = await db.select().from(tasks).where(eq(tasks.id, id))
+    expect(t).toMatchObject({ state: 'proposed', assigneeId: null, proposedAssigneeId: dev })
   })
 
   it('ai executor -> open, no assignee', async () => {
