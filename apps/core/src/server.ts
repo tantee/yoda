@@ -3,6 +3,8 @@ import { buildApp } from './app.js'
 import { loadConfig } from './config.js'
 import { createDb } from './db/client.js'
 import { createS3Storage } from './storage/s3.js'
+import { AiGateway } from './ai/gateway.js'
+import { buildModels } from './ai/models.js'
 import { LiveBus } from './live/bus.js'
 import { seedTemplates } from './workflow/seed.js'
 
@@ -13,7 +15,9 @@ const jwks = createRemoteJWKSet(
   new URL(`${config.oidcIssuer}/protocol/openid-connect/certs`),
 )
 const storage = await createS3Storage(config)
-const app = await buildApp({ config, db, jwks, bus: new LiveBus(), storage })
+const bus = new LiveBus()
+const ai = new AiGateway({ db, bus, models: buildModels(config) })
+const app = await buildApp({ config, db, jwks, bus, storage, ai })
 
 let stopping = false
 async function shutdown(signal: string) {

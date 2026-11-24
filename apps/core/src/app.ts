@@ -7,6 +7,8 @@ import { MAX_UPLOAD_BYTES } from './attachments/service.js'
 import type { Config } from './config.js'
 import type { Db } from './db/client.js'
 import type { LiveBus } from './live/bus.js'
+import type { AiGateway } from './ai/gateway.js'
+import { aiRoutes } from './routes/ai.js'
 import { attachmentRoutes } from './routes/attachments.js'
 import type { Storage } from './storage/s3.js'
 import { peopleRoutes } from './routes/people.js'
@@ -15,7 +17,7 @@ import { meRoutes } from './routes/me.js'
 import { streamRoutes } from './routes/stream.js'
 import { workRoutes } from './routes/work.js'
 
-export type AppDeps = { config: Config; db: Db; jwks: JWTVerifyGetKey; bus: LiveBus; storage: Storage }
+export type AppDeps = { config: Config; db: Db; jwks: JWTVerifyGetKey; bus: LiveBus; storage: Storage; ai: AiGateway }
 
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   const app = Fastify({ logger: process.env.VITEST ? false : true })
@@ -52,6 +54,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   workRoutes(app)
   streamRoutes(app)
   attachmentRoutes(app)
+  aiRoutes(app)
 
   return app
 }

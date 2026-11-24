@@ -24,6 +24,7 @@ export async function recordEvent(
     workItemId: string | null
     taskId: string | null
     reason?: string | null
+    actorKind?: 'person' | 'system' | 'ai'
     payload?: Record<string, unknown>
   },
 ): Promise<void> {
@@ -33,6 +34,7 @@ export async function recordEvent(
     taskId: e.taskId,
     type: e.type,
     actorId: ctx.actorId,
+    ...(e.actorKind ? { actorKind: e.actorKind } : {}),
     reason: e.reason ?? null,
     payload: e.payload ?? {},
   })
