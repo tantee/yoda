@@ -4,7 +4,7 @@ import type { Attachment, KnowledgeEntry, KnowledgeSearchHit, KnowledgeStatus, K
 const TYPES: KnowledgeType[] = ['fact', 'decision', 'document', 'progress', 'memory']
 const STATUSES: KnowledgeStatus[] = ['draft', 'confirmed']
 
-const props = defineProps<{ projectId: string }>()
+const props = defineProps<{ projectId: string; isMember?: boolean }>()
 
 const { t } = useI18n()
 const api = useApi()
@@ -23,7 +23,7 @@ let seq = 0
 async function loadEntries() {
   const mine = ++seq
   try {
-    const term = q.value.trim()
+    const term = (q.value ?? '').trim()
     let list: (KnowledgeEntry | KnowledgeSearchHit)[]
     if (term) {
       list = await api<KnowledgeSearchHit[]>('/knowledge/search', { query: { q: term, projectId: props.projectId } })
@@ -139,6 +139,6 @@ async function save(a: Attachment) {
       </v-list-item>
     </v-list>
 
-    <ProjectKnowledgeEntryDialog v-model="dialogOpen" :project-id="projectId" :entry-id="dialogEntryId" @saved="loadEntries" />
+    <ProjectKnowledgeEntryDialog v-model="dialogOpen" :project-id="projectId" :is-member="isMember ?? false" :entry-id="dialogEntryId" @saved="loadEntries" />
   </div>
 </template>
