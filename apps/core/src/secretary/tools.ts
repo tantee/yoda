@@ -31,6 +31,18 @@ export class ToolRefusal extends Error {
 export const NOT_AVAILABLE = 'This is not available to the assistant (the project is marked "do not send to AI").'
 const NOT_MEMBER = 'You are not a member of that project, so I cannot do this there.'
 const NOT_FOUND = 'Not found, or you do not have access to it.'
+const OUT_OF_SCOPE = "In this thread I can only work on the thread's own project. Ask me in your personal chat for anything else."
+
+/**
+ * Team threads (`projectId` set): everyone in the thread reads the reply, so tools work only on that project.
+ * `hideStaffNames` (work_item threads, which the requester may read): no staff names or internal notes.
+ */
+export type ToolScope = { projectId: string | null; hideStaffNames: boolean }
+const PERSONAL: ToolScope = { projectId: null, hideStaffNames: false }
+
+function requireInScope(scope: ToolScope, projectId: string): void {
+  if (scope.projectId && scope.projectId !== projectId) throw new ToolRefusal(OUT_OF_SCOPE)
+}
 
 /** Maps any failure to a user-safe message; unexpected errors are logged (message only) and generalised. */
 function safeMessage(err: unknown): string {
@@ -97,14 +109,16 @@ const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}…` : s
 const uuid = z.string().uuid()
 
 /** Tools for staff: read what they can see (never noAi content) and prepare confirm-first changes. */
-function staffTools(deps: ToolDeps, me: Me, pending: PendingAction[]): ToolSet {
+function staffTools(deps: ToolDeps, me: Me, pending: PendingAction[], scope: ToolScope): ToolSet {
   const { db } = deps
-  return {
+  const tools: ToolSet = {
     search_knowledge: tool({
       description:
         'Search the knowledge base (documents, facts, decisions, progress notes) of the projects the person can see, plus department knowledge. Optionally limit to one project.',
       inputSchema: z.object({ query: z.string().trim().min(1).max(500), projectId: uuid.optional() }),
-      execute: guarded(async ({ query, projectId }) => {
+      execute: guarded(async ({ query, projectId: asked }) => {
+        if (asked) requireInScope(scope, asked)
+        const projectId = scope.projectId ?? asked
         if (projectId) await aiVisibleProject(db, me, projectId)
         const hits = await searchKnowledge(db, me, { query, projectId, forAi: true, limit: 8 }, deps.ai)
         const names = await projectNames(db, hits.map((h) => h.projectId))
@@ -156,6 +170,7 @@ function staffTools(deps: ToolDeps, me: Me, pending: PendingAction[]): ToolSet {
       description: 'Status of a project: its active work items with priority and current step.',
       inputSchema: z.object({ projectId: uuid }),
       execute: guarded(async ({ projectId }) => {
+        requireInScope(scope, projectId)
         const p = await aiVisibleProject(db, me, projectId)
         const items = await listWorkItems(db, me, projectId)
         const count = (state: string) => items.filter((w) => w.state === state).length
@@ -181,7 +196,8 @@ function staffTools(deps: ToolDeps, me: Me, pending: PendingAction[]): ToolSet {
       description: 'Details of one work item: description, steps, open tasks and recent progress notes.',
       inputSchema: z.object({ workItemId: uuid }),
       execute: guarded(async ({ workItemId }) => {
-        await aiVisibleWorkItem(db, me, workItemId)
+        const { item } = await aiVisibleWorkItem(db, me, workItemId)
+        requireInScope(scope, item.projectId)
         const d = await getWorkItemDetail(db, me, workItemId)
         return {
           title: d.title,
@@ -191,8 +207,14 @@ function staffTools(deps: ToolDeps, me: Me, pending: PendingAction[]): ToolSet {
           steps: d.steps.map((s) => ({ name: s.name.th, status: s.status })),
           openTasks: d.tasks
             .filter((t) => ['proposed', 'open', 'in_progress', 'submitted'].includes(t.state))
-            .map((t) => ({ taskId: t.id, title: t.title.th, role: t.role, state: t.state, assignee: t.assigneeName })),
-          recentProgress: await progressNotes(db, workItemId, 5),
+            .map((t) => ({
+              taskId: t.id,
+              title: t.title.th,
+              role: t.role,
+              state: t.state,
+              ...(scope.hideStaffNames ? {} : { assignee: t.assigneeName }),
+            })),
+          ...(scope.hideStaffNames ? {} : { recentProgress: await progressNotes(db, workItemId, 5) }),
         }
       }),
     }),
@@ -209,6 +231,7 @@ function staffTools(deps: ToolDeps, me: Me, pending: PendingAction[]): ToolSet {
         requesterId: uuid.optional(),
       }),
       execute: guarded(async (input) => {
+        requireInScope(scope, input.projectId)
         await aiVisibleProject(db, me, input.projectId)
         if (!(await latestTemplate(db, input.templateKey))) {
           const keys = (await listTemplates(db)).map((t) => t.key)
@@ -239,6 +262,7 @@ function staffTools(deps: ToolDeps, me: Me, pending: PendingAction[]): ToolSet {
       inputSchema: z.object({ workItemId: uuid, priority: Priority, reason: z.string().trim().min(1).max(2000) }),
       execute: guarded(async ({ workItemId, priority, reason }) => {
         const { item, project } = await aiVisibleWorkItem(db, me, workItemId)
+        requireInScope(scope, item.projectId)
         if (item.state !== 'active') throw new ToolRefusal('That work item is no longer active.')
         if (item.priority === priority) throw new ToolRefusal(`The priority is already ${priority}.`)
         const direct = project.autonomy === 'auto-assign'
@@ -286,6 +310,7 @@ function staffTools(deps: ToolDeps, me: Me, pending: PendingAction[]): ToolSet {
         body: z.string().max(20000),
       }),
       execute: guarded(async (input) => {
+        requireInScope(scope, input.projectId)
         await aiVisibleProject(db, me, input.projectId)
         if (input.workItemId) {
           const { item } = await aiVisibleWorkItem(db, me, input.workItemId)
@@ -307,6 +332,9 @@ function staffTools(deps: ToolDeps, me: Me, pending: PendingAction[]): ToolSet {
       }),
     }),
   }
+  // The person's to-do spans all their projects: personal chat only.
+  if (scope.projectId) delete tools.my_todo
+  return tools
 }
 
 /** Tools for requesters: only their own requests, never staff names or internal content. */
@@ -438,7 +466,7 @@ export async function progressNotes(db: Db, workItemId: string, limit: number): 
   return rows.map((r) => ({ title: r.title, text: clip(r.body, 800) }))
 }
 
-/** The tool set for the person: staff tools for staff, requester tools otherwise. */
-export function secretaryTools(deps: ToolDeps, me: Me, pending: PendingAction[]): ToolSet {
-  return me.isStaff ? staffTools(deps, me, pending) : requesterTools(deps, me, pending)
+/** The tool set for the person: staff tools for staff, requester tools otherwise; `scope` for team threads. */
+export function secretaryTools(deps: ToolDeps, me: Me, pending: PendingAction[], scope: ToolScope = PERSONAL): ToolSet {
+  return me.isStaff ? staffTools(deps, me, pending, scope) : requesterTools(deps, me, pending)
 }

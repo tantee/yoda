@@ -9,6 +9,8 @@ export type PromptInput = {
   templates: { key: string; name: string }[]
   /** For project / work_item threads: a short context block. */
   thread: string | null
+  /** work_item threads: the requester may read the reply (no staff names, not even the asker's). */
+  visibleToRequester?: boolean
   /** Today in Asia/Bangkok, `YYYY-MM-DD`. */
   today: string
 }
@@ -35,7 +37,8 @@ export function secretarySystemPrompt(input: PromptInput): string {
   const lines = [...RULES, '']
   lines.push(`Today (Asia/Bangkok): ${input.today}.`)
   if (input.person.isStaff) {
-    lines.push(`You are talking to ${input.person.name}, a staff member${input.person.isAdmin ? ' and administrator' : ''}.`)
+    const who = input.visibleToRequester ? 'a staff member' : `${input.person.name}, a staff member`
+    lines.push(`You are talking to ${who}${input.person.isAdmin ? ' (an administrator)' : ''}.`)
     if (input.projects.length) {
       lines.push('Their projects (use the id when calling tools):')
       for (const p of input.projects) {
@@ -53,6 +56,16 @@ export function secretarySystemPrompt(input: PromptInput): string {
   } else {
     lines.push(...REQUESTER_RULES)
   }
-  if (input.thread) lines.push('', 'This conversation is a team thread. Context:', input.thread)
+  if (input.thread) {
+    lines.push(
+      '',
+      'This conversation is a team thread: everyone in it reads your reply. Answer the last message only, and work only on this thread\'s project.',
+      'Context:',
+      input.thread,
+    )
+  }
+  if (input.visibleToRequester) {
+    lines.push("This reply is visible to the requester; don't include staff names, internal notes or anything not meant for them.")
+  }
   return lines.join('\n')
 }

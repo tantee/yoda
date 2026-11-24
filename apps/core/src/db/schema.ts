@@ -16,6 +16,7 @@ import {
   uniqueIndex,
   uuid,
   vector,
+  type AnyPgColumn,
 } from 'drizzle-orm/pg-core'
 import {
   ActorKind,
@@ -244,10 +245,13 @@ export const messages = pgTable(
     text: text('text').notNull(),
     attachmentIds: uuid('attachment_ids').array().notNull().default(sql`'{}'::uuid[]`),
     actions: jsonb('actions').notNull().default(sql`'[]'::jsonb`),
+    /** For secretary replies (`ai` / `system`): the person message being answered. */
+    replyToId: uuid('reply_to_id').references((): AnyPgColumn => messages.id, { onDelete: 'set null' }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().default(sql`clock_timestamp()`),
   },
   (t) => [
     index('messages_conversation_seq_idx').on(t.conversationId, t.seq),
+    index('messages_reply_to_idx').on(t.replyToId),
     check('messages_author_kind_check', sql`${t.authorKind} in (${list(AuthorKind.options)})`),
   ],
 )

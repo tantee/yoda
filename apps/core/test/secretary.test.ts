@@ -5,6 +5,8 @@ import type { FastifyInstance } from 'fastify'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { AiGateway } from '../src/ai/gateway.js'
 import { aiCalls, departmentSettings, events, knowledgeEntries, messages, proposals, workItems } from '../src/db/schema.js'
+import { postMessage } from '../src/chat/service.js'
+import { runWork } from '../src/work/context.js'
 import { InlineJobQueue } from '../src/jobs/queue.js'
 import { LiveBus } from '../src/live/bus.js'
 import { secretaryChat } from '../src/secretary/chat.js'
@@ -17,7 +19,8 @@ type Turn = { text?: string; toolCalls?: { name: string; input: unknown }[] }
 let app: FastifyInstance
 let jobs: InlineJobQueue
 let model: MockLanguageModelV4
-let script: (Turn | 'fail')[] = []
+type Step = Turn | 'fail' | (() => Promise<Turn>)
+let script: Step[] = []
 let step = 0
 let admin: Who
 let pm: Who
@@ -27,7 +30,7 @@ let nurse: Who
 let nurse2: Who
 
 /** The model plays `turns` in order (the last repeats); `'fail'` makes that call throw (a provider error). */
-function play(...turns: (Turn | 'fail')[]) {
+function play(...turns: Step[]) {
   script = turns
   step = 0
 }
@@ -98,7 +101,7 @@ beforeEach(async () => {
     doStream: async () => {
       const turn = script[Math.min(step++, script.length - 1)]!
       if (turn === 'fail') throw new Error('upstream down')
-      return { stream: turnStream(turn) }
+      return { stream: turnStream(typeof turn === 'function' ? await turn() : turn) }
     },
   })
   jobs = new InlineJobQueue({ onError: (err, name, id) => console.warn(`job ${name} ${id} failed`, err) })
@@ -322,6 +325,77 @@ describe('secretary chat: staff', () => {
   })
 })
 
+describe('secretary chat: team threads', () => {
+  it('a work_item thread reply (readable by the requester) gets no staff names and nothing from other projects', async () => {
+    const p = await project('ระบบแล็บ', [[pm, ['PM']], [dev, ['DEV']]])
+    const other = await project('โครงการข้างเคียง', [[dev, ['DEV']]])
+    await doc(dev, other, 'เอกสารข้างเคียง', 'รหัส OTHER-4411 ของโครงการข้างเคียง')
+    const wi = (await call(pm, 'POST', `/projects/${p}/work-items`, { title: 'คำขอพยาบาล', templateKey: 'bug-fix', requesterId: nurse.id })).json() as WorkItemDetail
+    expect((await call(pm, 'POST', `/tasks/${wi.tasks[0]!.id}/assign`, { personId: pm.id })).statusCode).toBe(200)
+    const t = (await call(pm, 'POST', '/conversations', { kind: 'work_item', workItemId: wi.id })).json() as Conversation
+    await say(pm, t.id, 'รับเรื่องแล้วครับ')
+    await say(nurse, t.id, 'ขอบคุณค่ะ')
+    play(
+      {
+        toolCalls: [
+          { name: 'work_item', input: { workItemId: wi.id } },
+          { name: 'search_knowledge', input: { query: 'OTHER-4411', projectId: other } },
+          { name: 'search_knowledge', input: { query: 'OTHER-4411' } },
+          { name: 'project_status', input: { projectId: other } },
+          { name: 'save_note', input: { projectId: other, type: 'fact', title: 'x', body: 'y' } },
+        ],
+      },
+      { text: 'งานนี้อยู่ขั้นรับเรื่อง' },
+    )
+    await say(dev, t.id, '@ai งานนี้ถึงไหน')
+    const all = sent()
+    for (const name of ['คุณพีเอ็ม', 'คุณเดฟ', 'boss']) expect(all).not.toContain(name)
+    expect(all).not.toContain('OTHER-4411 ของ')
+    expect(all).not.toContain('โครงการข้างเคียง')
+    expect(all).toContain('visible to the requester')
+    expect(all).toContain('Requester: ขอบคุณค่ะ')
+    expect(lastToolOutputs()).toContain("only work on the thread")
+    expect(model.doStreamCalls[0]!.tools?.map((x) => x.name)).not.toContain('my_todo')
+    expect(await (await testDb()).select().from(knowledgeEntries).where(eq(knowledgeEntries.title, 'x'))).toHaveLength(0)
+  })
+
+  it('a project thread refuses search_knowledge for another project', async () => {
+    const p = await project('ระบบแล็บ', [[pm, ['PM']], [dev, ['DEV']]])
+    const other = await project('โครงการข้างเคียง', [[dev, ['DEV']]])
+    await doc(dev, other, 'เอกสารข้างเคียง', 'รหัส OTHER-4411 ของโครงการข้างเคียง')
+    const t = (await call(dev, 'POST', '/conversations', { kind: 'project', projectId: p })).json() as Conversation
+    play({ toolCalls: [{ name: 'search_knowledge', input: { query: 'OTHER-4411', projectId: other } }] }, { text: 'ทำไม่ได้' })
+    await say(dev, t.id, '@ai หา OTHER-4411')
+    expect(lastToolOutputs()).toContain('only work on the thread')
+    expect(sent()).not.toContain('OTHER-4411 ของ')
+  })
+
+  it('each @ai question gets its own reply even when a later one is answered first; history ends at the trigger', async () => {
+    const p = await project('ระบบแล็บ', [[pm, ['PM']], [dev, ['DEV']]])
+    const t = (await call(dev, 'POST', '/conversations', { kind: 'project', projectId: p })).json() as Conversation
+    const quiet = { ...app.deps, jobs: { send: async () => {} } }
+    const post = (who: Who, text: string) =>
+      runWork(quiet, { id: who.id, kind: 'person' }, (ctx) => postMessage(ctx, { conversationId: t.id, authorKind: 'person', authorId: who.id, text }))
+    const a = await post(dev, '@ai คำถามของเดฟ')
+    const b = await post(pm, '@ai คำถามของพีเอ็ม')
+    play({ text: 'ตอบพีเอ็ม' })
+    await secretaryChat(app.deps, { id: b, attempt: 1, isFinalAttempt: true })
+    play({ text: 'ตอบเดฟ' })
+    await secretaryChat(app.deps, { id: a, attempt: 1, isFinalAttempt: true })
+    // A's run saw only the thread up to A.
+    expect(JSON.stringify(model.doStreamCalls[1]!.prompt)).not.toContain('คำถามของพีเอ็ม')
+    await secretaryChat(app.deps, { id: a, attempt: 2, isFinalAttempt: true })
+    expect(model.doStreamCalls).toHaveLength(2)
+    const rows = await (await testDb()).select().from(messages).where(eq(messages.conversationId, t.id)).orderBy(messages.seq)
+    expect(rows.map((r) => [r.authorKind, r.text, r.replyToId])).toEqual([
+      ['person', '@ai คำถามของเดฟ', null],
+      ['person', '@ai คำถามของพีเอ็ม', null],
+      ['ai', 'ตอบพีเอ็ม', b],
+      ['ai', 'ตอบเดฟ', a],
+    ])
+  })
+})
+
 describe('secretary chat: requesters', () => {
   it('submit_request creates a project-less proposal on behalf of the requester, visible to admins', async () => {
     const c = await personal(nurse)
@@ -434,6 +508,33 @@ describe('secretary chat: failures', () => {
     const c = await personal(dev)
     await say(dev, c.id, 'สวัสดี')
     expect((await thread(dev, c.id)).at(-1)).toMatchObject({ authorKind: 'system', text: '[[secretary.failed:ai_unavailable]]' })
+  })
+
+  it('a staged action that no longer applies is dropped with a note; the others still apply', async () => {
+    const p = await project('ระบบแล็บ', [[pm, ['PM']], [dev, ['DEV']]])
+    const wi = (await call(pm, 'POST', `/projects/${p}/work-items`, { title: 'งาน A', templateKey: 'bug-fix' })).json() as WorkItemDetail
+    play(
+      {
+        toolCalls: [
+          { name: 'propose_priority', input: { workItemId: wi.id, priority: 'urgent', reason: 'รอ' } },
+          { name: 'save_note', input: { projectId: p, type: 'fact', title: 'บันทึก', body: 'ข้อมูล' } },
+        ],
+      },
+      async () => {
+        // The work item is cancelled while the model is still answering.
+        await (await testDb()).update(workItems).set({ state: 'cancelled' }).where(eq(workItems.id, wi.id))
+        return { text: 'เสนอแล้ว และบันทึกแล้ว' }
+      },
+    )
+    const c = await personal(dev)
+    await say(dev, c.id, 'ด่วน และจดไว้')
+    const db = await testDb()
+    expect(await db.select().from(proposals)).toHaveLength(0)
+    const [e] = await db.select().from(knowledgeEntries)
+    const last = (await thread(dev, c.id)).at(-1)!
+    expect(last.authorKind).toBe('ai')
+    expect(last.actions).toEqual([{ type: 'knowledge_saved', entryId: e!.id, title: 'บันทึก' }])
+    expect(last.text).toContain('หมายเหตุ')
   })
 
   it('duplicate job delivery → one reply, one model run', async () => {

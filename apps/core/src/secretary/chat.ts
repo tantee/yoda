@@ -1,17 +1,17 @@
-import type { Me } from '@yoda/shared'
+import type { ActionCard, Me } from '@yoda/shared'
 import type { ModelMessage } from 'ai'
-import { and, asc, desc, eq, gt, inArray } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, inArray, lte } from 'drizzle-orm'
 import type { AppDeps } from '../app.js'
 import { AiFailed, AiRefused, errorSummary, type BillingTarget } from '../ai/gateway.js'
 import { secretaryAnswers, postMessage, visibleConversation, OWN_KINDS, type ConversationRow } from '../chat/service.js'
 import type { Db, Tx } from '../db/client.js'
-import { attachments, conversations, messages, people, projectMembers, projects } from '../db/schema.js'
+import { attachments, conversations, messages, people, projectMembers, projects, workItems } from '../db/schema.js'
 import type { JobRun } from '../jobs/queue.js'
 import { personAsMe } from '../proposals/service.js'
-import { runWork } from '../work/context.js'
+import { runWork, type WorkCtx } from '../work/context.js'
 import { canSeeProject, getMyRequests, getWorkItemDetail, listTemplates, listWorkItems } from '../work/queries.js'
 import { secretarySystemPrompt } from './prompt.js'
-import { progressNotes, secretaryTools, type PendingAction } from './tools.js'
+import { secretaryTools, type PendingAction } from './tools.js'
 
 export type SecretaryDeps = Pick<AppDeps, 'db' | 'ai' | 'bus' | 'jobs' | 'config'>
 
@@ -31,14 +31,25 @@ function failureReason(err: unknown): FailureReason | null {
   return null
 }
 
-type Trigger = { id: string; conversationId: string; seq: number }
+/** `team`: a project / work_item thread, where several people may each ask the secretary. */
+type Trigger = { id: string; conversationId: string; seq: number; team: boolean }
 
-/** Has an `ai`/`system` message been posted after the trigger (a reply to it, or to a later message)? */
+/**
+ * Is the trigger already answered? In team threads only a reply to this very message counts (another person's
+ * question must not swallow it); in personal/intake threads any later `ai`/`system` message does (a reply to
+ * a later message covers the earlier ones too).
+ */
 async function answered(conn: Db | Tx, t: Trigger): Promise<boolean> {
   const [row] = await conn
     .select({ id: messages.id })
     .from(messages)
-    .where(and(eq(messages.conversationId, t.conversationId), gt(messages.seq, t.seq), inArray(messages.authorKind, ['system', 'ai'])))
+    .where(
+      and(
+        eq(messages.conversationId, t.conversationId),
+        inArray(messages.authorKind, ['system', 'ai']),
+        t.team ? eq(messages.replyToId, t.id) : gt(messages.seq, t.seq),
+      ),
+    )
     .limit(1)
   return !!row
 }
@@ -52,7 +63,13 @@ async function lockAndCheck(tx: Tx, t: Trigger): Promise<boolean> {
 async function postFailure(deps: SecretaryDeps, t: Trigger, reason: FailureReason): Promise<void> {
   await runWork(deps, { id: null, kind: 'system' }, async (ctx) => {
     if (await lockAndCheck(ctx.tx, t)) return
-    await postMessage(ctx, { conversationId: t.conversationId, authorKind: 'system', authorId: null, text: secretaryFailed(reason) })
+    await postMessage(ctx, {
+      conversationId: t.conversationId,
+      authorKind: 'system',
+      authorId: null,
+      text: secretaryFailed(reason),
+      replyToId: t.id,
+    })
   })
 }
 
@@ -70,7 +87,8 @@ export async function secretaryChat(deps: SecretaryDeps, run: JobRun): Promise<v
     .innerJoin(conversations, eq(conversations.id, messages.conversationId))
     .where(eq(messages.id, run.id))
   if (!m || m.authorKind !== 'person' || !m.authorId || !secretaryAnswers(m.kind, m.text)) return
-  const trigger: Trigger = { id: m.id, conversationId: m.conversationId, seq: Number(m.seq) }
+  const team = !(OWN_KINDS as readonly string[]).includes(m.kind)
+  const trigger: Trigger = { id: m.id, conversationId: m.conversationId, seq: Number(m.seq), team }
   if (await answered(db, trigger)) return
   const me = await personAsMe(db, m.authorId)
   // The author may have lost access to the thread since (e.g. removed from the project): no reply.
@@ -85,19 +103,26 @@ export async function secretaryChat(deps: SecretaryDeps, run: JobRun): Promise<v
       // A noAi project's thread is never sent to the AI (the gateway would refuse too; this avoids building it).
       if (p?.noAi) throw new AiRefused('no_ai')
     }
+    // Team threads: everyone in the thread reads the reply, so the secretary works only on the thread's project,
+    // and work_item threads (the requester may read them) get no staff names or internal notes.
+    const scopeProjectId = team ? conversation.projectId : null
     const system = secretarySystemPrompt({
-      ...(await personContext(db, me)),
+      ...(await personContext(db, me, scopeProjectId)),
       thread: await threadContext(db, me, conversation),
+      visibleToRequester: conversation.kind === 'work_item',
       today: new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' }),
     })
-    const history = await loadHistory(db, me, conversation)
+    const history = await loadHistory(db, me, conversation, trigger)
     const pending: PendingAction[] = []
     const out = await deps.ai.chat({
       job: 'fast',
       billing,
       system,
       messages: history,
-      tools: secretaryTools({ db, ai: deps.ai }, me, pending),
+      tools: secretaryTools({ db, ai: deps.ai }, me, pending, {
+        projectId: scopeProjectId,
+        hideStaffNames: conversation.kind === 'work_item',
+      }),
       maxSteps: SECRETARY_MAX_STEPS,
       maxOutputTokens: SECRETARY_MAX_OUTPUT_TOKENS,
       signal: run.signal,
@@ -105,9 +130,9 @@ export async function secretaryChat(deps: SecretaryDeps, run: JobRun): Promise<v
     modelDone = true
     await runWork(deps, { id: me.id, kind: 'ai' }, async (ctx) => {
       if (await lockAndCheck(ctx.tx, trigger)) return
-      const actions = []
-      for (const apply of pending) actions.push(await apply(ctx))
-      await postMessage(ctx, { conversationId: trigger.conversationId, authorKind: 'ai', authorId: null, text: out.text.trim(), actions })
+      const { actions, failed } = await applyActions(ctx, pending)
+      const text = failed ? `${out.text.trim()}\n\n${actionsFailedNote(out.text, failed)}` : out.text.trim()
+      await postMessage(ctx, { conversationId: trigger.conversationId, authorKind: 'ai', authorId: null, text, actions, replyToId: trigger.id })
     })
   } catch (err) {
     const reason = failureReason(err)
@@ -118,15 +143,54 @@ export async function secretaryChat(deps: SecretaryDeps, run: JobRun): Promise<v
   }
 }
 
-/** The person, their (AI-visible) projects and the workflow templates, for the system prompt. */
-async function personContext(db: Db, me: Me) {
+/**
+ * Applies each staged tool write in its own savepoint: one that fails (e.g. access changed since the tool
+ * ran) is rolled back and dropped from the cards; the others still apply with the reply.
+ */
+async function applyActions(ctx: WorkCtx, pending: PendingAction[]): Promise<{ actions: ActionCard[]; failed: number }> {
+  const actions: ActionCard[] = []
+  let failed = 0
+  for (const apply of pending) {
+    const emitted: WorkCtx['emitted'] = []
+    const jobs: WorkCtx['jobs'] = []
+    try {
+      const card = await ctx.tx.transaction((sp) => apply({ ...ctx, tx: sp, emitted, jobs }))
+      actions.push(card)
+      ctx.emitted.push(...emitted)
+      ctx.jobs.push(...jobs)
+    } catch (err) {
+      failed++
+      console.warn(`secretary-chat: a staged action failed: ${errorSummary(err)}`)
+    }
+  }
+  return { actions, failed }
+}
+
+/** Appended to a reply whose staged changes partly failed, in the reply's language (Thai or English). */
+function actionsFailedNote(reply: string, failed: number): string {
+  return /[\u0E00-\u0E7F]/.test(reply)
+    ? `(หมายเหตุ: ทำรายการไม่สำเร็จ ${failed} รายการ จึงไม่ได้แนบไว้ในข้อความนี้)`
+    : `(Note: ${failed} of the prepared changes could not be applied and ${failed === 1 ? 'is' : 'are'} not attached.)`
+}
+
+/**
+ * The person, their (AI-visible) projects and the workflow templates, for the system prompt. In team threads
+ * (`scopeProjectId`) only the thread's project is listed.
+ */
+async function personContext(db: Db, me: Me, scopeProjectId: string | null) {
   const person = { name: me.displayName, isStaff: me.isStaff, isAdmin: me.isAdmin }
   if (!me.isStaff) return { person, projects: [], hiddenProjects: 0, templates: [] }
   const rows = await db
     .select({ id: projects.id, name: projects.name, noAi: projects.noAi, autonomy: projects.autonomy, roles: projectMembers.roles })
     .from(projectMembers)
     .innerJoin(projects, eq(projects.id, projectMembers.projectId))
-    .where(and(eq(projectMembers.personId, me.id), eq(projects.status, 'active')))
+    .where(
+      and(
+        eq(projectMembers.personId, me.id),
+        eq(projects.status, 'active'),
+        scopeProjectId ? eq(projects.id, scopeProjectId) : undefined,
+      ),
+    )
     .orderBy(asc(projects.name))
   const templates = (await listTemplates(db)).map((t) => ({ key: t.key, name: t.name.en }))
   return {
@@ -157,10 +221,9 @@ async function threadContext(db: Db, me: Me, c: ConversationRow): Promise<string
       `Work item "${d.title}" (id ${d.id}), priority ${d.priority}, state ${d.state}${current ? `, current step ${current.name.th}` : ''}.`,
       d.description ? `Description: ${clip(d.description, 1000)}` : '',
       open.length ? 'Open tasks:' : 'No open tasks.',
-      ...open.map((t) => `- ${t.title.th} (${t.role}, ${t.state}${t.assigneeName ? `, ${t.assigneeName}` : ''})`),
+      // The requester may read this thread: no assignee names, no internal progress notes.
+      ...open.map((t) => `- ${t.title.th} (${t.role}, ${t.state})`),
     ]
-    const notes = await progressNotes(db, d.id, 5)
-    if (notes.length) lines.push('Recent progress notes:', ...notes.map((n) => `- ${n.title}: ${n.text}`))
     return lines.filter(Boolean).join('\n')
   }
   if (!insider) return null
@@ -177,17 +240,24 @@ async function threadContext(db: Db, me: Me, c: ConversationRow): Promise<string
 }
 
 /**
- * The last messages as model messages. Person messages carry the author's name in team threads, except for
- * requesters, who never see staff names ("Team member"). System messages (markers) are left out; attachments
- * appear by name and id, and "do not send to AI" files by id only.
+ * The last messages as model messages. In team threads the history ends at the trigger (later questions are
+ * other people's to ask) and person messages are labelled: by name in project threads; in work_item threads
+ * (the requester may read them) only as "Me" / "Requester" / "Team member". System messages (markers) are left
+ * out; attachments appear by name and id, and "do not send to AI" files by id only.
  */
-async function loadHistory(db: Db, me: Me, c: ConversationRow): Promise<ModelMessage[]> {
+async function loadHistory(db: Db, me: Me, c: ConversationRow, trigger: Trigger): Promise<ModelMessage[]> {
   const rows = (
     await db
       .select({ m: messages, name: people.displayName })
       .from(messages)
       .leftJoin(people, eq(people.id, messages.authorId))
-      .where(and(eq(messages.conversationId, c.id), inArray(messages.authorKind, ['person', 'ai'])))
+      .where(
+        and(
+          eq(messages.conversationId, c.id),
+          inArray(messages.authorKind, ['person', 'ai']),
+          trigger.team ? lte(messages.seq, trigger.seq) : undefined,
+        ),
+      )
       .orderBy(desc(messages.seq))
       .limit(HISTORY_LIMIT)
   ).reverse()
@@ -199,15 +269,20 @@ async function loadHistory(db: Db, me: Me, c: ConversationRow): Promise<ModelMes
         ),
       )
     : new Map<string, { id: string; fileName: string; noAi: boolean }>()
-  const team = !(OWN_KINDS as readonly string[]).includes(c.kind)
+  const requesterId =
+    c.kind === 'work_item' && c.workItemId
+      ? ((await db.select({ id: workItems.requesterId }).from(workItems).where(eq(workItems.id, c.workItemId)))[0]?.id ?? null)
+      : null
+  const label = (authorId: string | null, name: string | null): string => {
+    if (authorId === me.id) return c.kind === 'project' ? me.displayName : 'Me'
+    if (c.kind === 'project' && me.isStaff) return name ?? 'Someone'
+    return authorId !== null && authorId === requesterId ? 'Requester' : 'Team member'
+  }
 
   const out: { role: 'user' | 'assistant'; content: string }[] = []
   for (const { m, name } of rows) {
     let content = m.text
-    if (m.authorKind === 'person' && team) {
-      const who = m.authorId === me.id ? (me.isStaff ? me.displayName : 'Me') : me.isStaff ? (name ?? 'Someone') : 'Team member'
-      content = `${who}: ${content}`
-    }
+    if (m.authorKind === 'person' && trigger.team) content = `${label(m.authorId, name)}: ${content}`
     const attached = m.attachmentIds.flatMap((id) => {
       const f = files.get(id)
       if (!f) return []
