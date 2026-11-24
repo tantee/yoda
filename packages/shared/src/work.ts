@@ -116,6 +116,9 @@ export const Task = z.object({
   proposedAssigneeId: uuid.nullable(),
   proposedAssigneeName: z.string().nullable(),
   result: TaskResult.nullable(),
+  /** 'drafting' while an AI draft is pending, 'failed' (see aiFailReason) when it needs a person; null otherwise. */
+  aiStatus: z.enum(['drafting', 'failed']).nullable(),
+  aiFailReason: z.string().nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
 })
@@ -174,7 +177,7 @@ export type WorkItem = z.infer<typeof WorkItem>
 export const EventType = z.enum([
   'work_item.created', 'work_item.step_advanced', 'work_item.done', 'work_item.cancelled',
   'task.created', 'task.proposed', 'task.assigned', 'task.unassigned', 'task.started', 'task.accepted', 'task.rejected',
-  'ai.drafted', 'ai.failed', 'ai.budget_warning', 'ai.budget_exceeded',
+  'ai.drafted', 'ai.failed', 'ai.retried', 'ai.budget_warning', 'ai.budget_exceeded',
   'knowledge.created', 'knowledge.updated', 'knowledge.confirmed',
 ])
 export type EventType = z.infer<typeof EventType>

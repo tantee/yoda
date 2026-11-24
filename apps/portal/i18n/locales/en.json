@@ -107,7 +107,13 @@
     "assign": "Assign",
     "unassigned": "Unassigned",
     "decision": "Decision",
-    "proposedAssignee": "Proposed assignee"
+    "proposedAssignee": "Proposed assignee",
+    "fromPrevious": "From previous steps",
+    "aiDraft": "AI draft",
+    "copyIntoResult": "Copy into my result",
+    "attachments": "Attachments",
+    "resultAttachments": "Attach files to your result",
+    "noPreviousText": "(no text)"
   },
   "priority": {
     "low": "Low",
@@ -169,8 +175,20 @@
     "reason": {
       "work_item_cancelled": "Work item cancelled",
       "member_removed": "Member removed from project",
-      "no_candidate": "No eligible person found"
-    }
+      "no_candidate": "No eligible person found",
+      "budget_exceeded": "Monthly AI budget reached",
+      "ai_failed": "The AI could not produce a draft",
+      "ai_unavailable": "AI is not configured",
+      "no_ai": "This project does not use AI"
+    },
+    "ai": {
+      "drafted": "AI drafted a result",
+      "failed": "AI could not draft",
+      "retried": "AI retry requested",
+      "budget_warning": "AI budget 80% used",
+      "budget_exceeded": "AI budget reached"
+    },
+    "aiLabel": "AI"
   },
   "knowledge": {
     "search": "Search knowledge",
@@ -231,6 +249,9 @@
     "spend": "Spend",
     "calls": "Calls",
     "noLimit": "No limit",
-    "readOnly": "Only a PM or admin can change these settings"
+    "readOnly": "Only a PM or admin can change these settings",
+    "drafting": "AI is drafting…",
+    "failed": "AI couldn't draft this ({reason})",
+    "retry": "Retry AI"
   }
 }
