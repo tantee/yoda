@@ -253,5 +253,43 @@
     "drafting": "AI กำลังร่าง…",
     "failed": "AI ร่างงานนี้ไม่ได้ ({reason})",
     "retry": "ให้ AI ลองใหม่"
+  },
+  "chat": {
+    "threads": "การสนทนา",
+    "personal": "ผู้ช่วยของฉัน",
+    "intake": "ผู้ช่วยของฉัน",
+    "empty": "ยังไม่มีข้อความ",
+    "select": "เลือกการสนทนา",
+    "placeholder": "พิมพ์ข้อความ (Enter เพื่อส่ง, Shift+Enter ขึ้นบรรทัดใหม่)",
+    "send": "ส่ง",
+    "attach": "แนบไฟล์",
+    "typing": "ผู้ช่วยกำลังพิมพ์…",
+    "loadOlder": "โหลดข้อความที่เก่ากว่า",
+    "visibleToRequester": "เธรดนี้ผู้ขอมองเห็นได้ ห้ามโพสต์บันทึกภายในที่นี่",
+    "sendFailed": "ส่งข้อความไม่สำเร็จ",
+    "ai": "ผู้ช่วย",
+    "system": "ระบบ",
+    "card": {
+      "workItemCreated": "สร้างคำขอแล้ว",
+      "knowledgeSaved": "บันทึกความรู้แล้ว",
+      "proposal": "ข้อเสนอ",
+      "open": "เปิด",
+      "confirm": "ยืนยัน",
+      "dismiss": "ปฏิเสธ",
+      "dismissNote": "เหตุผลที่ปฏิเสธ",
+      "state": {
+        "pending": "รอการตัดสินใจ",
+        "accepted": "ยืนยันแล้ว",
+        "rejected": "ปฏิเสธแล้ว",
+        "superseded": "ใช้ไม่ได้แล้ว"
+      },
+      "project": "โครงการ",
+      "chooseProject": "เลือกโครงการ"
+    }
+  },
+  "notifications": {
+    "title": "การแจ้งเตือน",
+    "empty": "ไม่มีการแจ้งเตือน",
+    "markAllRead": "อ่านทั้งหมดแล้ว"
   }
 }
