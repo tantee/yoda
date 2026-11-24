@@ -1,7 +1,7 @@
 import type { TaskExecutor, TemplateTask } from '@yoda/shared'
 import { and, eq } from 'drizzle-orm'
 import type { Tx } from '../db/client.js'
-import { projectMembers, projects, tasks } from '../db/schema.js'
+import { projectMembers, projects, tasks, workItems } from '../db/schema.js'
 import { pickAssignee } from './assign.js'
 import { recordEvent, type WorkCtx } from './context.js'
 
@@ -24,13 +24,24 @@ export async function createTaskAttempt(
   let proposedAssigneeId: string | null = null
   let noCandidate = false
 
-  if (input.executor !== 'ai') {
+  if (input.task.role === 'REQUESTER') {
+    // The person who asked does the work directly: never proposed, no load balancing, no assignee hint.
+    // Without a recorded requester, the work item's owner stands in while still a project member;
+    // otherwise the task is left for the PM.
+    const [item] = await tx
+      .select({ requesterId: workItems.requesterId, ownerId: workItems.ownerId })
+      .from(workItems)
+      .where(eq(workItems.id, input.workItemId))
+    if (!item) throw new Error(`work item ${input.workItemId} missing`)
+    if (item.requesterId) assigneeId = item.requesterId
+    else if (await isMember(tx, input.projectId, item.ownerId)) assigneeId = item.ownerId
+    else noCandidate = true
+  } else if (input.executor !== 'ai') {
     // The previous attempt's assignee keeps the task only while still a project member.
     if (input.assigneeHint && (await isMember(tx, input.projectId, input.assigneeHint))) {
       assigneeId = input.assigneeHint
     } else {
-      // REQUESTER tasks are assigned to the requester in plan 4 task 2; no staff candidate until then.
-      const candidate = input.task.role === 'REQUESTER' ? null : await pickAssignee(tx, input.projectId, input.task.role)
+      const candidate = await pickAssignee(tx, input.projectId, input.task.role)
       if (!candidate) {
         noCandidate = true
       } else {

@@ -81,6 +81,7 @@ async function createItem(projectId: string): Promise<WorkItemDetail> {
     title: 'เพิ่มรายงาน HbA1c',
     description: 'ต้องการรายงานใหม่',
     templateKey: 'software-change',
+    requesterId: requester.id,
   })
   expect(res.statusCode).toBe(201)
   return res.json()
@@ -127,7 +128,7 @@ describe('AI drafter', () => {
     await app.close()
   })
 
-  it('drafts draft-requirements after intake approval and opens clarify-requirements with the draft', async () => {
+  it('drafts draft-requirements after intake approval and asks the requester with the draft', async () => {
     const m = draftModel()
     await boot(mockModels({ draft: m.model }))
     const p = await project()
@@ -145,10 +146,14 @@ describe('AI drafter', () => {
     expect(accepted).toMatchObject({ actorKind: 'ai', actorId: null })
     expect(drafted!.seq).toBeLessThan(accepted!.seq)
 
-    const clarify = await active(wi.id, 'clarify-requirements')
-    expect(clarify).toBeTruthy()
-    const detail = (await call(ba, 'GET', `/tasks/${clarify.id}`)).json() as TaskWithContext
+    const answer = await active(wi.id, 'answer-questions')
+    expect(answer).toMatchObject({ state: 'open', assigneeId: requester.id })
+    const detail = (await call(requester, 'GET', `/tasks/${answer.id}`)).json() as TaskWithContext
     expect(detail.inputs.map((i) => i.result.text)).toContain(DRAFT)
+    await drive(wi.id, 'answer-questions', requester, { text: 'คำตอบของผู้ขอ' })
+    const clarify = await active(wi.id, 'clarify-requirements')
+    const forBa = (await call(ba, 'GET', `/tasks/${clarify.id}`)).json() as TaskWithContext
+    expect(forBa.inputs.map((i) => i.result.text)).toEqual(['คำตอบของผู้ขอ'])
 
     const db = await testDb()
     const progress = await db
@@ -322,7 +327,7 @@ describe('AI drafter', () => {
     expect(res.statusCode).toBe(200)
     await queue.drain()
     expect(await active(wi.id, 'draft-requirements')).toMatchObject({ id: draft.id, state: 'accepted', result: { text: DRAFT } })
-    expect(await active(wi.id, 'clarify-requirements')).toBeTruthy()
+    expect(await active(wi.id, 'answer-questions')).toBeTruthy()
 
     const again = await call(pm, 'POST', `/tasks/${draft.id}/retry-ai`)
     expect(again.statusCode).toBe(409)
@@ -449,6 +454,7 @@ describe('AI drafter', () => {
     const wi = await createItem(p)
     await approveIntake(wi.id)
     await queue.drain()
+    await drive(wi.id, 'answer-questions', requester, { text: 'คำตอบ' })
     await drive(wi.id, 'clarify-requirements', ba, { text: 'ข้อกำหนดฉบับสมบูรณ์' })
     await drive(wi.id, 'approve-requirements', ba, { decision: 'approve', text: '' })
     await queue.drain()

@@ -83,6 +83,9 @@ export function validateTemplate(def: WorkflowTemplateDef): string[] {
       }
       if (task.type === 'ai' && !task.capability) problems.push(`ai task ${task.key} must declare a capability`)
       if (task.type !== 'ai' && task.capability) problems.push(`task ${task.key} must not declare a capability (only ai tasks may)`)
+      if (task.role === 'REQUESTER' && task.type !== 'human' && task.type !== 'approval') {
+        problems.push(`REQUESTER task ${task.key} must be a human or approval task`)
+      }
       earlierInStep.add(task.key)
     })
   }

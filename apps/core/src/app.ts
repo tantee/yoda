@@ -20,6 +20,7 @@ import { projectRoutes } from './routes/projects.js'
 import { meRoutes } from './routes/me.js'
 import { streamRoutes } from './routes/stream.js'
 import { workRoutes } from './routes/work.js'
+import { requestRoutes } from './routes/requests.js'
 
 export type AppDeps = {
   config: Config
@@ -66,6 +67,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   peopleRoutes(app)
   projectRoutes(app)
   workRoutes(app)
+  requestRoutes(app)
   streamRoutes(app)
   // Text-bearing uploads become `document` entries. The attachment is already committed, so a failure here
   // is logged rather than failing the upload (a retried upload would duplicate the file).

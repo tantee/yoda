@@ -77,18 +77,20 @@ describe('work API', () => {
     await app.close()
   })
 
-  it('requesters get 403 and non-member staff get 404', async () => {
+  it('requesters get 403 (or 404 where they may hold a task) and non-member staff get 404', async () => {
     expect((await call(nurse, 'GET', '/workflow-templates')).statusCode).toBe(403)
     expect((await call(nurse, 'GET', '/me/todo')).statusCode).toBe(403)
-    expect((await call(nurse, 'GET', `/tasks/${NO_ID}`)).statusCode).toBe(403)
-    expect((await call(nurse, 'GET', `/work-items/${NO_ID}`)).statusCode).toBe(403)
+    expect((await call(nurse, 'GET', `/tasks/${NO_ID}`)).statusCode).toBe(404)
+    expect((await call(nurse, 'GET', `/work-items/${NO_ID}`)).statusCode).toBe(404)
 
     const p = await project([[pm, ['PM']], [dev, ['DEV']]])
     const wi = await createItem(pm, p)
     const taskId = wi.tasks[0]!.id
 
-    expect((await call(nurse, 'GET', `/work-items/${wi.id}`)).statusCode).toBe(403)
-    expect((await call(nurse, 'GET', `/tasks/${taskId}`)).statusCode).toBe(403)
+    expect((await call(nurse, 'GET', `/work-items/${wi.id}`)).statusCode).toBe(404)
+    expect((await call(nurse, 'GET', `/tasks/${taskId}`)).statusCode).toBe(404)
+    expect((await call(nurse, 'POST', `/tasks/${taskId}/submit`, { text: 'x' })).statusCode).toBe(404)
+    expect((await call(nurse, 'POST', `/tasks/${taskId}/confirm`)).statusCode).toBe(403)
     expect((await call(nurse, 'GET', `/projects/${p}/work-items`)).statusCode).toBe(403)
 
     const hidden = await call(outsider, 'GET', `/work-items/${wi.id}`)
