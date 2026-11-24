@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { ProjectRole } from './projects.js'
+import { Attachment } from './knowledge.js'
 
 const uuid = z.string().uuid()
 const keyRe = /^[a-z0-9-]+$/
@@ -19,6 +20,9 @@ export type Priority = z.infer<typeof Priority>
 export const WorkItemState = z.enum(['active', 'done', 'cancelled'])
 export type WorkItemState = z.infer<typeof WorkItemState>
 
+export const TaskCapability = z.enum(['draft-text', 'analyze-repo', 'code-change', 'run-tests'])
+export type TaskCapability = z.infer<typeof TaskCapability>
+
 export const TemplateTask = z.object({
   key: z.string().regex(keyRe),
   type: TaskType,
@@ -26,6 +30,7 @@ export const TemplateTask = z.object({
   title: LocalizedText,
   instructions: LocalizedText,
   dependsOn: z.array(z.string()).default([]),
+  capability: TaskCapability.optional(),
 })
 export type TemplateTask = z.infer<typeof TemplateTask>
 
@@ -68,6 +73,8 @@ export function validateTemplate(def: WorkflowTemplateDef): string[] {
       if ((task.type === 'review' || task.type === 'approval') && task.dependsOn.length === 0 && i > 0) {
         problems.push(`${task.type} task ${task.key} must depend on an earlier task unless it is first in step ${step.key}`)
       }
+      if (task.type === 'ai' && !task.capability) problems.push(`ai task ${task.key} must declare a capability`)
+      if (task.type !== 'ai' && task.capability) problems.push(`task ${task.key} must not declare a capability (only ai tasks may)`)
       earlierInStep.add(task.key)
     })
   }
@@ -85,6 +92,8 @@ export type WorkflowTemplateSummary = z.infer<typeof WorkflowTemplateSummary>
 export const TaskResult = z.object({
   text: z.string().max(50000).default(''),
   decision: z.enum(['approve', 'changes']).optional(),
+  /** Attachments of the task's project, linked to the task on submit. */
+  attachmentIds: z.array(uuid).max(20).default([]),
 })
 export type TaskResult = z.infer<typeof TaskResult>
 
@@ -107,12 +116,30 @@ export const Task = z.object({
   proposedAssigneeId: uuid.nullable(),
   proposedAssigneeName: z.string().nullable(),
   result: TaskResult.nullable(),
+  /** 'drafting' while an AI draft is pending, 'failed' (see aiFailReason) when it needs a person; null otherwise. */
+  aiStatus: z.enum(['drafting', 'failed']).nullable(),
+  aiFailReason: z.string().nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
 })
 export type Task = z.infer<typeof Task>
 
-export const TaskWithContext = Task.extend({ workItemTitle: z.string(), workItemPriority: Priority, projectName: z.string() })
+export const TaskInput = z.object({
+  templateTaskKey: z.string(),
+  title: LocalizedText,
+  executor: TaskExecutor,
+  result: TaskResult,
+  attachments: z.array(Attachment),
+})
+export type TaskInput = z.infer<typeof TaskInput>
+
+export const TaskWithContext = Task.extend({
+  workItemTitle: z.string(),
+  workItemPriority: Priority,
+  projectName: z.string(),
+  inputs: z.array(TaskInput),
+  attachments: z.array(Attachment),
+})
 export type TaskWithContext = z.infer<typeof TaskWithContext>
 
 export const Todo = z.object({ tasks: z.array(TaskWithContext), confirmations: z.array(TaskWithContext) })
@@ -150,12 +177,18 @@ export type WorkItem = z.infer<typeof WorkItem>
 export const EventType = z.enum([
   'work_item.created', 'work_item.step_advanced', 'work_item.done', 'work_item.cancelled',
   'task.created', 'task.proposed', 'task.assigned', 'task.unassigned', 'task.started', 'task.accepted', 'task.rejected',
+  'ai.drafted', 'ai.failed', 'ai.retried', 'ai.budget_warning', 'ai.budget_exceeded',
+  'knowledge.created', 'knowledge.updated', 'knowledge.confirmed',
 ])
 export type EventType = z.infer<typeof EventType>
+
+export const ActorKind = z.enum(['person', 'system', 'ai'])
+export type ActorKind = z.infer<typeof ActorKind>
 
 export const EventEntry = z.object({
   id: uuid,
   type: EventType,
+  actorKind: ActorKind,
   actorId: uuid.nullable(),
   actorName: z.string().nullable(),
   taskId: uuid.nullable(),

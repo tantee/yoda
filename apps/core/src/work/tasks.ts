@@ -66,6 +66,12 @@ export async function createTaskAttempt(
   await recordEvent(ctx, { type: 'task.created', ...base, reason: noCandidate ? 'no_candidate' : null })
   if (assigneeId) await recordEvent(ctx, { type: 'task.assigned', ...base, payload: { assigneeId } })
   else if (proposedAssigneeId) await recordEvent(ctx, { type: 'task.proposed', ...base, payload: { proposedAssigneeId } })
+
+  // AI drafting runs after commit; a noAi project gets no AI calls at all (its AI tasks wait for a person).
+  if (input.executor === 'ai' && input.task.capability === 'draft-text') {
+    const [proj] = await tx.select({ noAi: projects.noAi }).from(projects).where(eq(projects.id, input.projectId))
+    if (proj && !proj.noAi) ctx.jobs.push({ name: 'draft-task', id: taskId })
+  }
   return taskId
 }
 

@@ -1,18 +1,40 @@
-import type { EventType, LiveEvent } from '@yoda/shared'
+import type { ActorKind, EventType, LiveEvent } from '@yoda/shared'
 import type { Db, Tx } from '../db/client.js'
 import { events } from '../db/schema.js'
+import type { JobName, JobQueue } from '../jobs/queue.js'
 import type { LiveBus } from '../live/bus.js'
 
-export type WorkCtx = { tx: Tx; actorId: string | null; emitted: LiveEvent[] }
+export type WorkCtx = {
+  tx: Tx
+  actorId: string | null
+  /** Who is acting: a person (actorId set), the system (actorId null) or the AI runner. */
+  actorKind: ActorKind
+  emitted: LiveEvent[]
+  /** Jobs to send once the transaction has committed. */
+  jobs: { name: JobName; id: string }[]
+}
+
+export type Actor = { id: string | null; kind: ActorKind }
+
+export type WorkDeps = { db: Db; bus: LiveBus; jobs: Pick<JobQueue, 'send'> }
 
 export async function runWork<T>(
-  deps: { db: Db; bus: LiveBus },
-  actorId: string | null,
+  deps: WorkDeps,
+  actor: Actor,
   fn: (ctx: WorkCtx) => Promise<T>,
 ): Promise<T> {
   const emitted: LiveEvent[] = []
-  const result = await deps.db.transaction((tx) => fn({ tx, actorId, emitted }))
+  const jobs: WorkCtx['jobs'] = []
+  const result = await deps.db.transaction((tx) => fn({ tx, actorId: actor.id, actorKind: actor.kind, emitted, jobs }))
   for (const e of emitted) deps.bus.publish(e)
+  for (const j of jobs) {
+    // Committed work stays committed: a queue outage loses the job (it is logged), not the request.
+    try {
+      await deps.jobs.send(j.name, { id: j.id })
+    } catch (err) {
+      console.error(`jobs: failed to send ${j.name} ${j.id}`, err)
+    }
+  }
   return result
 }
 
@@ -24,6 +46,8 @@ export async function recordEvent(
     workItemId: string | null
     taskId: string | null
     reason?: string | null
+    /** Defaults to the context's actor kind. */
+    actorKind?: ActorKind
     payload?: Record<string, unknown>
   },
 ): Promise<void> {
@@ -33,6 +57,7 @@ export async function recordEvent(
     taskId: e.taskId,
     type: e.type,
     actorId: ctx.actorId,
+    actorKind: e.actorKind ?? ctx.actorKind,
     reason: e.reason ?? null,
     payload: e.payload ?? {},
   })

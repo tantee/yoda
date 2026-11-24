@@ -3,15 +3,21 @@ import { loadConfig } from '../src/config.js'
 import { buildApp } from '../src/app.js'
 import { testDeps } from './helpers.js'
 
+const baseEnv = {
+  DATABASE_URL: 'postgres://x',
+  OIDC_ISSUER: 'http://issuer.test',
+  OIDC_CLIENT_ID: 'c',
+  S3_ACCESS_KEY: 'k',
+  S3_SECRET_KEY: 's',
+}
+
 describe('loadConfig', () => {
   it('lists every missing variable', () => {
     expect(() => loadConfig({})).toThrow(/DATABASE_URL[\s\S]*OIDC_ISSUER/)
   })
   it('parses bootstrap admins and defaults', () => {
     const c = loadConfig({
-      DATABASE_URL: 'postgres://x',
-      OIDC_ISSUER: 'http://issuer.test',
-      OIDC_CLIENT_ID: 'c',
+      ...baseEnv,
       BOOTSTRAP_ADMINS: 'a, b',
     })
     expect(c.bootstrapAdmins).toEqual(['a', 'b'])
@@ -20,11 +26,30 @@ describe('loadConfig', () => {
   })
   it('strips trailing slashes from OIDC_ISSUER', () => {
     const c = loadConfig({
-      DATABASE_URL: 'postgres://x',
+      ...baseEnv,
       OIDC_ISSUER: 'http://kc.test/realms/hospital/',
-      OIDC_CLIENT_ID: 'c',
     })
     expect(c.oidcIssuer).toBe('http://kc.test/realms/hospital')
+  })
+  it('applies AI and S3 defaults', () => {
+    const c = loadConfig(baseEnv)
+    expect(c.aiModelDraft).toBe('anthropic:claude-opus-5-5')
+    expect(c.aiModelFast).toBe('anthropic:claude-haiku-5-5')
+    expect(c.aiEmbeddingModel).toBeUndefined()
+    expect(c.s3Endpoint).toBe('http://localhost:9000')
+    expect(c.s3Region).toBe('us-east-1')
+    expect(c.s3Bucket).toBe('yoda')
+    expect(c.aiWorkers).toBe(2)
+  })
+  it('requires S3 credentials', () => {
+    const { S3_ACCESS_KEY: _a, S3_SECRET_KEY: _s, ...rest } = baseEnv
+    expect(() => loadConfig(rest)).toThrow(/S3_ACCESS_KEY/)
+  })
+  it('validates provider:model strings', () => {
+    expect(() => loadConfig({ ...baseEnv, AI_MODEL_DRAFT: 'claude-opus-5-5' })).toThrow(/AI_MODEL_DRAFT/)
+    expect(loadConfig({ ...baseEnv, AI_MODEL_DRAFT: 'anthropic:claude-opus-5-5' }).aiModelDraft).toBe('anthropic:claude-opus-5-5')
+    expect(loadConfig({ ...baseEnv, AI_EMBEDDING_MODEL: 'openai:text-embedding-3-small' }).aiEmbeddingModel).toBe('openai:text-embedding-3-small')
+    expect(() => loadConfig({ ...baseEnv, AI_MODEL_FAST: 'gemini:x' })).toThrow(/AI_MODEL_FAST/)
   })
 })
 

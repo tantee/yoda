@@ -1,5 +1,5 @@
 import type { Me, TaskResult, TaskState, WorkflowTemplateDef, WorkItemCreate } from '@yoda/shared'
-import { and, asc, desc, eq, inArray, or, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, isNull, like, or, sql } from 'drizzle-orm'
 import {
   commentRequired,
   decisionRequired,
@@ -9,7 +9,8 @@ import {
   notMember,
 } from '../auth/plugin.js'
 import type { Tx } from '../db/client.js'
-import { projectMembers, tasks, workItems } from '../db/schema.js'
+import { attachments, events, knowledgeEntries, projectMembers, projects, tasks, workItems } from '../db/schema.js'
+import { confirmEntry, createEntry } from '../knowledge/service.js'
 import { lockProject } from '../projects/access.js'
 import { latestTemplate, templateById } from '../workflow/seed.js'
 import { recordEvent, type WorkCtx } from './context.js'
@@ -191,10 +192,13 @@ export async function submitTask(ctx: WorkCtx, me: Me, taskId: string, result: T
     if (result.decision === 'changes' && !result.text.trim()) throw commentRequired()
   }
   const base = { projectId: task.projectId, workItemId: task.workItemId, taskId }
+  result = { ...result, attachmentIds: [...new Set(result.attachmentIds)] }
+  await linkAttachments(tx, task, result.attachmentIds)
 
   if (!decides || result.decision === 'approve') {
     await tx.update(tasks).set({ state: 'accepted', result, updatedAt: sql`now()` }).where(eq(tasks.id, taskId))
     await recordEvent(ctx, { type: 'task.accepted', ...base })
+    await recordAcceptedKnowledge(ctx, item, task, result)
   } else {
     const comment = result.text
     await tx.update(tasks).set({ state: 'rejected', result, updatedAt: sql`now()` }).where(eq(tasks.id, taskId))
@@ -224,6 +228,97 @@ export async function submitTask(ctx: WorkCtx, me: Me, taskId: string, result: T
     }
   }
   await progressWorkItem(ctx, task.workItemId)
+}
+
+/**
+ * Links attachments to the task. Unknown ids or files of another project → 404 (never confirms other
+ * projects' ids). A file already linked to another task, or on another work item → 409 `invalid_state`,
+ * so a submit never moves files off other tasks. Project-level files join the task's work item.
+ */
+async function linkAttachments(tx: Tx, task: TaskRow, ids: string[]): Promise<void> {
+  if (!ids.length) return
+  const rows = await tx
+    .select({ id: attachments.id, taskId: attachments.taskId, workItemId: attachments.workItemId })
+    .from(attachments)
+    .where(and(inArray(attachments.id, ids), eq(attachments.projectId, task.projectId)))
+    .orderBy(asc(attachments.id))
+    .for('update')
+  if (rows.length !== ids.length) throw notFound()
+  const foreign = (r: (typeof rows)[number]) =>
+    (r.taskId !== null && r.taskId !== task.id) || (r.workItemId !== null && r.workItemId !== task.workItemId)
+  if (rows.some(foreign)) throw invalidState()
+  await tx
+    .update(attachments)
+    .set({ taskId: task.id, workItemId: task.workItemId })
+    .where(inArray(attachments.id, ids))
+}
+
+/**
+ * Knowledge from accepted work (system writes, no permission checks: the submitter's rights were checked).
+ * Call after the task row is `accepted` with `result` (submitTask, and the AI runner's submitAiResult).
+ * - An `ai` / `human` task with result text → a `progress` entry; `draft` when the AI did the work.
+ * - An approving `review` / `approval` → a confirmed `document` entry for each task it depends on
+ *   (latest accepted attempt), and that task's draft progress entries become confirmed.
+ */
+export async function recordAcceptedKnowledge(ctx: WorkCtx, item: WorkItemRow, task: TaskRow, result: TaskResult): Promise<void> {
+  const { tx } = ctx
+  const def = await definitionOf(tx, item)
+  const step = def.steps.find((s) => s.key === task.stepKey)
+  const templateTask = step?.tasks.find((t) => t.key === task.templateTaskKey)
+  if (!step || !templateTask) return
+  const entry = (sourceTask: TaskRow, title: string, body: string) =>
+    ({
+      scope: 'work_item',
+      projectId: sourceTask.projectId,
+      workItemId: sourceTask.workItemId,
+      title,
+      body,
+      noAi: false,
+      sourceKind: 'task',
+      sourceRef: sourceTask.id,
+    }) as const
+
+  if (task.type === 'ai' || task.type === 'human') {
+    if (!result.text.trim()) return
+    await createEntry(ctx, null, {
+      ...entry(task, templateTask.title.th, result.text),
+      type: 'progress',
+      status: task.executor === 'ai' ? 'draft' : 'confirmed',
+    })
+    return
+  }
+  if (result.decision !== 'approve') return
+  for (const depKey of templateTask.dependsOn) {
+    const depDef = step.tasks.find((t) => t.key === depKey)
+    const [dep] = await tx
+      .select()
+      .from(tasks)
+      .where(and(eq(tasks.workItemId, task.workItemId), eq(tasks.templateTaskKey, depKey), eq(tasks.state, 'accepted')))
+      .orderBy(desc(tasks.attempt))
+      .limit(1)
+    if (!dep || !depDef) continue
+    const text = (dep.result as TaskResult | null)?.text ?? ''
+    if (text.trim()) {
+      await createEntry(ctx, null, { ...entry(dep, depDef.title.th, text), type: 'document', status: 'confirmed' })
+    }
+    const drafts = await tx
+      .select({ id: knowledgeEntries.id })
+      .from(knowledgeEntries)
+      .where(
+        and(
+          eq(knowledgeEntries.sourceKind, 'task'),
+          eq(knowledgeEntries.sourceRef, dep.id),
+          eq(knowledgeEntries.type, 'progress'),
+          eq(knowledgeEntries.status, 'draft'),
+          isNull(knowledgeEntries.supersededAt),
+        ),
+      )
+      .orderBy(asc(knowledgeEntries.id))
+      // Locked, and the filter is re-checked after any wait: a draft a person edited or confirmed
+      // meanwhile is no longer a current draft and is skipped instead of failing the approval.
+      .for('update')
+    for (const d of drafts) await confirmEntry(ctx, null, d.id)
+  }
 }
 
 export async function assignTask(ctx: WorkCtx, me: Me, taskId: string, personId: string): Promise<void> {
@@ -339,4 +434,128 @@ export async function cancelWorkItem(ctx: WorkCtx, me: Me, workItemId: string): 
   }
   await tx.update(workItems).set({ state: 'cancelled', updatedAt: sql`now()` }).where(eq(workItems.id, workItemId))
   await recordEvent(ctx, { type: 'work_item.cancelled', projectId: item.projectId, workItemId, taskId: null })
+}
+
+/** The AI runner may still act on the task: open, unassigned and executed by the AI. */
+const awaitingAi = (task: TaskRow) => task.state === 'open' && task.assigneeId === null && task.executor === 'ai'
+
+/**
+ * Stores an AI draft as the task's result (actor kind `ai`). No-op when the task was taken over, cancelled or
+ * already finished meanwhile. Records `ai.drafted` then `task.accepted`, a draft progress entry, then advances
+ * the work item so the next (human) task appears.
+ */
+export async function submitAiResult(
+  ctx: WorkCtx,
+  taskId: string,
+  text: string,
+  meta: { model: string; overBudget?: boolean },
+): Promise<boolean> {
+  const { tx } = ctx
+  const { item, task } = await lockTask(tx, taskId)
+  if (item.state !== 'active' || !awaitingAi(task)) return false
+  const result: TaskResult = { text, attachmentIds: [] }
+  const base = { projectId: task.projectId, workItemId: task.workItemId, taskId }
+  await tx.update(tasks).set({ state: 'accepted', result, updatedAt: sql`now()` }).where(eq(tasks.id, taskId))
+  await recordEvent(ctx, {
+    type: 'ai.drafted',
+    ...base,
+    payload: meta.overBudget ? { model: meta.model, overBudget: true } : { model: meta.model },
+  })
+  await recordEvent(ctx, { type: 'task.accepted', ...base })
+  await recordAcceptedKnowledge(ctx, item, task, result)
+  await progressWorkItem(ctx, task.workItemId)
+  return true
+}
+
+/**
+ * Records that the AI could not draft the task (`ai.failed` with `reason`, actor kind `system`). The task stays
+ * open and unassigned, so it remains in the PM's confirmations. No-op when it no longer awaits the AI.
+ */
+export async function failAiTask(ctx: WorkCtx, taskId: string, reason: string): Promise<void> {
+  const { item, task } = await lockTask(ctx.tx, taskId)
+  if (item.state !== 'active' || !awaitingAi(task)) return
+  await recordEvent(ctx, {
+    type: 'ai.failed',
+    projectId: task.projectId,
+    workItemId: task.workItemId,
+    taskId,
+    reason,
+  })
+}
+
+/** PM/admin: queue another drafting attempt for an open, unassigned `draft-text` AI task. */
+export async function retryAiTask(ctx: WorkCtx, me: Me, taskId: string): Promise<void> {
+  const { tx } = ctx
+  const { item, task } = await lockTask(tx, taskId)
+  if (!(await isPmOrAdmin(tx, me, task.projectId))) throw forbidden()
+  if (item.state !== 'active' || !awaitingAi(task)) throw invalidState()
+  const def = await definitionOf(tx, item)
+  const templateTask = def.steps.find((s) => s.key === task.stepKey)?.tasks.find((t) => t.key === task.templateTaskKey)
+  if (templateTask?.capability !== 'draft-text') throw invalidState()
+  const [proj] = await tx.select({ noAi: projects.noAi }).from(projects).where(eq(projects.id, task.projectId))
+  if (!proj || proj.noAi) throw invalidState()
+  // After a failed draft, or when no draft was ever attempted (e.g. its job was lost). A pending ai.retried
+  // means a job is already queued. A duplicate job is harmless: the draft-task queue keeps one per task.
+  const [last] = await tx
+    .select({ type: events.type })
+    .from(events)
+    .where(and(eq(events.taskId, taskId), like(events.type, 'ai.%')))
+    .orderBy(desc(events.seq))
+    .limit(1)
+  if (last && last.type !== 'ai.failed') throw invalidState()
+  await recordEvent(ctx, { type: 'ai.retried', projectId: task.projectId, workItemId: task.workItemId, taskId })
+  ctx.jobs.push({ name: 'draft-task', id: taskId })
+}
+
+/**
+ * After a project's noAi is switched off: queues drafting for every `draft-text` task still waiting on the AI
+ * (recording `ai.retried` where the last attempt failed, so the task shows as drafting again) and re-embeds the
+ * project's current entries that have chunks without vectors.
+ */
+export async function resumeProjectAi(ctx: WorkCtx, projectId: string): Promise<void> {
+  const { tx } = ctx
+  const waiting = await tx
+    .select({ task: tasks, item: workItems })
+    .from(tasks)
+    .innerJoin(workItems, eq(workItems.id, tasks.workItemId))
+    .where(
+      and(
+        eq(tasks.projectId, projectId),
+        eq(tasks.state, 'open'),
+        eq(tasks.executor, 'ai'),
+        isNull(tasks.assigneeId),
+        eq(workItems.state, 'active'),
+      ),
+    )
+  const defs = new Map<string, WorkflowTemplateDef>()
+  for (const { task, item } of waiting) {
+    let def = defs.get(item.templateId)
+    if (!def) defs.set(item.templateId, (def = await definitionOf(tx, item)))
+    const tt = def.steps.find((s) => s.key === task.stepKey)?.tasks.find((t) => t.key === task.templateTaskKey)
+    if (tt?.capability !== 'draft-text') continue
+    const [last] = await tx
+      .select({ type: events.type })
+      .from(events)
+      .where(and(eq(events.taskId, task.id), like(events.type, 'ai.%')))
+      .orderBy(desc(events.seq))
+      .limit(1)
+    if (last?.type === 'ai.failed') {
+      await recordEvent(ctx, { type: 'ai.retried', projectId, workItemId: task.workItemId, taskId: task.id })
+    }
+    ctx.jobs.push({ name: 'draft-task', id: task.id })
+  }
+  const unembedded = await tx
+    .select({ id: knowledgeEntries.id })
+    .from(knowledgeEntries)
+    .leftJoin(attachments, eq(attachments.id, knowledgeEntries.attachmentId))
+    .where(
+      and(
+        eq(knowledgeEntries.projectId, projectId),
+        isNull(knowledgeEntries.supersededAt),
+        eq(knowledgeEntries.noAi, false),
+        or(isNull(attachments.id), eq(attachments.noAi, false)),
+        sql`exists (select 1 from knowledge_chunks c where c.entry_id = ${knowledgeEntries.id} and c.embedding is null)`,
+      ),
+    )
+  for (const e of unembedded) ctx.jobs.push({ name: 'embed-entry', id: e.id })
 }

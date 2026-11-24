@@ -1,0 +1,6 @@
+{
+  "claude-opus-5-5": { "inputPerMTok": 4, "outputPerMTok": 20 },
+  "claude-sonnet-5-5": { "inputPerMTok": 2, "outputPerMTok": 10 },
+  "claude-haiku-5-5": { "inputPerMTok": 0.1, "outputPerMTok": 0.5 },
+  "text-embedding-3-small": { "inputPerMTok": 0.02, "outputPerMTok": 0 }
+}

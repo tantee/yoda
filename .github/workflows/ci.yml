@@ -31,6 +31,7 @@ jobs:
           --health-timeout 3s --health-retries 10
     env:
       TEST_DATABASE_URL: postgres://yoda:yoda-ci@localhost:5432/yoda_test
+      TEST_STORAGE: memory
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4

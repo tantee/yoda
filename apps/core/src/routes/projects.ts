@@ -8,7 +8,7 @@ import type { Db, Tx } from '../db/client.js'
 import { people, projectMembers, projects } from '../db/schema.js'
 import { canManageProject, lockProject } from '../projects/access.js'
 import { runWork } from '../work/context.js'
-import { unassignMemberTasks } from '../work/engine.js'
+import { resumeProjectAi, unassignMemberTasks } from '../work/engine.js'
 
 type ProjectRow = typeof projects.$inferSelect
 
@@ -20,6 +20,7 @@ const toProject = (row: ProjectRow): Project =>
     status: row.status,
     noAi: row.noAi,
     autonomy: row.autonomy,
+    aiBudgetUsd: row.aiBudgetUsd === null ? null : Number(row.aiBudgetUsd),
     createdAt: row.createdAt.toISOString(),
   })
 
@@ -136,7 +137,7 @@ export function projectRoutes(app: FastifyInstance): void {
     await requireManage(request, id)
     const me = request.me
     // runWork so the task.unassigned events are published after commit.
-    await runWork(app.deps, me.id, async (ctx) => {
+    await runWork(app.deps, { id: me.id, kind: 'person' }, async (ctx) => {
       const { tx } = ctx
       await lockProject(tx, id)
       if (!(await canManageProject(tx, me, id))) throw forbidden()
@@ -158,12 +159,22 @@ export function projectRoutes(app: FastifyInstance): void {
   app.patch('/projects/:id', async (request) => {
     requireStaff(request)
     const { id } = ProjectParams.parse(request.params)
-    const { autonomy } = ProjectPatch.parse(request.body)
+    const patch = ProjectPatch.parse(request.body)
     await requireManage(request, id)
-    return db().transaction(async (tx) => {
+    // runWork so jobs queued when AI is switched back on are sent after commit.
+    return runWork(app.deps, { id: request.me.id, kind: 'person' }, async (ctx) => {
+      const { tx } = ctx
       await lockProject(tx, id)
       if (!(await canManageProject(tx, request.me, id))) throw forbidden()
-      await tx.update(projects).set({ autonomy }).where(eq(projects.id, id))
+      const [before] = await tx.select({ noAi: projects.noAi }).from(projects).where(eq(projects.id, id))
+      const set: Partial<typeof projects.$inferInsert> = {}
+      if (patch.autonomy !== undefined) set.autonomy = patch.autonomy
+      if (patch.noAi !== undefined) set.noAi = patch.noAi
+      if (patch.aiBudgetUsd !== undefined) {
+        set.aiBudgetUsd = patch.aiBudgetUsd === null ? null : patch.aiBudgetUsd.toFixed(2)
+      }
+      if (Object.keys(set).length > 0) await tx.update(projects).set(set).where(eq(projects.id, id))
+      if (before?.noAi && patch.noAi === false) await resumeProjectAi(ctx, id)
       const detail = await loadDetail(tx, id)
       if (!detail) throw notFound()
       return detail

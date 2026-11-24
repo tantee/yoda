@@ -76,6 +76,7 @@ const isEmpty = computed(() => !todo.value?.tasks.length && !todo.value?.confirm
             <v-list-item-subtitle>
               {{ task.projectName }} · {{ task.workItemTitle }} ·
               {{ task.proposedAssigneeName ?? (task.executor === 'ai' && !task.assigneeId ? t('todo.waitingForAi') : t('todo.needsAssignee')) }}
+              <template v-if="task.aiStatus"> · <AiStatus :task="task" can-retry @retried="load" /></template>
             </v-list-item-subtitle>
             <template #append>
               <v-chip size="small" class="mr-2" data-testid="priority-chip">{{ t(`priority.${task.workItemPriority}`) }}</v-chip>

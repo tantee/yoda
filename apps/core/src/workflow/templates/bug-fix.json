@@ -47,7 +47,8 @@
             "th": "เขียนโค้ดแก้ไขข้อผิดพลาดตามรายงานบนงาน",
             "en": "Write the code that fixes the bug described in the bug report on the work item"
           },
-          "dependsOn": []
+          "dependsOn": [],
+          "capability": "code-change"
         },
         {
           "key": "draft-tests",
@@ -61,7 +62,8 @@
             "th": "ร่างกรณีทดสอบจากรายงานข้อผิดพลาดบนงาน",
             "en": "Draft test cases from the bug report on the work item"
           },
-          "dependsOn": []
+          "dependsOn": [],
+          "capability": "draft-text"
         },
         {
           "key": "review-code",
