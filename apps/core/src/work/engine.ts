@@ -9,7 +9,7 @@ import {
   notMember,
 } from '../auth/plugin.js'
 import type { Tx } from '../db/client.js'
-import { attachments, events, knowledgeEntries, people, projectMembers, projects, tasks, workItems } from '../db/schema.js'
+import { attachments, conversations, events, knowledgeEntries, people, projectMembers, projects, tasks, workItems } from '../db/schema.js'
 import { confirmEntry, createEntry } from '../knowledge/service.js'
 import { lockProject } from '../projects/access.js'
 import { latestTemplate, templateById } from '../workflow/seed.js'
@@ -207,7 +207,7 @@ export async function submitTask(ctx: WorkCtx, me: Me, taskId: string, result: T
   const base = { projectId: task.projectId, workItemId: task.workItemId, taskId }
   result = { ...result, attachmentIds: [...new Set(result.attachmentIds)] }
   // A requester may only attach files they uploaded themselves, never other project files.
-  await linkAttachments(tx, task, result.attachmentIds, asRequester ? me.id : null)
+  await linkAttachments(tx, task, result.attachmentIds, me, asRequester)
 
   if (!decides || result.decision === 'approve') {
     await tx.update(tasks).set({ state: 'accepted', result, updatedAt: sql`now()` }).where(eq(tasks.id, taskId))
@@ -245,21 +245,32 @@ export async function submitTask(ctx: WorkCtx, me: Me, taskId: string, result: T
 }
 
 /**
- * Links attachments to the task. Unknown ids, files of another project, or (with `uploadedBy`) files someone
- * else uploaded → 404 (never confirms other
- * projects' ids). A file already linked to another task, or on another work item → 409 `invalid_state`,
+ * Links attachments to the task. Allowed: files of the task's project (for a requester, only ones they
+ * uploaded), and project-less files the submitter uploaded in their own personal/intake conversation (a
+ * requester's samples), which join the task's project. Anything else → 404 (never confirms other projects' or
+ * people's ids). A file already linked to another task, or on another work item → 409 `invalid_state`,
  * so a submit never moves files off other tasks. Project-level files join the task's work item.
  */
-async function linkAttachments(tx: Tx, task: TaskRow, ids: string[], uploadedBy: string | null): Promise<void> {
+async function linkAttachments(tx: Tx, task: TaskRow, ids: string[], me: Me, asRequester: boolean): Promise<void> {
   if (!ids.length) return
+  const ownChatFile = and(
+    isNull(attachments.projectId),
+    eq(attachments.uploadedBy, me.id),
+    inArray(
+      attachments.conversationId,
+      tx.select({ id: conversations.id }).from(conversations).where(eq(conversations.ownerId, me.id)),
+    ),
+  )
   const rows = await tx
     .select({ id: attachments.id, taskId: attachments.taskId, workItemId: attachments.workItemId })
     .from(attachments)
     .where(
       and(
         inArray(attachments.id, ids),
-        eq(attachments.projectId, task.projectId),
-        uploadedBy ? eq(attachments.uploadedBy, uploadedBy) : undefined,
+        or(
+          and(eq(attachments.projectId, task.projectId), asRequester ? eq(attachments.uploadedBy, me.id) : undefined),
+          ownChatFile,
+        ),
       ),
     )
     .orderBy(asc(attachments.id))
@@ -270,7 +281,7 @@ async function linkAttachments(tx: Tx, task: TaskRow, ids: string[], uploadedBy:
   if (rows.some(foreign)) throw invalidState()
   await tx
     .update(attachments)
-    .set({ taskId: task.id, workItemId: task.workItemId })
+    .set({ projectId: task.projectId, taskId: task.id, workItemId: task.workItemId })
     .where(inArray(attachments.id, ids))
 }
 

@@ -68,6 +68,8 @@ export type KnowledgeSearchHit = z.infer<typeof KnowledgeSearchHit>
 export const Attachment = z.object({
   id: uuid,
   projectId: uuid.nullable(),
+  /** Set for files uploaded in a chat conversation. */
+  conversationId: uuid.nullable(),
   workItemId: uuid.nullable(),
   taskId: uuid.nullable(),
   fileName: z.string(),

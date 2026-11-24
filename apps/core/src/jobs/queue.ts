@@ -1,7 +1,7 @@
 import { PgBoss } from 'pg-boss'
 
-export type JobName = 'embed-entry' | 'draft-task'
-export const JOB_NAMES: readonly JobName[] = ['embed-entry', 'draft-task']
+export type JobName = 'embed-entry' | 'draft-task' | 'secretary-chat'
+export const JOB_NAMES: readonly JobName[] = ['embed-entry', 'draft-task', 'secretary-chat']
 
 /** `attempt` starts at 1; with RETRY_LIMIT 2 the 3rd attempt is final. */
 /** `signal` (pg-boss) aborts when the job expires or is cancelled; the inline test queue omits it. */
