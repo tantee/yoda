@@ -36,4 +36,14 @@ describe('app', () => {
     expect(res.json()).toEqual({ status: 'ok' })
     await app.close()
   })
+  it('unexpected errors return a generic 500', async () => {
+    const app = await buildApp(await testDeps())
+    app.get('/boom', { config: { public: true } }, async () => {
+      throw new Error('relation "secret_table" does not exist')
+    })
+    const res = await app.inject({ url: '/boom' })
+    expect(res.statusCode).toBe(500)
+    expect(res.json()).toEqual({ error: 'internal' })
+    await app.close()
+  })
 })

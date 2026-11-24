@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { projectMembers } from '../src/db/schema.js'
 import { resetDb, testDb } from './helpers.js'
 import { auth, login, makeApp, type Who } from './support.js'
 
@@ -64,6 +65,26 @@ describe('projects API', () => {
     expect(hidden.statusCode).toBe(404)
     expect(hidden.json()).toEqual({ error: 'not_found' })
     expect((await call(admin, 'GET', `/projects/${p.id}`)).statusCode).toBe(200)
+  })
+
+  it('rejects adding a non-staff person (422) but accepts staff', async () => {
+    const p = await createProject()
+    const bad = await call(admin, 'PUT', `/projects/${p.id}/members/${nurse.id}`, { roles: ['DEV'] })
+    expect(bad.statusCode).toBe(422)
+    expect(bad.json()).toEqual({ error: 'not_staff' })
+    const ok = await call(admin, 'PUT', `/projects/${p.id}/members/${somchai.id}`, { roles: ['DEV'] })
+    expect(ok.statusCode).toBe(200)
+  })
+
+  it('database rejects invalid or empty roles', async () => {
+    const p = await createProject()
+    const db = await testDb()
+    await expect(
+      db.insert(projectMembers).values({ projectId: p.id, personId: somchai.id, roles: ['BOSS'] }),
+    ).rejects.toThrow()
+    await expect(
+      db.insert(projectMembers).values({ projectId: p.id, personId: somchai.id, roles: [] }),
+    ).rejects.toThrow()
   })
 
   it('PM can add members; DEV-only member cannot', async () => {

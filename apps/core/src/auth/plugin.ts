@@ -7,8 +7,8 @@ import { isStaff, TokenClaims, upsertPersonFromClaims } from './people.js'
 /** Thrown by guards / auth; mapped to `{ error }` bodies by the app error handler. */
 export class HttpError extends Error {
   constructor(
-    readonly statusCode: 401 | 403 | 404 | 409,
-    readonly body: { error: 'unauthorized' | 'forbidden' | 'not_found' | 'last_pm' | 'last_admin' },
+    readonly statusCode: 401 | 403 | 404 | 409 | 422,
+    readonly body: { error: 'unauthorized' | 'forbidden' | 'not_found' | 'last_pm' | 'last_admin' | 'not_staff' },
   ) {
     super(body.error)
   }
@@ -18,6 +18,7 @@ const unauthorized = () => new HttpError(401, { error: 'unauthorized' })
 export const notFound = () => new HttpError(404, { error: 'not_found' })
 export const lastAdmin = () => new HttpError(409, { error: 'last_admin' })
 export const lastPm = () => new HttpError(409, { error: 'last_pm' })
+export const notStaff = () => new HttpError(422, { error: 'not_staff' })
 export const forbidden = () => new HttpError(403, { error: 'forbidden' })
 
 /**

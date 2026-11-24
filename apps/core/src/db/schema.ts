@@ -11,8 +11,8 @@ export const people = pgTable('people', {
   staffOverride: boolean('staff_override'),
   lastSeenStaff: boolean('last_seen_staff').notNull().default(false),
   skills: text('skills').array().notNull().default(sql`'{}'::text[]`),
-  createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
-  lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).defaultNow(),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
 })
 
 export const projects = pgTable(
@@ -25,7 +25,7 @@ export const projects = pgTable(
     noAi: boolean('no_ai').notNull().default(false),
     autonomy: text('autonomy').notNull().default('propose'),
     createdBy: uuid('created_by').references(() => people.id),
-    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     check('projects_status_check', sql`${t.status} in ('active', 'archived')`),
@@ -44,5 +44,11 @@ export const projectMembers = pgTable(
       .references(() => people.id),
     roles: text('roles').array().notNull(),
   },
-  (t) => [primaryKey({ columns: [t.projectId, t.personId] })],
+  (t) => [
+    primaryKey({ columns: [t.projectId, t.personId] }),
+    check(
+      'project_members_roles_check',
+      sql`cardinality(${t.roles}) > 0 AND ${t.roles} <@ ARRAY['PM','BA','SA','DEV','QC']::text[]`,
+    ),
+  ],
 )
