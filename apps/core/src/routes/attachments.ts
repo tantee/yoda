@@ -121,7 +121,7 @@ export function attachmentRoutes(app: FastifyInstance, opts: { onStored: Attachm
     requireStaff(request)
     const { id } = IdParams.parse(request.params)
     const [row] = await db().select().from(attachments).where(eq(attachments.id, id))
-    if (!row || !(await canSeeProject(db(), request.me, row.projectId))) throw notFound()
+    if (!row?.projectId || !(await canSeeProject(db(), request.me, row.projectId))) throw notFound()
     const stream = await storage().get(row.storageKey)
     return reply
       .header('Content-Type', row.contentType)
@@ -136,7 +136,7 @@ export function attachmentRoutes(app: FastifyInstance, opts: { onStored: Attachm
     const body = Patch.parse(request.body)
     const me = request.me
     const [row] = await db().select().from(attachments).where(eq(attachments.id, id))
-    if (!row || !(await canSeeProject(db(), me, row.projectId))) throw notFound()
+    if (!row?.projectId || !(await canSeeProject(db(), me, row.projectId))) throw notFound()
     if (row.uploadedBy !== me.id && !(await canManageProject(db(), me, row.projectId))) throw forbidden()
     await runWork(app.deps, { id: me.id, kind: 'person' }, async (ctx) => {
       await ctx.tx.update(attachments).set({ noAi: body.noAi }).where(eq(attachments.id, id))

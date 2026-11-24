@@ -40,7 +40,7 @@ const columns = {
 
 function toAttachment(r: {
   id: string
-  projectId: string
+  projectId: string | null
   workItemId: string | null
   taskId: string | null
   fileName: string

@@ -1,4 +1,4 @@
-import { sql } from 'drizzle-orm'
+import { sql } from "drizzle-orm";
 import {
   bigint,
   bigserial,
@@ -16,272 +16,551 @@ import {
   uniqueIndex,
   uuid,
   vector,
-} from 'drizzle-orm/pg-core'
+} from "drizzle-orm/pg-core";
 import {
   ActorKind,
+  AuthorKind,
+  ConversationKind,
   KnowledgeScope,
   KnowledgeStatus,
   KnowledgeType,
+  NotificationKind,
   Priority,
-  ProjectRole,
+  ProposalKind,
+  ProposalState,
   SourceKind,
   TaskExecutor,
   TaskState,
   TaskType,
+  TemplateRole,
   WorkItemState,
   type TaskResult,
-} from '@yoda/shared'
+} from "@yoda/shared";
 
-const list = (values: readonly string[]) => sql.raw(values.map((v) => `'${v}'`).join(', '))
+const list = (values: readonly string[]) =>
+  sql.raw(values.map((v) => `'${v}'`).join(", "));
 
-export const people = pgTable('people', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  keycloakSub: text('keycloak_sub').notNull().unique(),
-  username: text('username').notNull(),
-  displayName: text('display_name').notNull(),
-  email: text('email'),
-  isAdmin: boolean('is_admin').notNull().default(false),
-  staffOverride: boolean('staff_override'),
-  lastSeenStaff: boolean('last_seen_staff').notNull().default(false),
-  skills: text('skills').array().notNull().default(sql`'{}'::text[]`),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).notNull().defaultNow(),
-})
+export const people = pgTable("people", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  keycloakSub: text("keycloak_sub").notNull().unique(),
+  username: text("username").notNull(),
+  displayName: text("display_name").notNull(),
+  email: text("email"),
+  isAdmin: boolean("is_admin").notNull().default(false),
+  staffOverride: boolean("staff_override"),
+  lastSeenStaff: boolean("last_seen_staff").notNull().default(false),
+  skills: text("skills")
+    .array()
+    .notNull()
+    .default(sql`'{}'::text[]`),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  lastSeenAt: timestamp("last_seen_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
 
 export const projects = pgTable(
-  'projects',
+  "projects",
   {
-    id: uuid('id').primaryKey().defaultRandom(),
-    name: text('name').notNull(),
-    description: text('description').notNull().default(''),
-    status: text('status').notNull().default('active'),
-    noAi: boolean('no_ai').notNull().default(false),
-    autonomy: text('autonomy').notNull().default('propose'),
-    aiBudgetUsd: numeric('ai_budget_usd', { precision: 12, scale: 2 }),
-    createdBy: uuid('created_by').references(() => people.id),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    id: uuid("id").primaryKey().defaultRandom(),
+    name: text("name").notNull(),
+    description: text("description").notNull().default(""),
+    status: text("status").notNull().default("active"),
+    noAi: boolean("no_ai").notNull().default(false),
+    autonomy: text("autonomy").notNull().default("propose"),
+    aiBudgetUsd: numeric("ai_budget_usd", { precision: 12, scale: 2 }),
+    createdBy: uuid("created_by").references(() => people.id),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (t) => [
-    check('projects_status_check', sql`${t.status} in ('active', 'archived')`),
-    check('projects_autonomy_check', sql`${t.autonomy} in ('propose', 'auto-assign')`),
+    check("projects_status_check", sql`${t.status} in ('active', 'archived')`),
+    check(
+      "projects_autonomy_check",
+      sql`${t.autonomy} in ('propose', 'auto-assign')`,
+    ),
   ],
-)
+);
 
 export const projectMembers = pgTable(
-  'project_members',
+  "project_members",
   {
-    projectId: uuid('project_id')
+    projectId: uuid("project_id")
       .notNull()
-      .references(() => projects.id, { onDelete: 'cascade' }),
-    personId: uuid('person_id')
+      .references(() => projects.id, { onDelete: "cascade" }),
+    personId: uuid("person_id")
       .notNull()
       .references(() => people.id),
-    roles: text('roles').array().notNull(),
+    roles: text("roles").array().notNull(),
   },
   (t) => [
     primaryKey({ columns: [t.projectId, t.personId] }),
     check(
-      'project_members_roles_check',
+      "project_members_roles_check",
       sql`cardinality(${t.roles}) > 0 AND ${t.roles} <@ ARRAY['PM','BA','SA','DEV','QC']::text[]`,
     ),
   ],
-)
+);
 
 export const workflowTemplates = pgTable(
-  'workflow_templates',
+  "workflow_templates",
   {
-    id: uuid('id').primaryKey().defaultRandom(),
-    key: text('key').notNull(),
-    version: integer('version').notNull(),
-    definition: jsonb('definition').notNull(),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    id: uuid("id").primaryKey().defaultRandom(),
+    key: text("key").notNull(),
+    version: integer("version").notNull(),
+    definition: jsonb("definition").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
-  (t) => [unique('workflow_templates_key_version_unique').on(t.key, t.version)],
-)
+  (t) => [unique("workflow_templates_key_version_unique").on(t.key, t.version)],
+);
 
 export const workItems = pgTable(
-  'work_items',
+  "work_items",
   {
-    id: uuid('id').primaryKey().defaultRandom(),
-    projectId: uuid('project_id')
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
       .notNull()
-      .references(() => projects.id, { onDelete: 'cascade' }),
-    templateId: uuid('template_id')
+      .references(() => projects.id, { onDelete: "cascade" }),
+    templateId: uuid("template_id")
       .notNull()
       .references(() => workflowTemplates.id),
-    title: text('title').notNull(),
-    description: text('description').notNull().default(''),
-    priority: text('priority').notNull().default('normal'),
-    ownerId: uuid('owner_id')
+    title: text("title").notNull(),
+    description: text("description").notNull().default(""),
+    priority: text("priority").notNull().default("normal"),
+    ownerId: uuid("owner_id")
       .notNull()
       .references(() => people.id),
-    currentStepKey: text('current_step_key'),
-    state: text('state').notNull().default('active'),
-    createdBy: uuid('created_by').references(() => people.id),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    requesterId: uuid("requester_id").references(() => people.id),
+    currentStepKey: text("current_step_key"),
+    state: text("state").notNull().default("active"),
+    createdBy: uuid("created_by").references(() => people.id),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (t) => [
-    check('work_items_priority_check', sql`${t.priority} in (${list(Priority.options)})`),
-    check('work_items_state_check', sql`${t.state} in (${list(WorkItemState.options)})`),
+    check(
+      "work_items_priority_check",
+      sql`${t.priority} in (${list(Priority.options)})`,
+    ),
+    check(
+      "work_items_state_check",
+      sql`${t.state} in (${list(WorkItemState.options)})`,
+    ),
   ],
-)
+);
 
 export const tasks = pgTable(
-  'tasks',
+  "tasks",
   {
-    id: uuid('id').primaryKey().defaultRandom(),
-    workItemId: uuid('work_item_id')
+    id: uuid("id").primaryKey().defaultRandom(),
+    workItemId: uuid("work_item_id")
       .notNull()
-      .references(() => workItems.id, { onDelete: 'cascade' }),
-    projectId: uuid('project_id')
+      .references(() => workItems.id, { onDelete: "cascade" }),
+    projectId: uuid("project_id")
       .notNull()
-      .references(() => projects.id, { onDelete: 'cascade' }),
-    stepKey: text('step_key').notNull(),
-    templateTaskKey: text('template_task_key').notNull(),
-    attempt: integer('attempt').notNull(),
-    type: text('type').notNull(),
-    role: text('role').notNull(),
-    executor: text('executor').notNull(),
-    feedback: text('feedback'),
-    state: text('state').notNull(),
-    assigneeId: uuid('assignee_id').references(() => people.id),
-    proposedAssigneeId: uuid('proposed_assignee_id').references(() => people.id),
-    result: jsonb('result').$type<TaskResult>(),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+      .references(() => projects.id, { onDelete: "cascade" }),
+    stepKey: text("step_key").notNull(),
+    templateTaskKey: text("template_task_key").notNull(),
+    attempt: integer("attempt").notNull(),
+    type: text("type").notNull(),
+    role: text("role").notNull(),
+    executor: text("executor").notNull(),
+    feedback: text("feedback"),
+    state: text("state").notNull(),
+    assigneeId: uuid("assignee_id").references(() => people.id),
+    proposedAssigneeId: uuid("proposed_assignee_id").references(
+      () => people.id,
+    ),
+    result: jsonb("result").$type<TaskResult>(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (t) => [
-    check('tasks_type_check', sql`${t.type} in (${list(TaskType.options)})`),
-    check('tasks_role_check', sql`${t.role} in (${list(ProjectRole.options)})`),
-    check('tasks_executor_check', sql`${t.executor} in (${list(TaskExecutor.options)})`),
-    check('tasks_state_check', sql`${t.state} in (${list(TaskState.options)})`),
-    unique('tasks_attempt_unique').on(t.workItemId, t.templateTaskKey, t.attempt),
-    uniqueIndex('tasks_one_active_attempt')
+    check("tasks_type_check", sql`${t.type} in (${list(TaskType.options)})`),
+    check(
+      "tasks_role_check",
+      sql`${t.role} in (${list(TemplateRole.options)})`,
+    ),
+    check(
+      "tasks_executor_check",
+      sql`${t.executor} in (${list(TaskExecutor.options)})`,
+    ),
+    check("tasks_state_check", sql`${t.state} in (${list(TaskState.options)})`),
+    unique("tasks_attempt_unique").on(
+      t.workItemId,
+      t.templateTaskKey,
+      t.attempt,
+    ),
+    uniqueIndex("tasks_one_active_attempt")
       .on(t.workItemId, t.templateTaskKey)
-      .where(sql`${t.state} in ('proposed', 'open', 'in_progress', 'submitted')`),
-    index('tasks_assignee_state_idx').on(t.assigneeId, t.state),
-    index('tasks_project_state_idx').on(t.projectId, t.state),
+      .where(
+        sql`${t.state} in ('proposed', 'open', 'in_progress', 'submitted')`,
+      ),
+    index("tasks_assignee_state_idx").on(t.assigneeId, t.state),
+    index("tasks_project_state_idx").on(t.projectId, t.state),
   ],
-)
+);
 
 export const events = pgTable(
-  'events',
+  "events",
   {
-    id: uuid('id').primaryKey().defaultRandom(),
-    seq: bigserial('seq', { mode: 'number' }).notNull(),
-    projectId: uuid('project_id')
+    id: uuid("id").primaryKey().defaultRandom(),
+    seq: bigserial("seq", { mode: "number" }).notNull(),
+    projectId: uuid("project_id")
       .notNull()
-      .references(() => projects.id, { onDelete: 'cascade' }),
-    workItemId: uuid('work_item_id').references(() => workItems.id, { onDelete: 'cascade' }),
-    taskId: uuid('task_id').references(() => tasks.id, { onDelete: 'cascade' }),
-    type: text('type').notNull(),
-    actorId: uuid('actor_id').references(() => people.id),
-    actorKind: text('actor_kind').notNull().default('person'),
-    reason: text('reason'),
-    payload: jsonb('payload').notNull().default(sql`'{}'::jsonb`),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().default(sql`clock_timestamp()`),
+      .references(() => projects.id, { onDelete: "cascade" }),
+    workItemId: uuid("work_item_id").references(() => workItems.id, {
+      onDelete: "cascade",
+    }),
+    taskId: uuid("task_id").references(() => tasks.id, { onDelete: "cascade" }),
+    type: text("type").notNull(),
+    actorId: uuid("actor_id").references(() => people.id),
+    actorKind: text("actor_kind").notNull().default("person"),
+    reason: text("reason"),
+    payload: jsonb("payload")
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .default(sql`clock_timestamp()`),
   },
   (t) => [
-    index('events_work_item_seq_idx').on(t.workItemId, t.seq),
-    check('events_actor_kind_check', sql`${t.actorKind} in (${list(ActorKind.options)})`),
+    index("events_work_item_seq_idx").on(t.workItemId, t.seq),
+    check(
+      "events_actor_kind_check",
+      sql`${t.actorKind} in (${list(ActorKind.options)})`,
+    ),
   ],
-)
+);
 
-export const attachments = pgTable('attachments', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  projectId: uuid('project_id')
-    .notNull()
-    .references(() => projects.id, { onDelete: 'cascade' }),
-  workItemId: uuid('work_item_id').references(() => workItems.id, { onDelete: 'cascade' }),
-  taskId: uuid('task_id').references(() => tasks.id, { onDelete: 'cascade' }),
-  storageKey: text('storage_key').notNull().unique(),
-  fileName: text('file_name').notNull(),
-  contentType: text('content_type').notNull(),
-  sizeBytes: bigint('size_bytes', { mode: 'number' }).notNull(),
-  noAi: boolean('no_ai').notNull().default(false),
-  extractedText: text('extracted_text'),
-  uploadedBy: uuid('uploaded_by')
-    .notNull()
-    .references(() => people.id),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-})
+export const conversations = pgTable(
+  "conversations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    kind: text("kind").notNull(),
+    ownerId: uuid("owner_id")
+      .notNull()
+      .references(() => people.id),
+    projectId: uuid("project_id").references(() => projects.id, {
+      onDelete: "cascade",
+    }),
+    workItemId: uuid("work_item_id").references(() => workItems.id, {
+      onDelete: "cascade",
+    }),
+    title: text("title").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    lastMessageAt: timestamp("last_message_at", { withTimezone: true }),
+  },
+  (t) => [
+    check(
+      "conversations_kind_check",
+      sql`${t.kind} in (${list(ConversationKind.options)})`,
+    ),
+    check(
+      "conversations_scope_ids_check",
+      sql`(${t.kind} in ('personal', 'intake'))
+        OR (${t.kind} = 'project' AND ${t.projectId} IS NOT NULL AND ${t.workItemId} IS NULL)
+        OR (${t.kind} = 'work_item' AND ${t.projectId} IS NOT NULL AND ${t.workItemId} IS NOT NULL)`,
+    ),
+    uniqueIndex("conversations_one_personal")
+      .on(t.ownerId)
+      .where(sql`${t.kind} = 'personal'`),
+  ],
+);
+
+export const messages = pgTable(
+  "messages",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    conversationId: uuid("conversation_id")
+      .notNull()
+      .references(() => conversations.id, { onDelete: "cascade" }),
+    seq: bigserial("seq", { mode: "number" }).notNull(),
+    authorKind: text("author_kind").notNull(),
+    authorId: uuid("author_id").references(() => people.id),
+    text: text("text").notNull(),
+    attachmentIds: uuid("attachment_ids")
+      .array()
+      .notNull()
+      .default(sql`'{}'::uuid[]`),
+    actions: jsonb("actions")
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .default(sql`clock_timestamp()`),
+  },
+  (t) => [
+    index("messages_conversation_seq_idx").on(t.conversationId, t.seq),
+    check(
+      "messages_author_kind_check",
+      sql`${t.authorKind} in (${list(AuthorKind.options)})`,
+    ),
+  ],
+);
+
+export const conversationReads = pgTable(
+  "conversation_reads",
+  {
+    conversationId: uuid("conversation_id")
+      .notNull()
+      .references(() => conversations.id, { onDelete: "cascade" }),
+    personId: uuid("person_id")
+      .notNull()
+      .references(() => people.id, { onDelete: "cascade" }),
+    lastReadSeq: bigint("last_read_seq", { mode: "number" })
+      .notNull()
+      .default(0),
+  },
+  (t) => [primaryKey({ columns: [t.conversationId, t.personId] })],
+);
+
+export const proposals = pgTable(
+  "proposals",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id").references(() => projects.id, {
+      onDelete: "cascade",
+    }),
+    workItemId: uuid("work_item_id").references(() => workItems.id, {
+      onDelete: "cascade",
+    }),
+    kind: text("kind").notNull(),
+    summary: text("summary").notNull().default(""),
+    reason: text("reason").notNull().default(""),
+    payload: jsonb("payload")
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    state: text("state").notNull().default("pending"),
+    createdByKind: text("created_by_kind").notNull(),
+    onBehalfOf: uuid("on_behalf_of").references(() => people.id),
+    decidedBy: uuid("decided_by").references(() => people.id),
+    decisionNote: text("decision_note"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+  },
+  (t) => [
+    check(
+      "proposals_kind_check",
+      sql`${t.kind} in (${list(ProposalKind.options)})`,
+    ),
+    check(
+      "proposals_state_check",
+      sql`${t.state} in (${list(ProposalState.options)})`,
+    ),
+    check(
+      "proposals_created_by_kind_check",
+      sql`${t.createdByKind} in (${list(ActorKind.options)})`,
+    ),
+    uniqueIndex("proposals_one_pending_step_advance")
+      .on(t.workItemId, t.kind)
+      .where(sql`${t.state} = 'pending' and ${t.kind} = 'step_advance'`),
+  ],
+);
+
+export const notifications = pgTable(
+  "notifications",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    personId: uuid("person_id")
+      .notNull()
+      .references(() => people.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    title: text("title").notNull(),
+    body: text("body").notNull().default(""),
+    link: text("link"),
+    dedupeKey: text("dedupe_key"),
+    readAt: timestamp("read_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    check(
+      "notifications_kind_check",
+      sql`${t.kind} in (${list(NotificationKind.options)})`,
+    ),
+    uniqueIndex("notifications_dedupe_unique")
+      .on(t.personId, t.dedupeKey)
+      .where(sql`${t.dedupeKey} is not null`),
+    index("notifications_person_read_idx").on(
+      t.personId,
+      t.readAt,
+      t.createdAt,
+    ),
+  ],
+);
+
+export const attachments = pgTable(
+  "attachments",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id").references(() => projects.id, {
+      onDelete: "cascade",
+    }),
+    conversationId: uuid("conversation_id").references(() => conversations.id, {
+      onDelete: "cascade",
+    }),
+    workItemId: uuid("work_item_id").references(() => workItems.id, {
+      onDelete: "cascade",
+    }),
+    taskId: uuid("task_id").references(() => tasks.id, { onDelete: "cascade" }),
+    storageKey: text("storage_key").notNull().unique(),
+    fileName: text("file_name").notNull(),
+    contentType: text("content_type").notNull(),
+    sizeBytes: bigint("size_bytes", { mode: "number" }).notNull(),
+    noAi: boolean("no_ai").notNull().default(false),
+    extractedText: text("extracted_text"),
+    uploadedBy: uuid("uploaded_by")
+      .notNull()
+      .references(() => people.id),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    check(
+      "attachments_owner_check",
+      sql`${t.projectId} is not null or ${t.conversationId} is not null`,
+    ),
+  ],
+);
 
 export const knowledgeEntries = pgTable(
-  'knowledge_entries',
+  "knowledge_entries",
   {
-    id: uuid('id').primaryKey().defaultRandom(),
-    lineageId: uuid('lineage_id').notNull(),
-    version: integer('version').notNull(),
-    scope: text('scope').notNull(),
-    projectId: uuid('project_id').references(() => projects.id, { onDelete: 'cascade' }),
-    workItemId: uuid('work_item_id').references(() => workItems.id, { onDelete: 'cascade' }),
-    type: text('type').notNull(),
-    title: text('title').notNull(),
-    body: text('body').notNull().default(''),
-    status: text('status').notNull(),
-    sourceKind: text('source_kind').notNull(),
-    sourceRef: text('source_ref'),
-    noAi: boolean('no_ai').notNull().default(false),
-    attachmentId: uuid('attachment_id').references(() => attachments.id, { onDelete: 'cascade' }),
-    createdBy: uuid('created_by').references(() => people.id),
-    supersededAt: timestamp('superseded_at', { withTimezone: true }),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    id: uuid("id").primaryKey().defaultRandom(),
+    lineageId: uuid("lineage_id").notNull(),
+    version: integer("version").notNull(),
+    scope: text("scope").notNull(),
+    projectId: uuid("project_id").references(() => projects.id, {
+      onDelete: "cascade",
+    }),
+    workItemId: uuid("work_item_id").references(() => workItems.id, {
+      onDelete: "cascade",
+    }),
+    type: text("type").notNull(),
+    title: text("title").notNull(),
+    body: text("body").notNull().default(""),
+    status: text("status").notNull(),
+    sourceKind: text("source_kind").notNull(),
+    sourceRef: text("source_ref"),
+    noAi: boolean("no_ai").notNull().default(false),
+    attachmentId: uuid("attachment_id").references(() => attachments.id, {
+      onDelete: "cascade",
+    }),
+    createdBy: uuid("created_by").references(() => people.id),
+    supersededAt: timestamp("superseded_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (t) => [
-    check('knowledge_entries_scope_check', sql`${t.scope} in (${list(KnowledgeScope.options)})`),
-    check('knowledge_entries_type_check', sql`${t.type} in (${list(KnowledgeType.options)})`),
-    check('knowledge_entries_status_check', sql`${t.status} in (${list(KnowledgeStatus.options)})`),
-    check('knowledge_entries_source_kind_check', sql`${t.sourceKind} in (${list(SourceKind.options)})`),
     check(
-      'knowledge_entries_scope_ids_check',
+      "knowledge_entries_scope_check",
+      sql`${t.scope} in (${list(KnowledgeScope.options)})`,
+    ),
+    check(
+      "knowledge_entries_type_check",
+      sql`${t.type} in (${list(KnowledgeType.options)})`,
+    ),
+    check(
+      "knowledge_entries_status_check",
+      sql`${t.status} in (${list(KnowledgeStatus.options)})`,
+    ),
+    check(
+      "knowledge_entries_source_kind_check",
+      sql`${t.sourceKind} in (${list(SourceKind.options)})`,
+    ),
+    check(
+      "knowledge_entries_scope_ids_check",
       sql`(${t.scope} = 'department' AND ${t.projectId} IS NULL AND ${t.workItemId} IS NULL)
         OR (${t.scope} = 'project' AND ${t.projectId} IS NOT NULL AND ${t.workItemId} IS NULL)
         OR (${t.scope} = 'work_item' AND ${t.projectId} IS NOT NULL AND ${t.workItemId} IS NOT NULL)`,
     ),
-    unique('knowledge_entries_lineage_version_unique').on(t.lineageId, t.version),
-    uniqueIndex('knowledge_entries_one_live_version')
+    unique("knowledge_entries_lineage_version_unique").on(
+      t.lineageId,
+      t.version,
+    ),
+    uniqueIndex("knowledge_entries_one_live_version")
       .on(t.lineageId)
       .where(sql`${t.supersededAt} is null`),
-    index('knowledge_entries_title_trgm_idx').using('gin', t.title.op('gin_trgm_ops')),
-    index('knowledge_entries_body_trgm_idx').using('gin', t.body.op('gin_trgm_ops')),
+    index("knowledge_entries_title_trgm_idx").using(
+      "gin",
+      t.title.op("gin_trgm_ops"),
+    ),
+    index("knowledge_entries_body_trgm_idx").using(
+      "gin",
+      t.body.op("gin_trgm_ops"),
+    ),
   ],
-)
+);
 
 export const knowledgeChunks = pgTable(
-  'knowledge_chunks',
+  "knowledge_chunks",
   {
-    id: uuid('id').primaryKey().defaultRandom(),
-    entryId: uuid('entry_id')
+    id: uuid("id").primaryKey().defaultRandom(),
+    entryId: uuid("entry_id")
       .notNull()
-      .references(() => knowledgeEntries.id, { onDelete: 'cascade' }),
-    idx: integer('idx').notNull(),
-    text: text('text').notNull(),
-    embedding: vector('embedding', { dimensions: 1024 }),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+      .references(() => knowledgeEntries.id, { onDelete: "cascade" }),
+    idx: integer("idx").notNull(),
+    text: text("text").notNull(),
+    embedding: vector("embedding", { dimensions: 1024 }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
   (t) => [
-    unique('knowledge_chunks_entry_idx_unique').on(t.entryId, t.idx),
-    index('knowledge_chunks_embedding_hnsw_idx').using('hnsw', t.embedding.op('vector_cosine_ops')),
-    index('knowledge_chunks_text_trgm_idx').using('gin', t.text.op('gin_trgm_ops')),
+    unique("knowledge_chunks_entry_idx_unique").on(t.entryId, t.idx),
+    index("knowledge_chunks_embedding_hnsw_idx").using(
+      "hnsw",
+      t.embedding.op("vector_cosine_ops"),
+    ),
+    index("knowledge_chunks_text_trgm_idx").using(
+      "gin",
+      t.text.op("gin_trgm_ops"),
+    ),
   ],
-)
+);
 
 export const aiCalls = pgTable(
-  'ai_calls',
+  "ai_calls",
   {
-    id: uuid('id').primaryKey().defaultRandom(),
-    projectId: uuid('project_id').references(() => projects.id, { onDelete: 'cascade' }),
-    taskId: uuid('task_id').references(() => tasks.id, { onDelete: 'set null' }),
-    job: text('job').notNull(),
-    provider: text('provider'),
-    model: text('model'),
-    inputTokens: integer('input_tokens'),
-    outputTokens: integer('output_tokens'),
-    costUsd: numeric('cost_usd', { precision: 12, scale: 6 }),
-    ok: boolean('ok').notNull(),
-    error: text('error'),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id").references(() => projects.id, {
+      onDelete: "cascade",
+    }),
+    taskId: uuid("task_id").references(() => tasks.id, {
+      onDelete: "set null",
+    }),
+    job: text("job").notNull(),
+    provider: text("provider"),
+    model: text("model"),
+    inputTokens: integer("input_tokens"),
+    outputTokens: integer("output_tokens"),
+    costUsd: numeric("cost_usd", { precision: 12, scale: 6 }),
+    ok: boolean("ok").notNull(),
+    error: text("error"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
   },
-  (t) => [index('ai_calls_project_created_idx').on(t.projectId, t.createdAt)],
-)
+  (t) => [index("ai_calls_project_created_idx").on(t.projectId, t.createdAt)],
+);

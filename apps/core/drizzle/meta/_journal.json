@@ -43,6 +43,13 @@
       "when": 1795531117096,
       "tag": "0005_classy_valkyrie",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1795538430895,
+      "tag": "0006_right_firebrand",
+      "breakpoints": true
     }
   ]
 }
