@@ -1,10 +1,10 @@
-import type { ActionCard, Attachment, AuthorKind, Conversation, ConversationCreate, Me, Message } from '@yoda/shared'
-import { and, asc, desc, eq, gt, inArray, lt, or, sql, type SQL } from 'drizzle-orm'
+import { mentionsSecretary, type ActionCard, type Attachment, type AuthorKind, type Conversation, type ConversationCreate, type Me, type Message } from '@yoda/shared'
+import { and, asc, desc, eq, inArray, lt, or, sql, type SQL } from 'drizzle-orm'
 import { notFound } from '../auth/plugin.js'
 import { attachmentsByIds } from '../attachments/service.js'
 import type { Db, Tx } from '../db/client.js'
 import { attachments, conversationReads, conversations, messages, people, projectMembers, projects, workItems } from '../db/schema.js'
-import { runWork, type WorkCtx, type WorkDeps } from '../work/context.js'
+import type { WorkCtx } from '../work/context.js'
 import { canSeeProject } from '../work/queries.js'
 
 type Conn = Db | Tx
@@ -12,13 +12,15 @@ export type ConversationRow = typeof conversations.$inferSelect
 
 /** Stored title of a personal/intake conversation; the portal localizes it. */
 export const PERSONAL_TITLE = 'ผู้ช่วย'
-/**
- * Interim secretary reply until the real secretary (plan 4, Task 8) replaces the job handler. A stable marker,
- * not prose: the portal shows it in the reader's language (system messages only).
- */
-export const SECRETARY_NOT_READY = '[[secretary.not_ready]]'
+export const OWN_KINDS = ['personal', 'intake'] as const
 
-const OWN_KINDS = ['personal', 'intake'] as const
+/**
+ * Does a person's message get a secretary reply? Always in personal/intake threads; in project/work_item
+ * threads only when it mentions the secretary (`@ai` / `@ผู้ช่วย`).
+ */
+export function secretaryAnswers(kind: string, text: string): boolean {
+  return (OWN_KINDS as readonly string[]).includes(kind) || mentionsSecretary(text)
+}
 
 /**
  * The caller's own assistant conversation, created on first use: `personal` for staff, `intake` for requesters.
@@ -234,7 +236,8 @@ export async function attachmentInConversation(db: Conn, c: ConversationRow, att
 
 /**
  * Posts a message: bumps `last_message_at`, pushes a live `message.created` event for the conversation and,
- * for person-authored messages, enqueues the secretary reply. Callers check permissions.
+ * for person-authored messages the secretary answers (`secretaryAnswers`), enqueues its reply. Callers check
+ * permissions.
  */
 export async function postMessage(
   ctx: WorkCtx,
@@ -249,7 +252,7 @@ export async function postMessage(
 ): Promise<string> {
   const { tx } = ctx
   const [c] = await tx
-    .select({ projectId: conversations.projectId, workItemId: conversations.workItemId })
+    .select({ kind: conversations.kind, projectId: conversations.projectId, workItemId: conversations.workItemId })
     .from(conversations)
     .where(eq(conversations.id, input.conversationId))
   if (!c) throw notFound()
@@ -279,7 +282,7 @@ export async function postMessage(
     taskId: null,
     personId: null,
   })
-  if (input.authorKind === 'person') ctx.jobs.push({ name: 'secretary-chat', id: m!.id })
+  if (input.authorKind === 'person' && secretaryAnswers(c.kind, input.text)) ctx.jobs.push({ name: 'secretary-chat', id: m!.id })
   return m!.id
 }
 
@@ -363,36 +366,4 @@ export async function markRead(db: Conn, me: Me, conversationId: string, seq: nu
       target: [conversationReads.conversationId, conversationReads.personId],
       set: { lastReadSeq: sql`greatest(${conversationReads.lastReadSeq}, excluded.last_read_seq)` },
     })
-}
-
-/**
- * `secretary-chat` job until the real secretary lands (plan 4, Task 8): one `system` reply to a person
- * message in a personal/intake conversation, so the portal's typing indicator ends. Team threads get no
- * reply. Idempotent: skipped when a `system`/`ai` message already follows (a retry, or a reply to a later
- * message that also ends the typing indicator).
- */
-export async function interimSecretaryReply(deps: WorkDeps, messageId: string): Promise<void> {
-  const [m] = await deps.db
-    .select({ conversationId: messages.conversationId, seq: messages.seq, authorKind: messages.authorKind, kind: conversations.kind })
-    .from(messages)
-    .innerJoin(conversations, eq(conversations.id, messages.conversationId))
-    .where(eq(messages.id, messageId))
-  if (!m || m.authorKind !== 'person' || !(OWN_KINDS as readonly string[]).includes(m.kind)) return
-  await runWork(deps, { id: null, kind: 'system' }, async (ctx) => {
-    // Serializes replies within the conversation so concurrent retries can't both post.
-    await ctx.tx.select({ id: conversations.id }).from(conversations).where(eq(conversations.id, m.conversationId)).for('update')
-    const [answered] = await ctx.tx
-      .select({ id: messages.id })
-      .from(messages)
-      .where(
-        and(
-          eq(messages.conversationId, m.conversationId),
-          gt(messages.seq, m.seq),
-          inArray(messages.authorKind, ['system', 'ai']),
-        ),
-      )
-      .limit(1)
-    if (answered) return
-    await postMessage(ctx, { conversationId: m.conversationId, authorKind: 'system', authorId: null, text: SECRETARY_NOT_READY })
-  })
 }

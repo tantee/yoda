@@ -39,3 +39,14 @@ it('ProposalDecision accepts an optional projectId; LiveEvent allows null projec
   expect(ProposalDecision.safeParse({ decision: 'maybe' }).success).toBe(false)
   expect(LiveEvent.safeParse({ type: 'proposal.created', projectId: null, workItemId: null, taskId: null, conversationId: null, personId: id }).success).toBe(true)
 })
+
+it('mentionsSecretary matches @ai / @ผู้ช่วย case-insensitively, not inside words', async () => {
+  const { mentionsSecretary } = await import('../src/index.js')
+  expect(mentionsSecretary('@ai ช่วยสรุป')).toBe(true)
+  expect(mentionsSecretary('ช่วยด้วย @AI')).toBe(true)
+  expect(mentionsSecretary('@ผู้ช่วย สรุปให้หน่อย')).toBe(true)
+  expect(mentionsSecretary('ถาม @Ai, ช่วยที')).toBe(true)
+  expect(mentionsSecretary('ทีมช่วยดูหน่อย')).toBe(false)
+  expect(mentionsSecretary('mail me at x@aid.com')).toBe(false)
+  expect(mentionsSecretary('@aiden please check')).toBe(false)
+})

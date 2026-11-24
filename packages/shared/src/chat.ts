@@ -64,3 +64,11 @@ export const ConversationCreate = z
     if (v.kind === 'work_item' && !v.workItemId) bad('work_item conversation requires workItemId')
   })
 export type ConversationCreate = z.infer<typeof ConversationCreate>
+
+/**
+ * True when a message calls the secretary into a team (project / work_item) thread: `@ai` or `@ผู้ช่วย`,
+ * case-insensitive, as its own mention (not part of an email address or a longer name like `@aiden`).
+ */
+export function mentionsSecretary(text: string): boolean {
+  return /(?:^|[^\p{L}\p{N}_@.])@(?:ai(?![\p{L}\p{N}_])|ผู้ช่วย)/iu.test(text)
+}
