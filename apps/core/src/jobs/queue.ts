@@ -58,9 +58,16 @@ export class InlineJobQueue implements JobQueue {
   private handlers = new Map<JobName, JobHandler>()
   private pending = new Set<Promise<void>>()
 
-  constructor(private opts: { onError?: (err: unknown, name: JobName, id: string) => void } = {}) {}
+  constructor(
+    private opts: {
+      onError?: (err: unknown, name: JobName, id: string) => void
+      /** Jobs dropped on send (tests that drive AI tasks by hand keep the drafter out of the way). */
+      ignore?: readonly JobName[]
+    } = {},
+  ) {}
 
   async send(name: JobName, data: { id: string }): Promise<void> {
+    if (this.opts.ignore?.includes(name)) return
     const p = new Promise<void>((resolve) => setImmediate(resolve)).then(() => this.run(name, data.id))
     this.pending.add(p)
     void p.finally(() => this.pending.delete(p))

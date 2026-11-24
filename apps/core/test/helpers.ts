@@ -82,7 +82,11 @@ export async function testDeps(overrides: Partial<AppDeps> = {}): Promise<AppDep
     bus,
     ai: new AiGateway({ db, bus, models: mockModels() }),
     storage: await testStorage(config),
-    jobs: new InlineJobQueue({ onError: (err, name, id) => console.warn(`test job ${name} ${id} failed`, err) }),
+    // Most tests drive AI tasks by hand, so drafting jobs are dropped by default; drafter tests pass their own queue.
+    jobs: new InlineJobQueue({
+      onError: (err, name, id) => console.warn(`test job ${name} ${id} failed`, err),
+      ignore: ['draft-task'],
+    }),
     ...overrides,
   }
   // Handlers see the final deps (overrides included). Tests await `(deps.jobs as InlineJobQueue).drain()`.

@@ -3,7 +3,15 @@ import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { requireStaff } from '../auth/plugin.js'
 import { runWork, type WorkCtx } from '../work/context.js'
-import { assignTask, cancelWorkItem, confirmTask, createWorkItem, startTask, submitTask } from '../work/engine.js'
+import {
+  assignTask,
+  cancelWorkItem,
+  confirmTask,
+  createWorkItem,
+  retryAiTask,
+  startTask,
+  submitTask,
+} from '../work/engine.js'
 import {
   getTask,
   getTodo,
@@ -94,4 +102,5 @@ export function workRoutes(app: FastifyInstance): void {
   taskAction('submit', (b) => TaskResult.parse(b ?? {}), (ctx, me, id, result) => submitTask(ctx, me, id, result))
   taskAction('confirm', none, (ctx, me, id) => confirmTask(ctx, me, id))
   taskAction('assign', (b) => TaskAssign.parse(b), (ctx, me, id, { personId }) => assignTask(ctx, me, id, personId))
+  taskAction('retry-ai', none, (ctx, me, id) => retryAiTask(ctx, me, id))
 }
