@@ -44,7 +44,7 @@ export function streamRoutes(app: FastifyInstance): void {
     const ping = setInterval(() => {
       if (writable()) raw.write(': ping\n\n')
     }, PING_MS)
-    const expiry = setTimeout(() => cleanup(), Math.max(0, request.tokenExp - Date.now()))
+    const expiry = setTimeout(() => cleanup(), Math.min(2 ** 31 - 1, Math.max(0, request.tokenExp - Date.now())))
 
     // Single exit path: expiry, server close, client close and socket errors all end up here.
     function cleanup() {

@@ -264,6 +264,7 @@ export async function getTodo(db: Conn, me: Me): Promise<Todo> {
       or(
         eq(tasks.state, 'proposed'),
         and(isNull(tasks.assigneeId), isNull(tasks.proposedAssigneeId), eq(tasks.executor, 'human')),
+        and(isNull(tasks.assigneeId), eq(tasks.executor, 'ai')),
       ),
     ),
     order,

@@ -228,7 +228,7 @@ describe('work API', () => {
     await drive(wi.id, 'accept-bug', pm, approve)
     const impl = await active(pm, wi.id, 'implement')
     expect(impl).toMatchObject({ executor: 'ai', assigneeId: null })
-    expect((await todo(pm)).confirmations.map((c) => c.id)).not.toContain(impl.id)
+    expect((await todo(pm)).confirmations.map((c) => c.id)).toContain(impl.id)
 
     const res = await call(pm, 'POST', `/tasks/${impl.id}/assign`, { personId: dev.id })
     expect(res.statusCode).toBe(200)
@@ -236,6 +236,18 @@ describe('work API', () => {
     const submitted = await call(dev, 'POST', `/tasks/${impl.id}/submit`, { text: 'done' })
     expect(submitted.statusCode).toBe(200)
     expect(submitted.json()).toMatchObject({ state: 'accepted', result: { text: 'done' } })
+  })
+
+  it('unassigned ai tasks wait in the PM confirmations', async () => {
+    const p = await project([[pm, ['PM']], [dev, ['DEV']]])
+    const wi = await createItem(pm, p)
+    await drive(wi.id, 'accept-bug', pm, approve)
+    const impl = await active(pm, wi.id, 'implement')
+    const tests = await active(pm, wi.id, 'draft-tests')
+    expect(impl).toMatchObject({ executor: 'ai', assigneeId: null, state: 'open' })
+    const ids = (await todo(pm)).confirmations.map((c) => c.id)
+    expect(ids).toEqual(expect.arrayContaining([impl.id, tests.id]))
+    expect((await todo(dev)).confirmations).toEqual([])
   })
 
   it('to-do tasks are ordered by priority, then age', async () => {

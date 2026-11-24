@@ -75,7 +75,7 @@ const isEmpty = computed(() => !todo.value?.tasks.length && !todo.value?.confirm
             <v-list-item-title>{{ localized(task.title, locale) }}</v-list-item-title>
             <v-list-item-subtitle>
               {{ task.projectName }} · {{ task.workItemTitle }} ·
-              {{ task.proposedAssigneeName ?? t('todo.needsAssignee') }}
+              {{ task.proposedAssigneeName ?? (task.executor === 'ai' && !task.assigneeId ? t('todo.waitingForAi') : t('todo.needsAssignee')) }}
             </v-list-item-subtitle>
             <template #append>
               <v-chip size="small" class="mr-2" data-testid="priority-chip">{{ t(`priority.${task.workItemPriority}`) }}</v-chip>

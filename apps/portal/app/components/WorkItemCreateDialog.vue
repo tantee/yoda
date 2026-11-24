@@ -8,6 +8,7 @@ const props = defineProps<{
   templates: WorkflowTemplateSummary[]
   members: ProjectMember[]
   defaultOwnerId?: string
+  ownerRequired?: boolean
 }>()
 const emit = defineEmits<{ 'update:modelValue': [boolean]; created: [string] }>()
 
@@ -24,7 +25,7 @@ const error = ref('')
 const busy = ref(false)
 
 const templateItems = computed(() => props.templates.map(x => ({ title: localized(x.name, locale.value), value: x.key })))
-const canSubmit = computed(() => !!title.value.trim() && !!templateKey.value)
+const canSubmit = computed(() => !!title.value.trim() && !!templateKey.value && (!props.ownerRequired || !!ownerId.value))
 
 watch(() => props.modelValue, (open) => {
   if (!open) return
@@ -79,7 +80,7 @@ async function submit() {
           item-title="displayName"
           item-value="personId"
           :label="t('workItems.owner')"
-          clearable
+          :clearable="!ownerRequired"
           data-testid="wi-owner"
         />
       </v-card-text>

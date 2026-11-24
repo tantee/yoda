@@ -197,7 +197,8 @@ useLiveEvents((e) => {
       :project-id="id"
       :templates="templates"
       :members="project.members"
-      :default-owner-id="isMember ? me?.id : undefined"
+      :default-owner-id="isMember ? me?.id : (project.members.find(m => m.roles.includes('PM')) ?? project.members[0])?.personId"
+      :owner-required="!isMember"
       @created="onCreated"
     />
 

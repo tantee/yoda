@@ -44,8 +44,8 @@
             "en": "Implement the change"
           },
           "instructions": {
-            "th": "เขียนโค้ดตามข้อกำหนดและแบบที่อนุมัติแล้ว",
-            "en": "Write the code according to the approved requirements and design"
+            "th": "เขียนโค้ดแก้ไขข้อผิดพลาดตามรายงานบนงาน",
+            "en": "Write the code that fixes the bug described in the bug report on the work item"
           },
           "dependsOn": []
         },
@@ -58,8 +58,8 @@
             "en": "Draft test cases"
           },
           "instructions": {
-            "th": "ร่างกรณีทดสอบจากข้อกำหนดที่อนุมัติแล้ว",
-            "en": "Draft test cases from the approved requirements"
+            "th": "ร่างกรณีทดสอบจากรายงานข้อผิดพลาดบนงาน",
+            "en": "Draft test cases from the bug report on the work item"
           },
           "dependsOn": []
         },
