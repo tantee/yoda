@@ -285,7 +285,8 @@
       },
       "project": "โครงการ",
       "chooseProject": "เลือกโครงการ"
-    }
+    },
+    "textRequired": "พิมพ์ข้อความเพื่อส่งไฟล์ที่แนบ"
   },
   "notifications": {
     "title": "การแจ้งเตือน",

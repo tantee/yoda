@@ -23,13 +23,15 @@ watch(() => props.conversationId, () => {
 })
 
 async function addFiles(files: File[]) {
+  const cid = props.conversationId
   error.value = ''
   for (const f of files) {
     uploading.value++
     try {
-      pending.value.push(await uploadToConversation(props.conversationId, f))
+      const a = await uploadToConversation(cid, f)
+      if (cid === props.conversationId) pending.value.push(a)
     } catch (e) {
-      error.value = t((e as { key?: string }).key ?? 'errors.generic')
+      if (cid === props.conversationId) error.value = t((e as { key?: string }).key ?? 'errors.generic')
     } finally {
       uploading.value--
     }
@@ -54,28 +56,33 @@ function onPick(e: Event) {
 }
 
 const canSend = computed(() => !busy.value && !uploading.value && text.value.trim().length > 0)
+// Core requires message text, so a file alone cannot be sent.
+const needsText = computed(() => pending.value.length > 0 && !text.value.trim())
 
 async function send() {
   if (!canSend.value) return
+  const cid = props.conversationId
   busy.value = true
   error.value = ''
   try {
-    const message = await api<Message>(`/conversations/${props.conversationId}/messages`, {
+    const message = await api<Message>(`/conversations/${cid}/messages`, {
       method: 'POST',
       body: { text: text.value.trim(), attachmentIds: pending.value.map(a => a.id) },
     })
-    text.value = ''
-    pending.value = []
+    if (cid === props.conversationId) {
+      text.value = ''
+      pending.value = []
+    }
     emit('sent', message)
   } catch (e) {
-    error.value = errorKey(e) === 'errors.generic' ? t('chat.sendFailed') : t(errorKey(e))
+    if (cid === props.conversationId) error.value = errorKey(e) === 'errors.generic' ? t('chat.sendFailed') : t(errorKey(e))
   } finally {
     busy.value = false
   }
 }
 
 function onKeydown(e: KeyboardEvent) {
-  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229) {
     e.preventDefault()
     void send()
   }
@@ -92,6 +99,7 @@ function onKeydown(e: KeyboardEvent) {
     @drop.prevent="onDrop"
   >
     <v-alert v-if="error" type="error" density="compact" class="mb-2" data-testid="composer-error">{{ error }}</v-alert>
+    <div v-if="needsText" class="text-caption text-warning mb-1" data-testid="composer-hint">{{ t('chat.textRequired') }}</div>
     <div v-if="pending.length || uploading" class="d-flex flex-wrap ga-2 mb-2">
       <v-chip
         v-for="a in pending"
