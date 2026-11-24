@@ -1,10 +1,14 @@
+import { MockLanguageModelV4 } from 'ai/test'
 import { sql } from 'drizzle-orm'
 import { createDb, type Db } from '../src/db/client.js'
 import { seedTemplates } from '../src/workflow/seed.js'
 import { runMigrations } from '../src/db/migrate.js'
 import type { AppDeps } from '../src/app.js'
 import { createS3Storage, type Storage } from '../src/storage/s3.js'
+import { AiGateway } from '../src/ai/gateway.js'
+import type { ModelSet } from '../src/ai/models.js'
 import { LiveBus } from '../src/live/bus.js'
+import { textStream } from './ai-mocks.js'
 import { localJwks, TEST_CLIENT_ID, TEST_ISSUER } from './jwt.js'
 
 // DEV ONLY: local docker-compose Postgres credentials
@@ -34,6 +38,22 @@ function testStorage(config: AppDeps['config']): Promise<Storage> {
   return storagePromise
 }
 
+/** Mock models: no network. Override `models` to inject specific mocks. */
+export function mockModels(overrides: Partial<ModelSet> = {}): ModelSet {
+  const lm = (modelId: string) =>
+    new MockLanguageModelV4({
+      modelId,
+      doStream: async () => ({ stream: textStream('ok') }),
+    })
+  return {
+    draft: lm('claude-opus-5-5'),
+    fast: lm('claude-haiku-5-5'),
+    embed: null,
+    ids: { draft: 'anthropic:claude-opus-5-5', fast: 'anthropic:claude-haiku-5-5', embed: null },
+    ...overrides,
+  }
+}
+
 export async function testDeps(overrides: Partial<AppDeps> = {}): Promise<AppDeps> {
   const config: AppDeps['config'] = {
       port: 0,
@@ -51,11 +71,14 @@ export async function testDeps(overrides: Partial<AppDeps> = {}): Promise<AppDep
       s3SecretKey: 'yoda-dev-minio', // DEV ONLY
       aiWorkers: 2,
   }
+  const db = await testDb()
+  const bus = new LiveBus()
   return {
     config,
-    db: await testDb(),
+    db,
     jwks: localJwks,
-    bus: new LiveBus(),
+    bus,
+    ai: new AiGateway({ db, bus, models: mockModels() }),
     storage: await testStorage(config),
     ...overrides,
   }
