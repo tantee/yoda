@@ -47,7 +47,8 @@
             "th": "ร่างข้อกำหนดจากรายละเอียดของงาน",
             "en": "Draft requirements from the work item description"
           },
-          "dependsOn": []
+          "dependsOn": [],
+          "capability": "draft-text"
         },
         {
           "key": "clarify-requirements",
@@ -102,7 +103,8 @@
             "th": "ร่างแบบระบบจากข้อกำหนดที่อนุมัติแล้ว",
             "en": "Draft the system design from the approved requirements"
           },
-          "dependsOn": []
+          "dependsOn": [],
+          "capability": "draft-text"
         },
         {
           "key": "approve-design",
@@ -141,7 +143,8 @@
             "th": "เขียนโค้ดตามข้อกำหนดและแบบที่อนุมัติแล้ว",
             "en": "Write the code according to the approved requirements and design"
           },
-          "dependsOn": []
+          "dependsOn": [],
+          "capability": "code-change"
         },
         {
           "key": "draft-tests",
@@ -155,7 +158,8 @@
             "th": "ร่างกรณีทดสอบจากข้อกำหนดที่อนุมัติแล้ว",
             "en": "Draft test cases from the approved requirements"
           },
-          "dependsOn": []
+          "dependsOn": [],
+          "capability": "draft-text"
         },
         {
           "key": "review-code",

@@ -25,6 +25,7 @@ test:
     POSTGRES_PASSWORD: yoda-ci
     POSTGRES_DB: yoda_test
     TEST_DATABASE_URL: postgres://yoda:yoda-ci@postgres:5432/yoda_test
+    TEST_STORAGE: memory
     LEFTHOOK: '0'
   before_script:
     - corepack enable

@@ -25,3 +25,12 @@ for (const name of ['software-change', 'bug-fix']) {
 it('software-change step keys', () => {
   expect(load('software-change').steps.map((s) => s.key)).toEqual(['intake', 'ba', 'sa', 'dev', 'qc', 'close'])
 })
+
+it('ai tasks carry the expected capabilities', () => {
+  const caps = (n: string) =>
+    Object.fromEntries(load(n).steps.flatMap((s) => s.tasks).filter((t) => t.type === 'ai').map((t) => [t.key, t.capability]))
+  expect(caps('software-change')).toEqual({
+    'draft-requirements': 'draft-text', 'draft-design': 'draft-text', implement: 'code-change', 'draft-tests': 'draft-text',
+  })
+  expect(caps('bug-fix')).toEqual({ implement: 'code-change', 'draft-tests': 'draft-text' })
+})

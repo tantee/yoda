@@ -1,6 +1,8 @@
 import type { FastifyInstance } from 'fastify'
 import type { Task, TaskWithContext, Todo, WorkItemDetail } from '@yoda/shared'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { eq } from 'drizzle-orm'
+import { attachments } from '../src/db/schema.js'
 import { resetDb, testDb } from './helpers.js'
 import { auth, login, makeApp, type Who } from './support.js'
 
@@ -273,5 +275,99 @@ describe('work API', () => {
     expect(res.statusCode).toBe(200)
     expect(res.json()).toMatchObject({ state: 'cancelled', tasks: [{ state: 'rejected' }] })
     expect((await todo(pm)).confirmations).toEqual([])
+  })
+
+  async function attach(projectId: string, by: Who, over: Partial<typeof attachments.$inferInsert> = {}): Promise<string> {
+    const [row] = await app.deps.db
+      .insert(attachments)
+      .values({
+        projectId,
+        storageKey: `projects/${projectId}/${Math.random()}/ผลแล็บ.txt`,
+        fileName: 'ผลแล็บ.txt',
+        contentType: 'text/plain',
+        sizeBytes: 3,
+        extractedText: 'abc',
+        uploadedBy: by.id,
+        ...over,
+      })
+      .returning()
+    return row!.id
+  }
+
+  it('a review task gets the implement result and its attachments as an input', async () => {
+    const p = await project([[pm, ['PM']], [dev, ['DEV']]])
+    const wi = await createItem(pm, p)
+    await drive(wi.id, 'accept-bug', pm, approve)
+    const fileId = await attach(p, dev, { noAi: true })
+    const impl = await drive(wi.id, 'implement', dev, { text: 'แก้แล้ว', attachmentIds: [fileId] })
+    expect(impl.result).toEqual({ text: 'แก้แล้ว', attachmentIds: [fileId] })
+    expect(impl.attachments.map((a) => a.id)).toEqual([fileId])
+
+    const review = await active(pm, wi.id, 'review-code')
+    const res = await call(dev, 'GET', `/tasks/${review.id}`)
+    expect(res.statusCode).toBe(200)
+    const body = res.json() as TaskWithContext
+    expect(body.inputs).toHaveLength(1)
+    expect(body.inputs[0]).toMatchObject({
+      templateTaskKey: 'implement',
+      title: { th: 'พัฒนาโค้ด' },
+      executor: 'human',
+      result: { text: 'แก้แล้ว' },
+    })
+    expect(body.inputs[0]!.attachments).toMatchObject([{ id: fileId, noAi: true, taskId: impl.id }])
+    expect(body.attachments).toEqual([])
+    // To-do lists carry the same inputs.
+    const lists = await todo(pm)
+    const listed = [...lists.tasks, ...lists.confirmations].find((t) => t.id === review.id)!
+    expect(listed.inputs.map((i) => i.result.text)).toEqual(['แก้แล้ว'])
+  })
+
+  it('submitting with an attachment of another project is 404 and changes nothing', async () => {
+    const p = await project([[pm, ['PM']], [dev, ['DEV']]])
+    const other = await project([[pm, ['PM']]], 'อีกโครงการ')
+    const wi = await createItem(pm, p)
+    await drive(wi.id, 'accept-bug', pm, approve)
+    const foreign = await attach(other, pm)
+    const impl = await active(pm, wi.id, 'implement')
+    expect((await call(pm, 'POST', `/tasks/${impl.id}/assign`, { personId: dev.id })).statusCode).toBe(200)
+    const res = await call(dev, 'POST', `/tasks/${impl.id}/submit`, { text: 'x', attachmentIds: [foreign] })
+    expect(res.statusCode).toBe(404)
+    expect((await active(pm, wi.id, 'implement')).state).toBe('open')
+    const unknown = await call(dev, 'POST', `/tasks/${impl.id}/submit`, { text: 'x', attachmentIds: [NO_ID] })
+    expect(unknown.statusCode).toBe(404)
+  })
+
+  it('events in the detail carry the actor kind', async () => {
+    const p = await project([[pm, ['PM']]])
+    const wi = await createItem(pm, p)
+    expect(wi.events.length).toBeGreaterThan(0)
+    expect(wi.events.every((e) => e.actorKind === 'person')).toBe(true)
+  })
+
+  it('a submit never moves files off other tasks; project-level files join the work item', async () => {
+    const p = await project([[pm, ['PM']], [dev, ['DEV']], [qc, ['QC']]])
+    const wi = await createItem(pm, p)
+    const wi2 = await createItem(pm, p, { title: 'งานอื่น' })
+    await drive(wi.id, 'accept-bug', pm, approve)
+    const projectFile = await attach(p, dev)
+    const impl = await drive(wi.id, 'implement', dev, { text: 'แก้แล้ว', attachmentIds: [projectFile] })
+    const listed = (await call(dev, 'GET', `/projects/${p}/attachments?workItemId=${wi.id}`)).json() as { id: string; taskId: string }[]
+    expect(listed).toMatchObject([{ id: projectFile, taskId: impl.id }])
+
+    // Already linked to the accepted implement task → refused, link intact.
+    const tests = await active(pm, wi.id, 'draft-tests')
+    expect((await call(pm, 'POST', `/tasks/${tests.id}/assign`, { personId: qc.id })).statusCode).toBe(200)
+    const stolen = await call(qc, 'POST', `/tasks/${tests.id}/submit`, { text: 't', attachmentIds: [projectFile] })
+    expect(stolen.statusCode).toBe(409)
+    expect(stolen.json()).toEqual({ error: 'invalid_state' })
+    expect((await active(pm, wi.id, 'draft-tests')).state).toBe('open')
+    expect((await call(dev, 'GET', `/tasks/${impl.id}`)).json()).toMatchObject({ attachments: [{ id: projectFile }] })
+
+    // A file on another work item → refused too.
+    const otherItemFile = await attach(p, dev, { workItemId: wi2.id })
+    const res = await call(qc, 'POST', `/tasks/${tests.id}/submit`, { text: 't', attachmentIds: [otherItemFile] })
+    expect(res.statusCode).toBe(409)
+    const [row] = await app.deps.db.select().from(attachments).where(eq(attachments.id, otherItemFile))
+    expect(row).toMatchObject({ workItemId: wi2.id, taskId: null })
   })
 })

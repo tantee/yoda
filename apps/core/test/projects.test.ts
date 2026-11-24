@@ -144,6 +144,23 @@ describe('projects API', () => {
     expect((await call(admin, 'PATCH', '/projects/00000000-0000-4000-8000-000000000000', { autonomy: 'propose' })).statusCode).toBe(404)
   })
 
+  it('PATCH persists aiBudgetUsd and noAi, and null clears the budget', async () => {
+    const p = await createProject()
+    await call(admin, 'PUT', `/projects/${p.id}/members/${somchai.id}`, { roles: ['PM'] })
+    const res = await call(somchai, 'PATCH', `/projects/${p.id}`, { aiBudgetUsd: 25 })
+    expect(res.statusCode).toBe(200)
+    expect(res.json().aiBudgetUsd).toBe(25)
+    expect((await call(somchai, 'GET', `/projects/${p.id}`)).json().aiBudgetUsd).toBe(25)
+    const noAi = await call(somchai, 'PATCH', `/projects/${p.id}`, { noAi: true })
+    expect(noAi.json()).toMatchObject({ noAi: true, aiBudgetUsd: 25 })
+    expect((await call(somchai, 'GET', `/projects/${p.id}`)).json().noAi).toBe(true)
+    const cleared = await call(somchai, 'PATCH', `/projects/${p.id}`, { aiBudgetUsd: null })
+    expect(cleared.json().aiBudgetUsd).toBeNull()
+    // numeric(12,2) holds up to 9 999 999 999.99: larger values are a 400, not a database 500.
+    expect((await call(somchai, 'PATCH', `/projects/${p.id}`, { aiBudgetUsd: 9_999_999_999 })).statusCode).toBe(200)
+    expect((await call(somchai, 'PATCH', `/projects/${p.id}`, { aiBudgetUsd: 1e12 })).statusCode).toBe(400)
+  })
+
   it('removing a member unassigns their open and proposed tasks into the PM confirmations', async () => {
     const p = await createProject()
     await call(admin, 'PUT', `/projects/${p.id}/members/${somchai.id}`, { roles: ['PM'] })

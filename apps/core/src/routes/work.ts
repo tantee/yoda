@@ -3,7 +3,15 @@ import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { requireStaff } from '../auth/plugin.js'
 import { runWork, type WorkCtx } from '../work/context.js'
-import { assignTask, cancelWorkItem, confirmTask, createWorkItem, startTask, submitTask } from '../work/engine.js'
+import {
+  assignTask,
+  cancelWorkItem,
+  confirmTask,
+  createWorkItem,
+  retryAiTask,
+  startTask,
+  submitTask,
+} from '../work/engine.js'
 import {
   getTask,
   getTodo,
@@ -36,7 +44,7 @@ export function workRoutes(app: FastifyInstance): void {
     const body = WorkItemCreate.parse(request.body)
     const me = request.me
     // createWorkItem answers 404 for non-members and unknown projects.
-    const workItemId = await runWork(app.deps, me.id, (ctx) => createWorkItem(ctx, me, id, body))
+    const workItemId = await runWork(app.deps, { id: me.id, kind: 'person' }, (ctx) => createWorkItem(ctx, me, id, body))
     return reply.status(201).send(await getWorkItemDetail(db(), me, workItemId))
   })
 
@@ -50,7 +58,7 @@ export function workRoutes(app: FastifyInstance): void {
     requireStaff(request)
     const { id } = IdParams.parse(request.params)
     const me = request.me
-    await runWork(app.deps, me.id, async (ctx) => {
+    await runWork(app.deps, { id: me.id, kind: 'person' }, async (ctx) => {
       await requireWorkItemVisible(ctx.tx, me, id)
       await cancelWorkItem(ctx, me, id)
     })
@@ -82,7 +90,7 @@ export function workRoutes(app: FastifyInstance): void {
       const { id } = IdParams.parse(request.params)
       const body = parse(request.body)
       const me = request.me
-      await runWork(app.deps, me.id, async (ctx) => {
+      await runWork(app.deps, { id: me.id, kind: 'person' }, async (ctx) => {
         await requireTaskVisible(ctx.tx, me, id)
         await act(ctx, me, id, body)
       })
@@ -94,4 +102,5 @@ export function workRoutes(app: FastifyInstance): void {
   taskAction('submit', (b) => TaskResult.parse(b ?? {}), (ctx, me, id, result) => submitTask(ctx, me, id, result))
   taskAction('confirm', none, (ctx, me, id) => confirmTask(ctx, me, id))
   taskAction('assign', (b) => TaskAssign.parse(b), (ctx, me, id, { personId }) => assignTask(ctx, me, id, personId))
+  taskAction('retry-ai', none, (ctx, me, id) => retryAiTask(ctx, me, id))
 }
