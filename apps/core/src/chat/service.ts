@@ -248,6 +248,8 @@ export async function postMessage(
     text: string
     attachmentIds?: string[]
     actions?: ActionCard[]
+    /** Secretary replies: the person message answered. */
+    replyToId?: string | null
   },
 ): Promise<string> {
   const { tx } = ctx
@@ -265,6 +267,7 @@ export async function postMessage(
       text: input.text,
       attachmentIds: [...new Set(input.attachmentIds ?? [])],
       actions: input.actions ?? [],
+      replyToId: input.replyToId ?? null,
     })
     .returning({ id: messages.id })
   // greatest() ignores the null of a first message; concurrent posts never move it backwards.
