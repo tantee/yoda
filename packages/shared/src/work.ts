@@ -19,6 +19,8 @@ export type TaskExecutor = z.infer<typeof TaskExecutor>
 // `submitted` is reserved for plan 7 runner results; plan 2 submits resolve immediately.
 export const TaskState = z.enum(['proposed', 'open', 'in_progress', 'submitted', 'accepted', 'rejected'])
 export type TaskState = z.infer<typeof TaskState>
+/** States in which a task is still in play (not yet accepted or rejected). */
+export const ACTIVE_TASK_STATES = ['proposed', 'open', 'in_progress', 'submitted'] as const satisfies readonly TaskState[]
 export const Priority = z.enum(['low', 'normal', 'high', 'urgent'])
 export type Priority = z.infer<typeof Priority>
 export const WorkItemState = z.enum(['active', 'done', 'cancelled'])

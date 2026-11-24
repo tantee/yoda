@@ -575,6 +575,21 @@ describe('workflow engine', () => {
       await run(s.pm, (ctx) => assignTask(ctx, s.pm, accept.id, s.pm.id))
       await expect(submit(nurse, accept.id, approve)).rejects.toMatchObject({ statusCode: 403 })
       await expect(run(nurse, (ctx) => startTask(ctx, nurse, accept.id))).rejects.toMatchObject({ statusCode: 403 })
+
+      // The PM can hand it back to the requester (not a member); other non-members and other tasks stay refused.
+      await expect(run(s.pm, (ctx) => assignTask(ctx, s.pm, accept.id, s.outsider.id))).rejects.toMatchObject({
+        statusCode: 422,
+        body: { error: 'not_member' },
+      })
+      await expect(run(s.dev, (ctx) => assignTask(ctx, s.dev, accept.id, nurse.id))).rejects.toMatchObject({ statusCode: 403 })
+      await run(s.pm, (ctx) => assignTask(ctx, s.pm, accept.id, nurse.id))
+      expect(await latest(wi, 'accept-delivery')).toMatchObject({ assigneeId: nurse.id, state: 'open' })
+      await submit(nurse, accept.id, approve)
+      const close = (await latest(wi, 'close-bug'))!
+      await expect(run(s.pm, (ctx) => assignTask(ctx, s.pm, close.id, nurse.id))).rejects.toMatchObject({
+        statusCode: 422,
+        body: { error: 'not_member' },
+      })
     })
 
     it('without a requester, an owner who left the project does not get the requester task', async () => {
