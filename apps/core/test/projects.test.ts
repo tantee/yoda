@@ -159,6 +159,10 @@ describe('projects API', () => {
     // numeric(12,2) holds up to 9 999 999 999.99: larger values are a 400, not a database 500.
     expect((await call(somchai, 'PATCH', `/projects/${p.id}`, { aiBudgetUsd: 9_999_999_999 })).statusCode).toBe(200)
     expect((await call(somchai, 'PATCH', `/projects/${p.id}`, { aiBudgetUsd: 1e12 })).statusCode).toBe(400)
+    expect((await call(somchai, 'PATCH', `/projects/${p.id}`, { aiBudgetUsd: 9_999_999_999.99 })).statusCode).toBe(200)
+    // Would round past numeric(12,2) (or silently lose a cent): rejected.
+    expect((await call(somchai, 'PATCH', `/projects/${p.id}`, { aiBudgetUsd: 9_999_999_999.999 })).statusCode).toBe(400)
+    expect((await call(somchai, 'PATCH', `/projects/${p.id}`, { aiBudgetUsd: 1.005 })).statusCode).toBe(400)
   })
 
   it('removing a member unassigns their open and proposed tasks into the PM confirmations', async () => {

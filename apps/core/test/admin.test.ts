@@ -71,8 +71,16 @@ describe('/admin/ai-settings', () => {
     expect(row!.aiBudgetUsd).toBeNull()
   })
 
-  it('rejects a negative or missing budget with 400', async () => {
-    for (const payload of [{ aiBudgetUsd: -1 }, {}, { aiBudgetUsd: 10_000_000_000 }]) {
+  it('accepts the numeric(12,2) maximum; rejects negative, missing, too large or sub-cent budgets with 400', async () => {
+    const ok = await app.inject({
+      method: 'PATCH',
+      url: '/admin/ai-settings',
+      headers: auth(boss),
+      payload: { aiBudgetUsd: 9_999_999_999.99 },
+    })
+    expect(ok.statusCode).toBe(200)
+    expect(ok.json().aiBudgetUsd).toBe(9_999_999_999.99)
+    for (const payload of [{ aiBudgetUsd: -1 }, {}, { aiBudgetUsd: 10_000_000_000 }, { aiBudgetUsd: 9_999_999_999.999 }, { aiBudgetUsd: 0.015 }]) {
       const res = await app.inject({ method: 'PATCH', url: '/admin/ai-settings', headers: auth(boss), payload })
       expect(res.statusCode).toBe(400)
     }
