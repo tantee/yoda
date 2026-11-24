@@ -190,6 +190,10 @@ export const events = pgTable(
   },
   (t) => [
     index('events_work_item_seq_idx').on(t.workItemId, t.seq),
+    // The daily task cap counts today's automatic assignments (work/assign.ts).
+    index('events_auto_assigned_idx')
+      .on(t.createdAt)
+      .where(sql`${t.type} = 'task.assigned' and ${t.payload}->>'auto' = 'true'`),
     check('events_actor_kind_check', sql`${t.actorKind} in (${list(ActorKind.options)})`),
   ],
 )

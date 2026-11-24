@@ -71,6 +71,7 @@ export async function createProposal(ctx: WorkCtx, input: ProposalCreate): Promi
   await notifyProposalPending(ctx, {
     id,
     projectId,
+    workItemId: input.workItemId,
     kind: input.kind,
     summary: input.summary,
     onBehalfOf: input.onBehalfOf,

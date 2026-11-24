@@ -18,13 +18,11 @@ export type WorkCtx = {
 
 export type Actor = { id: string | null; kind: ActorKind }
 
-export const DEFAULT_DAILY_TASK_CAP = 8
-
 export type WorkDeps = {
   db: Db
   bus: LiveBus
   jobs: Pick<JobQueue, 'send'>
-  config?: { dailyTaskCap: number }
+  config: { dailyTaskCap: number }
 }
 
 export async function runWork<T>(
@@ -40,7 +38,7 @@ export async function runWork<T>(
       actorKind: actor.kind,
       emitted,
       jobs,
-      dailyTaskCap: deps.config?.dailyTaskCap ?? DEFAULT_DAILY_TASK_CAP,
+      dailyTaskCap: deps.config.dailyTaskCap,
     }),
   )
   for (const e of emitted) deps.bus.publish(e)
