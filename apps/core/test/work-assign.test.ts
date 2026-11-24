@@ -100,7 +100,7 @@ describe('createTaskAttempt', () => {
     const s = await setup(db, 'propose')
     const dev = await person(db, 'Dev')
     await member(db, s.projectId, dev, ['DEV'])
-    const id = await runWork({ db, bus: new LiveBus(), jobs: new InlineJobQueue() }, s.owner, (ctx) => createTaskAttempt(ctx, input(s)))
+    const id = await runWork({ db, bus: new LiveBus(), jobs: new InlineJobQueue() }, { id: s.owner, kind: 'person' }, (ctx) => createTaskAttempt(ctx, input(s)))
     const [t] = await db.select().from(tasks).where(eq(tasks.id, id))
     expect(t).toMatchObject({ state: 'proposed', proposedAssigneeId: dev, assigneeId: null, role: 'DEV', type: 'human' })
     expect((await taskEvents(db, id)).map((e) => e.type)).toEqual(['task.created', 'task.proposed'])
@@ -111,7 +111,7 @@ describe('createTaskAttempt', () => {
     const s = await setup(db, 'auto-assign')
     const dev = await person(db, 'Dev')
     await member(db, s.projectId, dev, ['DEV'])
-    const id = await runWork({ db, bus: new LiveBus(), jobs: new InlineJobQueue() }, null, (ctx) => createTaskAttempt(ctx, input(s)))
+    const id = await runWork({ db, bus: new LiveBus(), jobs: new InlineJobQueue() }, { id: null, kind: 'system' }, (ctx) => createTaskAttempt(ctx, input(s)))
     const [t] = await db.select().from(tasks).where(eq(tasks.id, id))
     expect(t).toMatchObject({ state: 'open', assigneeId: dev, proposedAssigneeId: null })
     expect((await taskEvents(db, id)).map((e) => e.type)).toEqual(['task.created', 'task.assigned'])
@@ -122,7 +122,7 @@ describe('createTaskAttempt', () => {
     const s = await setup(db, 'propose')
     const hint = await person(db, 'Hint')
     await member(db, s.projectId, hint, ['BA'])
-    const id = await runWork({ db, bus: new LiveBus(), jobs: new InlineJobQueue() }, null, (ctx) =>
+    const id = await runWork({ db, bus: new LiveBus(), jobs: new InlineJobQueue() }, { id: null, kind: 'system' }, (ctx) =>
       createTaskAttempt(ctx, input(s, { assigneeHint: hint, attempt: 2, feedback: 'redo' })),
     )
     const [t] = await db.select().from(tasks).where(eq(tasks.id, id))
@@ -136,7 +136,7 @@ describe('createTaskAttempt', () => {
     const gone = await person(db, 'Gone')
     const dev = await person(db, 'Dev')
     await member(db, s.projectId, dev, ['DEV'])
-    const id = await runWork({ db, bus: new LiveBus(), jobs: new InlineJobQueue() }, null, (ctx) =>
+    const id = await runWork({ db, bus: new LiveBus(), jobs: new InlineJobQueue() }, { id: null, kind: 'system' }, (ctx) =>
       createTaskAttempt(ctx, input(s, { assigneeHint: gone, attempt: 2 })),
     )
     const [t] = await db.select().from(tasks).where(eq(tasks.id, id))
@@ -148,7 +148,7 @@ describe('createTaskAttempt', () => {
     const s = await setup(db, 'auto-assign')
     const dev = await person(db, 'Dev')
     await member(db, s.projectId, dev, ['DEV'])
-    const id = await runWork({ db, bus: new LiveBus(), jobs: new InlineJobQueue() }, null, (ctx) =>
+    const id = await runWork({ db, bus: new LiveBus(), jobs: new InlineJobQueue() }, { id: null, kind: 'system' }, (ctx) =>
       createTaskAttempt(ctx, input(s, { executor: 'ai' })),
     )
     const [t] = await db.select().from(tasks).where(eq(tasks.id, id))
@@ -159,7 +159,7 @@ describe('createTaskAttempt', () => {
   it('no candidate -> open unassigned with reason', async () => {
     const db = await testDb()
     const s = await setup(db, 'propose')
-    const id = await runWork({ db, bus: new LiveBus(), jobs: new InlineJobQueue() }, null, (ctx) => createTaskAttempt(ctx, input(s)))
+    const id = await runWork({ db, bus: new LiveBus(), jobs: new InlineJobQueue() }, { id: null, kind: 'system' }, (ctx) => createTaskAttempt(ctx, input(s)))
     const [t] = await db.select().from(tasks).where(eq(tasks.id, id))
     expect(t).toMatchObject({ state: 'open', assigneeId: null, proposedAssigneeId: null })
     const evs = await taskEvents(db, id)
@@ -180,7 +180,7 @@ describe('runWork', () => {
       const rows = await db.select().from(events)
       seen.push({ e, count: rows.length })
     })
-    await runWork({ db, bus, jobs: new InlineJobQueue() }, s.owner, async (ctx) => {
+    await runWork({ db, bus, jobs: new InlineJobQueue() }, { id: s.owner, kind: 'person' }, async (ctx) => {
       await recordEvent(ctx, { type: 'work_item.created', projectId: s.projectId, workItemId: s.workItemId, taskId: null })
       expect(seen).toHaveLength(0)
     })
@@ -203,7 +203,7 @@ describe('runWork', () => {
         sent.push({ name, id: data.id, eventsAtSend: (await db.select().from(events)).length })
       },
     }
-    await runWork({ db, bus: new LiveBus(), jobs }, null, async (ctx) => {
+    await runWork({ db, bus: new LiveBus(), jobs }, { id: null, kind: 'system' }, async (ctx) => {
       await recordEvent(ctx, { type: 'work_item.created', projectId: s.projectId, workItemId: s.workItemId, taskId: null })
       ctx.jobs.push({ name: 'embed-entry', id: 'e1' })
       expect(sent).toHaveLength(0)
@@ -211,7 +211,7 @@ describe('runWork', () => {
     expect(sent).toEqual([{ name: 'embed-entry', id: 'e1', eventsAtSend: 1 }])
 
     await expect(
-      runWork({ db, bus: new LiveBus(), jobs }, null, async (ctx) => {
+      runWork({ db, bus: new LiveBus(), jobs }, { id: null, kind: 'system' }, async (ctx) => {
         ctx.jobs.push({ name: 'draft-task', id: 't1' })
         throw new Error('boom')
       }),
@@ -226,7 +226,7 @@ describe('runWork', () => {
     const seen: LiveEvent[] = []
     bus.subscribe((e) => void seen.push(e))
     await expect(
-      runWork({ db, bus, jobs: new InlineJobQueue() }, null, async (ctx) => {
+      runWork({ db, bus, jobs: new InlineJobQueue() }, { id: null, kind: 'system' }, async (ctx) => {
         await recordEvent(ctx, { type: 'work_item.created', projectId: s.projectId, workItemId: s.workItemId, taskId: null })
         throw new Error('boom')
       }),

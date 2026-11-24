@@ -1,6 +1,6 @@
 import type { Attachment } from '@yoda/shared'
-import { and, desc, eq, type SQL } from 'drizzle-orm'
-import type { Db } from '../db/client.js'
+import { and, asc, desc, eq, inArray, type SQL } from 'drizzle-orm'
+import type { Db, Tx } from '../db/client.js'
 import { attachments, people } from '../db/schema.js'
 
 export type AttachmentRow = typeof attachments.$inferSelect
@@ -92,4 +92,23 @@ export async function listAttachments(
     .where(and(...conds))
     .orderBy(desc(attachments.createdAt), desc(attachments.id))
   return rows.map(toAttachment)
+}
+
+/** Attachments linked to each of the given tasks, oldest first. */
+export async function attachmentsByTask(db: Db | Tx, taskIds: string[]): Promise<Map<string, Attachment[]>> {
+  const out = new Map<string, Attachment[]>()
+  const ids = [...new Set(taskIds)]
+  if (!ids.length) return out
+  const rows = await db
+    .select(columns)
+    .from(attachments)
+    .innerJoin(people, eq(people.id, attachments.uploadedBy))
+    .where(inArray(attachments.taskId, ids))
+    .orderBy(asc(attachments.createdAt), asc(attachments.id))
+  for (const r of rows) {
+    const list = out.get(r.taskId!) ?? []
+    list.push(toAttachment(r))
+    out.set(r.taskId!, list)
+  }
+  return out
 }

@@ -8,10 +8,12 @@ import {
   WorkItem,
   WorkItemDetail,
   type Me,
+  type TaskInput,
   type TemplateTask,
 } from '@yoda/shared'
 import { and, asc, desc, eq, inArray, isNull, or, sql, type SQL } from 'drizzle-orm'
 import { forbidden, notFound } from '../auth/plugin.js'
+import { attachmentsByTask } from '../attachments/service.js'
 import type { Db, Tx } from '../db/client.js'
 import { events, people, projectMembers, projects, tasks, workflowTemplates, workItems } from '../db/schema.js'
 
@@ -111,16 +113,54 @@ async function tasksWithContext(db: Conn, where: SQL | undefined, orderBy: SQL[]
     .orderBy(...orderBy)
   const defs = await definitions(db, rows.map((r) => r.templateId))
   const who = await names(db, rows.flatMap((r) => [r.t.assigneeId, r.t.proposedAssigneeId]))
-  return rows.map((r) =>
-    TaskWithContext.parse({
-      ...toTask(r.t, defs.get(r.templateId), who),
+
+  // Inputs: for each dependsOn key, the latest accepted attempt of that task in the same work item.
+  const depsOf = new Map(rows.map((r) => [r.t.id, templateTask(defs.get(r.templateId), r.t).dependsOn]))
+  const withDeps = rows.filter((r) => depsOf.get(r.t.id)!.length)
+  const accepted = withDeps.length
+    ? await db
+        .select()
+        .from(tasks)
+        .where(
+          and(
+            inArray(tasks.workItemId, [...new Set(withDeps.map((r) => r.t.workItemId))]),
+            inArray(tasks.templateTaskKey, [...new Set(withDeps.flatMap((r) => depsOf.get(r.t.id)!))]),
+            eq(tasks.state, 'accepted'),
+          ),
+        )
+    : []
+  const latestAccepted = new Map<string, TaskRow>()
+  for (const a of accepted) {
+    const k = `${a.workItemId}/${a.templateTaskKey}`
+    const cur = latestAccepted.get(k)
+    if (!cur || a.attempt > cur.attempt) latestAccepted.set(k, a)
+  }
+  const files = await attachmentsByTask(db, [...rows.map((r) => r.t.id), ...[...latestAccepted.values()].map((a) => a.id)])
+
+  return rows.map((r) => {
+    const def = defs.get(r.templateId)
+    const inputs: TaskInput[] = []
+    for (const key of depsOf.get(r.t.id)!) {
+      const dep = latestAccepted.get(`${r.t.workItemId}/${key}`)
+      if (!dep) continue
+      const depTask = templateTask(def, dep)
+      inputs.push({
+        templateTaskKey: key,
+        title: depTask.title,
+        executor: dep.executor as TaskInput['executor'],
+        result: (dep.result ?? { text: '' }) as TaskInput['result'],
+        attachments: files.get(dep.id) ?? [],
+      })
+    }
+    return TaskWithContext.parse({
+      ...toTask(r.t, def, who),
       workItemTitle: r.workItemTitle,
       workItemPriority: r.workItemPriority,
       projectName: r.projectName,
-      inputs: [], // plan 3 task 6 fills these
-      attachments: [],
-    }),
-  )
+      inputs,
+      attachments: files.get(r.t.id) ?? [],
+    })
+  })
 }
 
 const workItemCols = {

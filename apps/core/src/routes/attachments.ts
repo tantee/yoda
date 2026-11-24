@@ -138,7 +138,7 @@ export function attachmentRoutes(app: FastifyInstance, opts: { onStored: Attachm
     const [row] = await db().select().from(attachments).where(eq(attachments.id, id))
     if (!row || !(await canSeeProject(db(), me, row.projectId))) throw notFound()
     if (row.uploadedBy !== me.id && !(await canManageProject(db(), me, row.projectId))) throw forbidden()
-    await runWork(app.deps, me.id, async (ctx) => {
+    await runWork(app.deps, { id: me.id, kind: 'person' }, async (ctx) => {
       await ctx.tx.update(attachments).set({ noAi: body.noAi }).where(eq(attachments.id, id))
       // In place on the current entry: a handling flag, not a content change (see propagateAttachmentNoAi).
       await propagateAttachmentNoAi(ctx, id, body.noAi)

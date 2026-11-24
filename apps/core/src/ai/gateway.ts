@@ -206,7 +206,7 @@ export class AiGateway {
     costUsd: number,
     budgetUsd: number,
   ): Promise<void> {
-    await runWork({ ...this.deps, jobs: NO_JOBS }, null, async (ctx) => {
+    await runWork({ ...this.deps, jobs: NO_JOBS }, { id: null, kind: 'system' }, async (ctx) => {
       // Serialize concurrent callers per project+type so the event is recorded once.
       await ctx.tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`${type}:${projectId}`}))`)
       const existing = await ctx.tx
