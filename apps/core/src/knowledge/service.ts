@@ -272,15 +272,16 @@ export async function createAttachmentEntry(deps: WorkDeps, a: AttachmentRow, te
 }
 
 /**
- * Copies an attachment's noAi flag onto its current entry in place: the flag is a handling rule, not
- * content, so it does not warrant a new version. Re-chunks so embeddings match the flag.
+ * Applies an attachment's noAi change to its current entry. Setting it copies `true` onto the entry in place
+ * (a handling rule, not content, so no new version). Clearing it never clears the entry's own flag: the
+ * entry may have been marked noAi itself. Either way the entry is re-chunked so embeddings follow the
+ * effective flag (entry noAi OR attachment noAi), which embedEntry and forAi search check separately.
  */
 export async function propagateAttachmentNoAi(ctx: WorkCtx, attachmentId: string, noAi: boolean): Promise<void> {
-  const rows = await ctx.tx
-    .update(knowledgeEntries)
-    .set({ noAi })
-    .where(and(eq(knowledgeEntries.attachmentId, attachmentId), isNull(knowledgeEntries.supersededAt)))
-    .returning({ id: knowledgeEntries.id })
+  const current = and(eq(knowledgeEntries.attachmentId, attachmentId), isNull(knowledgeEntries.supersededAt))
+  const rows = noAi
+    ? await ctx.tx.update(knowledgeEntries).set({ noAi: true }).where(current).returning({ id: knowledgeEntries.id })
+    : await ctx.tx.select({ id: knowledgeEntries.id }).from(knowledgeEntries).where(current)
   for (const r of rows) ctx.jobs.push({ name: 'embed-entry', id: r.id })
 }
 
@@ -325,13 +326,14 @@ export async function embedEntry(deps: { db: Db; ai: Pick<AiGateway, 'embed'> },
   await db.transaction(async (tx) => {
     // Serialize concurrent re-chunks of one entry; recheck it is still there.
     const [locked] = await tx
-      .select({ noAi: knowledgeEntries.noAi, supersededAt: knowledgeEntries.supersededAt })
+      .select({ noAi: knowledgeEntries.noAi, attachmentNoAi: attachments.noAi, supersededAt: knowledgeEntries.supersededAt })
       .from(knowledgeEntries)
+      .leftJoin(attachments, eq(attachments.id, knowledgeEntries.attachmentId))
       .where(eq(knowledgeEntries.id, row.id))
-      .for('update')
+      .for('update', { of: knowledgeEntries })
     if (!locked || locked.supersededAt) return
-    // The flag may have been set while embedding ran; never keep vectors for noAi content.
-    if (locked.noAi) vectors = null
+    // A flag may have been set while embedding ran; never keep vectors for noAi content.
+    if (locked.noAi || locked.attachmentNoAi) vectors = null
     await tx.delete(knowledgeChunks).where(eq(knowledgeChunks.entryId, row.id))
     if (!texts.length) return
     await tx.insert(knowledgeChunks).values(

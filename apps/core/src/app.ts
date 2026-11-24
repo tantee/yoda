@@ -8,7 +8,7 @@ import type { Config } from './config.js'
 import type { Db } from './db/client.js'
 import type { LiveBus } from './live/bus.js'
 import type { AiGateway } from './ai/gateway.js'
-import { setOnAttachmentStored } from './attachments/service.js'
+import type { AttachmentStoredHook } from './attachments/service.js'
 import type { JobQueue } from './jobs/queue.js'
 import { createAttachmentEntry } from './knowledge/service.js'
 import { knowledgeRoutes } from './routes/knowledge.js'
@@ -29,6 +29,8 @@ export type AppDeps = {
   storage: Storage
   ai: AiGateway
   jobs: JobQueue
+  /** Replaces the default upload hook (create the attachment's knowledge entry); tests use it to observe calls. */
+  onAttachmentStored?: AttachmentStoredHook
 }
 
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
@@ -65,19 +67,20 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   projectRoutes(app)
   workRoutes(app)
   streamRoutes(app)
-  attachmentRoutes(app)
-  aiRoutes(app)
-  knowledgeRoutes(app)
-
   // Text-bearing uploads become `document` entries. The attachment is already committed, so a failure here
   // is logged rather than failing the upload (a retried upload would duplicate the file).
-  setOnAttachmentStored(async (row, text) => {
-    try {
-      await createAttachmentEntry(app.deps, row, text)
-    } catch (err) {
-      app.log.error({ err, attachmentId: row.id }, 'knowledge entry for attachment failed')
-    }
-  })
+  const onStored: AttachmentStoredHook =
+    deps.onAttachmentStored ??
+    (async (row, text) => {
+      try {
+        await createAttachmentEntry(app.deps, row, text)
+      } catch (err) {
+        app.log.error({ err, attachmentId: row.id }, 'knowledge entry for attachment failed')
+      }
+    })
+  attachmentRoutes(app, { onStored })
+  aiRoutes(app)
+  knowledgeRoutes(app)
 
   return app
 }

@@ -4,7 +4,7 @@ import type { Attachment } from '@yoda/shared'
 import { eq } from 'drizzle-orm'
 import { attachments, tasks } from '../src/db/schema.js'
 import { buildApp } from '../src/app.js'
-import { setOnAttachmentStored } from '../src/attachments/service.js'
+import type { AttachmentStoredHook } from '../src/attachments/service.js'
 import type { Storage } from '../src/storage/s3.js'
 import { resetDb, testDb, testDeps } from './helpers.js'
 import { auth, login, type Who } from './support.js'
@@ -17,6 +17,8 @@ let outsider: Who
 let nurse: Who
 let puts: string[]
 let removed: string[]
+/** Per-test upload hook; the app's hook delegates to it. */
+let onStored: AttachmentStoredHook
 
 const NO_ID = '00000000-0000-4000-8000-000000000000'
 
@@ -102,13 +104,13 @@ describe('attachments API', () => {
         return real.remove(k)
       },
     }
-    app = await buildApp({ ...deps, config: { ...deps.config, bootstrapAdmins: ['boss'] }, storage: spy })
+    app = await buildApp({ ...deps, config: { ...deps.config, bootstrapAdmins: ['boss'] }, storage: spy, onAttachmentStored: (r, t) => onStored(r, t) })
     admin = await login(app, 'boss')
     pm = await login(app, 'pm1', { staff: true })
     member = await login(app, 'dev1', { staff: true })
     outsider = await login(app, 'out1', { staff: true })
     nurse = await login(app, 'nurse1')
-    setOnAttachmentStored(async () => {})
+    onStored = async () => {}
   })
   afterEach(async () => {
     for (const k of puts) await app.deps.storage.remove(k).catch(() => {})
@@ -139,9 +141,9 @@ describe('attachments API', () => {
   it('calls the onAttachmentStored hook with the row and text', async () => {
     const p = await newProject()
     const seen: unknown[] = []
-    setOnAttachmentStored(async (row, text) => {
+    onStored = async (row, text) => {
       seen.push([row.fileName, text])
-    })
+    }
     await upload(member, p, { name: 'a.txt', type: 'text/plain', data: Buffer.from('hello') })
     expect(seen).toEqual([['a.txt', 'hello']])
   })

@@ -22,15 +22,8 @@ export const ALLOWED_TYPES = new Set([
   'image/webp',
 ])
 
+/** Called after the attachment row is committed; wired per app in buildApp (default: knowledge entry). */
 export type AttachmentStoredHook = (attachment: AttachmentRow, extractedText: string | null) => Promise<void>
-
-let onStored: AttachmentStoredHook = async () => {}
-
-/** Plan 3 Task 5 registers the knowledge-entry creator here. Called after the attachment row is committed. */
-export function setOnAttachmentStored(fn: AttachmentStoredHook): void {
-  onStored = fn
-}
-export const runOnAttachmentStored: AttachmentStoredHook = (a, t) => onStored(a, t)
 
 /** Storage-key-safe file name: no path separators or control characters, bounded length; Thai is kept. */
 export function sanitizeFileName(name: string): string {

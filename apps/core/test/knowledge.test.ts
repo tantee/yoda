@@ -6,7 +6,7 @@ import { and, eq, isNull } from 'drizzle-orm'
 import { AiGateway } from '../src/ai/gateway.js'
 import type { AppDeps } from '../src/app.js'
 import { aiCalls, attachments, events, knowledgeChunks, knowledgeEntries, people, projects } from '../src/db/schema.js'
-import { InlineJobQueue } from '../src/jobs/queue.js'
+import { InlineJobQueue, type JobName } from '../src/jobs/queue.js'
 import { LiveBus } from '../src/live/bus.js'
 import { searchKnowledge } from '../src/knowledge/search.js'
 import { mockModels, resetDb, testDb } from './helpers.js'
@@ -22,7 +22,9 @@ let nurse: Who
 const call = (who: Who, method: 'GET' | 'POST' | 'PATCH', url: string, payload?: unknown) =>
   app.inject({ method, url, headers: auth(who), payload: payload as object | undefined })
 
-const drain = () => (app.deps.jobs as InlineJobQueue).drain()
+const drain = async () => {
+  if (app.deps.jobs instanceof InlineJobQueue) await app.deps.jobs.drain()
+}
 
 async function meOf(w: Who): Promise<Me> {
   const [p] = await app.deps.db.select().from(people).where(eq(people.id, w.id))
@@ -63,6 +65,31 @@ function topicEmbedder() {
 async function gatewayWith(embed: MockEmbeddingModelV4): Promise<AiGateway> {
   const models = mockModels({ embed, ids: { draft: 'anthropic:claude-opus-5-5', fast: 'anthropic:claude-haiku-5-5', embed: 'openai:mock-embed' } })
   return new AiGateway({ db: await testDb(), bus: new LiveBus(), models })
+}
+
+/** Uploads a UTF-8 .txt as `dev`; returns the attachment id. */
+async function uploadTxt(a: FastifyInstance, projectId: string, name: string, text: string): Promise<string> {
+  const b = '----yodaTestBoundary'
+  const payload = Buffer.concat([
+    Buffer.from(`--${b}\r\nContent-Disposition: form-data; name="file"; filename="${name}"\r\nContent-Type: text/plain\r\n\r\n`),
+    Buffer.from(text, 'utf8'),
+    Buffer.from(`\r\n--${b}--\r\n`),
+  ])
+  const up = await a.inject({
+    method: 'POST',
+    url: `/projects/${projectId}/attachments`,
+    headers: { ...auth(dev), 'content-type': `multipart/form-data; boundary=${b}` },
+    payload,
+  })
+  expect(up.statusCode).toBe(201)
+  return (up.json() as { id: string }).id
+}
+
+async function removeStored(attIds: string[]): Promise<void> {
+  for (const id of attIds) {
+    const [row] = await app.deps.db.select().from(attachments).where(eq(attachments.id, id))
+    if (row) await app.deps.storage.remove(row.storageKey).catch(() => {})
+  }
 }
 
 async function setup(overrides: Partial<AppDeps> = {}) {
@@ -290,20 +317,7 @@ describe('knowledge API', () => {
   it('a .txt upload creates a confirmed document entry; PATCH noAi propagates to it', async () => {
     await setup()
     const p = await newProject()
-    const b = '----yodaTestBoundary'
-    const payload = Buffer.concat([
-      Buffer.from(`--${b}\r\nContent-Disposition: form-data; name="file"; filename="ผลแล็บ.txt"\r\nContent-Type: text/plain\r\n\r\n`),
-      Buffer.from('ผลแล็บของผู้ป่วยนอก ปกติ', 'utf8'),
-      Buffer.from(`\r\n--${b}--\r\n`),
-    ])
-    const up = await app.inject({
-      method: 'POST',
-      url: `/projects/${p}/attachments`,
-      headers: { ...auth(dev), 'content-type': `multipart/form-data; boundary=${b}` },
-      payload,
-    })
-    expect(up.statusCode).toBe(201)
-    const attId = (up.json() as { id: string }).id
+    const attId = await uploadTxt(app, p, 'ผลแล็บ.txt', 'ผลแล็บของผู้ป่วยนอก ปกติ')
     try {
       const [entry] = await app.deps.db.select().from(knowledgeEntries).where(eq(knowledgeEntries.attachmentId, attId))
       expect(entry).toMatchObject({
@@ -321,8 +335,97 @@ describe('knowledge API', () => {
         .where(and(eq(knowledgeEntries.attachmentId, attId), isNull(knowledgeEntries.supersededAt)))
       expect(after).toMatchObject({ id: entry!.id, noAi: true, version: 1 })
     } finally {
-      const [row] = await app.deps.db.select().from(attachments).where(eq(attachments.id, attId))
-      if (row) await app.deps.storage.remove(row.storageKey).catch(() => {})
+      await removeStored([attId])
+    }
+  })
+
+  it("clearing an attachment's noAi never clears the entry's noAi; embeddings follow the effective flag", async () => {
+    const embedded: string[] = []
+    await setup({
+      ai: await gatewayWith(new MockEmbeddingModelV4({
+        modelId: 'mock-embed',
+        doEmbed: async ({ values }) => {
+          embedded.push(...values)
+          return { embeddings: values.map(() => Array.from({ length: 1024 }, () => 0.1)), usage: { tokens: 1 }, warnings: [] }
+        },
+      })),
+    })
+    const p = await newProject()
+    const own = await uploadTxt(app, p, 'ลับเฉพาะ.txt', 'รายชื่อผู้ป่วยลับเฉพาะ')
+    const plain = await uploadTxt(app, p, 'ทั่วไป.txt', 'คู่มือทั่วไปเปิดเผยได้')
+    try {
+      await drain()
+      const current = async (attId: string) => {
+        const [e] = await app.deps.db
+          .select()
+          .from(knowledgeEntries)
+          .where(and(eq(knowledgeEntries.attachmentId, attId), isNull(knowledgeEntries.supersededAt)))
+        const chunks = await app.deps.db.select().from(knowledgeChunks).where(eq(knowledgeChunks.entryId, e!.id))
+        return { entry: e!, chunks }
+      }
+      // The entry itself is marked noAi (new version).
+      const before = await current(own)
+      expect((await call(dev, 'PATCH', `/knowledge/${before.entry.id}`, { noAi: true })).statusCode).toBe(200)
+      await drain()
+
+      for (const flag of [true, false]) {
+        for (const att of [own, plain]) expect((await call(dev, 'PATCH', `/attachments/${att}`, { noAi: flag })).statusCode).toBe(200)
+        await drain()
+      }
+
+      const o = await current(own)
+      expect(o.entry).toMatchObject({ noAi: true, version: 2 })
+      expect(o.chunks.length).toBeGreaterThan(0)
+      expect(o.chunks.every((c) => c.embedding === null)).toBe(true)
+      // Setting the attachment flag copied `true` onto the plain entry; clearing it left that in place
+      // (safe default). A person clears the entry flag explicitly, and then it is embedded again.
+      const pl = await current(plain)
+      expect(pl.entry.noAi).toBe(true)
+      expect(pl.chunks.every((c) => c.embedding === null)).toBe(true)
+      expect((await call(dev, 'PATCH', `/knowledge/${pl.entry.id}`, { noAi: false })).statusCode).toBe(200)
+      await drain()
+      const pl2 = await current(plain)
+      expect(pl2.entry.noAi).toBe(false)
+      expect(pl2.chunks.length).toBeGreaterThan(0)
+      expect(pl2.chunks.every((c) => c.embedding !== null)).toBe(true)
+
+      const me = await meOf(dev)
+      const forAi = await searchKnowledge(app.deps.db, me, { query: 'ลับเฉพาะ', projectId: p, forAi: true })
+      expect(forAi).toEqual([])
+      const people = await searchKnowledge(app.deps.db, me, { query: 'ลับเฉพาะ', projectId: p })
+      expect(people.map((h) => h.id)).toEqual([o.entry.id])
+      // Only the first, pre-flag version's text was ever embedded.
+      expect(embedded.filter((t) => t.includes('ลับเฉพาะ'))).toHaveLength(1)
+    } finally {
+      await removeStored([own, plain])
+    }
+  })
+
+  it('two apps in one file keep their own deps for the upload hook', async () => {
+    const sentA: string[] = []
+    const sentB: string[] = []
+    const spy = (log: string[]) => ({
+      send: async (name: JobName, d: { id: string }) => void log.push(`${name}:${d.id}`),
+      work: async () => {},
+      stop: async () => {},
+    })
+    const appA = await makeApp({ jobs: spy(sentA) })
+    app = await makeApp({ jobs: spy(sentB) })
+    try {
+      admin = await login(app, 'boss')
+      pm = await login(app, 'pm1', { staff: true })
+      dev = await login(app, 'dev1', { staff: true })
+      const p = await newProject()
+      const attId = await uploadTxt(appA, p, 'a.txt', 'ข้อความ')
+      try {
+        const [e] = await app.deps.db.select().from(knowledgeEntries).where(eq(knowledgeEntries.attachmentId, attId))
+        expect(sentA).toEqual([`embed-entry:${e!.id}`])
+        expect(sentB).toEqual([])
+      } finally {
+        await removeStored([attId])
+      }
+    } finally {
+      await appA.close()
     }
   })
 })
