@@ -29,6 +29,7 @@ export async function upsertPersonFromClaims(
   const username = claims.preferred_username
   const displayName = claims.name?.trim() || username
   const email = claims.email?.trim() || null
+  const groupStaff = (claims.groups ?? []).includes(config.staffGroup)
   const [row] = await db
     .insert(people)
     .values({
@@ -37,10 +38,18 @@ export async function upsertPersonFromClaims(
       displayName,
       email,
       isAdmin: config.bootstrapAdmins.includes(username),
+      lastSeenStaff: groupStaff,
     })
     .onConflictDoUpdate({
       target: people.keycloakSub,
-      set: { username, displayName, email, lastSeenAt: sql`now()` },
+      set: {
+        username,
+        displayName,
+        email,
+        lastSeenAt: sql`now()`,
+        // Informational only (shown to other staff); authorization recomputes per request.
+        lastSeenStaff: sql`coalesce(${people.staffOverride}, ${groupStaff})`,
+      },
     })
     .returning()
   if (!row) throw new Error('person upsert returned no row')

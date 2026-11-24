@@ -9,6 +9,7 @@ export const people = pgTable('people', {
   email: text('email'),
   isAdmin: boolean('is_admin').notNull().default(false),
   staffOverride: boolean('staff_override'),
+  lastSeenStaff: boolean('last_seen_staff').notNull().default(false),
   skills: text('skills').array().notNull().default(sql`'{}'::text[]`),
   createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
   lastSeenAt: timestamp('last_seen_at', { withTimezone: true }).defaultNow(),
