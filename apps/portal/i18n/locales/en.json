@@ -64,6 +64,7 @@
     "confirmations": "Waiting for your confirmation",
     "empty": "Nothing to do right now",
     "needsAssignee": "Needs an assignee",
+    "waitingForAi": "Waiting for AI — assign to a person",
     "confirm": "Confirm",
     "project": "Project",
     "workItem": "Work item",

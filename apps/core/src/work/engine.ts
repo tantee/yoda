@@ -154,13 +154,14 @@ export async function progressWorkItem(ctx: WorkCtx, workItemId: string): Promis
     for (const t of step.tasks) {
       if (satisfied(t.key) || active.has(t.key) || !t.dependsOn.every(satisfied)) continue
       const prev = latest.get(t.key)
+      const prevText = prev?.state === 'rejected' ? (prev.result as { text?: string } | null)?.text : undefined
       await createTaskAttempt(ctx, {
         workItemId,
         projectId: item.projectId,
         stepKey: step.key,
         task: t,
         attempt: (prev?.attempt ?? 0) + 1,
-        feedback: null,
+        feedback: prevText && prevText.trim() ? prevText : null,
         assigneeHint: prev?.assigneeId ?? null,
         executor: t.type === 'ai' ? 'ai' : 'human',
       })

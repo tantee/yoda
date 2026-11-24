@@ -211,6 +211,19 @@ describe('workflow engine', () => {
     expect((await item(wi)).currentStepKey).toBe('qc')
   })
 
+  it('request changes on an approval keeps the comment as feedback on the next attempt', async () => {
+    const s = await setup(db)
+    const wi = await create(s)
+    const t = (await latest(wi, 'accept-bug'))!
+    await submit(s.pm, t.id, { decision: 'changes', text: 'ข้อมูลไม่ครบ' })
+    expect(await latest(wi, 'accept-bug')).toMatchObject({
+      attempt: 2,
+      state: 'open',
+      assigneeId: s.pm.id,
+      feedback: 'ข้อมูลไม่ครบ',
+    })
+  })
+
   it('validates submissions', async () => {
     const s = await setup(db)
     const wi = await create(s)
