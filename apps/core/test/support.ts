@@ -1,10 +1,10 @@
 import type { FastifyInstance } from 'fastify'
-import { buildApp } from '../src/app.js'
+import { buildApp, type AppDeps } from '../src/app.js'
 import { signToken } from './jwt.js'
 import { testDeps } from './helpers.js'
 
-export async function makeApp(): Promise<FastifyInstance> {
-  const deps = await testDeps()
+export async function makeApp(overrides: Partial<AppDeps> = {}): Promise<FastifyInstance> {
+  const deps = await testDeps(overrides)
   return buildApp({ ...deps, config: { ...deps.config, bootstrapAdmins: ['boss'] } })
 }
 

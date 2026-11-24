@@ -6,6 +6,8 @@ import { createS3Storage } from './storage/s3.js'
 import { AiGateway } from './ai/gateway.js'
 import { buildModels } from './ai/models.js'
 import { LiveBus } from './live/bus.js'
+import { registerJobHandlers } from './jobs/handlers.js'
+import { createPgBossQueue } from './jobs/queue.js'
 import { seedTemplates } from './workflow/seed.js'
 
 const config = loadConfig(process.env)
@@ -17,7 +19,9 @@ const jwks = createRemoteJWKSet(
 const storage = await createS3Storage(config)
 const bus = new LiveBus()
 const ai = new AiGateway({ db, bus, models: buildModels(config) })
-const app = await buildApp({ config, db, jwks, bus, storage, ai })
+const jobs = await createPgBossQueue(config.databaseUrl, config.aiWorkers)
+const app = await buildApp({ config, db, jwks, bus, storage, ai, jobs })
+await registerJobHandlers(app.deps)
 
 let stopping = false
 async function shutdown(signal: string) {
@@ -26,6 +30,7 @@ async function shutdown(signal: string) {
   app.log.info({ signal }, 'shutting down')
   try {
     await app.close()
+    await jobs.stop()
     await (db as unknown as { $client: { end(): Promise<void> } }).$client.end()
     process.exit(0)
   } catch (err) {
