@@ -75,6 +75,7 @@ export async function testDeps(overrides: Partial<AppDeps> = {}): Promise<AppDep
       s3AccessKey: process.env.S3_ACCESS_KEY ?? 'yoda', // DEV ONLY (docker-compose MinIO)
       s3SecretKey: process.env.S3_SECRET_KEY ?? 'yoda-dev-minio', // DEV ONLY
       aiWorkers: 2,
+      dailyTaskCap: 8,
   }
   const db = await testDb()
   const bus = new LiveBus()

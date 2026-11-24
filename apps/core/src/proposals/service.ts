@@ -11,6 +11,7 @@ import { and, desc, eq, inArray, isNull, or, sql, type SQL } from 'drizzle-orm'
 import { commentRequired, forbidden, HttpError, invalidState, notFound, projectRequired } from '../auth/plugin.js'
 import type { Db, Tx } from '../db/client.js'
 import { people, projectMembers, projects, proposals, workItems } from '../db/schema.js'
+import { notifyProposalPending } from '../notifications/service.js'
 import { lockProject } from '../projects/access.js'
 import { recordEvent, type WorkCtx } from '../work/context.js'
 import {
@@ -67,12 +68,15 @@ export async function createProposal(ctx: WorkCtx, input: ProposalCreate): Promi
       payload: { proposalId: id, kind: input.kind },
     })
   }
-  await notifyProposalPending(ctx, id)
+  await notifyProposalPending(ctx, {
+    id,
+    projectId,
+    kind: input.kind,
+    summary: input.summary,
+    onBehalfOf: input.onBehalfOf,
+  })
   return id
 }
-
-/** Task 6 hook: notify the deciders (the project's PMs) of a new pending proposal. No-op until then. */
-async function notifyProposalPending(_ctx: WorkCtx, _proposalId: string): Promise<void> {}
 
 /** Marks the work item's pending proposals (of `kind`, or all) superseded (caller holds the work item lock). */
 export async function supersedePending(ctx: WorkCtx, workItemId: string, kind?: ProposalKind): Promise<void> {

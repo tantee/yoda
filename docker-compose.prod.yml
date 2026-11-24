@@ -32,6 +32,7 @@ services:
       AI_MODEL_FAST: ${AI_MODEL_FAST:-anthropic:claude-haiku-5-5}
       AI_EMBEDDING_MODEL: ${AI_EMBEDDING_MODEL:-}
       AI_WORKERS: ${AI_WORKERS:-2}
+      DAILY_TASK_CAP: ${DAILY_TASK_CAP:-8}
     restart: unless-stopped
 
   # Replaces the dev root credentials: core signs in with the same S3_ACCESS_KEY / S3_SECRET_KEY.

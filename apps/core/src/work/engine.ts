@@ -27,6 +27,11 @@ import { lockProject } from '../projects/access.js'
 import { latestTemplate, templateById } from '../workflow/seed.js'
 import { recordEvent, type WorkCtx } from './context.js'
 import { createTaskAttempt } from './tasks.js'
+import {
+  notifyChangesRequested,
+  notifyRequestEnded,
+  notifyTaskAssigned,
+} from '../notifications/service.js'
 
 const ACTIVE_STATES: readonly TaskState[] = ACTIVE_TASK_STATES
 const isActive = (state: string) => (ACTIVE_STATES as readonly string[]).includes(state)
@@ -185,6 +190,7 @@ async function advanceStep(ctx: WorkCtx, item: WorkItemRow, status: StepStatus):
       .set({ state: 'done', currentStepKey: null, updatedAt: sql`now()` })
       .where(eq(workItems.id, item.id))
     await recordEvent(ctx, { type: 'work_item.done', ...base })
+    await notifyRequestEnded(ctx, item, 'done')
     return
   }
   await tx.update(workItems).set({ currentStepKey: next.key, updatedAt: sql`now()` }).where(eq(workItems.id, item.id))
@@ -329,6 +335,9 @@ export async function submitTask(ctx: WorkCtx, me: Me, taskId: string, result: T
     const comment = result.text
     await tx.update(tasks).set({ state: 'rejected', result, updatedAt: sql`now()` }).where(eq(tasks.id, taskId))
     await recordEvent(ctx, { type: 'task.rejected', ...base, reason: comment })
+    if (task.role === 'REQUESTER') {
+      await notifyChangesRequested(ctx, { projectId: task.projectId, workItemId: task.workItemId, taskId, comment })
+    }
 
     const def = await definitionOf(tx, item)
     const step = def.steps.find((s) => s.key === task.stepKey)
@@ -491,11 +500,12 @@ export async function assignTask(ctx: WorkCtx, me: Me, taskId: string, personId:
     taskId,
     payload: takeover ? { assigneeId: personId, takeover: true } : { assigneeId: personId },
   })
+  await notifyManualAssignment(ctx, item, task, personId)
 }
 
 export async function confirmTask(ctx: WorkCtx, me: Me, taskId: string): Promise<void> {
   const { tx } = ctx
-  const { task } = await lockTask(tx, taskId)
+  const { item, task } = await lockTask(tx, taskId)
   if (!(await isPmOrAdmin(tx, me, task.projectId))) throw forbidden()
   if (task.state !== 'proposed' || !task.proposedAssigneeId) throw invalidState()
   const assigneeId = task.proposedAssigneeId
@@ -510,6 +520,21 @@ export async function confirmTask(ctx: WorkCtx, me: Me, taskId: string): Promise
     workItemId: task.workItemId,
     taskId,
     payload: { assigneeId },
+  })
+  await notifyManualAssignment(ctx, item, task, assigneeId)
+}
+
+/** A PM's own decision to give a task to `personId`: they are told, unless they did it to themselves. */
+async function notifyManualAssignment(ctx: WorkCtx, item: WorkItemRow, task: TaskRow, personId: string): Promise<void> {
+  if (personId === ctx.actorId) return
+  const def = await definitionOf(ctx.tx, item)
+  const taskTitle = def.steps.flatMap((s) => s.tasks).find((t) => t.key === task.templateTaskKey)?.title.th ?? ''
+  await notifyTaskAssigned(ctx, {
+    taskId: task.id,
+    workItemId: task.workItemId,
+    role: task.role,
+    personId,
+    taskTitle,
   })
 }
 
@@ -591,6 +616,7 @@ export async function cancelWorkItem(ctx: WorkCtx, me: Me, workItemId: string): 
   }
   await tx.update(workItems).set({ state: 'cancelled', updatedAt: sql`now()` }).where(eq(workItems.id, workItemId))
   await recordEvent(ctx, { type: 'work_item.cancelled', projectId: item.projectId, workItemId, taskId: null })
+  await notifyRequestEnded(ctx, item, 'cancelled')
   // Nothing left to decide for a cancelled item (work item lock held, so proposals are locked after it).
   await supersedePending(ctx, workItemId)
 }

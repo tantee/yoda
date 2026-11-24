@@ -207,6 +207,8 @@ export const EventType = z.enum([
   'proposal.created', 'proposal.accepted', 'proposal.rejected', 'proposal.superseded', 'work_item.priority_changed',
   /** Live-only (never stored in `events`): a message was posted in `conversationId`. */
   'message.created',
+  /** Live-only (never stored in `events`): a notification was created for `personId`. */
+  'notification.created',
 ])
 export type EventType = z.infer<typeof EventType>
 

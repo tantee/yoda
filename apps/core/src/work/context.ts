@@ -12,11 +12,20 @@ export type WorkCtx = {
   emitted: LiveEvent[]
   /** Jobs to send once the transaction has committed. */
   jobs: { name: JobName; id: string }[]
+  /** Daily cap on automatic task assignments per person (config `dailyTaskCap`). */
+  dailyTaskCap: number
 }
 
 export type Actor = { id: string | null; kind: ActorKind }
 
-export type WorkDeps = { db: Db; bus: LiveBus; jobs: Pick<JobQueue, 'send'> }
+export const DEFAULT_DAILY_TASK_CAP = 8
+
+export type WorkDeps = {
+  db: Db
+  bus: LiveBus
+  jobs: Pick<JobQueue, 'send'>
+  config?: { dailyTaskCap: number }
+}
 
 export async function runWork<T>(
   deps: WorkDeps,
@@ -25,7 +34,15 @@ export async function runWork<T>(
 ): Promise<T> {
   const emitted: LiveEvent[] = []
   const jobs: WorkCtx['jobs'] = []
-  const result = await deps.db.transaction((tx) => fn({ tx, actorId: actor.id, actorKind: actor.kind, emitted, jobs }))
+  const result = await deps.db.transaction((tx) => fn({
+      tx,
+      actorId: actor.id,
+      actorKind: actor.kind,
+      emitted,
+      jobs,
+      dailyTaskCap: deps.config?.dailyTaskCap ?? DEFAULT_DAILY_TASK_CAP,
+    }),
+  )
   for (const e of emitted) deps.bus.publish(e)
   for (const j of jobs) {
     // Committed work stays committed: a queue outage loses the job (it is logged), not the request.
