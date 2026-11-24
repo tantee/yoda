@@ -21,7 +21,7 @@ export function testDb(): Promise<Db> {
 }
 
 export async function resetDb(db: Db): Promise<void> {
-  await db.execute(sql`TRUNCATE people, projects, project_members, events, tasks, work_items, workflow_templates CASCADE`)
+  await db.execute(sql`TRUNCATE ai_calls, knowledge_chunks, knowledge_entries, attachments, people, projects, project_members, events, tasks, work_items, workflow_templates CASCADE`)
   await seedTemplates(db)
 }
 

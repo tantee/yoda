@@ -206,7 +206,7 @@ export async function getWorkItemDetail(db: Conn, me: Me, id: string): Promise<W
       EventEntry.parse({
         id: e.id,
         type: e.type,
-        actorKind: e.actorId ? 'person' : 'system', // plan 3 task 2 stores the real kind
+        actorKind: e.actorKind,
         actorId: e.actorId,
         actorName: actorName ?? null,
         taskId: e.taskId,
