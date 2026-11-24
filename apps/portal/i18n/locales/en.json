@@ -1,5 +1,8 @@
 {
-  "app": { "title": "AI Work Portal", "logout": "Log out" },
+  "app": {
+    "title": "AI Work Portal",
+    "logout": "Log out"
+  },
   "common": {
     "comingSoon": "Coming soon",
     "save": "Save",
@@ -14,7 +17,9 @@
     "projects": "Projects",
     "requests": "My requests",
     "answers": "Things to answer",
-    "admin": { "people": "People admin" }
+    "admin": {
+      "people": "People admin"
+    }
   },
   "projects": {
     "title": "Projects",
@@ -39,5 +44,10 @@
     "overrideRequester": "Force requester",
     "admin": "Admin",
     "lastAdmin": "There must be at least one admin"
+  },
+  "errors": {
+    "forbidden": "You do not have access to this page",
+    "notFound": "The requested item was not found",
+    "generic": "Cannot reach the server. Please try again later."
   }
 }

@@ -5,12 +5,19 @@ const { t } = useI18n()
 const { me } = useMe()
 const api = useApi()
 const projects = ref<Project[]>([])
+const loaded = ref(false)
 const error = ref('')
 const dialog = ref(false)
 const form = reactive({ name: '', description: '' })
 
 async function load() {
-  projects.value = await api<Project[]>('/projects')
+  try {
+    projects.value = await api<Project[]>('/projects')
+    loaded.value = true
+    error.value = ''
+  } catch (e) {
+    error.value = t(errorKey(e))
+  }
 }
 
 async function create() {
@@ -37,8 +44,8 @@ onMounted(load)
       <v-btn v-if="me?.isAdmin" color="primary" prepend-icon="mdi-plus" @click="dialog = true">{{ t('projects.create') }}</v-btn>
     </div>
     <v-alert v-if="error" type="error" class="mb-4">{{ error }}</v-alert>
-    <p v-if="!projects.length" class="text-medium-emphasis">{{ t('projects.empty') }}</p>
-    <v-list v-else border>
+    <p v-if="loaded && !projects.length" class="text-medium-emphasis">{{ t('projects.empty') }}</p>
+    <v-list v-else-if="loaded" border>
       <v-list-item
         v-for="p in projects"
         :key="p.id"
