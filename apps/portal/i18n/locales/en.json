@@ -156,6 +156,11 @@
       "started": "Task started",
       "accepted": "Task accepted",
       "rejected": "Task rejected"
+    },
+    "reason": {
+      "work_item_cancelled": "Work item cancelled",
+      "member_removed": "Member removed from project",
+      "no_candidate": "No eligible person found"
     }
   }
 }
