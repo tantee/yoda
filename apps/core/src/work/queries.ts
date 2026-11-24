@@ -234,6 +234,8 @@ function toWorkItem(r: WorkItemJoined): WorkItem {
     priority: w.priority,
     ownerId: w.ownerId,
     ownerName: r.ownerName,
+    requesterId: null,
+    requesterName: null,
     state: w.state,
     createdAt: w.createdAt.toISOString(),
     updatedAt: w.updatedAt.toISOString(),
@@ -353,7 +355,7 @@ export async function getTodo(db: Conn, me: Me): Promise<Todo> {
     ),
     order,
   )
-  return Todo.parse({ tasks: mine, confirmations })
+  return Todo.parse({ tasks: mine, confirmations, proposals: [] })
 }
 
 /** Latest version of every template, sorted by key. */

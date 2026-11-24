@@ -29,7 +29,8 @@ export async function createTaskAttempt(
     if (input.assigneeHint && (await isMember(tx, input.projectId, input.assigneeHint))) {
       assigneeId = input.assigneeHint
     } else {
-      const candidate = await pickAssignee(tx, input.projectId, input.task.role)
+      // REQUESTER tasks are assigned to the requester in plan 4 task 2; no staff candidate until then.
+      const candidate = input.task.role === 'REQUESTER' ? null : await pickAssignee(tx, input.projectId, input.task.role)
       if (!candidate) {
         noCandidate = true
       } else {

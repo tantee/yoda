@@ -61,5 +61,12 @@ export async function recordEvent(
     reason: e.reason ?? null,
     payload: e.payload ?? {},
   })
-  ctx.emitted.push({ type: e.type, projectId: e.projectId, workItemId: e.workItemId, taskId: e.taskId })
+  ctx.emitted.push({
+    type: e.type,
+    projectId: e.projectId,
+    workItemId: e.workItemId,
+    taskId: e.taskId,
+    conversationId: null,
+    personId: null,
+  })
 }
