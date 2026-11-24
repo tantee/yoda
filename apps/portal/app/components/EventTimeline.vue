@@ -2,7 +2,7 @@
 import type { EventEntry } from '@yoda/shared'
 
 defineProps<{ events: EventEntry[] }>()
-const { t, locale } = useI18n()
+const { t, te, locale } = useI18n()
 const fmt = (s: string) => new Date(s).toLocaleString(locale.value === 'en' ? 'en-GB' : 'th-TH')
 </script>
 
@@ -13,7 +13,7 @@ const fmt = (s: string) => new Date(s).toLocaleString(locale.value === 'en' ? 'e
       <div class="text-caption text-medium-emphasis">
         {{ ev.actorName ?? t('events.system') }} · {{ fmt(ev.createdAt) }}
       </div>
-      <div v-if="ev.reason" class="text-body-2" style="white-space: pre-wrap">{{ ev.reason }}</div>
+      <div v-if="ev.reason" class="text-body-2" style="white-space: pre-wrap">{{ te(`events.reason.${ev.reason}`) ? t(`events.reason.${ev.reason}`) : ev.reason }}</div>
     </v-timeline-item>
   </v-timeline>
 </template>

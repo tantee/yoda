@@ -71,25 +71,29 @@ onBeforeUnmount(() => {
   if (timer) clearTimeout(timer)
 })
 
-async function act(fn: () => Promise<unknown>) {
+async function act(fn: () => Promise<unknown>): Promise<boolean> {
   error.value = ''
   busy.value = true
+  let ok = false
   try {
     await fn()
     seq++ // drop any in-flight older load
+    ok = true
   } catch (e) {
     error.value = t(errorKey(e))
   } finally {
     busy.value = false
   }
   await load()
+  return ok
 }
 
 const confirmTask = (taskId: string) => act(() => api(`/tasks/${taskId}/confirm`, { method: 'POST' }))
 async function assign(taskId: string) {
   if (!assignee.value) return
   const personId = assignee.value
-  await act(() => api(`/tasks/${taskId}/assign`, { method: 'POST', body: { personId } }))
+  const ok = await act(() => api(`/tasks/${taskId}/assign`, { method: 'POST', body: { personId } }))
+  if (!ok) return // keep the picker open so the user can retry
   assigningId.value = null
   assignee.value = null
 }
