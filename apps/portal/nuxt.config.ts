@@ -6,10 +6,9 @@ export default defineNuxtConfig({
   css: ['@mdi/font/css/materialdesignicons.css', 'vuetify/styles'],
   build: { transpile: ['vuetify'] },
   devServer: { port: Number(process.env.PORTAL_PORT ?? 3000) },
-  routeRules: {
-    '/api/**': { proxy: (process.env.CORE_URL ?? 'http://localhost:4000') + '/**' },
-  },
   runtimeConfig: {
+    // Server-only; override at runtime with NUXT_CORE_URL (used by server/routes/api proxy).
+    coreUrl: process.env.CORE_URL ?? 'http://localhost:4000',
     public: {
       keycloakUrl: 'http://localhost:8080',
       keycloakRealm: 'yoda',

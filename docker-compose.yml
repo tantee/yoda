@@ -4,7 +4,7 @@ services:
   postgres:
     image: pgvector/pgvector:pg17
     ports:
-      - '${POSTGRES_PORT:-5432}:5432'
+      - '127.0.0.1:${POSTGRES_PORT:-5432}:5432'
     environment:
       POSTGRES_USER: yoda          # DEV ONLY
       POSTGRES_PASSWORD: yoda      # DEV ONLY
@@ -22,8 +22,8 @@ services:
     image: minio/minio
     command: server /data --console-address :9001
     ports:
-      - '${MINIO_PORT:-9000}:9000'
-      - '${MINIO_CONSOLE_PORT:-9001}:9001'
+      - '127.0.0.1:${MINIO_PORT:-9000}:9000'
+      - '127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001'
     environment:
       MINIO_ROOT_USER: yoda          # DEV ONLY
       MINIO_ROOT_PASSWORD: yoda-dev-minio   # DEV ONLY
@@ -34,7 +34,7 @@ services:
     image: quay.io/keycloak/keycloak:26.0
     command: start-dev --import-realm
     ports:
-      - '${KEYCLOAK_PORT:-8080}:8080'
+      - '127.0.0.1:${KEYCLOAK_PORT:-8080}:8080'
     environment:
       KEYCLOAK_ADMIN: admin          # DEV ONLY
       KEYCLOAK_ADMIN_PASSWORD: admin # DEV ONLY

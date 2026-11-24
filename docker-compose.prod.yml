@@ -1,0 +1,37 @@
+# Overlay: docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
+# All values come from the environment (CI variables / server env / local .env). No secrets here.
+services:
+  core:
+    build:
+      context: .
+      dockerfile: apps/core/Dockerfile
+    image: yoda-core
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - '${CORE_PORT:-4000}:4000'
+    environment:
+      PORT: 4000
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      OIDC_ISSUER: ${OIDC_ISSUER:?OIDC_ISSUER is required}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-yoda-portal}
+      STAFF_GROUP: ${STAFF_GROUP:-/it-dev}
+      BOOTSTRAP_ADMINS: ${BOOTSTRAP_ADMINS:-}
+    restart: unless-stopped
+
+  portal:
+    build:
+      context: .
+      dockerfile: apps/portal/Dockerfile
+    image: yoda-portal
+    depends_on:
+      - core
+    ports:
+      - '${PORTAL_PORT:-3000}:3000'
+    environment:
+      NUXT_CORE_URL: http://core:4000
+      NUXT_PUBLIC_KEYCLOAK_URL: ${NUXT_PUBLIC_KEYCLOAK_URL:?NUXT_PUBLIC_KEYCLOAK_URL is required}
+      NUXT_PUBLIC_KEYCLOAK_REALM: ${NUXT_PUBLIC_KEYCLOAK_REALM:-yoda}
+      NUXT_PUBLIC_KEYCLOAK_CLIENT_ID: ${NUXT_PUBLIC_KEYCLOAK_CLIENT_ID:-yoda-portal}
+    restart: unless-stopped
