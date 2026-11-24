@@ -1,26 +1,13 @@
-import type { Attachment } from '@yoda/shared'
+import { MAX_UPLOAD_BYTES, UPLOAD_ALLOWED_TYPES, type Attachment } from '@yoda/shared'
 import { and, asc, desc, eq, inArray, type SQL } from 'drizzle-orm'
 import type { Db, Tx } from '../db/client.js'
 import { attachments, people } from '../db/schema.js'
 
 export type AttachmentRow = typeof attachments.$inferSelect
 
-export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+export { MAX_UPLOAD_BYTES }
 
-export const ALLOWED_TYPES = new Set([
-  'text/plain',
-  'text/markdown',
-  'text/csv',
-  'application/json',
-  'application/pdf',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-  'image/png',
-  'image/jpeg',
-  'image/gif',
-  'image/webp',
-])
+export const ALLOWED_TYPES: ReadonlySet<string> = new Set(UPLOAD_ALLOWED_TYPES)
 
 /** Called after the attachment row is committed; wired per app in buildApp (default: knowledge entry). */
 export type AttachmentStoredHook = (attachment: AttachmentRow, extractedText: string | null) => Promise<void>

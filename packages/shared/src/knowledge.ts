@@ -121,3 +121,20 @@ export const ContextPack = z.object({
   related: z.array(PackEntry),
 })
 export type ContextPack = z.infer<typeof ContextPack>
+
+/** Upload limits shared by core (enforced) and portal (pre-checked). */
+export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+export const UPLOAD_ALLOWED_TYPES: readonly string[] = [
+  'text/plain',
+  'text/markdown',
+  'text/csv',
+  'application/json',
+  'application/pdf',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+]
