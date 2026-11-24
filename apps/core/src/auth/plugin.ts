@@ -67,6 +67,7 @@ async function verifyRequest(request: FastifyRequest, deps: AppDeps): Promise<To
  */
 export function registerAuth(app: FastifyInstance): void {
   app.decorateRequest('me', null as unknown as Me)
+  app.decorateRequest('tokenExp', 0)
 
   app.addHook('onRequest', async (request) => {
     if (request.routeOptions.config?.public === true) return
@@ -74,6 +75,7 @@ export function registerAuth(app: FastifyInstance): void {
     const claims = await verifyRequest(request, deps)
     if (!claims) throw unauthorized()
     const person = await upsertPersonFromClaims(deps.db, claims, deps.config)
+    request.tokenExp = claims.exp * 1000
     request.me = {
       id: person.id,
       username: person.username,
@@ -100,6 +102,8 @@ export function requireAdmin(request: FastifyRequest): void {
 declare module 'fastify' {
   interface FastifyRequest {
     me: Me
+    /** Access-token expiry, epoch ms. */
+    tokenExp: number
   }
   interface FastifyContextConfig {
     public?: boolean
