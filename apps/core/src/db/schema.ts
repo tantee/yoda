@@ -418,3 +418,16 @@ export const aiCalls = pgTable(
   },
   (t) => [index('ai_calls_project_created_idx').on(t.projectId, t.createdAt)],
 )
+
+/** Department-wide settings: a single row (id 1), seeded by its migration. */
+export const departmentSettings = pgTable(
+  'department_settings',
+  {
+    id: integer('id').primaryKey().default(1),
+    /** Monthly budget for project-less AI calls (null = no limit). */
+    aiBudgetUsd: numeric('ai_budget_usd', { precision: 12, scale: 2 }),
+    updatedBy: uuid('updated_by').references(() => people.id, { onDelete: 'set null' }),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [check('department_settings_single_row', sql`${t.id} = 1`)],
+)

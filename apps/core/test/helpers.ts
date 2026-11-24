@@ -29,7 +29,9 @@ export function testDb(): Promise<Db> {
 }
 
 export async function resetDb(db: Db): Promise<void> {
-  await db.execute(sql`TRUNCATE notifications, proposals, conversation_reads, messages, conversations, ai_calls, knowledge_chunks, knowledge_entries, attachments, people, projects, project_members, events, tasks, work_items, workflow_templates CASCADE`)
+  await db.execute(sql`TRUNCATE department_settings, notifications, proposals, conversation_reads, messages, conversations, ai_calls, knowledge_chunks, knowledge_entries, attachments, people, projects, project_members, events, tasks, work_items, workflow_templates CASCADE`)
+  // The migration seeds the single department_settings row; TRUNCATE (cascading from people) removes it.
+  await db.execute(sql`INSERT INTO department_settings (id) VALUES (1) ON CONFLICT DO NOTHING`)
   await seedTemplates(db)
 }
 
