@@ -8,8 +8,8 @@ import {
   ALLOWED_TYPES,
   getAttachment,
   listAttachments,
-  runOnAttachmentStored,
   sanitizeFileName,
+  type AttachmentStoredHook,
 } from '../attachments/service.js'
 import { attachments, tasks, workItems } from '../db/schema.js'
 import { canManageProject } from '../projects/access.js'
@@ -22,7 +22,7 @@ const ListQuery = z.object({ workItemId: z.string().uuid().optional(), taskId: z
 const Patch = z.object({ noAi: z.boolean() })
 const OptionalUuid = z.string().uuid().optional()
 
-export function attachmentRoutes(app: FastifyInstance): void {
+export function attachmentRoutes(app: FastifyInstance, opts: { onStored: AttachmentStoredHook }): void {
   const db = () => app.deps.db
   const storage = () => app.deps.storage
 
@@ -105,7 +105,7 @@ export function attachmentRoutes(app: FastifyInstance): void {
       await storage().remove(storageKey).catch(() => {})
       throw err
     }
-    await runOnAttachmentStored(row, text)
+    await opts.onStored(row, text)
     return reply.status(201).send(await getAttachment(db(), row.id))
   })
 
