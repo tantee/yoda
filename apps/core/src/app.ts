@@ -34,6 +34,8 @@ import { statusRoutes } from './routes/status.js'
 import { mcpRoutes } from './routes/mcp.js'
 import { notificationChannelRoutes } from './routes/notification-channels.js'
 import { channelWebhookRoutes } from './routes/channel-webhooks.js'
+import { readiness } from './readiness.js'
+import { VERSION } from './version.js'
 
 export type AppDeps = {
   config: Config
@@ -102,7 +104,12 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     ...({ defParamCharset: 'utf8' } as object),
   })
 
-  app.get('/health', { config: { public: true } }, async () => ({ status: 'ok' }))
+  // Liveness: the process answers. Readiness: its database, storage and queue answer too (load balancers, compose).
+  app.get('/health', { config: { public: true } }, async () => ({ status: 'ok', version: VERSION }))
+  app.get('/ready', { config: { public: true } }, async (_req, reply) => {
+    const r = await readiness(app.deps)
+    return reply.status(r.ok ? 200 : 503).send({ status: r.ok ? 'ok' : 'unavailable', checks: r.checks })
+  })
   meRoutes(app)
   peopleRoutes(app)
   projectRoutes(app)

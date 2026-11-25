@@ -1,7 +1,8 @@
-import { createRemoteJWKSet } from 'jose'
 import { buildApp } from './app.js'
+import { remoteJwks } from './auth/jwks.js'
 import { loadConfig } from './config.js'
 import { createDb } from './db/client.js'
+import { runMigrations } from './db/migrations.js'
 import { createS3Storage } from './storage/s3.js'
 import { AiGateway } from './ai/gateway.js'
 import { buildModels } from './ai/models.js'
@@ -14,10 +15,14 @@ import { createMailTransport, emailConfigured } from './notifications/channels/e
 
 const config = loadConfig(process.env)
 const db = createDb(config.databaseUrl)
+// Dev and a plain `docker run` migrate here; production compose sets MIGRATE_ON_START=false and runs the
+// one-shot `migrate` service first, so only one container ever migrates.
+if (config.migrateOnStart) {
+  await runMigrations(db)
+  console.log('migrations applied')
+}
 await seedTemplates(db)
-const jwks = createRemoteJWKSet(
-  new URL(`${config.oidcIssuer}/protocol/openid-connect/certs`),
-)
+const jwks = remoteJwks(config)
 const storage = await createS3Storage(config)
 const bus = new LiveBus()
 const jobs = await createPgBossQueue(config.databaseUrl, config.aiWorkers)

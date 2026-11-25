@@ -15,4 +15,6 @@ COPY --from=build /out/ ./
 USER node
 EXPOSE 4000
 # Configuration (DATABASE_URL, OIDC_*, ...) comes from the environment at runtime.
-CMD ["sh", "-c", "node dist/migrate.js && node dist/server.js"]
+# The server migrates on start unless MIGRATE_ON_START=false; production compose runs `node dist/migrate.js`
+# once in its `migrate` service instead.
+CMD ["node", "dist/server.js"]

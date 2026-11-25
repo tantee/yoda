@@ -21,5 +21,6 @@ export function createMemoryStorage(): Storage {
     async remove(key) {
       objects.delete(key)
     },
+    async ping() {},
   }
 }

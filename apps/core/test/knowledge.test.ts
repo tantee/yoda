@@ -427,6 +427,7 @@ describe('knowledge API', () => {
       send: async (name: JobName, d: { id: string }) => void log.push(`${name}:${d.id}`),
       work: async () => {},
       stop: async () => {},
+      started: () => true,
     })
     const appA = await makeApp({ jobs: spy(sentA) })
     app = await makeApp({ jobs: spy(sentB) })

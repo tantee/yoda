@@ -70,6 +70,7 @@ export function testConfig(): AppDeps['config'] {
       databaseUrl: process.env.TEST_DATABASE_URL ?? DEFAULT_TEST_URL,
       oidcIssuer: TEST_ISSUER,
       oidcClientId: TEST_CLIENT_ID,
+      migrateOnStart: false,
       staffGroup: '/it-dev',
       bootstrapAdmins: [],
       aiModelDraft: 'anthropic:claude-opus-5-5',

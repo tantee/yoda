@@ -1,6 +1,20 @@
 # Overlay: docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
 # All values come from the environment (CI variables / server env / local .env). No secrets here.
 services:
+  # Runs the database migrations once, before core starts; the only container that migrates in production.
+  migrate:
+    build:
+      context: .
+      dockerfile: apps/core/Dockerfile
+    image: yoda-core
+    command: ['node', 'dist/migrate.js']
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+    restart: 'no'
+
   core:
     build:
       context: .
@@ -11,6 +25,8 @@ services:
         condition: service_healthy
       rustfs:
         condition: service_started
+      migrate:
+        condition: service_completed_successfully
     ports:
       - '${CORE_PORT:-4000}:4000'
     environment:
@@ -18,6 +34,10 @@ services:
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
       OIDC_ISSUER: ${OIDC_ISSUER:?OIDC_ISSUER is required}
       OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-yoda-portal}
+      # Optional: fetch signing keys from an internal address; tokens are still checked against OIDC_ISSUER.
+      OIDC_JWKS_URL: ${OIDC_JWKS_URL:-}
+      # The `migrate` service has already run; core never migrates in production.
+      MIGRATE_ON_START: 'false'
       STAFF_GROUP: ${STAFF_GROUP:-/it-dev}
       BOOTSTRAP_ADMINS: ${BOOTSTRAP_ADMINS:-}
       S3_ENDPOINT: http://rustfs:9000
@@ -50,6 +70,13 @@ services:
       TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:-}
       TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
       TELEGRAM_API_URL: ${TELEGRAM_API_URL:-https://api.telegram.org}
+    # Ready = database, storage and job queue all answer (GET /ready).
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:4000/ready').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     restart: unless-stopped
 
   # Replaces the dev credentials: core signs in with the same S3_ACCESS_KEY / S3_SECRET_KEY.
@@ -69,7 +96,8 @@ services:
       dockerfile: apps/portal/Dockerfile
     image: yoda-portal
     depends_on:
-      - core
+      core:
+        condition: service_healthy
     ports:
       - '${PORTAL_PORT:-3000}:3000'
     environment:
@@ -78,6 +106,12 @@ services:
       NUXT_PUBLIC_KEYCLOAK_REALM: ${NUXT_PUBLIC_KEYCLOAK_REALM:-yoda}
       NUXT_PUBLIC_KEYCLOAK_CLIENT_ID: ${NUXT_PUBLIC_KEYCLOAK_CLIENT_ID:-yoda-portal}
       NUXT_PUBLIC_LINE_ADD_FRIEND_URL: ${NUXT_PUBLIC_LINE_ADD_FRIEND_URL:-}
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:3000/health').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     restart: unless-stopped
 
   # Optional server runner (README "Runners"): docker compose ... --profile runner up -d runner

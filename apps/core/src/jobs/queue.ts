@@ -33,6 +33,8 @@ export interface JobQueue {
   send(name: JobName, data: { id: string }): Promise<void>
   work(name: JobName, handler: JobHandler): Promise<void>
   stop(): Promise<void>
+  /** True while the queue is running (readiness). */
+  started(): boolean
 }
 
 export const RETRY_LIMIT = 2
@@ -76,6 +78,7 @@ export async function createPgBossQueue(databaseUrl: string, concurrency: number
   const boss = new PgBoss(databaseUrl)
   boss.on('error', (err) => console.error('pg-boss error', err))
   await boss.start()
+  let running = true
   for (const name of JOB_NAMES) {
     // createQueue is insert-if-absent; updateQueue applies changed retry settings to an existing queue.
     const policy = POLICY[name]
@@ -103,8 +106,10 @@ export async function createPgBossQueue(databaseUrl: string, concurrency: number
       })
     },
     async stop() {
+      running = false
       await boss.stop({ graceful: true })
     },
+    started: () => running,
   }
 }
 
@@ -137,6 +142,10 @@ export class InlineJobQueue implements JobQueue {
 
   async stop(): Promise<void> {
     await this.drain()
+  }
+
+  started(): boolean {
+    return true
   }
 
   /** Runs a recurring job once, as pg-boss would at its cron time (tests). */

@@ -55,10 +55,17 @@ pnpm test            # uses TEST_DATABASE_URL, default postgres://yoda:yoda@loca
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
 ```
 
-Images: `yoda-core` (runs migrations, then `node dist/server.js`) and `yoda-portal`
-(`node .output/server/index.mjs`). Configuration is environment-only:
+Images: `yoda-core` (`node dist/server.js`) and `yoda-portal` (`node .output/server/index.mjs`).
+The core server runs the migrations itself when `MIGRATE_ON_START=true` (the default, so a plain
+`docker run` works). The prod overlay sets it to `false` and runs a one-shot `migrate` service
+(`node dist/migrate.js`, same image) first; core starts only after it completes, so only one
+container ever migrates. Configuration is environment-only:
 
-- core: `DATABASE_URL`, `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `STAFF_GROUP`, `BOOTSTRAP_ADMINS`
+- core: `DATABASE_URL`, `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_JWKS_URL` (optional), `STAFF_GROUP`,
+  `BOOTSTRAP_ADMINS`, `MIGRATE_ON_START` (`true`|`false`)
+- health: core `GET /health` (liveness, with the version) and `GET /ready` (200 when the database,
+  storage and job queue answer within 2 s each, else 503; `{ status, checks }`); portal `GET /health`.
+  The overlay's healthchecks use them, and the portal waits for a healthy core.
 - core object storage (the compose `rustfs` service): `S3_ACCESS_KEY`, `S3_SECRET_KEY` (required; the
   overlay also uses them as the RustFS credentials), `S3_REGION` (`us-east-1`), `S3_BUCKET` (`yoda`,
   created on startup). `S3_ENDPOINT` is fixed to `http://rustfs:9000` by the overlay.
@@ -79,10 +86,11 @@ Inside containers:
 - `DATABASE_URL` must use the compose service host (`postgres`), not `localhost`, e.g.
   `postgres://yoda:...@postgres:5432/yoda`. Compose also reads the root `.env` for interpolation, so
   do not leave the dev `localhost` URL there when running the overlay.
-- `OIDC_ISSUER` must equal the browser-facing token `iss` AND be reachable from the core container
-  (it fetches the JWKS from it). The overlay against the dev Keycloak on `localhost` therefore only
-  smoke-tests; a real deployment needs a Keycloak URL reachable from both the browser and the core
-  container (a separate JWKS URL is planned for plan 8).
+- `OIDC_ISSUER` must equal the browser-facing token `iss`. Core fetches the signing keys from
+  `OIDC_JWKS_URL` when set (e.g. Keycloak's internal address,
+  `http://keycloak:8080/realms/yoda/protocol/openid-connect/certs`), otherwise from
+  `${OIDC_ISSUER}/protocol/openid-connect/certs`, which must then be reachable from the core container.
+  Tokens are checked against `OIDC_ISSUER` either way.
 
 Production secrets come only from the deploy environment / CI variables, never from committed files.
 The dev compose services use throwaway credentials and must not be exposed publicly.

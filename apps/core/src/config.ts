@@ -5,6 +5,10 @@ export type Config = {
   databaseUrl: string
   oidcIssuer: string
   oidcClientId: string
+  /** Where signing keys are fetched, when not the issuer's certs endpoint; the issuer check still uses `oidcIssuer`. */
+  oidcJwksUrl?: string
+  /** Run database migrations when the server starts (dev default); production runs the `migrate` service instead. */
+  migrateOnStart: boolean
   staffGroup: string
   bootstrapAdmins: string[]
   anthropicApiKey?: string
@@ -65,6 +69,8 @@ const envSchema = z.object({
   DATABASE_URL: z.string().min(1),
   OIDC_ISSUER: z.string().url(),
   OIDC_CLIENT_ID: z.string().min(1),
+  OIDC_JWKS_URL: optional(z.string().url()),
+  MIGRATE_ON_START: z.preprocess((v) => (v === '' ? undefined : v), z.enum(['true', 'false']).default('true')),
   STAFF_GROUP: z.string().min(1).default('/it-dev'),
   BOOTSTRAP_ADMINS: z.string().default(''),
   ANTHROPIC_API_KEY: optional(z.string()),
@@ -115,6 +121,8 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     databaseUrl: e.DATABASE_URL,
     oidcIssuer: e.OIDC_ISSUER.replace(/\/+$/, ''),
     oidcClientId: e.OIDC_CLIENT_ID,
+    oidcJwksUrl: e.OIDC_JWKS_URL,
+    migrateOnStart: e.MIGRATE_ON_START === 'true',
     staffGroup: e.STAFF_GROUP,
     bootstrapAdmins: e.BOOTSTRAP_ADMINS.split(',')
       .map((s) => s.trim())
