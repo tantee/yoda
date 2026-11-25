@@ -154,6 +154,7 @@ const PROPOSAL_TITLE: Record<ProposalKind, string> = {
   step_advance: 'รอยืนยันการไปขั้นตอนถัดไป',
   priority_change: 'รอยืนยันการเปลี่ยนความสำคัญ',
   create_work_item: 'รอยืนยันการสร้างงานใหม่',
+  raise_discussion: 'รอยืนยันการยกประเด็นหารือ',
 }
 
 /**

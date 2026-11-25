@@ -22,6 +22,8 @@ import {
   ActorKind,
   AuthorKind,
   ConversationKind,
+  DiscussionResponseKind,
+  DiscussionState,
   KnowledgeScope,
   KnowledgeStatus,
   KnowledgeType,
@@ -434,4 +436,70 @@ export const departmentSettings = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [check('department_settings_single_row', sql`${t.id} = 1`)],
+)
+
+export const agendas = pgTable('agendas', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  title: text('title').notNull(),
+  meetingAt: timestamp('meeting_at', { withTimezone: true }).notNull(),
+  createdBy: uuid('created_by')
+    .notNull()
+    .references(() => people.id),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+export const discussions = pgTable(
+  'discussions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    projectId: uuid('project_id').references(() => projects.id, { onDelete: 'cascade' }),
+    workItemId: uuid('work_item_id').references(() => workItems.id, { onDelete: 'cascade' }),
+    taskId: uuid('task_id').references(() => tasks.id, { onDelete: 'set null' }),
+    stepKey: text('step_key'),
+    question: text('question').notNull(),
+    details: text('details').notNull().default(''),
+    priority: text('priority').notNull().default('normal'),
+    state: text('state').notNull().default('open'),
+    brief: jsonb('brief'),
+    raisedBy: uuid('raised_by')
+      .notNull()
+      .references(() => people.id),
+    decision: text('decision'),
+    decidedOptionKey: text('decided_option_key'),
+    decidedBy: uuid('decided_by').references(() => people.id),
+    decidedAt: timestamp('decided_at', { withTimezone: true }),
+    agendaId: uuid('agenda_id').references(() => agendas.id, { onDelete: 'set null' }),
+    agendaPosition: integer('agenda_position'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    check('discussions_state_check', sql`${t.state} in (${list(DiscussionState.options)})`),
+    check('discussions_priority_check', sql`${t.priority} in (${list(Priority.options)})`),
+    index('discussions_work_item_state_idx').on(t.workItemId, t.state),
+    index('discussions_project_state_idx').on(t.projectId, t.state),
+  ],
+)
+
+export const discussionResponses = pgTable(
+  'discussion_responses',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    discussionId: uuid('discussion_id')
+      .notNull()
+      .references(() => discussions.id, { onDelete: 'cascade' }),
+    authorId: uuid('author_id')
+      .notNull()
+      .references(() => people.id),
+    kind: text('kind').notNull(),
+    optionKey: text('option_key'),
+    text: text('text').notNull().default(''),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    check('discussion_responses_kind_check', sql`${t.kind} in (${list(DiscussionResponseKind.options)})`),
+    uniqueIndex('discussion_responses_one_vote')
+      .on(t.discussionId, t.authorId)
+      .where(sql`${t.kind} = 'vote'`),
+  ],
 )

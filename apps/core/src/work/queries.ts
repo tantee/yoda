@@ -368,6 +368,7 @@ function toWorkItem(r: WorkItemJoined, awaiting: Set<string>): WorkItem {
     requesterName: r.requesterName,
     state: w.state,
     awaitingAdvance: awaiting.has(w.id),
+    openDiscussions: 0,
     createdAt: w.createdAt.toISOString(),
     updatedAt: w.updatedAt.toISOString(),
   })
