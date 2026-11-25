@@ -26,7 +26,7 @@ export function navItemsFor(me: Me): NavItem[] {
   return items
 }
 
-const STAFF_PREFIXES = ['/todo', '/discussions', '/status', '/projects', '/work-items', '/admin']
+const STAFF_PREFIXES = ['/todo', '/discussions', '/agendas', '/status', '/projects', '/work-items', '/admin']
 
 export function isStaffPath(path: string): boolean {
   // A single task page (/todo/<id>) is also reached by requesters, from notifications and "answers".
