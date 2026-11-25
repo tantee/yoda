@@ -182,9 +182,20 @@ refuses claims beyond it (`at_capacity`) and the runner waits for the next poll.
 - `yoda-runner start` polls every `pollSeconds`, claims and works up to `maxConcurrent` tasks, and
   waits when core refuses with `outside_hours`, a pause or `at_capacity`. SIGINT / SIGTERM stops
   polling, aborts the agents and gives their tasks back to the queue (not counted as failures).
+  A runner set to **on demand** in the portal may not poll: core refuses (`on_demand_runner`) and
+  `start` exits with code 2.
 - A run that asks a person (`ask_human`) stops without pushing; it is picked up again once the
   question is decided. A failed run (agent error, refused push) is released as failed; after 3 failed
   runs the task goes back to people.
+- A problem with the machine rather than the task (no clone configured for the repo, a clone or fetch
+  that fails, a worktree in the way, the agent CLI not installed) gives the task back without counting
+  as a failure (reason `runner_environment: …`). `start` skips that task for 10 minutes, and exits with
+  code 3 when the agent CLI cannot be started at all. A worktree a killed run left under `workRoot` is
+  removed before the next run; if the run's branch is checked out somewhere else (e.g. in your own
+  clone), the run is given back with a message saying where.
+- When the task is cancelled, reassigned or done while the agent works, core ends the run at the next
+  heartbeat and the runner stops (not a failure). Heartbeats go every min(60 s, lease / 3); core's
+  `RUNNER_LEASE_SECONDS` is at least 180.
 
 **What the agent may do (Claude Code).** Runs are headless with `--permission-mode` from the config
 (default `acceptEdits`; avoid `bypassPermissions` outside a sandbox) and tool lists from
@@ -193,22 +204,40 @@ refuses claims beyond it (`at_capacity`) and the runner waits for the next poll.
 `remote` plus the run lifecycle tools (`claim_task`, `heartbeat`, `open_merge_request`,
 `submit_result`, `release_task`, `list_available_tasks`), which the runner calls itself. Whatever the
 agent does, the runner refuses to push anything but the run's branch, and core refuses MRs from the
-default branch. Add tools your projects need (e.g. `"Bash(pnpm test:*)"`) to `allowedTools`; setting
-either list replaces its defaults, so copy them in.
+default branch. The default `allowedTools` permit only git, so an agent cannot build or run tests until
+you allow it. Add the commands your projects need to `allowedTools`, per runner and capability, e.g. a
+`run-tests` or `code-change` runner for a pnpm repo:
 
-**The agent can read the token.** The agent runs as the same OS user as the runner, so it can read
-the MCP config file the runner writes for it (and the runner config). This is why each machine gets its
-own runner token, with only the capabilities it needs; revoke it if in doubt.
+```json
+"allowedTools": [
+  "mcp__yoda", "Bash(git add:*)", "Bash(git commit:*)", "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)",
+  "Bash(pnpm install:*)", "Bash(pnpm test:*)", "Bash(pnpm vitest:*)", "Bash(pnpm -r typecheck:*)"
+]
+```
+
+An `analyze-repo` runner usually needs nothing beyond the defaults (reading files is always allowed).
+Setting either list replaces its defaults, so copy them in, and keep the allowed commands narrow: a
+build or test script runs whatever the repo's scripts say.
+
+**The agent can read the runner's secrets.** The agent runs as the same OS user as the runner, so it
+can read anything that user can: the MCP config file the runner writes for it, the runner config (with
+its token), the runner's environment (e.g. via `/proc`) and any credentials in that user's home. Use
+scoped credentials only: a runner token per machine with just the capabilities it needs, git
+credentials limited to the repos it works, and no personal tokens; on a shared machine run the runner
+as its own OS user. Revoke the token if in doubt.
 
 **Interactive Claude Code.** To use the Yoda tools in your own Claude Code session,
 `yoda-runner mcp-config` prints the MCP config with `Bearer ${YODA_RUNNER_TOKEN}` (Claude Code expands
 the variable from its environment); `--with-token` prints the real token instead, so do not paste that
 output anywhere shared. Save it as an MCP config file and start `claude --mcp-config <file>`.
 
-**Codex (untested).** `"executor": "codex"` runs `codex exec` with the yoda MCP server configured
-through `-c` overrides and the token in the child environment only. It has not been tested against a
-real Codex; it needs a Codex version with streamable-HTTP MCP servers and `bearer_token_env_var`
-(roughly 0.50 or later, not verified).
+**Codex (experimental, untested).** `"executor": "codex"` runs `codex exec` with the yoda MCP server
+configured through `-c` overrides and the token in the child environment only. The agent gets the same
+yoda tools as Claude's defaults (`mcp_servers.yoda.enabled_tools`: the yoda tools minus those
+`disallowedTools` denies). It has not been tested against a real Codex; it needs a Codex version with
+streamable-HTTP MCP servers, `bearer_token_env_var` and `enabled_tools` (roughly 0.50 or later, not
+verified). `yoda-runner start` refuses Codex unless the config sets `"allowExperimentalCodex": true`;
+`yoda-runner work <taskId>` runs it either way.
 
 **Server runner container.** `apps/runner/Dockerfile` (node:22-slim, git, a pinned
 `@anthropic-ai/claude-code`, non-root `node` user, no secrets in the image) runs `yoda-runner start`.
