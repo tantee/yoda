@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify'
 import type { Discussion, DiscussionBrief, WorkItemDetail } from '@yoda/shared'
 import { MockLanguageModelV4 } from 'ai/test'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { and, asc, eq, isNull } from 'drizzle-orm'
+import { and, asc, eq, isNull, sql } from 'drizzle-orm'
 import { BRIEF_MAX_OUTPUT_TOKENS } from '../src/discussions/brief.js'
 import { AiGateway } from '../src/ai/gateway.js'
 import type { ModelSet } from '../src/ai/models.js'
@@ -38,6 +38,7 @@ function briefModel(output: unknown = GOOD) {
     maxOutputTokens: [] as (number | undefined)[],
     responseFormats: [] as unknown[],
     output,
+    finish: 'stop' as 'stop' | 'length',
     before: null as null | (() => Promise<void>),
   }
   const model = new MockLanguageModelV4({
@@ -49,10 +50,22 @@ function briefModel(output: unknown = GOOD) {
       state.responseFormats.push(opts.responseFormat)
       if (state.before) await state.before()
       const out = state.output
-      return { stream: textStream(typeof out === 'string' ? out : JSON.stringify(out)) }
+      const text = typeof out === 'string' ? out : JSON.stringify(out)
+      return { stream: state.finish === 'stop' ? textStream(text) : withFinish(textStream(text), state.finish) }
     },
   })
   return { model, state }
+}
+
+/** Rewrites the finish chunk's reason (e.g. `length`: cut off at maxOutputTokens). */
+function withFinish(stream: ReadableStream<never>, reason: string): ReadableStream<never> {
+  return stream.pipeThrough(
+    new TransformStream({
+      transform(chunk: { type: string }, c) {
+        c.enqueue((chunk.type === 'finish' ? { ...chunk, finishReason: { unified: reason, raw: reason } } : chunk) as never)
+      },
+    }),
+  ) as ReadableStream<never>
 }
 
 /** Holds discussion-brief jobs until `release()`, so a test can act before the brief job runs. */
@@ -190,6 +203,11 @@ describe('AI discussion briefs', () => {
     await queue.drain()
     expect(m.state.calls).toBe(0)
     expect((await get(d.id)).brief).toMatchObject({ status: 'failed', failReason: 'no_ai' })
+    expect((await discussionEvents(d.id)).filter((e) => e.type === 'discussion.brief_failed')).toMatchObject([
+      { reason: 'no_ai', actorId: dev.id },
+    ])
+    // Retrying cannot help while the project is no-AI.
+    expect((await call(dev, 'POST', `/discussions/${d.id}/brief/retry`)).statusCode).toBe(409)
 
     const edit = { context: 'บริบท', options: GOOD.options, recommendation: '', recommendedKey: null }
     expect((await call(dev, 'PUT', `/discussions/${d.id}/brief`, edit)).statusCode).toBe(200)
@@ -284,6 +302,69 @@ describe('AI discussion briefs', () => {
     await queue.drain()
     expect((await call(pm, 'POST', `/discussions/${d2.id}/decide`, { decision: 'จบ' })).statusCode).toBe(200)
     expect((await call(pm, 'POST', `/discussions/${d2.id}/brief/retry`)).statusCode).toBe(409)
+  })
+
+  it('output cut off at the token limit fails at once with ai_failed (no retry)', async () => {
+    const m = briefModel()
+    m.state.finish = 'length'
+    await boot(mockModels({ draft: m.model }))
+    const p = await project()
+    const d = await raise(dev, { projectId: p, question: 'เลือกแนวทาง' })
+    await queue.drain()
+    expect(m.state.calls).toBe(1)
+    expect((await get(d.id)).brief).toMatchObject({ status: 'failed', failReason: 'ai_failed' })
+    const db = await testDb()
+    expect(await db.select().from(aiCalls).where(eq(aiCalls.projectId, p))).toMatchObject([
+      { ok: false, error: 'truncated', inputTokens: 1000, outputTokens: 500 },
+    ])
+  })
+
+  it('options are re-keyed a, b, … in order; the recommendation follows its option', async () => {
+    const m = briefModel({
+      ...GOOD,
+      options: [{ ...GOOD.options[0], key: 'c' }, { ...GOOD.options[1], key: 'e' }],
+      recommendedKey: 'e',
+    })
+    await boot(mockModels({ draft: m.model }))
+    const p = await project()
+    const d = await raise(dev, { projectId: p, question: 'เลือกแนวทาง' })
+    await queue.drain()
+    const brief = (await get(d.id)).brief!
+    expect(brief.options.map((o) => [o.key, o.title])).toEqual([['a', 'ใช้ระบบเดิม'], ['b', 'สร้างระบบใหม่']])
+    expect(brief.recommendedKey).toBe('b')
+  })
+
+  it('retry: a failed brief on a project flagged no-AI since → 409', async () => {
+    const m = briefModel('garbage')
+    await boot(mockModels({ draft: m.model }))
+    const p = await project()
+    const d = await raise(dev, { projectId: p, question: 'เลือกแนวทาง' })
+    await queue.drain()
+    expect((await get(d.id)).brief).toMatchObject({ status: 'failed', failReason: 'ai_failed' })
+    expect((await call(admin, 'PATCH', `/projects/${p}`, { noAi: true })).statusCode).toBe(200)
+    expect((await call(dev, 'POST', `/discussions/${d.id}/brief/retry`)).statusCode).toBe(409)
+  })
+
+  it('retry: a brief stuck pending for over 15 minutes can be re-queued', async () => {
+    const m = briefModel()
+    const held = new HeldQueue()
+    await boot(mockModels({ draft: m.model }), held)
+    const p = await project()
+    const d = await raise(dev, { projectId: p, question: 'เลือกแนวทาง' })
+    held.held.splice(0) // the job is lost
+    expect((await call(dev, 'POST', `/discussions/${d.id}/brief/retry`)).statusCode).toBe(409)
+    const db = await testDb()
+    await db.update(discussions).set({ updatedAt: sql`now() - interval '16 minutes'` }).where(eq(discussions.id, d.id))
+    const res = await call(dev, 'POST', `/discussions/${d.id}/brief/retry`)
+    expect(res.statusCode, res.body).toBe(200)
+    expect(res.json().brief).toMatchObject({ status: 'pending' })
+    expect(held.held).toEqual([{ name: 'discussion-brief', id: d.id }])
+    // Just re-queued: not stuck again yet.
+    expect((await call(dev, 'POST', `/discussions/${d.id}/brief/retry`)).statusCode).toBe(409)
+    await held.release()
+    await queue.drain()
+    expect(m.state.calls).toBe(1)
+    expect((await get(d.id)).brief).toMatchObject({ status: 'ready', source: 'ai' })
   })
 
   it('a person editing the brief while the AI generates wins', async () => {

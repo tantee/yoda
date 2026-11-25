@@ -125,6 +125,7 @@ export async function createDiscussion(ctx: WorkCtx, me: Me, input: DiscussionCr
     .returning()
   const d = row!
   await recordDiscussionEvent(ctx, d, 'discussion.raised')
+  if (brief.status === 'failed') await recordDiscussionEvent(ctx, d, 'discussion.brief_failed', { reason: 'no_ai' })
   await notifyDiscussionRaised(ctx, { id: d.id, projectId, question: d.question, raisedBy: me.id })
   if (wantsAi) ctx.jobs.push({ name: 'discussion-brief', id: d.id })
   return d.id
@@ -200,9 +201,14 @@ export async function editBrief(ctx: WorkCtx, me: Me, id: string, input: Discuss
   await tx.update(discussions).set({ brief, updatedAt: sql`now()` }).where(eq(discussions.id, id))
 }
 
+/** A brief pending this long has lost its job (queue outage, expired job): it may be retried. */
+export const BRIEF_STUCK_MINUTES = 15
+
 /**
- * `POST /discussions/:id/brief/retry`: the raiser, a PM or an admin asks the AI again for a failed brief of an
- * open / scheduled discussion (409 otherwise). The brief goes back to `pending`; the job is sent after commit.
+ * `POST /discussions/:id/brief/retry`: the raiser, a PM or an admin asks the AI again for a failed brief (or
+ * one pending for over BRIEF_STUCK_MINUTES since the discussion last changed) of an open / scheduled
+ * discussion on an AI-enabled project (409 otherwise). The brief goes back to `pending`; the job is sent
+ * after commit.
  */
 export async function retryBrief(ctx: WorkCtx, me: Me, id: string): Promise<void> {
   const { tx } = ctx
@@ -212,7 +218,18 @@ export async function retryBrief(ctx: WorkCtx, me: Me, id: string): Promise<void
   await requireDiscussionVisible(tx, me, d)
   if (!(await canManage(tx, me, d))) throw forbidden()
   const brief = d.brief as DiscussionBrief | null
-  if (!isUndecided(d.state) || !brief || brief.status !== 'failed') throw invalidState()
+  if (!isUndecided(d.state) || !brief) throw invalidState()
+  if (brief.status === 'pending') {
+    const [stuck] = await tx
+      .select({ id: discussions.id })
+      .from(discussions)
+      .where(and(eq(discussions.id, id), sql`${discussions.updatedAt} < now() - make_interval(mins => ${BRIEF_STUCK_MINUTES})`))
+    if (!stuck) throw invalidState()
+  } else if (brief.status !== 'failed') throw invalidState()
+  if (d.projectId) {
+    const [project] = await tx.select({ noAi: projects.noAi }).from(projects).where(eq(projects.id, d.projectId))
+    if (project?.noAi) throw invalidState()
+  }
   const next: DiscussionBrief = { ...brief, source: 'ai', status: 'pending', failReason: null }
   await tx.update(discussions).set({ brief: next, updatedAt: sql`now()` }).where(eq(discussions.id, id))
   ctx.jobs.push({ name: 'discussion-brief', id })
