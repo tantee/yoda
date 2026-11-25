@@ -47,7 +47,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: docker build -f apps/core/Dockerfile -t yoda-core .
-      - run: docker build -f apps/portal/Dockerfile -t yoda-portal .
-      - run: docker build -f apps/runner/Dockerfile -t yoda-runner .
-      - run: docker build -t yoda-backup ops/backup
+      # Build-only: the repo is public, so images are published from GitLab CI, never from here.
+      - run: docker build -f apps/core/Dockerfile -t yoda/core .
+      - run: docker build -f apps/portal/Dockerfile -t yoda/portal .
+      - run: docker build -f apps/runner/Dockerfile -t yoda/runner .
+      - run: docker build -f ops/backup/Dockerfile -t yoda/backup ops/backup

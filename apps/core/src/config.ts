@@ -64,7 +64,8 @@ const modelId = z.string().regex(/^(anthropic|openai):.+$/, 'must be provider:mo
 const optional = <T extends z.ZodTypeAny>(s: T) =>
   z.preprocess((v) => (v === '' ? undefined : v), s.optional())
 
-const envSchema = z.object({
+/** The environment core reads; exported so the runbook's variable table can be checked against it. */
+export const envSchema = z.object({
   PORT: z.coerce.number().int().min(0).max(65535).default(4000),
   DATABASE_URL: z.string().min(1),
   OIDC_ISSUER: z.string().url(),

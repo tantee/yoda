@@ -1,6 +1,10 @@
 # Yoda — AI work portal
 
-pnpm monorepo: `apps/core` (Fastify + Drizzle), `apps/portal` (Nuxt 4 SPA), `packages/shared`.
+pnpm monorepo: `apps/core` (Fastify + Drizzle), `apps/portal` (Nuxt 4 SPA), `apps/runner`, `packages/shared`.
+
+Running it in production: see the [operations runbook](docs/operations.md) (install, environment variables,
+upgrade and rollback, backups, GitLab, runners, notifications, secrets, troubleshooting). Changes per release:
+[CHANGELOG.md](CHANGELOG.md).
 
 ## Requirements
 
@@ -55,7 +59,9 @@ pnpm test            # uses TEST_DATABASE_URL, default postgres://yoda:yoda@loca
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
 ```
 
-Images: `yoda-core` (`node dist/server.js`) and `yoda-portal` (`node .output/server/index.mjs`).
+Images: `core` (`node dist/server.js`), `portal` (`node .output/server/index.mjs`), `runner` and `backup`,
+named `${YODA_IMAGE_PREFIX:-yoda}/<name>:${YODA_VERSION:-latest}` by the overlay (locally `yoda/core:latest` and
+so on; a deploy host pulls them from the registry, see the runbook).
 The core server runs the migrations itself when `MIGRATE_ON_START=true` (the default, so a plain
 `docker run` works). The prod overlay sets it to `false` and runs a one-shot `migrate` service
 (`node dist/migrate.js`, same image) first; core starts only after it completes, so only one
@@ -99,7 +105,7 @@ Inside containers:
 - The dev `keycloak` and `mailpit` services are behind the `dev-only` profile in the overlay and never
   start in production: sign-in uses the organisation's Keycloak at `OIDC_ISSUER`.
 
-- Backups: the overlay's `backup` service (image `yoda-backup`, `ops/backup`) writes
+- Backups: the overlay's `backup` service (image `backup`, `ops/backup`) writes
   `pg-<YYYYMMDD-HHMM>.dump` (`pg_dump -Fc`) and `storage-<YYYYMMDD-HHMM>/` (a mirror of the bucket) to
   the `backups` volume every day at `BACKUP_AT` (`02:00`, Asia/Bangkok), updates a `latest` marker and
   deletes backups older than `BACKUP_KEEP_DAYS` (14). A failed run is retried 3 times, 15 minutes
@@ -299,8 +305,16 @@ Worktrees and clones live in the `runner-work` volume.
 - The migrations run `CREATE EXTENSION vector` and `pg_trgm`, which needs a superuser; otherwise a DBA
   must pre-create both extensions in the database.
 
-## CI
+## CI and releases
 
-`.gitlab-ci.yml` (and the equivalent `.github/workflows/ci.yml`): `secrets` (gitleaks over full
-history), `test` (pgvector service, typecheck, tests), `build` (images on the default branch and tags;
-the runner image is built but not pushed).
+`.gitlab-ci.yml`: `secrets` (gitleaks over full history), `test` (pgvector service, typecheck, tests),
+`build-core` / `build-portal` / `build-runner` / `build-backup` (on the default branch and on tags: push to
+`$CI_REGISTRY_IMAGE/<name>` tagged with the short commit SHA, plus the git tag on tags and `latest` on the
+default branch), and a manual `deploy` job on tags that runs `ops/deploy/deploy.sh` on the deploy host over
+SSH (pull, migrate, up, wait for `/ready`). `.github/workflows/ci.yml` runs the same checks and only builds
+the images: the GitHub repository is public, so nothing is published from it.
+
+**Versioning.** Releases follow [semantic versioning](https://semver.org) and are git tags without a `v`
+(`1.0.0`); the tag is the image tag the deploy job runs. Bump `version` in the root and `apps/core` `package.json` with the
+release (core reports it on `/health`) and add a `CHANGELOG.md` entry. Upgrade and rollback steps are in the
+[runbook](docs/operations.md#5-upgrade-and-rollback).

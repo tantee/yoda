@@ -1,4 +1,4 @@
-# Build context: ops/backup (docker build -t yoda-backup ops/backup)
+# Build context: ops/backup (docker build -t yoda/backup ops/backup)
 # PostgreSQL 17 client tools (pg_dump/pg_restore must match the server major) and rclone for the S3 mirror.
 FROM rclone/rclone:1.71.2 AS rclone
 

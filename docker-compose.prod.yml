@@ -1,12 +1,14 @@
 # Overlay: docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
 # All values come from the environment (CI variables / server env / local .env). No secrets here.
+# Images: ${YODA_IMAGE_PREFIX}/<name>:${YODA_VERSION}. A deploy host pulls the release from the registry
+# (ops/deploy/deploy.sh, docs/operations.md); locally `up --build` builds them under yoda/<name>:latest.
 services:
   # Runs the database migrations once, before core starts; the only container that migrates in production.
   migrate:
     build:
       context: .
       dockerfile: apps/core/Dockerfile
-    image: yoda-core
+    image: ${YODA_IMAGE_PREFIX:-yoda}/core:${YODA_VERSION:-latest}
     command: ['node', 'dist/migrate.js']
     depends_on:
       postgres:
@@ -19,7 +21,7 @@ services:
     build:
       context: .
       dockerfile: apps/core/Dockerfile
-    image: yoda-core
+    image: ${YODA_IMAGE_PREFIX:-yoda}/core:${YODA_VERSION:-latest}
     depends_on:
       postgres:
         condition: service_healthy
@@ -57,6 +59,8 @@ services:
       GITLAB_TOKEN: ${GITLAB_TOKEN:-}
       GITLAB_WEBHOOK_SECRET: ${GITLAB_WEBHOOK_SECRET:-}
       PORTAL_URL: ${PORTAL_URL:-http://localhost:3000}
+      RUNNER_LEASE_SECONDS: ${RUNNER_LEASE_SECONDS:-600}
+      MCP_ENABLED: ${MCP_ENABLED:-true}
       SMTP_HOST: ${SMTP_HOST:-}
       SMTP_PORT: ${SMTP_PORT:-587}
       SMTP_SECURE: ${SMTP_SECURE:-false}
@@ -108,7 +112,7 @@ services:
     build:
       context: .
       dockerfile: apps/portal/Dockerfile
-    image: yoda-portal
+    image: ${YODA_IMAGE_PREFIX:-yoda}/portal:${YODA_VERSION:-latest}
     depends_on:
       core:
         condition: service_healthy
@@ -120,6 +124,7 @@ services:
       NUXT_PUBLIC_KEYCLOAK_REALM: ${NUXT_PUBLIC_KEYCLOAK_REALM:-yoda}
       NUXT_PUBLIC_KEYCLOAK_CLIENT_ID: ${NUXT_PUBLIC_KEYCLOAK_CLIENT_ID:-yoda-portal}
       NUXT_PUBLIC_LINE_ADD_FRIEND_URL: ${NUXT_PUBLIC_LINE_ADD_FRIEND_URL:-}
+      NUXT_PUBLIC_RUNNER_DOCS_URL: ${NUXT_PUBLIC_RUNNER_DOCS_URL:-https://github.com/tantee/yoda#runners}
     healthcheck:
       test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:3000/health').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
       interval: 15s
@@ -134,7 +139,7 @@ services:
   backup:
     build:
       context: ops/backup
-    image: yoda-backup
+    image: ${YODA_IMAGE_PREFIX:-yoda}/backup:${YODA_VERSION:-latest}
     depends_on:
       postgres:
         condition: service_healthy
@@ -161,7 +166,7 @@ services:
     build:
       context: .
       dockerfile: apps/runner/Dockerfile
-    image: yoda-runner
+    image: ${YODA_IMAGE_PREFIX:-yoda}/runner:${YODA_VERSION:-latest}
     depends_on:
       - core
     environment:
