@@ -33,6 +33,13 @@ describe('renderIssueSection', () => {
     expect(a).toContain('Closes #')
   })
 
+  it('renders an unreviewed original request under its own heading', () => {
+    const s = renderIssueSection({ ...base, requirements: null, originalRequest: 'คำขอเดิม X' })
+    expect(s).toContain('### คำขอเดิม (ยังไม่ผ่านการทบทวน) / Original request (not reviewed)')
+    expect(s).toContain('คำขอเดิม X')
+    expect(s).not.toContain('### ข้อกำหนด / Requirements')
+  })
+
   it('names its own issue in the closing note once the iid is known', () => {
     expect(renderIssueSection({ ...base, iid: 7 })).toContain('`Closes #7`')
   })

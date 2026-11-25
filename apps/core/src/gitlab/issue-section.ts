@@ -14,6 +14,7 @@ export const HEADINGS = {
   decisions: 'การตัดสินใจ / Decisions',
   testCases: 'กรณีทดสอบ / Test cases',
   related: 'งานที่เกี่ยวข้อง / Related issues',
+  originalRequest: 'คำขอเดิม (ยังไม่ผ่านการทบทวน) / Original request (not reviewed)',
 } as const
 const SUMMARY = 'สรุป / Summary'
 
@@ -22,6 +23,8 @@ export type IssueSectionInput = {
   projectName: string
   portalUrl: string
   requirements: string | null
+  /** The work item's description, shown only for templates without a requirements (BA) step. */
+  originalRequest?: string | null
   design: string | null
   decisions: { question: string; decision: string }[]
   testCases: string | null
@@ -52,7 +55,9 @@ export function renderIssueSection(input: IssueSectionInput): string {
   if (input.feedback && input.feedback.trim()) {
     lines.push(`**ขอให้แก้ไข / Changes requested:** ${clip(input.feedback, link)}`, '')
   }
-  lines.push(`### ${HEADINGS.requirements}`, '', doc(input.requirements), '')
+  if (input.originalRequest && input.originalRequest.trim()) {
+    lines.push(`### ${HEADINGS.originalRequest}`, '', doc(input.originalRequest), '')
+  } else lines.push(`### ${HEADINGS.requirements}`, '', doc(input.requirements), '')
   lines.push(`### ${HEADINGS.design}`, '', doc(input.design), '')
   lines.push(`### ${HEADINGS.decisions}`, '')
   if (input.decisions.length) {
