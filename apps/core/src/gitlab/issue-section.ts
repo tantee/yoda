@@ -80,10 +80,11 @@ export function renderIssueSection(input: IssueSectionInput): string {
 
 /** Start/end offsets of the owned section (end exclusive), or null when the markers are missing. */
 function findSection(body: string): [number, number] | null {
-  const e = body.indexOf(ISSUE_END)
-  if (e < 0) return null
-  const b = body.lastIndexOf(ISSUE_BEGIN, e)
+  // The last begin marker and the end after it: a stray end marker in the developer's text comes before it.
+  const b = body.lastIndexOf(ISSUE_BEGIN)
   if (b < 0) return null
+  const e = body.indexOf(ISSUE_END, b)
+  if (e < 0) return null
   return [b, e + ISSUE_END.length]
 }
 

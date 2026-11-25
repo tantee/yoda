@@ -8,6 +8,7 @@ import { isTeamKind, threadAudience, type ThreadAudience } from '../chat/audienc
 import { secretaryAnswers, postMessage, visibleConversation, type ConversationRow } from '../chat/service.js'
 import type { Db, Tx } from '../db/client.js'
 import { attachments, conversations, messages, people, projectMembers, projects, workItems } from '../db/schema.js'
+import { withoutGitLabLinks } from '../gitlab/repos.js'
 import type { JobRun } from '../jobs/queue.js'
 import { personAsMe } from '../proposals/service.js'
 import { runWork, type WorkCtx } from '../work/context.js'
@@ -241,7 +242,8 @@ async function threadContext(db: Db, me: Me, c: ConversationRow): Promise<string
     const open = d.tasks.filter((t) => ['proposed', 'open', 'in_progress', 'submitted'].includes(t.state))
     const lines = [
       `Work item "${d.title}" (id ${d.id}), priority ${d.priority}, state ${d.state}${current ? `, current step ${current.name.th}` : ''}.`,
-      d.description ? `Description: ${clip(d.description, 1000)}` : '',
+      // No GitLab links (e.g. an imported issue's URL): the requester may read the thread.
+      d.description ? `Description: ${clip(await withoutGitLabLinks(db, d.projectId, d.description), 1000)}` : '',
       open.length ? 'Open tasks:' : 'No open tasks.',
       // The requester may read this thread: no assignee names, no internal progress notes.
       ...open.map((t) => `- ${t.title.th} (${t.role}, ${t.state})`),

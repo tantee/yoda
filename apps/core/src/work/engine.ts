@@ -106,6 +106,8 @@ export async function createWorkItem(
   me: Me,
   projectId: string,
   input: WorkItemCreate,
+  /** Repos to link instead of all of the project's (an imported issue links its own repo, issue known). */
+  opts: { repos?: { repoId: string; issueIid: number; issueUrl: string }[] } = {},
 ): Promise<string> {
   const { tx } = ctx
   // Waits for any in-flight member removal, so the new item's tasks never go to a departing member.
@@ -136,9 +138,13 @@ export async function createWorkItem(
     })
     .returning({ id: workItems.id })
   const workItemId = row!.id
-  // Every repo linked to the project so far; the PM can narrow the set until the Dev step starts.
-  const repos = await tx.select({ id: projectRepos.id }).from(projectRepos).where(eq(projectRepos.projectId, projectId))
-  if (repos.length) await tx.insert(workItemRepos).values(repos.map((r) => ({ workItemId, repoId: r.id })))
+  if (opts.repos) {
+    if (opts.repos.length) await tx.insert(workItemRepos).values(opts.repos.map((r) => ({ workItemId, ...r })))
+  } else {
+    // Every repo linked to the project so far; the PM can narrow the set until the Dev step starts.
+    const repos = await tx.select({ id: projectRepos.id }).from(projectRepos).where(eq(projectRepos.projectId, projectId))
+    if (repos.length) await tx.insert(workItemRepos).values(repos.map((r) => ({ workItemId, repoId: r.id })))
+  }
   await recordEvent(ctx, { type: 'work_item.created', projectId, workItemId, taskId: null })
   await startWorkItem(ctx, workItemId)
   return workItemId

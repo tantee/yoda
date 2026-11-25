@@ -4,7 +4,7 @@ import { and, eq, sql } from 'drizzle-orm'
 import type { FastifyInstance } from 'fastify'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { AiGateway } from '../src/ai/gateway.js'
-import { aiCalls, departmentSettings, discussions, events, knowledgeEntries, messages, proposals, workItems } from '../src/db/schema.js'
+import { aiCalls, departmentSettings, discussions, events, knowledgeEntries, mergeRequests, messages, projectRepos, proposals, workItemRepos, workItems } from '../src/db/schema.js'
 import { postMessage } from '../src/chat/service.js'
 import { runWork } from '../src/work/context.js'
 import { InlineJobQueue } from '../src/jobs/queue.js'
@@ -566,6 +566,81 @@ describe('secretary chat: team threads', () => {
       ['ai', 'ตอบพีเอ็ม', b],
       ['ai', 'ตอบเดฟ', a],
     ])
+  })
+})
+
+const GITLAB = 'http://gitlab.example.test'
+
+/** A linked repo, the item's issue and a merged MR with a failed pipeline, written directly (no GitLab needed). */
+async function seedCode(projectId: string, workItemId: string): Promise<void> {
+  const db = await testDb()
+  const [repo] = await db
+    .insert(projectRepos)
+    .values({ projectId, gitlabProjectId: 11, pathWithNamespace: 'dept/lab-report', webUrl: `${GITLAB}/dept/lab-report`, defaultBranch: 'main' })
+    .returning()
+  await db.insert(workItemRepos).values({ workItemId, repoId: repo!.id, issueIid: 3, issueUrl: `${GITLAB}/dept/lab-report/-/issues/3`, syncStatus: 'synced' })
+  await db.insert(mergeRequests).values({
+    repoId: repo!.id,
+    mrIid: 5,
+    workItemId,
+    title: 'Fix lab report',
+    url: `${GITLAB}/dept/lab-report/-/merge_requests/5`,
+    state: 'merged',
+    sourceBranch: 'yoda/fix',
+    pipeline: 'failed',
+  })
+}
+
+describe('secretary chat: code status', () => {
+  const description = `${GITLAB}/dept/lab-report/-/issues/3\n\nผลแล็บไม่แสดง`
+
+  it('staff in their personal thread see the code status of a work item', async () => {
+    const p = await project('ระบบแล็บ', [[pm, ['PM']], [dev, ['DEV']]])
+    const wi = (await call(pm, 'POST', `/projects/${p}/work-items`, { title: 'แก้รายงานแล็บ', description, templateKey: 'bug-fix' })).json() as WorkItemDetail
+    await seedCode(p, wi.id)
+    play({ toolCalls: [{ name: 'work_item', input: { workItemId: wi.id } }] }, { text: 'merge แล้ว แต่ไปป์ไลน์ไม่ผ่าน' })
+    const c = await personal(dev)
+    await say(dev, c.id, 'งานแก้รายงานแล็บถึงไหน')
+    const out = lastToolOutputs()
+    expect(out).toContain('dept/lab-report#3')
+    expect(out).toContain('dept/lab-report!5')
+    expect(out).toContain('merged')
+    expect(out).toContain('failed')
+    expect(out).toContain('synced')
+  })
+
+  it('a requester-visible thread gets no code status and no GitLab links', async () => {
+    const p = await project('ระบบแล็บ', [[pm, ['PM']], [dev, ['DEV']]])
+    const wi = (await call(pm, 'POST', `/projects/${p}/work-items`, { title: 'คำขอพยาบาล', description, templateKey: 'bug-fix', requesterId: nurse.id })).json() as WorkItemDetail
+    await seedCode(p, wi.id)
+    const t = (await call(pm, 'POST', '/conversations', { kind: 'work_item', workItemId: wi.id })).json() as Conversation
+    play({ toolCalls: [{ name: 'work_item', input: { workItemId: wi.id } }] }, { text: 'กำลังดำเนินการ' })
+    await say(dev, t.id, '@ai งานนี้ถึงไหน')
+    const all = sent()
+    expect(all).toContain('คำขอพยาบาล')
+    expect(all).toContain('ผลแล็บไม่แสดง')
+    expect(all).not.toContain('gitlab.example.test')
+    expect(all).not.toContain('dept/lab-report')
+    expect(all).not.toContain('mergeRequests')
+    expect(lastToolOutputs()).not.toContain('"code"')
+
+    // The requester asking in the same thread: their own plain status only.
+    play({ text: 'กำลังดำเนินการค่ะ' })
+    await say(nurse, t.id, '@ai คำขอฉันถึงไหน')
+    const prompt = JSON.stringify(model.doStreamCalls.at(-1)!.prompt)
+    expect(prompt).not.toContain('gitlab.example.test')
+    expect(prompt).not.toContain('dept/lab-report')
+  })
+
+  it('a work_item thread without a requester gets no code status either (a requester may be added later)', async () => {
+    const p = await project('ระบบแล็บ', [[pm, ['PM']], [dev, ['DEV']]])
+    const wi = (await call(pm, 'POST', `/projects/${p}/work-items`, { title: 'งานภายใน', description, templateKey: 'bug-fix' })).json() as WorkItemDetail
+    await seedCode(p, wi.id)
+    const t = (await call(dev, 'POST', '/conversations', { kind: 'work_item', workItemId: wi.id })).json() as Conversation
+    play({ toolCalls: [{ name: 'work_item', input: { workItemId: wi.id } }] }, { text: 'ok' })
+    await say(dev, t.id, '@ai งานนี้ถึงไหน')
+    expect(lastToolOutputs()).not.toContain('"code"')
+    expect(sent()).not.toContain('gitlab.example.test')
   })
 })
 

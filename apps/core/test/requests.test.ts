@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify'
 import type { MyRequest, Task, TaskWithContext, Todo, WorkItemDetail } from '@yoda/shared'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { eq } from 'drizzle-orm'
-import { attachments, tasks } from '../src/db/schema.js'
+import { attachments, events, mergeRequests, projectRepos, tasks, workItemRepos } from '../src/db/schema.js'
 import { resetDb, testDb } from './helpers.js'
 import { acceptStepAdvance, auth, login, makeApp, type Who } from './support.js'
 
@@ -301,6 +301,45 @@ describe('requesters in the workflow', () => {
       ['หนึ่ง', 'cancelled', 'ระบบรายงานแล็บ'],
     ])
     expect(list[0]).toMatchObject({ workItemId: second.id, currentStepName: { en: 'Intake' } })
+  })
+
+  it('requester task and request responses carry no GitLab links, issue numbers or MR states', async () => {
+    const GITLAB = 'http://gitlab.example.test'
+    const p = await project([[pm, ['PM']], [ba, ['BA']]])
+    const wi = await createItem(p, { requesterId: nurse.id })
+    const db = await testDb()
+    const [repo] = await db
+      .insert(projectRepos)
+      .values({ projectId: p, gitlabProjectId: 11, pathWithNamespace: 'dept/lab-report', webUrl: `${GITLAB}/dept/lab-report`, defaultBranch: 'main' })
+      .returning()
+    await db.insert(workItemRepos).values({ workItemId: wi.id, repoId: repo!.id, issueIid: 3, issueUrl: `${GITLAB}/dept/lab-report/-/issues/3`, syncStatus: 'synced' })
+    const [mr] = await db
+      .insert(mergeRequests)
+      .values({ repoId: repo!.id, mrIid: 5, workItemId: wi.id, title: 'Fix', url: `${GITLAB}/dept/lab-report/-/merge_requests/5`, state: 'merged', sourceBranch: 'yoda/x', pipeline: 'failed' })
+      .returning()
+    await db.insert(events).values({
+      projectId: p,
+      workItemId: wi.id,
+      type: 'gitlab.mr_merged',
+      actorKind: 'system',
+      payload: { mergeRequestId: mr!.id, path: 'dept/lab-report', mrIid: 5, url: mr!.url },
+    })
+    await drive(wi.id, 'accept-intake', pm, approve)
+    await drive(wi.id, 'draft-requirements', ba, { text: 'คำถาม: ต้องการรายงานรายวันหรือรายเดือน?' })
+    const answer = (await active(wi.id, 'answer-questions'))!
+    const probe = (body: string) => {
+      expect(body).not.toContain(GITLAB)
+      expect(body.toLowerCase()).not.toContain('gitlab')
+      expect(body).not.toContain('dept/lab-report')
+      expect(body).not.toContain('merge')
+      expect(body).not.toContain('pipeline')
+    }
+    for (const url of ['/me/answers', '/me/requests', `/tasks/${answer.id}`]) {
+      const res = await call(nurse, 'GET', url)
+      expect(res.statusCode).toBe(200)
+      probe(res.body)
+    }
+    expect((await call(nurse, 'GET', `/work-items/${wi.id}/code`)).statusCode).toBe(403)
   })
 
   it('rejects an unknown requester id', async () => {
