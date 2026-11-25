@@ -32,6 +32,8 @@ export default defineNuxtConfig({
       runnerDocsUrl: 'https://github.com/tantee/yoda#runners',
       // The LINE Official Account's add-friend link, shown when linking LINE (NUXT_PUBLIC_LINE_ADD_FRIEND_URL).
       lineAddFriendUrl: '',
+      // A line at the foot of the side menu, e.g. the department or hospital name (NUXT_PUBLIC_ORG_LINE).
+      orgLine: '',
     },
   },
   i18n: {

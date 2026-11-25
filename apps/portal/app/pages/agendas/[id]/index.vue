@@ -10,6 +10,7 @@ const id = route.params.id as string
 const canEdit = useCanEditAgendas()
 
 const agenda = ref<Agenda | null>(null)
+useBreadcrumb(() => (agenda.value ? [{ label: agenda.value.title }] : []))
 const full = ref<Record<string, Discussion>>({})
 const candidates = ref<Discussion[]>([])
 const loadError = ref('')

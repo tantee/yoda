@@ -8,6 +8,7 @@ const { dateTime } = useDateFormat()
 const api = useApi()
 const id = useRoute().params.id as string
 const request = ref<MyRequest | null>(null)
+useBreadcrumb(() => (request.value ? [{ label: request.value.title }] : []))
 const answers = ref<TaskWithContext[]>([])
 const loaded = ref(false)
 const loadError = ref('')

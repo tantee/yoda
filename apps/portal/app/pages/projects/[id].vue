@@ -10,6 +10,7 @@ const route = useRoute()
 const api = useApi()
 const id = route.params.id as string
 const project = ref<ProjectDetail | null>(null)
+useBreadcrumb(() => (project.value ? [{ label: project.value.name }] : []))
 const loadError = ref('')
 const people = ref<Person[]>([])
 const error = ref('')

@@ -11,6 +11,7 @@ const api = useApi()
 const id = route.params.id as string
 
 const task = ref<TaskWithContext | null>(null)
+useBreadcrumb(() => (task.value ? [{ label: localized(task.value.title, locale.value) }] : []))
 const project = ref<ProjectDetail | null>(null)
 const loadError = ref('')
 const error = ref('')

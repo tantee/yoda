@@ -1,4 +1,4 @@
-import { homeFor, isStaffPath } from '~/utils/nav'
+import { forbiddenFor } from '~/utils/nav'
 
 export default defineNuxtRouteMiddleware(async (to) => {
   const { me, refresh } = useMe()
@@ -14,6 +14,7 @@ export default defineNuxtRouteMiddleware(async (to) => {
   }
   const user = me.value
   if (!user) return
-  if (!user.isStaff && isStaffPath(to.path)) return navigateTo('/requests')
-  if (to.path.startsWith('/admin') && !user.isAdmin) return navigateTo(homeFor(user))
+  // A page the user may not open: say so instead of a silent redirect. The server enforces access regardless.
+  const need = forbiddenFor(user, to.path)
+  if (need) return navigateTo({ path: '/forbidden', query: { need } }, { replace: true })
 })

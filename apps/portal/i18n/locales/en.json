@@ -1,7 +1,10 @@
 {
   "app": {
-    "title": "AI Work Portal",
-    "logout": "Log out"
+    "title": "Yoda · IT work portal",
+    "logout": "Log out",
+    "name": "Yoda",
+    "sub": "IT work portal",
+    "subRequester": "Requests to the IT department"
   },
   "common": {
     "comingSoon": "Coming soon",
@@ -13,17 +16,29 @@
     "chat": "Chat",
     "todo": "To-do",
     "discussions": "Discussions",
-    "status": "Status",
+    "status": "Overall status",
     "projects": "Projects",
     "requests": "My requests",
-    "answers": "Things to answer",
+    "answers": "Questions for me",
     "admin": {
-      "people": "People admin",
+      "people": "People",
       "ai": "AI budget",
-      "gitlab": "GitLab",
+      "gitlab": "GitLab connection",
       "notifications": "Notification channels"
     },
-    "runners": "Runners"
+    "runners": "Runners",
+    "agendas": "Meeting agendas",
+    "assistant": "Chat with the assistant",
+    "group": {
+      "mine": "My work",
+      "projects": "Projects",
+      "meetings": "Meetings",
+      "system": "System"
+    },
+    "short": {
+      "status": "Status",
+      "assistant": "Assistant"
+    }
   },
   "projects": {
     "title": "Projects",
@@ -1010,5 +1025,56 @@
     "short": "{n}/{total} {name}",
     "long": "Step {n} of {total}: {name}",
     "allDone": "All {total} steps done"
+  },
+  "shell": {
+    "role": {
+      "staff": "IT staff",
+      "admin": "Administrator",
+      "requester": "Requester"
+    },
+    "signingIn": "Signing in…",
+    "mainMenu": "Main menu",
+    "openMenu": "Open menu",
+    "collapseRail": "Collapse menu",
+    "expandRail": "Expand menu",
+    "breadcrumb": "You are here",
+    "userMenu": "User menu",
+    "language": "Language",
+    "myNotifications": "My notifications",
+    "notificationsCount": "Notifications, {n} unread",
+    "unread": "Unread",
+    "search": {
+      "label": "Search",
+      "placeholder": "Search work, projects, people",
+      "placeholderRequester": "Search my requests",
+      "hint": "Type at least 2 characters",
+      "noResults": "Nothing matches",
+      "failed": "Search failed, try again",
+      "types": {
+        "project": "Project",
+        "work_item": "Work item",
+        "person": "Person",
+        "request": "Request"
+      }
+    },
+    "home": "Go to the home page",
+    "notFound": {
+      "title": "Page not found",
+      "text": "The link may be wrong, or the page has moved"
+    },
+    "error": {
+      "title": "Something went wrong",
+      "text": "The system had a temporary problem. Try reloading the page.",
+      "status": "Error code {status}",
+      "reload": "Reload"
+    },
+    "forbidden": {
+      "crumb": "No access",
+      "admin": "This page is for administrators",
+      "staff": "This page is for IT staff",
+      "generic": "You do not have access to this page",
+      "text": "If you think you should have access, contact an administrator"
+    },
+    "close": "Close"
   }
 }

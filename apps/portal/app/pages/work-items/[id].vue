@@ -13,6 +13,12 @@ const id = route.params.id as string
 
 const item = ref<WorkItemDetail | null>(null)
 const project = ref<ProjectDetail | null>(null)
+definePageMeta({ crumbs: [{ key: 'nav.projects', to: '/projects' }] })
+useBreadcrumb(() => {
+  if (!item.value) return []
+  const p = project.value ? [{ label: project.value.name, to: `/projects/${project.value.id}` }] : []
+  return [...p, { label: item.value.title }]
+})
 const templates = ref<WorkflowTemplateSummary[]>([])
 const loadError = ref('')
 const error = ref('')

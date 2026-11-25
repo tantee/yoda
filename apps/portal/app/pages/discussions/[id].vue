@@ -9,6 +9,7 @@ const api = useApi()
 const id = route.params.id as string
 
 const d = ref<Discussion | null>(null)
+useBreadcrumb(() => (d.value ? [{ label: d.value.question }] : []))
 const project = ref<ProjectDetail | null>(null)
 const loadError = ref('')
 const error = ref('')

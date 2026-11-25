@@ -128,6 +128,7 @@ Portal:
 | `NUXT_PUBLIC_KEYCLOAK_CLIENT_ID` | Public client | optional (`yoda-portal`) | `yoda-portal` |
 | `NUXT_PUBLIC_RUNNER_DOCS_URL` | Setup docs linked from the Runners page | optional (README "Runners") | `https://portal.example.org/docs/runners` |
 | `NUXT_PUBLIC_LINE_ADD_FRIEND_URL` | The LINE Official Account's add-friend link, shown when linking LINE | optional | `https://line.me/R/ti/p/@example` |
+| `NUXT_PUBLIC_ORG_LINE` | Organisation line at the foot of the side menu, e.g. the department or hospital name | optional (empty: no line) | `ฝ่ายเทคโนโลยีสารสนเทศ` |
 | `PORTAL_URL` | The portal's public base URL, used in links in emails, chats and GitLab issues (compose refuses to start without it) | yes | `https://portal.example.org` |
 
 AI:

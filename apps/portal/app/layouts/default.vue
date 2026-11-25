@@ -1,64 +1,141 @@
 <script setup lang="ts">
-import { navItemsFor } from '~/utils/nav'
+import { useDisplay } from 'vuetify'
+import { buildCrumbs, type MetaCrumb } from '~/utils/breadcrumbs'
+import { bottomLabelKey, bottomNavFor, isNavActive, navCount, navGroupsFor } from '~/utils/nav'
 
 const { me } = useMe()
-const { $keycloak } = useNuxtApp()
-const { t, locale, locales, setLocale } = useI18n()
+const { counts, refresh: refreshCounts } = useCounts()
+const { t } = useI18n()
+const route = useRoute()
+const orgLine = useRuntimeConfig().public.orgLine as string
+const meError = useState<string>('meError', () => '')
+const pageCrumbs = usePageCrumbs()
+
+// Below 1024 px the rail is a temporary drawer and the bottom navigation shows the daily pages (proposal §4.3).
+const { width } = useDisplay()
+const mobile = computed(() => width.value < 1024)
 // null lets Vuetify open it on desktop and keep it closed on narrow screens
 const drawer = ref<boolean | null>(null)
-const meError = useState<string>('meError', () => '')
-const items = computed(() => (me.value ? navItemsFor(me.value) : []))
 
-function logout() {
-  $keycloak.logout({ redirectUri: window.location.origin })
+const RAIL_KEY = 'yoda_rail_collapsed'
+const collapsed = ref(false)
+onMounted(() => {
+  try {
+    collapsed.value = localStorage.getItem(RAIL_KEY) === '1'
+  } catch {
+    // storage blocked: keep the full rail
+  }
+})
+function toggleRail() {
+  collapsed.value = !collapsed.value
+  try {
+    localStorage.setItem(RAIL_KEY, collapsed.value ? '1' : '0')
+  } catch {
+    // not remembered
+  }
 }
+
+const groups = computed(() => (me.value ? navGroupsFor(me.value) : null))
+const bottom = computed(() => (me.value ? bottomNavFor(me.value) : []))
+const requester = computed(() => !!me.value && !me.value.isStaff)
+
+const crumbs = computed(() =>
+  buildCrumbs(
+    {
+      path: route.path,
+      groups: groups.value ?? [],
+      meta: route.meta.crumbs as MetaCrumb[] | undefined,
+      dynamic: pageCrumbs.value?.path === route.path ? pageCrumbs.value.crumbs : [],
+    },
+    t,
+  ),
+)
+useHead({
+  title: () => crumbs.value.at(-1)?.label ?? '',
+  titleTemplate: (title?: string) => (title ? `${title} · ${t('app.name')}` : t('app.title')),
+})
+
+// Badges: on sign-in, on every navigation and every minute (no extra live stream).
+let timer: ReturnType<typeof setInterval> | null = null
+watch([me, () => route.path], () => {
+  if (me.value) void refreshCounts()
+}, { immediate: true })
+onMounted(() => {
+  timer = setInterval(() => {
+    if (me.value && document.visibilityState === 'visible') void refreshCounts()
+  }, 60000)
+})
+onBeforeUnmount(() => {
+  if (timer) clearInterval(timer)
+})
 </script>
 
 <template>
-  <v-app-bar flat border>
-    <v-app-bar-nav-icon @click="drawer = !drawer" />
-    <v-app-bar-title>{{ t('app.title') }}</v-app-bar-title>
-    <v-btn-toggle
-      :model-value="locale"
-      mandatory
-      density="compact"
-      variant="outlined"
-      divided
-      class="mr-4"
-      @update:model-value="(v: string) => setLocale(v as 'th' | 'en')"
-    >
-      <v-btn v-for="l in locales" :key="typeof l === 'string' ? l : l.code" :value="typeof l === 'string' ? l : l.code" size="small">
-        {{ typeof l === 'string' ? l : l.code.toUpperCase() }}
-      </v-btn>
-    </v-btn-toggle>
-    <NotificationBell v-if="me" />
-    <v-menu v-if="me">
-      <template #activator="{ props }">
-        <v-btn v-bind="props" variant="text" class="mr-2 text-none" append-icon="mdi-menu-down" data-testid="user-menu">
-          <span data-testid="display-name">{{ me.displayName }}</span>
-        </v-btn>
-      </template>
-      <v-list density="compact">
-        <v-list-item to="/settings/notifications" prepend-icon="mdi-bell-cog-outline" :title="t('notifications.settingsLink')" data-testid="menu-notification-settings" />
-      </v-list>
-    </v-menu>
-    <v-btn icon="mdi-logout" :title="t('app.logout')" @click="logout" />
-  </v-app-bar>
-  <v-navigation-drawer v-model="drawer">
-    <v-list nav>
-      <v-list-item
-        v-for="item in items"
-        :key="item.key"
-        :to="item.to"
-        :prepend-icon="item.icon"
-        :title="t(item.key)"
-      />
-    </v-list>
+  <v-navigation-drawer
+    v-model="drawer"
+    :rail="collapsed && !mobile"
+    rail-width="64"
+    :mobile="mobile"
+    :temporary="mobile"
+    data-testid="nav-drawer"
+  >
+    <AppRail
+      :groups="groups"
+      :path="route.path"
+      :counts="counts"
+      :requester="requester"
+      :org-line="orgLine"
+      :collapsed="collapsed && !mobile"
+      :collapsible="!mobile"
+      @toggle="toggleRail"
+    />
   </v-navigation-drawer>
+  <v-app-bar>
+    <div class="top-bar">
+      <v-btn v-if="mobile" icon="mdi-menu" variant="text" class="ml-n2" :aria-label="t('shell.openMenu')" data-testid="menu-open" @click="drawer = !drawer" />
+      <AppBreadcrumbs :items="crumbs" :compact="mobile" />
+      <template v-if="me">
+        <GlobalSearch :requester="requester" :compact="mobile" />
+        <NotificationBell />
+        <UserMenu :me="me" :compact="mobile" />
+      </template>
+    </div>
+  </v-app-bar>
   <v-main>
-    <v-container>
+    <v-container fluid class="app-content">
       <v-alert v-if="meError" type="error" data-testid="me-error">{{ t(meError) }}</v-alert>
+      <div v-else-if="!me" class="app-loading" role="status" data-testid="shell-loading">
+        <v-progress-circular indeterminate color="primary" size="32" />
+        <span class="text-body-2 text-medium-emphasis">{{ t('shell.signingIn') }}</span>
+      </div>
       <slot v-else />
     </v-container>
   </v-main>
+  <v-bottom-navigation v-if="me && mobile" grow height="64" class="bottom-nav" :aria-label="t('shell.mainMenu')" data-testid="bottom-nav">
+    <v-btn
+      v-for="i in bottom"
+      :key="i.key"
+      :to="i.to"
+      :active="isNavActive(i.to, route.path)"
+      :aria-current="isNavActive(i.to, route.path) ? 'page' : undefined"
+      color="primary"
+      :data-testid="`bottom-${i.to.slice(1)}`"
+    >
+      <v-badge :model-value="!!navCount(i, counts)" :content="navCount(i, counts) ?? ''" color="error">
+        <v-icon :icon="i.icon" />
+      </v-badge>
+      <span>{{ t(bottomLabelKey(i)) }}</span>
+    </v-btn>
+  </v-bottom-navigation>
 </template>
+
+<style scoped>
+.top-bar { display: flex; align-items: center; gap: 16px; width: 100%; height: 100%; padding: 0 24px; min-width: 0; }
+.app-content { padding: 24px; }
+.app-loading { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; min-height: 50vh; }
+@media (max-width: 1023px) {
+  .top-bar { gap: 4px; padding: 0 8px 0 16px; }
+  .app-content { padding: 16px 16px 24px; }
+}
+.bottom-nav :deep(.v-btn) { font-size: 12px; min-width: 0; }
+</style>

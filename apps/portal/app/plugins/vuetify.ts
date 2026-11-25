@@ -26,6 +26,7 @@ export const vuetifyTheme = {
         'secondary-darken-1': '#071A33',
         nav: '#0B2545',
         'on-nav': '#C3D0E2',
+        'nav-hover': '#12305A',
         'nav-active': '#173A66',
         'nav-label': '#8BA0BF',
         'nav-accent': '#6FA8FF',
