@@ -32,3 +32,12 @@ export function toggleChannel(prefs: NotificationPrefs, kind: NotificationKind, 
 
 export const kindKey = (kind: NotificationKind) => `notifications.kinds.${kind}`
 export const channelKey = (name: ChannelName) => `notifications.channels.${name}`
+
+/** Milliseconds left before a link code expires (never negative). */
+export const msLeft = (expiresAt: string, now: number) => Math.max(0, Date.parse(expiresAt) - now)
+
+/** `m:ss` for a link code's countdown. */
+export function countdown(expiresAt: string, now: number): string {
+  const secs = Math.ceil(msLeft(expiresAt, now) / 1000)
+  return `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`
+}

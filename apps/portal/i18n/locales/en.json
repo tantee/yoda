@@ -78,7 +78,8 @@
     "issueNotFound": "Issue not found in GitLab, or the bot account cannot access it",
     "gitlabUnavailable": "Cannot reach GitLab. Please try again later.",
     "invalidPrefs": "Those notification settings are not valid",
-    "channelNotConfigured": "This channel is not set up on the server, so it cannot be enabled"
+    "channelNotConfigured": "This channel is not set up on the server, so it cannot be enabled",
+    "channelUnavailable": "This channel is not enabled, so it cannot be linked"
   },
   "todo": {
     "myTasks": "My tasks",
@@ -424,7 +425,26 @@
       "noEmail": "No email address on your account",
       "link": "Link account",
       "saved": "Saved",
-      "noChannels": "No channel is enabled yet. An admin can enable them on the Notification channels page."
+      "noChannels": "No channel is enabled yet. An admin can enable them on the Notification channels page.",
+      "linking": {
+        "unlink": "Unlink",
+        "linkedNote": "Linked",
+        "linkTitle": "Link {channel}",
+        "lineStepAdd": "Add Yoda's LINE Official Account as a friend.",
+        "lineAddFriend": "Add friend",
+        "lineStepSend": "Send this code to it in the LINE chat:",
+        "telegramStep": "Open the Yoda bot in Telegram and press Start.",
+        "telegramOpen": "Open Telegram",
+        "telegramOr": "If it does not open, send this code to {bot} in Telegram:",
+        "code": "Your link code",
+        "expiresIn": "The code expires in {time}",
+        "expired": "This code has expired.",
+        "newCode": "Get a new code",
+        "waiting": "Waiting for the link…",
+        "linked": "{channel} is linked",
+        "unlinked": "{channel} is unlinked",
+        "close": "Close"
+      }
     },
     "admin": {
       "title": "Notification channels",

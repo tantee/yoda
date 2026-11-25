@@ -33,6 +33,7 @@ import { runnerRoutes } from './routes/runners.js'
 import { statusRoutes } from './routes/status.js'
 import { mcpRoutes } from './routes/mcp.js'
 import { notificationChannelRoutes } from './routes/notification-channels.js'
+import { channelWebhookRoutes } from './routes/channel-webhooks.js'
 
 export type AppDeps = {
   config: Config
@@ -52,11 +53,23 @@ export type AppDeps = {
 
 /**
  * Pino options. Request logs carry no headers today; credentials are redacted anyway, should a serializer or a
- * log call ever include them (Keycloak and runner bearer tokens, the GitLab webhook secret, cookies).
+ * log call ever include them (Keycloak and runner bearer tokens, the GitLab and Telegram webhook secrets, the
+ * LINE signature, cookies).
  */
 export const LOGGER_OPTIONS = {
   redact: {
-    paths: ['req.headers.authorization', 'req.headers["x-gitlab-token"]', 'req.headers.cookie', 'headers.authorization', 'headers["x-gitlab-token"]', 'headers.cookie'],
+    paths: [
+      'req.headers.authorization',
+      'req.headers["x-gitlab-token"]',
+      'req.headers["x-telegram-bot-api-secret-token"]',
+      'req.headers["x-line-signature"]',
+      'req.headers.cookie',
+      'headers.authorization',
+      'headers["x-gitlab-token"]',
+      'headers["x-telegram-bot-api-secret-token"]',
+      'headers["x-line-signature"]',
+      'headers.cookie',
+    ],
     censor: '[redacted]',
   },
 } satisfies Exclude<FastifyServerOptions['logger'], boolean | undefined>
@@ -100,6 +113,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   discussionRoutes(app)
   notificationRoutes(app)
   notificationChannelRoutes(app)
+  channelWebhookRoutes(app)
   adminRoutes(app)
   gitlabRoutes(app)
   runnerRoutes(app)

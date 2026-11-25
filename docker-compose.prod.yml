@@ -43,6 +43,13 @@ services:
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       MAIL_FROM: ${MAIL_FROM:-}
+      LINE_CHANNEL_ACCESS_TOKEN: ${LINE_CHANNEL_ACCESS_TOKEN:-}
+      LINE_CHANNEL_SECRET: ${LINE_CHANNEL_SECRET:-}
+      LINE_API_URL: ${LINE_API_URL:-https://api.line.me}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:-}
+      TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
+      TELEGRAM_API_URL: ${TELEGRAM_API_URL:-https://api.telegram.org}
     restart: unless-stopped
 
   # Replaces the dev credentials: core signs in with the same S3_ACCESS_KEY / S3_SECRET_KEY.
@@ -70,6 +77,7 @@ services:
       NUXT_PUBLIC_KEYCLOAK_URL: ${NUXT_PUBLIC_KEYCLOAK_URL:?NUXT_PUBLIC_KEYCLOAK_URL is required}
       NUXT_PUBLIC_KEYCLOAK_REALM: ${NUXT_PUBLIC_KEYCLOAK_REALM:-yoda}
       NUXT_PUBLIC_KEYCLOAK_CLIENT_ID: ${NUXT_PUBLIC_KEYCLOAK_CLIENT_ID:-yoda-portal}
+      NUXT_PUBLIC_LINE_ADD_FRIEND_URL: ${NUXT_PUBLIC_LINE_ADD_FRIEND_URL:-}
     restart: unless-stopped
 
   # Optional server runner (README "Runners"): docker compose ... --profile runner up -d runner

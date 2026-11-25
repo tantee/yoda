@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { ChannelName, NotificationKind, type MyNotificationPrefs } from '@yoda/shared'
-import { channelColumns, channelKey, isChecked, kindKey, toggleChannel } from '../app/utils/notificationSettings'
+import { channelColumns, channelKey, countdown, isChecked, kindKey, msLeft, toggleChannel } from '../app/utils/notificationSettings'
 import { errorKey } from '../app/utils/errors'
 import { navItemsFor } from '../app/utils/nav'
 
@@ -45,6 +45,17 @@ describe('toggleChannel', () => {
   })
 })
 
+describe('link codes', () => {
+  const now = Date.parse('2026-11-25T10:00:00Z')
+  it('counts down in m:ss and stops at zero', () => {
+    expect(countdown('2026-11-25T10:15:00Z', now)).toBe('15:00')
+    expect(countdown('2026-11-25T10:00:59.200Z', now)).toBe('1:00')
+    expect(countdown('2026-11-25T10:00:05Z', now)).toBe('0:05')
+    expect(countdown('2026-11-25T09:59:00Z', now)).toBe('0:00')
+    expect(msLeft('2026-11-25T09:59:00Z', now)).toBe(0)
+  })
+})
+
 describe('labels', () => {
   it('every kind, channel and the new errors have th and en text', () => {
     const keys = [
@@ -52,6 +63,7 @@ describe('labels', () => {
       ...ChannelName.options.map(channelKey),
       errorKey({ data: { error: 'invalid_prefs' } }),
       errorKey({ data: { error: 'channel_not_configured' } }),
+      errorKey({ data: { error: 'channel_unavailable' } }),
       'nav.admin.notifications',
     ]
     for (const key of keys) {

@@ -10,6 +10,7 @@ const CODES: Record<string, string> = {
   gitlab_unavailable: 'errors.gitlabUnavailable',
   invalid_prefs: 'errors.invalidPrefs',
   channel_not_configured: 'errors.channelNotConfigured',
+  channel_unavailable: 'errors.channelUnavailable',
 }
 
 export function errorKey(e: unknown): string {

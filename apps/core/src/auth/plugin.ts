@@ -7,7 +7,7 @@ import { isStaff, TokenClaims, upsertPersonFromClaims } from './people.js'
 /** Thrown by guards / auth; mapped to `{ error }` bodies by the app error handler. */
 export class HttpError extends Error {
   constructor(
-    readonly statusCode: 401 | 403 | 404 | 409 | 413 | 415 | 422 | 502 | 503,
+    readonly statusCode: 400 | 401 | 403 | 404 | 409 | 413 | 415 | 422 | 502 | 503,
     readonly body: {
       error:
         | 'unauthorized'
@@ -31,6 +31,8 @@ export class HttpError extends Error {
         | 'invalid_branch'
         | 'invalid_prefs'
         | 'channel_not_configured'
+        | 'channel_unavailable'
+        | 'bad_request'
       /** Machine-readable detail for some errors (runner claims: why `invalid_state`). */
       reason?: string
     },
@@ -64,6 +66,8 @@ export const invalidBranch = (reason?: string) =>
 export const invalidPrefs = () => new HttpError(422, { error: 'invalid_prefs' })
 /** Enabling an outside channel whose credentials are not set in env. */
 export const channelNotConfigured = () => new HttpError(422, { error: 'channel_not_configured' })
+/** A link code for a channel that is not configured and enabled. */
+export const channelUnavailable = () => new HttpError(422, { error: 'channel_unavailable' })
 export const gitlabUnavailable = () => new HttpError(502, { error: 'gitlab_unavailable' })
 
 /**

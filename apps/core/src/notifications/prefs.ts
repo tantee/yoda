@@ -26,7 +26,7 @@ async function settingsRow(q: Q): Promise<SettingsRow | undefined> {
 }
 
 /** Channels both configured (env) and enabled by an admin. */
-async function availableChannels(q: Q, configured: readonly ChannelName[]): Promise<ChannelName[]> {
+export async function availableChannels(q: Q, configured: readonly ChannelName[]): Promise<ChannelName[]> {
   if (!configured.length) return []
   const row = await settingsRow(q)
   return configured.filter((name) => row?.[ENABLED_COLUMN[name]] === true)

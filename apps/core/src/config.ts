@@ -40,6 +40,20 @@ export type Config = {
   /** Only ever read from the environment; never logged, stored or returned. */
   smtpPassword?: string
   mailFrom?: string
+  /** LINE Messaging API channel access token; only ever read from the environment. */
+  lineChannelAccessToken?: string
+  /** LINE channel secret, the key of the webhook's `X-Line-Signature`; only ever read from the environment. */
+  lineChannelSecret?: string
+  /** LINE API base URL (no trailing slash); a fake in dev and tests. */
+  lineApiUrl: string
+  /** Telegram bot token; it sits in the API URL path, so URLs and errors carrying it are never logged. */
+  telegramBotToken?: string
+  /** The bot's username (without @), for the `t.me/<bot>?start=<code>` link. */
+  telegramBotUsername?: string
+  /** Checked against `X-Telegram-Bot-Api-Secret-Token` on the webhook; at least 16 characters. */
+  telegramWebhookSecret?: string
+  /** Telegram Bot API base URL (no trailing slash); a fake in dev and tests. */
+  telegramApiUrl: string
 }
 
 const modelId = z.string().regex(/^(anthropic|openai):.+$/, 'must be provider:model with provider anthropic or openai')
@@ -78,6 +92,13 @@ const envSchema = z.object({
   SMTP_USER: optional(z.string()),
   SMTP_PASSWORD: optional(z.string()),
   MAIL_FROM: optional(z.string()),
+  LINE_CHANNEL_ACCESS_TOKEN: optional(z.string()),
+  LINE_CHANNEL_SECRET: optional(z.string()),
+  LINE_API_URL: z.preprocess((v) => (v === '' ? undefined : v), z.string().url().default('https://api.line.me')),
+  TELEGRAM_BOT_TOKEN: optional(z.string()),
+  TELEGRAM_BOT_USERNAME: optional(z.string().regex(/^@?[A-Za-z0-9_]{5,32}$/, 'must be the bot username')),
+  TELEGRAM_WEBHOOK_SECRET: optional(z.string().regex(/^[A-Za-z0-9_-]{16,256}$/, 'must be 16-256 characters of A-Z, a-z, 0-9, _ and -')),
+  TELEGRAM_API_URL: z.preprocess((v) => (v === '' ? undefined : v), z.string().url().default('https://api.telegram.org')),
 })
 
 export function loadConfig(env: NodeJS.ProcessEnv): Config {
@@ -123,5 +144,12 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     smtpUser: e.SMTP_USER,
     smtpPassword: e.SMTP_PASSWORD,
     mailFrom: e.MAIL_FROM,
+    lineChannelAccessToken: e.LINE_CHANNEL_ACCESS_TOKEN,
+    lineChannelSecret: e.LINE_CHANNEL_SECRET,
+    lineApiUrl: e.LINE_API_URL.replace(/\/+$/, ''),
+    telegramBotToken: e.TELEGRAM_BOT_TOKEN,
+    telegramBotUsername: e.TELEGRAM_BOT_USERNAME?.replace(/^@/, ''),
+    telegramWebhookSecret: e.TELEGRAM_WEBHOOK_SECRET,
+    telegramApiUrl: e.TELEGRAM_API_URL.replace(/\/+$/, ''),
   }
 }

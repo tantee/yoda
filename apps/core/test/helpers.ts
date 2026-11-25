@@ -85,9 +85,11 @@ export function testConfig(): AppDeps['config'] {
       portalUrl: 'http://localhost:3000',
       runnerLeaseSeconds: 600,
       mcpEnabled: true,
-      // No SMTP: the email channel is not configured unless a test sets it.
+      // No SMTP, LINE or Telegram credentials: those channels are not configured unless a test sets them.
       smtpPort: 587,
       smtpSecure: false,
+      lineApiUrl: 'http://127.0.0.1:9',
+      telegramApiUrl: 'http://127.0.0.1:9',
   }
 }
 
