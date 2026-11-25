@@ -243,7 +243,7 @@ async function onMergeRequest(ctx: WorkCtx, hook: z.infer<typeof MrHook>): Promi
 }
 
 /** The work item's current code-change (`implement`) task, latest attempt first. */
-async function implementTask(tx: Tx, workItemId: string): Promise<{ id: string; assigneeId: string | null; itemTitle: string } | null> {
+export async function implementTask(tx: Tx, workItemId: string): Promise<{ id: string; assigneeId: string | null; itemTitle: string } | null> {
   const [item] = await tx.select({ templateId: workItems.templateId, title: workItems.title }).from(workItems).where(eq(workItems.id, workItemId))
   if (!item) return null
   const def = await templateById(tx, item.templateId)

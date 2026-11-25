@@ -200,7 +200,9 @@
       "ai_failed": "The AI could not produce a draft",
       "ai_unavailable": "AI is not configured",
       "no_ai": "This project does not use AI",
-      "reopened": "Work item reopened to an earlier step"
+      "reopened": "Work item reopened to an earlier step",
+      "mr_opened_in_gitlab": "Merge request opened in GitLab",
+      "merged_in_gitlab": "Merged in GitLab"
     },
     "ai": {
       "drafted": "AI drafted a result",

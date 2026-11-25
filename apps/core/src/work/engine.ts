@@ -482,9 +482,7 @@ export async function submitTask(ctx: WorkCtx, me: Me, taskId: string, result: T
   await linkAttachments(tx, task, result.attachmentIds, me, asRequester)
 
   if (!decides || result.decision === 'approve') {
-    await tx.update(tasks).set({ state: 'accepted', result, updatedAt: sql`now()` }).where(eq(tasks.id, taskId))
-    await recordEvent(ctx, { type: 'task.accepted', ...base })
-    await recordAcceptedKnowledge(ctx, item, task, result)
+    await acceptTask(ctx, item, task, result)
   } else {
     const comment = result.text
     await tx.update(tasks).set({ state: 'rejected', result, updatedAt: sql`now()` }).where(eq(tasks.id, taskId))
@@ -517,6 +515,51 @@ export async function submitTask(ctx: WorkCtx, me: Me, taskId: string, result: T
     }
   }
   await progressWorkItem(ctx, task.workItemId)
+}
+
+/**
+ * The task (locked with its work item) is accepted with `result`: the row, a `task.accepted` event (with
+ * `reason` / `payload` when given) and the knowledge it yields. The caller runs progressWorkItem.
+ */
+async function acceptTask(
+  ctx: WorkCtx,
+  item: WorkItemRow,
+  task: TaskRow,
+  result: TaskResult,
+  ev: { reason?: string; payload?: Record<string, unknown> } = {},
+): Promise<void> {
+  await ctx.tx.update(tasks).set({ state: 'accepted', result, updatedAt: sql`now()` }).where(eq(tasks.id, task.id))
+  await recordEvent(ctx, {
+    type: 'task.accepted',
+    projectId: task.projectId,
+    workItemId: task.workItemId,
+    taskId: task.id,
+    reason: ev.reason ?? null,
+    payload: ev.payload,
+  })
+  await recordAcceptedKnowledge(ctx, item, task, result)
+}
+
+/**
+ * Accepts a task on the system's behalf (GitLab effects; the context's actor is `{ id: null, kind: 'system' }`)
+ * through the same internals as a person's approving submit, then advances the work item as usual (open
+ * discussions hold the step, auto-assign guard rails and `propose` proposals apply). No-op (false) unless the
+ * item is active, the task belongs to its current step and is still active (not accepted, rejected or
+ * superseded): a person's earlier decision wins.
+ */
+export async function acceptTaskAsSystem(
+  ctx: WorkCtx,
+  taskId: string,
+  result: TaskResult,
+  ev: { reason: string; payload?: Record<string, unknown> },
+): Promise<boolean> {
+  const { item, task } = await lockTask(ctx.tx, taskId)
+  if (item.state !== 'active' || task.stepKey !== item.currentStepKey || task.supersededAt || !isActive(task.state)) return false
+  const decides = task.type === 'review' || task.type === 'approval'
+  if (decides && result.decision !== 'approve') throw new Error('acceptTaskAsSystem: a deciding task needs decision approve')
+  await acceptTask(ctx, item, task, result, ev)
+  await progressWorkItem(ctx, task.workItemId)
+  return true
 }
 
 /**
