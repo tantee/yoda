@@ -18,6 +18,7 @@ import { workItemShortId } from '../gitlab/webhook.js'
 import { buildContextPack, PACK_MAX_CHARS, renderCode, renderContextPack, type RunCode } from '../knowledge/context-pack.js'
 import { searchKnowledge } from '../knowledge/search.js'
 import { createEntry } from '../knowledge/service.js'
+import { notify } from '../notifications/service.js'
 import { runWork, recordEvent, type WorkCtx } from '../work/context.js'
 import { lockItem, submitRunnerResult, submitTask, type WorkItemRow } from '../work/engine.js'
 import { canSeeProject } from '../work/queries.js'
@@ -174,7 +175,11 @@ function workable(rc: RunnerCtx, item: WorkItemRow, task: TaskRow): { ai: boolea
     (task.state === 'open' || task.state === 'in_progress')
   if (!current) return null
   if (task.executor === 'ai' && task.assigneeId === null) return { ai: true }
-  if (task.assigneeId === rc.owner.id) return { ai: false }
+  if (task.assigneeId === rc.owner.id) {
+    // Claims refuse these already; a result has no decision to give them.
+    if (task.type === 'review' || task.type === 'approval') throw invalidState('needs_decision')
+    return { ai: false }
+  }
   return null
 }
 
@@ -261,6 +266,15 @@ export async function askHuman(deps: RunnerDeps, rc: RunnerCtx, input: AskHumanI
       .set({ parkedDiscussionId: discussionId, state: 'open', updatedAt: sql`now()` })
       .where(eq(tasks.id, task.id))
     await endRun(ctx, run.id, { state: 'parked', event: 'run.parked', reason: 'asked_human', payload: { discussionId }, reopen: false })
+    // The PMs hear of a raise, never the raiser; the owner's own runner asked, so they are told too.
+    await notify(ctx, {
+      personId: rc.owner.id,
+      kind: 'discussion',
+      title: 'AI ของคุณมีคำถาม',
+      body: input.question,
+      link: `/discussions/${discussionId}`,
+      dedupeKey: `runner-ask:${discussionId}`,
+    })
     return discussionId
   })
 }

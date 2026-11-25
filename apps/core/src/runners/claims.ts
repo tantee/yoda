@@ -186,6 +186,8 @@ export async function claimTask(deps: RunnerDeps, rc: RunnerCtx, taskId: string)
           runner.capabilities.includes(tt.capability) &&
           !(await gaveUp(tx, task.id)))
     if (!eligible) throw invalidState('task_unavailable')
+    // A runner's result carries no approve / changes decision: review and approval tasks stay with people.
+    if (task.type === 'review' || task.type === 'approval') throw invalidState('needs_decision')
     const [running] = await tx
       .select({ id: agentRuns.id })
       .from(agentRuns)

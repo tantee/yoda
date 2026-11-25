@@ -121,7 +121,13 @@ export async function resetStaleVotes(
  * no-AI project it fails at once with `no_ai` (the reason stays visible; people write the brief); without
  * `requestBrief` the given options become a ready, person-written brief.
  */
-export async function createDiscussion(ctx: WorkCtx, me: Me, input: DiscussionCreate): Promise<string> {
+export async function createDiscussion(
+  ctx: WorkCtx,
+  me: Me,
+  input: DiscussionCreate,
+  /** `ai`: the given options were written by the AI (a runner's question); the brief is still ready. */
+  opts: { optionsBy?: 'ai' | 'person' } = {},
+): Promise<string> {
   const { tx } = ctx
   if (!me.isStaff) throw forbidden()
   requireUniqueKeys(input.options)
@@ -158,7 +164,7 @@ export async function createDiscussion(ctx: WorkCtx, me: Me, input: DiscussionCr
     options: input.options,
     recommendation: '',
     recommendedKey: null,
-    source: input.requestBrief ? 'ai' : 'person',
+    source: input.requestBrief ? 'ai' : (opts.optionsBy ?? 'person'),
     status: wantsAi ? 'pending' : input.requestBrief ? 'failed' : 'ready',
     failReason: input.requestBrief && noAi ? 'no_ai' : null,
   }
@@ -311,7 +317,7 @@ export async function resumeAfterDiscussion(ctx: WorkCtx, workItemId: string): P
  * finished task's step may already have advanced, and its discussion would hold a step it was not raised on.
  */
 export async function raiseFromTask(ctx: WorkCtx, me: Me, taskId: string, input: TaskDiscussionCreate): Promise<string> {
-  return raiseOnTask(ctx, me, taskId, input, { anyStaffMember: false })
+  return raiseOnTask(ctx, me, taskId, input, { anyStaffMember: false, optionsBy: 'person' })
 }
 
 /**
@@ -321,7 +327,7 @@ export async function raiseFromTask(ctx: WorkCtx, me: Me, taskId: string, input:
  * the task; people always go through `raiseFromTask`.
  */
 export async function raiseFromRunnerTask(ctx: WorkCtx, owner: Me, taskId: string, input: TaskDiscussionCreate): Promise<string> {
-  return raiseOnTask(ctx, owner, taskId, input, { anyStaffMember: true })
+  return raiseOnTask(ctx, owner, taskId, input, { anyStaffMember: true, optionsBy: 'ai' })
 }
 
 async function raiseOnTask(
@@ -329,7 +335,7 @@ async function raiseOnTask(
   me: Me,
   taskId: string,
   input: TaskDiscussionCreate,
-  o: { anyStaffMember: boolean },
+  o: { anyStaffMember: boolean; optionsBy: 'ai' | 'person' },
 ): Promise<string> {
   const { tx } = ctx
   if (!me.isStaff) throw forbidden()
@@ -355,7 +361,7 @@ async function raiseOnTask(
   const task = await allowed()
   const active = (ACTIVE_TASK_STATES as readonly string[]).includes(task.state)
   if (item.state !== 'active' || !active || task.stepKey !== item.currentStepKey) throw invalidState()
-  return createDiscussion(ctx, me, { ...input, workItemId: task.workItemId, taskId })
+  return createDiscussion(ctx, me, { ...input, workItemId: task.workItemId, taskId }, { optionsBy: o.optionsBy })
 }
 
 /**

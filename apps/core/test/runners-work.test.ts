@@ -9,6 +9,7 @@ import {
   discussions,
   events,
   knowledgeEntries,
+  notifications,
   people,
   projectMembers,
   projectRepos,
@@ -318,6 +319,18 @@ describe('submitResult', () => {
     expect((await runRow(runId)).state).toBe('succeeded')
   })
 
+  it('review and approval tasks need a decision: refused on claim, and on submit', async () => {
+    const db = await testDb()
+    await db.update(tasks).set({ executor: 'human', type: 'review', assigneeId: owner.id }).where(eq(tasks.id, implement.id))
+    await refused(claimTask(deps, rc, implement.id), 'needs_decision')
+    await db.update(tasks).set({ type: 'human' }).where(eq(tasks.id, implement.id))
+    const runId = await claim()
+    await db.update(tasks).set({ type: 'approval' }).where(eq(tasks.id, implement.id))
+    await refused(submitResult(deps, rc, { runId, text: 'ok' }), 'needs_decision')
+    expect((await runRow(runId)).state).toBe('running')
+    expect((await taskRow(implement.id)).state).toBe('in_progress')
+  })
+
   it('refuses an expired run', async () => {
     const runId = await claim()
     clock = new Date(WED_10.getTime() + 11 * 60_000)
@@ -338,6 +351,7 @@ describe('askHuman', () => {
     const db = await testDb()
     const [d] = await db.select().from(discussions).where(eq(discussions.id, discussionId))
     expect(d).toMatchObject({ state: 'open', taskId: implement.id, workItemId: itemId, raisedBy: owner.id })
+    expect(d!.brief).toMatchObject({ source: 'ai', status: 'ready' })
     expect((d!.brief as { options: { title: string }[] }).options.map((o) => o.title)).toEqual(['dd/mm/yyyy', 'ISO 8601'])
     expect(await taskRow(implement.id)).toMatchObject({ state: 'open', parkedDiscussionId: discussionId })
     expect((await runRow(runId)).state).toBe('parked')
@@ -352,6 +366,35 @@ describe('askHuman', () => {
     const { pack, text } = await getContextPack(deps, rc, next)
     expect(pack.decisions.map((e) => e.title)).toContain('Which date format?')
     expect(text).toContain('Use ISO 8601')
+  })
+
+  it('tells the owner and the PMs', async () => {
+    const runId = await claim()
+    const discussionId = await askHuman(deps, rc, { runId, question: 'Q?', details: '' })
+    const rows = await (await testDb()).select().from(notifications).where(eq(notifications.link, `/discussions/${discussionId}`))
+    expect(rows.map((n) => [n.personId, n.dedupeKey]).sort()).toEqual(
+      [
+        [owner.id, `runner-ask:${discussionId}`],
+        [pm.id, `discussion:${discussionId}:raised`],
+      ].sort(),
+    )
+    expect(rows.every((n) => n.kind === 'discussion')).toBe(true)
+  })
+
+  it('owner as the sole PM: the owner is told, and admins get the raise as the fallback', async () => {
+    const db = await testDb()
+    const admin = await person('boss', { admin: true })
+    await db.delete(projectMembers).where(eq(projectMembers.personId, pm.id))
+    await db.update(projectMembers).set({ roles: ['PM', 'DEV'] }).where(eq(projectMembers.personId, owner.id))
+    const runId = await claim()
+    const discussionId = await askHuman(deps, rc, { runId, question: 'Q?', details: '' })
+    const rows = await db.select().from(notifications).where(eq(notifications.link, `/discussions/${discussionId}`))
+    expect(rows.map((n) => [n.personId, n.dedupeKey]).sort()).toEqual(
+      [
+        [owner.id, `runner-ask:${discussionId}`],
+        [admin.id, `discussion:${discussionId}:raised`],
+      ].sort(),
+    )
   })
 
   it('withdrawing the question unparks the task too', async () => {

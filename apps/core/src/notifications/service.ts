@@ -222,9 +222,10 @@ type DiscussionRef = { id: string; projectId: string | null; question: string }
  * department discussion. Not the raiser themself.
  */
 export async function notifyDiscussionRaised(ctx: WorkCtx, d: DiscussionRef & { raisedBy: string }): Promise<void> {
-  let recipients = d.projectId ? await projectPms(ctx, d.projectId) : []
-  if (!recipients.length) recipients = await admins(ctx)
-  const ids = [...new Set(recipients)].filter((id) => id !== d.raisedBy)
+  // The admin fallback applies when no PM other than the raiser is left (e.g. the sole PM raised it).
+  const others = (ids: string[]) => [...new Set(ids)].filter((id) => id !== d.raisedBy)
+  let ids = others(d.projectId ? await projectPms(ctx, d.projectId) : [])
+  if (!ids.length) ids = others(await admins(ctx))
   for (const personId of await staffWhoSee(ctx, ids, d.projectId)) {
     await notify(ctx, {
       personId,

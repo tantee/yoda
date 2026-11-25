@@ -232,7 +232,7 @@ describe('safeguards', () => {
     const rc = await runner(owner, { maxConcurrent: 1 })
     const [w] = await (await testDb())
       .insert(tasks)
-      .values({ workItemId: itemId, projectId, stepKey: 'dev', templateTaskKey: 'review-code', attempt: 1, type: 'review', role: 'DEV', executor: 'human', state: 'open', assigneeId: owner.id })
+      .values({ workItemId: itemId, projectId, stepKey: 'dev', templateTaskKey: 'review-code', attempt: 1, type: 'human', role: 'DEV', executor: 'human', state: 'open', assigneeId: owner.id })
       .returning()
     await claimTask(deps, rc, w!.id)
     await refused(claimTask(deps, rc, implement.id), 'at_capacity')
@@ -248,7 +248,7 @@ describe('safeguards', () => {
   it('no-AI project', async () => {
     const db = await testDb()
     const rc = await runner(owner)
-    const own = await addTask({ templateTaskKey: 'review-code', type: 'review', executor: 'human', assigneeId: owner.id })
+    const own = await addTask({ templateTaskKey: 'review-code', type: 'human', executor: 'human', assigneeId: owner.id })
     await db.update(projects).set({ noAi: true }).where(eq(projects.id, projectId))
     await refused(claimTask(deps, rc, own.id), 'no_ai')
   })
@@ -262,7 +262,7 @@ describe('safeguards', () => {
 
   it('on demand: the owner claims their own assigned human task outside working hours', async () => {
     const rc = await runner(owner, { workingHours: WEEKDAYS })
-    const own = await addTask({ templateTaskKey: 'review-code', type: 'review', executor: 'human', assigneeId: owner.id })
+    const own = await addTask({ templateTaskKey: 'review-code', type: 'human', executor: 'human', assigneeId: owner.id })
     clock = SUN_10
     const { run } = await claimTask(deps, rc, own.id)
     expect(run.state).toBe('running')
@@ -297,7 +297,7 @@ describe('leases', () => {
 
   it('expireLeases leaves a live run and a person’s task with that person', async () => {
     const rc = await runner(owner, { maxConcurrent: 2 })
-    const own = await addTask({ templateTaskKey: 'review-code', type: 'review', executor: 'human', assigneeId: owner.id })
+    const own = await addTask({ templateTaskKey: 'review-code', type: 'human', executor: 'human', assigneeId: owner.id })
     const { run } = await claimTask(deps, rc, own.id)
     await expireLeases(deps)
     expect((await runsOf(own.id))[0]!.state).toBe('running')

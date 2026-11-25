@@ -122,6 +122,7 @@ export const ClaimRefusal = z.enum([
   'task_unavailable',
   'already_claimed',
   'run_not_active',
+  'needs_decision',
 ])
 export type ClaimRefusal = z.infer<typeof ClaimRefusal>
 
