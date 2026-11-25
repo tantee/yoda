@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import type { WeeklySummary } from '@yoda/shared'
+import { WeeklySummaryOutcome, type LiveEvent, type WeeklySummary } from '@yoda/shared'
+import { outcomeMessageKey } from '~/utils/status'
 
-/** How long a regenerate may take before the card says nothing was written (the job stays silent then). */
-const GIVE_UP_MS = 60_000
+/** A safety net only: every run announces its outcome, so this fires just when the job never ran. */
+const GIVE_UP_MS = 5 * 60_000
 const POLL_MS = 10_000
 
-const props = defineProps<{ projectId: string; summary: WeeklySummary | null; noAi: boolean; canManage: boolean }>()
+const props = defineProps<{ projectId: string; summary: WeeklySummary | null; noAi: boolean; aiConfigured: boolean; canManage: boolean }>()
 const emit = defineEmits<{ refresh: [] }>()
 const { t, locale } = useI18n()
 const api = useApi()
@@ -13,8 +14,8 @@ const api = useApi()
 const confirmOpen = ref(false)
 const busy = ref(false)
 const generating = ref(false)
-const notWritten = ref(false)
-const skipped = ref(false)
+/** Why the last regenerate wrote nothing (an i18n key), or null. */
+const outcomeKey = ref<string | null>(null)
 const error = ref('')
 let giveUp: ReturnType<typeof setTimeout> | null = null
 let poll: ReturnType<typeof setInterval> | null = null
@@ -30,8 +31,12 @@ function stop() {
 }
 onBeforeUnmount(stop)
 
+// A new summary ends the wait and clears any stale message.
 watch(() => signature(props.summary), (now) => {
-  if (generating.value && now !== before) stop()
+  if (generating.value && now === before) return
+  stop()
+  outcomeKey.value = null
+  error.value = ''
 })
 
 async function regenerate() {
@@ -41,13 +46,12 @@ async function regenerate() {
     await api(`/projects/${props.projectId}/weekly-summary`, { method: 'POST' })
     confirmOpen.value = false
     before = signature(props.summary)
-    notWritten.value = false
-    skipped.value = false
+    outcomeKey.value = null
     generating.value = true
     poll = setInterval(() => emit('refresh'), POLL_MS)
     giveUp = setTimeout(() => {
       stop()
-      notWritten.value = true
+      outcomeKey.value = 'status.weekly.notWritten'
     }, GIVE_UP_MS)
   } catch (e) {
     error.value = t(errorKey(e))
@@ -56,13 +60,19 @@ async function regenerate() {
   }
 }
 
-/** The parent forwards this project's live events: a written summary reloads, a skip ends the wait. */
-function onLive(type: string) {
-  if (type === 'status.weekly_summary') emit('refresh')
-  else if (type === 'status.weekly_summary_skipped' && generating.value) {
-    stop()
-    skipped.value = true
+/** The parent forwards this project's live events: a written summary reloads, a skipped run says why. */
+function onLive(e: LiveEvent) {
+  if (e.type === 'status.weekly_summary') emit('refresh')
+  if (e.type !== 'status.weekly_summary_outcome' || !generating.value) return
+  const parsed = WeeklySummaryOutcome.safeParse(e.payload)
+  if (!parsed.success) return
+  const key = outcomeMessageKey(parsed.data)
+  if (key === null) {
+    emit('refresh') // the new summary arrives with the reload and ends the wait
+    return
   }
+  stop()
+  outcomeKey.value = key
 }
 defineExpose({ onLive })
 
@@ -80,7 +90,7 @@ const fmt = (s: string) => new Date(s).toLocaleString(locale.value === 'en' ? 'e
         </template>
         <v-spacer />
         <v-btn
-          v-if="canManage && !noAi"
+          v-if="canManage && !noAi && aiConfigured"
           size="small"
           variant="outlined"
           prepend-icon="mdi-refresh"
@@ -97,8 +107,8 @@ const fmt = (s: string) => new Date(s).toLocaleString(locale.value === 'en' ? 'e
         <v-progress-circular indeterminate size="18" width="2" />
         <span class="text-body-2">{{ t('status.weekly.generating') }}</span>
       </div>
-      <v-alert v-if="notWritten" type="info" variant="tonal" density="compact" class="mb-3" data-testid="weekly-not-written">{{ t('status.weekly.notWritten') }}</v-alert>
-      <v-alert v-if="skipped" type="warning" variant="tonal" density="compact" class="mb-3" data-testid="weekly-skipped">{{ t('status.weekly.skipped') }}</v-alert>
+      <v-alert v-if="outcomeKey" type="info" variant="tonal" density="compact" class="mb-3" data-testid="weekly-outcome">{{ t(outcomeKey) }}</v-alert>
+      <v-alert v-if="!noAi && !aiConfigured" type="info" variant="tonal" density="compact" class="mb-3" data-testid="weekly-not-configured">{{ t('status.weekly.notConfigured') }}</v-alert>
       <p v-if="noAi" class="text-medium-emphasis" data-testid="weekly-no-ai">{{ t('status.weekly.noAi') }}</p>
       <MarkdownView v-else-if="summary" :source="summary.body" data-testid="weekly-body" />
       <p v-else class="text-medium-emphasis" data-testid="weekly-empty">{{ t('status.weekly.empty') }}</p>

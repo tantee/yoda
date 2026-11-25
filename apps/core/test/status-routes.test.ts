@@ -2,9 +2,11 @@ import type { FastifyInstance } from 'fastify'
 import type { DepartmentStatus, ProjectStatus, WorkItemDetail } from '@yoda/shared'
 import { eq, sql } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { AiGateway } from '../src/ai/gateway.js'
 import { aiCalls, discussions, events, projectRepos, workItemRepos, workItems } from '../src/db/schema.js'
+import { LiveBus } from '../src/live/bus.js'
 import { bangkokDate } from '../src/status/health.js'
-import { resetDb, testDb } from './helpers.js'
+import { mockModels, resetDb, testDb } from './helpers.js'
 import { auth, login, makeApp, type Who } from './support.js'
 
 let app: FastifyInstance
@@ -88,6 +90,7 @@ describe('status routes', () => {
         overdueItems: 0,
         openDiscussions: 0,
         countsByStep: {},
+        stepNames: {},
         aiSpendUsd: 0,
         aiBudgetUsd: null,
         board: [],
@@ -205,6 +208,23 @@ describe('status routes', () => {
     expect(s.recentEvents[0]!.workItemTitle).toBe(gone.title)
     const dept = (await call(pm, 'GET', '/status')).json() as DepartmentStatus
     expect(dept.projects[0]!.countsByStep).toEqual({ intake: 1, dev: 1, qc: 1 })
+    // Step names come with the counts (the board's localized names), so the portal needs no template lookup.
+    const names = dept.projects[0]!.stepNames
+    expect(Object.keys(names).sort()).toEqual(['dev', 'intake', 'qc'])
+    expect(names.intake).toEqual(s.board[0]!.stepName)
+    expect(s.stepNames.dev).toEqual(s.board.find((col) => col.stepKey === 'dev')!.stepName)
+  })
+
+  it('the project status says whether AI (the fast model) is configured', async () => {
+    const id = await project('แล็บ')
+    expect((await status(pm, id)).aiConfigured).toBe(true)
+    const bare = await makeApp({ ai: new AiGateway({ db: await testDb(), bus: new LiveBus(), models: mockModels({ fast: null, ids: { draft: 'anthropic:claude-opus-5-5', fast: null, embed: null } }), config: { dailyTaskCap: 8 } }) })
+    try {
+      const res = await bare.inject({ url: `/projects/${id}/status`, headers: auth(pm) })
+      expect((res.json() as ProjectStatus).aiConfigured).toBe(false)
+    } finally {
+      await bare.close()
+    }
   })
 
   it('people load counts open and in-progress staff work', async () => {

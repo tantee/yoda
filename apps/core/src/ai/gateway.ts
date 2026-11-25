@@ -7,7 +7,7 @@ import { aiCalls, events, people, projects } from '../db/schema.js'
 import type { LiveBus } from '../live/bus.js'
 import { notify } from '../notifications/service.js'
 import { recordEvent, runWork } from '../work/context.js'
-import { EMBEDDING_DIMENSIONS, parseModelId, type AiJob, type ModelSet } from './models.js'
+import { EMBEDDING_DIMENSIONS, parseModelId, type AiJob, type ModelJob, type ModelSet } from './models.js'
 import prices from './prices.json' with { type: 'json' }
 
 export class AiRefused extends Error {
@@ -126,6 +126,11 @@ export class AiGateway {
           'and refused for projects that have an AI budget (add the model to apps/core/src/ai/prices.json)',
       )
     }
+  }
+
+  /** The job has a usable model (its provider key is set); calls for it fail with `not_configured` otherwise. */
+  available(job: ModelJob): boolean {
+    return !!this.deps.models.ids[job] && !!this.deps.models[job]
   }
 
   async generateText(input: {

@@ -8,6 +8,7 @@ import {
   TimelineEvent,
   WeeklySummary,
   type BoardItem,
+  type LocalizedText,
   type Me,
   type Priority,
   type WorkflowTemplateDef,
@@ -148,6 +149,7 @@ async function summarize(
     undecidedDiscussions(db, ids),
     syncFailures(db, ids),
   ])
+  const steps = await stepNamesOf(db, items)
   const itemsBy = groupBy(items, (i) => i.projectId)
   const discussionsBy = groupBy(discussionRows, (d) => d.projectId)
   const failuresBy = groupBy(failures, (f) => f.projectId)
@@ -168,7 +170,12 @@ async function summarize(
       aiRatio: budget !== null && budget > 0 ? spent / budget : null,
     })
     const countsByStep: Record<string, number> = {}
-    for (const i of its) if (i.currentStepKey) countsByStep[i.currentStepKey] = (countsByStep[i.currentStepKey] ?? 0) + 1
+    const stepNames: Record<string, LocalizedText> = {}
+    for (const i of its) {
+      if (!i.currentStepKey) continue
+      countsByStep[i.currentStepKey] = (countsByStep[i.currentStepKey] ?? 0) + 1
+      stepNames[i.currentStepKey] ??= steps.get(i.templateId)?.get(i.currentStepKey) ?? { th: i.currentStepKey, en: i.currentStepKey }
+    }
     return ProjectStatusSummary.parse({
       projectId: p.id,
       name: p.name,
@@ -178,6 +185,7 @@ async function summarize(
       overdueItems: overdue.length,
       openDiscussions: ds.length,
       countsByStep,
+      stepNames,
       aiSpendUsd: spent,
       aiBudgetUsd: budget,
     })
@@ -211,6 +219,17 @@ export async function getDepartmentStatus(db: Db, me: Me): Promise<DepartmentSta
     },
     departmentAiSpendUsd: department.costUsd,
   })
+}
+
+/** Step names (by template id, then step key) of the templates `items` use. */
+async function stepNamesOf(db: Db, items: ItemRow[]): Promise<Map<string, Map<string, LocalizedText>>> {
+  const templateIds = [...new Set(items.map((i) => i.templateId))]
+  if (!templateIds.length) return new Map()
+  const defs = await db
+    .select({ id: workflowTemplates.id, definition: workflowTemplates.definition })
+    .from(workflowTemplates)
+    .where(inArray(workflowTemplates.id, templateIds))
+  return new Map(defs.map((d) => [d.id, new Map((d.definition as WorkflowTemplateDef).steps.map((s) => [s.key, s.name]))]))
 }
 
 /** One column per step of the templates the active items use (template order), items most urgent first. */
@@ -344,7 +363,7 @@ async function latestWeeklySummary(db: Db, projectId: string): Promise<WeeklySum
 }
 
 /** Staff who can see the project (403 for requesters, 404 for non-members and unknown ids). */
-export async function getProjectStatus(db: Db, me: Me, projectId: string): Promise<ProjectStatus> {
+export async function getProjectStatus(db: Db, me: Me, projectId: string, opts: { aiConfigured: boolean }): Promise<ProjectStatus> {
   if (!me.isStaff) throw forbidden()
   const [project] = await db.select(projectCols).from(projects).where(eq(projects.id, projectId))
   if (!project || !(await canSeeProject(db, me, projectId))) throw notFound()
@@ -379,5 +398,6 @@ export async function getProjectStatus(db: Db, me: Me, projectId: string): Promi
     discussions: open,
     repos: repos.map(toRepo),
     weeklySummary: weekly,
+    aiConfigured: opts.aiConfigured,
   })
 }

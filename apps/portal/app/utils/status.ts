@@ -1,4 +1,4 @@
-import type { Health, HealthReason, HealthReasonCode } from '@yoda/shared'
+import type { Health, HealthReason, HealthReasonCode, WeeklySummaryOutcome } from '@yoda/shared'
 
 /** The slice of vue-i18n's `t` the status helpers need: a key, named values and a plural count. */
 export type Translate = (key: string, named: Record<string, unknown>, plural: number) => string
@@ -37,4 +37,33 @@ export function spendPercent(spendUsd: number, budgetUsd: number | null): number
 /** US dollars with cents (AI spend is small; under a cent shows as $0.00). */
 export function usd(n: number): string {
   return `$${n.toFixed(2)}`
+}
+
+/** The message for a weekly summary run's outcome; null when it was written. */
+export function outcomeMessageKey(o: WeeklySummaryOutcome): string | null {
+  if (o.outcome === 'written') return null
+  return o.reason ? `status.weekly.reason.${o.reason}` : 'status.weekly.notWritten'
+}
+
+export type Debounced = (() => void) & { cancel: () => void }
+
+/** Runs `fn` once calls pause for `wait` ms, but at least every `maxWait` ms while they keep coming. */
+export function debounceMax(fn: () => void, wait: number, maxWait: number): Debounced {
+  let waitTimer: ReturnType<typeof setTimeout> | null = null
+  let maxTimer: ReturnType<typeof setTimeout> | null = null
+  const cancel = () => {
+    if (waitTimer) clearTimeout(waitTimer)
+    if (maxTimer) clearTimeout(maxTimer)
+    waitTimer = maxTimer = null
+  }
+  const flush = () => {
+    cancel()
+    fn()
+  }
+  const debounced = () => {
+    if (waitTimer) clearTimeout(waitTimer)
+    waitTimer = setTimeout(flush, wait)
+    maxTimer ??= setTimeout(flush, maxWait)
+  }
+  return Object.assign(debounced, { cancel })
 }

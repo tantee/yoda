@@ -1,4 +1,5 @@
 import { and, asc, desc, eq, gte, isNull, lt, ne, sql, type SQL } from 'drizzle-orm'
+import type { WeeklySummaryOutcome, WeeklySummaryReason } from '@yoda/shared'
 import type { AppDeps } from '../app.js'
 import { AiFailed, AiRefused, errorSummary } from '../ai/gateway.js'
 import { WEEKLY_SUMMARY_SYSTEM } from '../ai/prompts.js'
@@ -229,22 +230,50 @@ const permanent = (err: unknown) => err instanceof AiRefused || (err instanceof 
 
 const SYSTEM = { id: null, kind: 'system' } as const
 
+/** Tells open status pages how a run ended (live only, never stored; staff who can see the project get it). */
+function announce(deps: WeeklyDeps, projectId: string, outcome: WeeklySummaryOutcome): void {
+  deps.bus.publish({
+    type: 'status.weekly_summary_outcome',
+    projectId,
+    workItemId: null,
+    taskId: null,
+    conversationId: null,
+    personId: null,
+    payload: outcome,
+  })
+}
+
 /**
  * Writes (or, with `force`, rewrites) the project's summary of `week` as a draft `document` entry, keyed by
  * `sourceRef` `weekly:<projectId>:<week>`. No-AI projects and quiet weeks get nothing; without `force` an
  * existing entry is kept and nothing is billed. The AI call runs outside any transaction; the write takes a
  * per-project-week advisory lock and re-checks, so a rerun or a racing regenerate never duplicates the entry
- * (a regenerate supersedes it with a new version).
+ * (a regenerate supersedes it with a new version). Every run that does not keep an existing entry ends with a
+ * live `status.weekly_summary_outcome` (a retried transient failure announces on its final attempt).
  */
 export async function runWeeklySummary(
   deps: WeeklyDeps,
   input: { projectId: string; week: string; force: boolean },
   run?: Pick<JobRun, 'id' | 'isFinalAttempt' | 'signal'>,
 ): Promise<void> {
+  const outcome = await summarize(deps, input, run)
+  if (outcome) announce(deps, input.projectId, { week: input.week, ...outcome })
+}
+
+type Outcome = Omit<WeeklySummaryOutcome, 'week'>
+const skipped = (reason: WeeklySummaryReason): Outcome => ({ outcome: 'skipped', reason })
+
+/** The run itself; null when there is nothing to announce (unknown project, existing entry kept). */
+async function summarize(
+  deps: WeeklyDeps,
+  input: { projectId: string; week: string; force: boolean },
+  run?: Pick<JobRun, 'id' | 'isFinalAttempt' | 'signal'>,
+): Promise<Outcome | null> {
   const { db } = deps
   const { projectId, week, force } = input
   const [project] = await db.select({ name: projects.name, noAi: projects.noAi }).from(projects).where(eq(projects.id, projectId))
-  if (!project || project.noAi) return
+  if (!project) return null
+  if (project.noAi) return skipped('no_ai')
 
   const ref = weeklyRef(projectId, week)
   const existing = async (conn: Db | Tx) =>
@@ -255,15 +284,16 @@ export async function runWeeklySummary(
         .where(and(eq(knowledgeEntries.projectId, projectId), eq(knowledgeEntries.sourceRef, ref), isNull(knowledgeEntries.supersededAt)))
         .limit(1)
     )[0] ?? null
-  if (!force && (await existing(db))) return
+  if (!force && (await existing(db))) return null
 
   // The labelled week's own days: a finished week in full, the week in progress up to now.
   const now = deps.now?.() ?? new Date()
   const since = weekStart(week)
-  if (since >= now) return
+  if (since >= now) return skipped('no_activity')
   const end = new Date(since.getTime() + WINDOW_MS)
   const material = await weeklyMaterial(db, projectId, since, end <= now ? end : undefined)
-  if (!material) return
+  if (!material) return skipped('no_activity')
+  if (!deps.ai.available('fast')) return skipped('ai_not_configured')
 
   let body: string
   try {
@@ -289,19 +319,22 @@ export async function runWeeklySummary(
         if (seen) return
         await recordEvent(ctx, { type: 'status.weekly_summary_skipped', projectId, workItemId: null, taskId: null, reason: 'budget_exceeded', payload: { week } })
       })
-      return
+      return skipped('budget_exceeded')
     }
     if (permanent(err) || !run || run.isFinalAttempt) {
       console.warn(`weekly-summary ${projectId}:${week}: no summary: ${errorSummary(err)}`)
-      return
+      if (err instanceof AiRefused && err.reason === 'no_ai') return skipped('no_ai')
+      if (err instanceof AiFailed && err.reason === 'not_configured') return skipped('ai_not_configured')
+      return skipped('ai_failed')
     }
     throw err
   }
-  if (!body) return
+  if (!body) return skipped('ai_failed')
 
   await runWork(deps, SYSTEM, async (ctx) => {
     await ctx.tx.execute(sql`select pg_advisory_xact_lock(hashtext(${ref}))`)
     const cur = await existing(ctx.tx)
+    // Without force, a racing run already wrote it: the week has its summary either way.
     if (cur && !force) return
     const title = `สรุปประจำสัปดาห์ ${week} / Weekly summary ${week}`
     const entryId = cur
@@ -326,6 +359,7 @@ export async function runWeeklySummary(
       payload: { week, entryId, version: row!.version },
     })
   })
+  return { outcome: 'written' }
 }
 
 /** Job id of a project-week's summary (also its singleton key); a regenerate adds `:force`. */

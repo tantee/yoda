@@ -36,6 +36,8 @@ export const ProjectStatusSummary = z.object({
   openDiscussions: z.number().int(),
   /** Active items by their current step key. */
   countsByStep: z.record(z.string(), z.number().int()),
+  /** The name of each step key in `countsByStep` (from the templates its items use, like the board's). */
+  stepNames: z.record(z.string(), LocalizedText),
   /** This Asia/Bangkok month, as counted against the budget. */
   aiSpendUsd: z.number(),
   aiBudgetUsd: z.number().nullable(),
@@ -111,6 +113,17 @@ export const WeeklySummary = z.object({
 })
 export type WeeklySummary = z.infer<typeof WeeklySummary>
 
+export const WeeklySummaryReason = z.enum(['ai_not_configured', 'no_ai', 'no_activity', 'budget_exceeded', 'ai_failed'])
+export type WeeklySummaryReason = z.infer<typeof WeeklySummaryReason>
+
+/** Payload of the live-only `status.weekly_summary_outcome` event, sent on every summary run. */
+export const WeeklySummaryOutcome = z.object({
+  week: z.string().regex(/^\d{4}-W\d{2}$/),
+  outcome: z.enum(['written', 'skipped']),
+  reason: WeeklySummaryReason.optional(),
+})
+export type WeeklySummaryOutcome = z.infer<typeof WeeklySummaryOutcome>
+
 export const ProjectStatus = ProjectStatusSummary.extend({
   /** One column per step of the templates in use, in template order. */
   board: z.array(BoardColumn),
@@ -121,5 +134,7 @@ export const ProjectStatus = ProjectStatusSummary.extend({
   discussions: z.array(DiscussionSummary).max(20),
   repos: z.array(Repo),
   weeklySummary: WeeklySummary.nullable(),
+  /** The AI gateway has a usable fast model (weekly summaries can be written). */
+  aiConfigured: z.boolean(),
 })
 export type ProjectStatus = z.infer<typeof ProjectStatus>

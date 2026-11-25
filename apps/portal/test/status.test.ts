@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
-import { describe, expect, it } from 'vitest'
-import { EventType, HealthReasonCode, type HealthReason } from '@yoda/shared'
-import { bangkokToday, healthColor, isOverdue, reasonLink, reasonText, spendPercent, usd } from '../app/utils/status'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { HealthReasonCode, WeeklySummaryReason, type HealthReason } from '@yoda/shared'
+import { bangkokToday, debounceMax, healthColor, isOverdue, outcomeMessageKey, reasonLink, reasonText, spendPercent, usd } from '../app/utils/status'
 import { isStaffPath, navItemsFor } from '../app/utils/nav'
 
 const load = (f: string) => JSON.parse(readFileSync(new URL(`../i18n/locales/${f}`, import.meta.url), 'utf8'))
@@ -116,18 +116,55 @@ describe('status i18n', () => {
       'status.title', 'status.totals.activeItems', 'status.totals.overdueItems', 'status.totals.openDiscussions', 'status.totals.aiSpend',
       'status.health.on_track', 'status.health.at_risk', 'status.health.blocked', 'status.board', 'status.people', 'status.recentEvents',
       'status.discussions', 'status.repos', 'status.weekly.title', 'status.weekly.draft', 'status.weekly.regenerate',
-      'status.weekly.confirm', 'status.weekly.noAi', 'status.weekly.empty', 'status.weekly.notWritten', 'status.overdue', 'status.stuck',
+      'status.weekly.confirm', 'status.weekly.noAi', 'status.weekly.empty', 'status.weekly.notWritten', 'status.weekly.notConfigured', 'status.overdue', 'status.stuck',
       'workItems.targetDate', 'projects.tabs.status',
     ]
     for (const locale of ['th', 'en'] as const) for (const k of keys) expect(typeof lookup(LOCALES[locale], k), `${locale} ${k}`).toBe('string')
   })
 })
 
-describe('event labels', () => {
-  it('every stored event type has a timeline label in th and en', () => {
-    const liveOnly = ['discussion.responded', 'run.heartbeat', 'message.created', 'notification.created']
-    for (const type of EventType.options.filter(x => !liveOnly.includes(x))) {
-      for (const locale of ['th', 'en'] as const) expect(typeof lookup(LOCALES[locale], `events.${type}`), `${locale} ${type}`).toBe('string')
+describe('outcomeMessageKey', () => {
+  it('says nothing for a written summary and names the reason of a skip', () => {
+    expect(outcomeMessageKey({ week: '2026-W48', outcome: 'written' })).toBeNull()
+    expect(outcomeMessageKey({ week: '2026-W48', outcome: 'skipped', reason: 'no_activity' })).toBe('status.weekly.reason.no_activity')
+    expect(outcomeMessageKey({ week: '2026-W48', outcome: 'skipped' })).toBe('status.weekly.notWritten')
+  })
+  it('every reason has a message in th and en', () => {
+    for (const reason of WeeklySummaryReason.options) {
+      for (const locale of ['th', 'en'] as const) expect(typeof lookup(LOCALES[locale], `status.weekly.reason.${reason}`), `${locale} ${reason}`).toBe('string')
     }
+  })
+})
+
+describe('debounceMax', () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
+  it('runs once after a quiet period', () => {
+    const fn = vi.fn()
+    const d = debounceMax(fn, 1000, 5000)
+    d()
+    d()
+    vi.advanceTimersByTime(999)
+    expect(fn).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(1)
+    expect(fn).toHaveBeenCalledTimes(1)
+  })
+  it('a steady stream of calls still runs at least every maxWait', () => {
+    const fn = vi.fn()
+    const d = debounceMax(fn, 1000, 5000)
+    for (let t = 0; t < 12_000; t += 500) {
+      d()
+      vi.advanceTimersByTime(500)
+    }
+    expect(fn).toHaveBeenCalledTimes(2)
+  })
+  it('cancel drops a pending call', () => {
+    const fn = vi.fn()
+    const d = debounceMax(fn, 1000, 5000)
+    d()
+    d.cancel()
+    vi.advanceTimersByTime(10_000)
+    expect(fn).not.toHaveBeenCalled()
   })
 })

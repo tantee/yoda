@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import type { LiveEvent, ProjectStatus } from '@yoda/shared'
+import { debounceMax } from '~/utils/status'
 
 const props = defineProps<{ projectId: string; noAi: boolean; canManage: boolean }>()
 const { t, locale } = useI18n()
 const api = useApi()
 const status = ref<ProjectStatus | null>(null)
 const error = ref('')
-const weekly = ref<{ onLive: (type: string) => void } | null>(null)
+const weekly = ref<{ onLive: (e: LiveEvent) => void } | null>(null)
 
 let seq = 0
 async function load() {
@@ -21,21 +22,16 @@ async function load() {
   }
 }
 
-let timer: ReturnType<typeof setTimeout> | null = null
-function loadSoon() {
-  if (timer) clearTimeout(timer)
-  timer = setTimeout(load, 400)
-}
-onBeforeUnmount(() => {
-  if (timer) clearTimeout(timer)
-})
+const loadSoon = debounceMax(load, 400, 5000)
+onBeforeUnmount(loadSoon.cancel)
 onMounted(load)
 
 /** The project page forwards its live events (one stream per page). */
 function onLive(e: LiveEvent) {
   if (e.projectId !== props.projectId) return
-  weekly.value?.onLive(e.type)
-  if (e.type !== 'run.heartbeat' && e.type !== 'message.created' && e.type !== 'notification.created') loadSoon()
+  weekly.value?.onLive(e)
+  const quiet = ['run.heartbeat', 'message.created', 'notification.created', 'status.weekly_summary_outcome']
+  if (!quiet.includes(e.type)) loadSoon()
 }
 defineExpose({ onLive, reload: loadSoon })
 
@@ -66,6 +62,7 @@ const fmt = (s: string) => new Date(s).toLocaleString(locale.value === 'en' ? 'e
             :project-id="projectId"
             :summary="status.weeklySummary"
             :no-ai="noAi"
+            :ai-configured="status.aiConfigured"
             :can-manage="canManage"
             class="mb-6"
             @refresh="loadSoon"

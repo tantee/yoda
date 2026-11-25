@@ -1,19 +1,11 @@
 <script setup lang="ts">
-import type { DepartmentStatus, LiveEvent, WorkflowTemplateSummary } from '@yoda/shared'
-import { localized } from '~/utils/localized'
-import { usd } from '~/utils/status'
+import type { DepartmentStatus, LiveEvent } from '@yoda/shared'
+import { debounceMax, usd } from '~/utils/status'
 
-const { t, locale } = useI18n()
+const { t } = useI18n()
 const api = useApi()
 const status = ref<DepartmentStatus | null>(null)
-const templates = ref<WorkflowTemplateSummary[]>([])
 const error = ref('')
-
-/** Step keys are shared across templates; the newest template that has the key names it. */
-function stepName(key: string): string {
-  const step = [...templates.value].sort((a, b) => b.version - a.version).flatMap(x => x.steps).find(s => s.key === key)
-  return step ? localized(step.name, locale.value) : key
-}
 
 let seq = 0
 async function load() {
@@ -26,23 +18,11 @@ async function load() {
   } catch (e) {
     if (mine === seq) error.value = t(errorKey(e))
   }
-  if (!templates.value.length) {
-    try {
-      templates.value = await api<WorkflowTemplateSummary[]>('/workflow-templates')
-    } catch {
-      // Step chips fall back to their keys.
-    }
-  }
 }
 
-let timer: ReturnType<typeof setTimeout> | null = null
-function loadSoon() {
-  if (timer) clearTimeout(timer)
-  timer = setTimeout(load, 1000)
-}
-onBeforeUnmount(() => {
-  if (timer) clearTimeout(timer)
-})
+// Debounced, but a busy stream still refreshes at least every 5 s.
+const loadSoon = debounceMax(load, 1000, 5000)
+onBeforeUnmount(loadSoon.cancel)
 onMounted(load)
 
 const RELOAD_ON = ['work_item.', 'task.', 'discussion.', 'gitlab.issue_sync', 'ai.budget']
@@ -85,7 +65,7 @@ const totals = computed(() => {
       <p v-if="!status.projects.length" class="text-medium-emphasis" data-testid="status-empty">{{ t('status.empty') }}</p>
       <v-row v-else>
         <v-col v-for="p in status.projects" :key="p.projectId" cols="12" sm="6" lg="4">
-          <StatusProjectCard :project="p" :step-name="stepName" />
+          <StatusProjectCard :project="p" />
         </v-col>
       </v-row>
     </template>

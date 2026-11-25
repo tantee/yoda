@@ -196,7 +196,8 @@
     },
     "status": {
       "weekly_summary": "Weekly AI summary written",
-      "weekly_summary_skipped": "Weekly summary skipped"
+      "weekly_summary_skipped": "Weekly summary skipped",
+      "weekly_summary_outcome": "Weekly summary run finished"
     },
     "task": {
       "created": "Task created",
@@ -811,8 +812,15 @@
       "generating": "Generating the summary…",
       "noAi": "This project does not use AI, so there is no weekly summary.",
       "empty": "No weekly summary yet. A draft is written every Monday morning when AI is configured and the project had activity.",
-      "notWritten": "No summary was written. AI may not be configured, the budget may be used up, or there was no activity this week.",
-      "skipped": "The summary was skipped: this month's AI budget is used up."
+      "notWritten": "No answer from the summary job yet. Try again later.",
+      "notConfigured": "AI is not configured, so weekly summaries cannot be written. Ask an administrator to set up the AI provider.",
+      "reason": {
+        "ai_not_configured": "No summary was written: AI is not configured.",
+        "no_ai": "No summary was written: this project does not use AI.",
+        "no_activity": "No summary was written: the project had no activity this week.",
+        "budget_exceeded": "No summary was written: this month's AI budget is used up.",
+        "ai_failed": "No summary was written: the AI call failed. Try again later."
+      }
     }
   }
 }

@@ -22,7 +22,7 @@ export function statusRoutes(app: FastifyInstance): void {
   app.get('/projects/:id/status', async (request) => {
     requireStaff(request)
     const { id } = IdParams.parse(request.params)
-    return getProjectStatus(db(), request.me, id)
+    return getProjectStatus(db(), request.me, id, { aiConfigured: app.deps.ai.available('fast') })
   })
 
   /** PM or admin: regenerate the latest weekly summary (queued; the job replaces it as a new version). */

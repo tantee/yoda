@@ -1,6 +1,6 @@
 import { MockLanguageModelV4 } from 'ai/test'
 import type { FastifyInstance } from 'fastify'
-import type { Me, ProjectStatus } from '@yoda/shared'
+import type { LiveEvent, Me, ProjectStatus } from '@yoda/shared'
 import { and, asc, eq, like, sql } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { AiGateway } from '../src/ai/gateway.js'
@@ -285,6 +285,72 @@ describe('runWeeklySummary', () => {
     const skipped = await typedEvents(s.projectId, 'status.weekly_summary_skipped')
     expect(skipped).toHaveLength(1)
     expect(skipped[0]).toMatchObject({ reason: 'budget_exceeded', actorKind: 'system', payload: { week } })
+  })
+})
+
+describe('weekly summary outcome (live only)', () => {
+  const week = isoWeek(new Date())
+  let seen: LiveEvent[]
+  let unsubscribe: () => void
+  beforeEach(() => {
+    seen = []
+    unsubscribe = deps.bus.subscribe((e) => {
+      if (e.type === 'status.weekly_summary_outcome') seen.push(e)
+    })
+  })
+  afterEach(() => unsubscribe())
+  const outcomes = () => seen.map((e) => e.payload)
+
+  it('says written, addressed to the project, and is never stored', async () => {
+    const s = await setup()
+    await runWeeklySummary(deps, { projectId: s.projectId, week, force: true })
+    expect(seen).toHaveLength(1)
+    expect(seen[0]).toMatchObject({ projectId: s.projectId, workItemId: null, personId: null, conversationId: null })
+    expect(outcomes()).toEqual([{ week, outcome: 'written' }])
+    expect(await typedEvents(s.projectId, 'status.weekly_summary_outcome')).toHaveLength(0)
+  })
+
+  it('gives the reason on every skipped run', async () => {
+    const noAi = await setup({ noAi: true })
+    await runWeeklySummary(deps, { projectId: noAi.projectId, week, force: true })
+    const quiet = await setup()
+    await db.update(events).set({ createdAt: daysAgo(9) }).where(eq(events.projectId, quiet.projectId))
+    await runWeeklySummary(deps, { projectId: quiet.projectId, week, force: true })
+    expect(outcomes()).toEqual([
+      { week, outcome: 'skipped', reason: 'no_ai' },
+      { week, outcome: 'skipped', reason: 'no_activity' },
+    ])
+  })
+
+  it('reports an exceeded budget on each run while the stored skip stays once per week', async () => {
+    const s = await setup({ budget: '1' })
+    await db.insert(aiCalls).values({ projectId: s.projectId, job: 'draft', ok: true, costUsd: '2' })
+    await runWeeklySummary(deps, { projectId: s.projectId, week, force: true })
+    await runWeeklySummary(deps, { projectId: s.projectId, week, force: true })
+    expect(outcomes()).toEqual([
+      { week, outcome: 'skipped', reason: 'budget_exceeded' },
+      { week, outcome: 'skipped', reason: 'budget_exceeded' },
+    ])
+    expect(await typedEvents(s.projectId, 'status.weekly_summary_skipped')).toHaveLength(1)
+  })
+
+  it('reports AI not configured, and AI failures', async () => {
+    const s = await setup()
+    const bare = { ...deps, ai: new AiGateway({ db, bus: new LiveBus(), models: mockModels({ fast: null, ids: { draft: 'anthropic:claude-opus-5-5', fast: null, embed: null } }), config: { dailyTaskCap: 8 } }) }
+    await runWeeklySummary(bare, { projectId: s.projectId, week, force: true })
+    const broken = new MockLanguageModelV4({
+      modelId: 'claude-haiku-5-5',
+      doStream: async () => {
+        throw new Error('provider down')
+      },
+    })
+    const failing = { ...deps, ai: new AiGateway({ db, bus: new LiveBus(), models: mockModels({ fast: broken }), config: { dailyTaskCap: 8 } }) }
+    await runWeeklySummary(failing, { projectId: s.projectId, week, force: true })
+    expect(outcomes()).toEqual([
+      { week, outcome: 'skipped', reason: 'ai_not_configured' },
+      { week, outcome: 'skipped', reason: 'ai_failed' },
+    ])
+    expect(await weeklyEntries(s.projectId)).toHaveLength(0)
   })
 })
 

@@ -256,6 +256,8 @@ export const EventType = z.enum([
   'run.claimed', 'run.progress', 'run.succeeded', 'run.failed', 'run.expired', 'run.parked', 'run.released', 'gitlab.mr_requested',
   /** The weekly AI summary was written (payload `{ week, entryId, version }`) or skipped (`reason`, payload `{ week }`). */
   'status.weekly_summary', 'status.weekly_summary_skipped',
+  /** Live-only (never stored in `events`): how a weekly summary run ended (payload `WeeklySummaryOutcome`). */
+  'status.weekly_summary_outcome',
   'discussion.raised', 'discussion.brief_ready', 'discussion.brief_failed', 'discussion.scheduled', 'discussion.decided', 'discussion.withdrawn',
   /** Live-only (never stored in `events`): someone gave an opinion or voted on a discussion. */
   'discussion.responded',
@@ -296,6 +298,8 @@ export const LiveEvent = z.object({
   conversationId: uuid.nullable(),
   /** Set for person-addressed events such as notifications. */
   personId: uuid.nullable(),
+  /** Only on live-only events that carry details (e.g. `status.weekly_summary_outcome`). */
+  payload: z.record(z.unknown()).optional(),
 })
 export type LiveEvent = z.infer<typeof LiveEvent>
 

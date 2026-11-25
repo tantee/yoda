@@ -1,12 +1,17 @@
 <script setup lang="ts">
 import type { ProjectStatusSummary } from '@yoda/shared'
 import { usageColor } from '~/utils/aiBudget'
+import { localized } from '~/utils/localized'
 import { spendPercent, usd } from '~/utils/status'
 
-const props = defineProps<{ project: ProjectStatusSummary; stepName: (key: string) => string }>()
-const { t } = useI18n()
+const props = defineProps<{ project: ProjectStatusSummary }>()
+const { t, locale } = useI18n()
 const percent = computed(() => spendPercent(props.project.aiSpendUsd, props.project.aiBudgetUsd))
 const steps = computed(() => Object.entries(props.project.countsByStep).filter(([, n]) => n > 0))
+const stepName = (key: string) => {
+  const name = props.project.stepNames[key]
+  return name ? localized(name, locale.value) : key
+}
 </script>
 
 <template>
