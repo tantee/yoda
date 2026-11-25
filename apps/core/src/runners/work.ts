@@ -198,7 +198,16 @@ export async function submitResult(deps: RunnerDeps, rc: RunnerCtx, input: Submi
     const { tx } = ctx
     const [prior] = await tx.select().from(agentRuns).where(eq(agentRuns.id, input.runId))
     if (prior?.runnerId === rc.runner.id && prior.state === 'succeeded') return alreadySucceeded(ctx, prior, input)
-    const { run, task, item } = await lockLiveRun(tx, rc, input.runId, now)
+    let live: Awaited<ReturnType<typeof lockLiveRun>>
+    try {
+      live = await lockLiveRun(tx, rc, input.runId, now)
+    } catch (err) {
+      // Read again after the locks: an MR effect may have ended the run while this submit waited for them.
+      const [ended] = await tx.select().from(agentRuns).where(eq(agentRuns.id, input.runId))
+      if (ended?.runnerId === rc.runner.id && ended.state === 'succeeded') return alreadySucceeded(ctx, ended, input)
+      throw err
+    }
+    const { run, task, item } = live
     const how = workable(rc, item, task)
     let outcome: SubmitOutcome
     if (how?.ai) {

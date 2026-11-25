@@ -13,13 +13,16 @@ import { lockLiveRun, workable } from './work.js'
 export type MrDeps = RunnerDeps & { gitlab: GitLabClient | null }
 
 /**
- * A closing keyword followed by an issue reference (`#3`, `group/proj#9`, or an issue URL), as GitLab's default
- * closing pattern reads it. The runner's text must not close (or link the MR to) anything but its own item.
+ * A closing keyword (any form of close / fix / resolve / implement, any case), an optional `:` and `issue(s)`,
+ * then an issue reference: `#3`, `group/proj#9` or a URL. GitLab scans MR titles and descriptions with a pattern
+ * like this one (instances can widen it), so this errs on the side of rewriting: the runner's text must not close
+ * (or link the MR to) anything but its own item. Only the keyword is rewritten, so a list after it (`#5 and #6`)
+ * is left without one.
  */
 const CLOSING =
-  /\b(?:clos(?:e|es|ed|ing)|fix(?:es|ed|ing)?|resolv(?:e|es|ed|ing)|implement(?:s|ed|ing)?)\b:?\s*(?=(?:[\w.-]+(?:\/[\w.-]+)+)?#\d|https?:\/\/\S*\/(?:issues|work_items)\/\d)/giu
+  /\b(?:clos(?:e|es|ed|ing)|fix(?:es|ed|ing)?|resolv(?:e|es|ed|ing)|implement(?:s|ed|ing)?)\b\s*:?\s*(?:issues?\b\s*:?\s*)?(?=(?:[\w.-]+(?:\/[\w.-]+)+)?#\d|https?:\/\/)/giu
 
-/** The runner's text, safe for an MR description: no HTML comment markers, closing keywords turned into `Refs`. */
+/** The runner's text, safe for an MR title or description: no HTML comment markers, closing keywords turned into `Refs`. */
 export function runnerMrText(text: string): string {
   return stripCommentMarkers(text).replace(CLOSING, 'Refs ').trim()
 }
@@ -81,6 +84,7 @@ export async function openMergeRequest(deps: MrDeps, rc: RunnerCtx, input: OpenM
   const { repo } = read
   if (!runnerBranchPattern(read.workItemId).test(input.sourceBranch)) throw invalidBranch()
 
+  const title = runnerMrText(input.title) || input.sourceBranch
   let created: { iid: number; webUrl: string; state: string }
   try {
     const target = repo.defaultBranch ?? (await gitlab.getProject(repo.gitlabProjectId)).default_branch
@@ -91,7 +95,7 @@ export async function openMergeRequest(deps: MrDeps, rc: RunnerCtx, input: OpenM
     created = await gitlab.createMergeRequest(repo.gitlabProjectId, {
       sourceBranch: input.sourceBranch,
       targetBranch: target,
-      title: stripCommentMarkers(input.title).trim() || input.sourceBranch,
+      title,
       description: [text, closes].filter(Boolean).join('\n\n'),
       removeSourceBranch: true,
     })
@@ -108,7 +112,7 @@ export async function openMergeRequest(deps: MrDeps, rc: RunnerCtx, input: OpenM
     await upsertMergeRequest(ctx, {
       gitlabProjectId: repo.gitlabProjectId,
       iid: created.iid,
-      title: stripCommentMarkers(input.title).trim() || input.sourceBranch,
+      title,
       url: created.webUrl,
       state: created.state,
       sourceBranch: input.sourceBranch,

@@ -6,7 +6,8 @@ import { agentRuns, aiCalls, events, mergeRequests, people, projectMembers, proj
 import { GitLabClient } from '../src/gitlab/client.js'
 import { InlineJobQueue } from '../src/jobs/queue.js'
 import { claimTask, type RunnerCtx } from '../src/runners/claims.js'
-import { openMergeRequest } from '../src/runners/merge-requests.js'
+import { closingRefs } from '../src/gitlab/webhook.js'
+import { openMergeRequest, runnerMrText } from '../src/runners/merge-requests.js'
 import { meFromPerson } from '../src/runners/records.js'
 import { newRunnerToken } from '../src/runners/tokens.js'
 import { postProgress, submitResult, writeKnowledge } from '../src/runners/work.js'
@@ -173,6 +174,28 @@ describe('openMergeRequest', () => {
     expect(mr!.description).toBe('Refs #3 and Refs group/other#9\n\nCloses #7')
   })
 
+  it.each([
+    ['Closes issue #5', 'Refs #5'],
+    ['closes issues #5 and #6', 'Refs #5 and #6'],
+    ['RESOLVED: #3', 'Refs #3'],
+    ['fix\n  #4, #8', 'Refs #4, #8'],
+    ['Implementing: issues group/x#2', 'Refs group/x#2'],
+    ['Closes https://gitlab.example/lab/report/-/issues/3', 'Refs https://gitlab.example/lab/report/-/issues/3'],
+  ])('runnerMrText rewrites %j', (text, want) => {
+    expect(runnerMrText(text)).toBe(want)
+    expect(closingRefs(runnerMrText(text), 'lab/report')).toEqual([])
+  })
+
+  it('the title is rewritten too, and core\'s own Closes line still links the item', async () => {
+    const runId = await claim()
+    await open(runId, { title: 'Fixes #12: lab report', description: 'closes issues #5 and #6' })
+    const [mr] = fake.mergeRequests.get(GL_PROJECT)!
+    expect(mr!.title).toBe('Refs #12: lab report')
+    expect(mr!.description).toBe('Refs #5 and #6\n\nCloses #7')
+    expect(closingRefs(`${mr!.title}\n${mr!.description}`, 'lab/report')).toEqual([7])
+    expect((await mrRows())[0]).toMatchObject({ title: 'Refs #12: lab report', workItemId: itemId })
+  })
+
   it('without an issue in the repo there is no Closes line; the branch links the MR', async () => {
     const db = await testDb()
     await db.update(workItemRepos).set({ issueIid: null, issueUrl: null }).where(eq(workItemRepos.workItemId, itemId))
@@ -280,6 +303,34 @@ describe('MR effect and the run', () => {
     expect(await db.select().from(aiCalls)).toHaveLength(1)
     const accepted = await db.select().from(events).where(and(eq(events.taskId, implement.id), eq(events.type, 'task.accepted')))
     expect(accepted).toHaveLength(1)
+  })
+})
+
+describe('submitResult racing the MR effect', () => {
+  it('a submit that waited on the task lock while the effect ended the run is already_done', async () => {
+    const runId = await claim()
+    await open(runId)
+    // Hold the work item's lock so the effect and the submit queue behind it, effect first.
+    const db = await testDb()
+    let release!: () => void
+    const held = new Promise<void>((r) => (release = r))
+    let locked!: () => void
+    const isLocked = new Promise<void>((r) => (locked = r))
+    const holder = db.transaction(async (tx) => {
+      await tx.select().from(workItems).where(eq(workItems.id, itemId)).for('no key update')
+      locked()
+      await held
+    })
+    await isLocked
+    const effect = jobs.drain()
+    await new Promise((r) => setTimeout(r, 100))
+    const submit = submitResult(deps, rc, { runId, text: 'Implemented' })
+    await new Promise((r) => setTimeout(r, 100))
+    release()
+    await holder
+    await effect
+    expect(await submit).toEqual({ outcome: 'already_done' })
+    expect((await runRow(runId)).state).toBe('succeeded')
   })
 })
 
