@@ -13,6 +13,8 @@ export default defineNuxtConfig({
       keycloakUrl: 'http://localhost:8080',
       keycloakRealm: 'yoda',
       keycloakClientId: 'yoda-portal',
+      // The README's Runners section, linked from the Runners page (NUXT_PUBLIC_RUNNER_DOCS_URL).
+      runnerDocsUrl: 'https://github.com/tantee/yoda#runners',
     },
   },
   i18n: {

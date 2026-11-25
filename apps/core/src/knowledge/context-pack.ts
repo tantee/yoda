@@ -7,7 +7,7 @@ import { tasksWithContext } from '../work/queries.js'
 import { searchKnowledge } from './search.js'
 import { notGitLabDraft } from './service.js'
 
-const DEFAULT_MAX_CHARS = 60_000
+export const PACK_MAX_CHARS = 60_000
 const PROGRESS_LIMIT = 10
 const RELATED_LIMIT = 8
 const ENTRY_LIMIT = 50
@@ -75,7 +75,8 @@ export async function currentEntries(
 export async function buildContextPack(
   deps: { db: Db; ai?: Pick<AiGateway, 'embed'> | null },
   taskId: string,
-  opts: { maxChars?: number } = {},
+  /** `me`: whose visibility the related-knowledge search uses (a runner's owner); the system by default. */
+  opts: { maxChars?: number; me?: Me } = {},
 ): Promise<{ pack: ContextPack; overBudget: boolean }> {
   const { db } = deps
   const [t] = await tasksWithContext(db, eq(tasks.id, taskId), [])
@@ -114,7 +115,7 @@ export async function buildContextPack(
   const included = new Set([...documents, ...decisions, ...progress, ...memory].map((e) => e.id))
   const hits = await searchKnowledge(
     db,
-    SYSTEM_ME,
+    opts.me ?? SYSTEM_ME,
     { query: `${item.title} ${t.title.en}`, projectId: t.projectId, limit: RELATED_LIMIT, forAi: true },
     deps.ai,
   )
@@ -131,7 +132,7 @@ export async function buildContextPack(
     memory,
     related,
   })
-  return fit(pack, opts.maxChars ?? DEFAULT_MAX_CHARS)
+  return fit(pack, opts.maxChars ?? PACK_MAX_CHARS)
 }
 
 /** Shortens `text` by exactly `by` characters, the last ones being the marker. */
@@ -142,7 +143,13 @@ function shorten(text: string, by: number): string {
 /** Collapses newlines so a value is safe inside a heading or bold span. */
 const oneLine = (s: string) => s.replace(/\s*[\r\n]+\s*/g, ' ').trim()
 
-const blockOf = (e: PackEntry) => `### ${draft(e)}${oneLine(e.title)}\n\n${e.text}`.trimEnd()
+/**
+ * Stored text inside a `~~~text` fence, so it can never pose as a heading of the pack. Every `~` followed by
+ * another gets a backslash, so no run of tildes in the text can close the fence.
+ */
+export const fence = (text: string) => `~~~text\n${text.replace(/~(?=~)/g, '~\\')}\n~~~`
+
+const blockOf = (e: PackEntry) => `### ${draft(e)}${oneLine(e.title)}\n\n${fence(e.text.trimEnd())}`
 /** Characters one entry adds to the rendered document (block plus its line break). */
 const entryCost = (e: PackEntry) => blockOf(e).length + 1
 /** Extra characters a section heading adds when its list is non-empty. */
@@ -198,8 +205,28 @@ function section(heading: string, entries: PackEntry[]): string[] {
   return [`## ${heading}`, '', ...entries.map(blockOf), '']
 }
 
-/** Markdown for the prompt. Sections: task, work item, project, inputs, documents, decisions, progress, memory, related. */
-export function renderContextPack(pack: ContextPack): string {
+/** Repositories and the branch a runner works on (see runners/work.ts). */
+export type RunCode = {
+  repos: { repoId: string; path: string; webUrl: string; defaultBranch: string | null; issueIid: number | null; issueUrl: string | null }[]
+  branch: string
+}
+
+/** The `# Code` section of a runner's pack: where to work and which issue the merge request closes. */
+export function renderCode(code: RunCode): string {
+  const lines = ['# Code', '', `Branch: \`${code.branch}\` (core opens the merge request; never push the default branch)`, '']
+  for (const r of code.repos) {
+    lines.push(`- ${oneLine(r.path)} (${r.webUrl}), default branch ${r.defaultBranch ?? 'none'}`)
+    if (r.issueUrl) lines.push(`  Issue #${r.issueIid}: ${r.issueUrl}`)
+  }
+  if (!code.repos.length) lines.push('No repository is linked to this work item.')
+  return lines.join('\n') + '\n'
+}
+
+/**
+ * Markdown for the prompt. Sections: task, work item, project, inputs, documents, decisions, progress, memory,
+ * related. Stored text (descriptions, feedback, inputs, knowledge) is fenced; `code` appends a `# Code` section.
+ */
+export function renderContextPack(pack: ContextPack, code?: RunCode): string {
   const { task, workItem, project } = pack
   const lines = [
     '# Task',
@@ -212,12 +239,12 @@ export function renderContextPack(pack: ContextPack): string {
     task.instructions.th,
     '',
   ]
-  if (task.feedback) lines.push('## Changes requested', '', task.feedback, '')
-  lines.push('# Work item', '', `**${oneLine(workItem.title)}** (priority: ${workItem.priority})`, '', workItem.description, '')
+  if (task.feedback) lines.push('## Changes requested', '', fence(task.feedback), '')
+  lines.push('# Work item', '', `**${oneLine(workItem.title)}** (priority: ${workItem.priority})`, '', workItem.description ? fence(workItem.description) : '', '')
   lines.push('# Project', '', `**${oneLine(project.name)}**`, '', project.description, '')
   if (pack.inputs.length) {
     lines.push('## Inputs from previous steps', '')
-    for (const i of pack.inputs) lines.push(`### ${oneLine(i.title)}`, '', i.text, '')
+    for (const i of pack.inputs) lines.push(`### ${oneLine(i.title)}`, '', fence(i.text.trimEnd()), '')
   }
   lines.push(
     ...section('Confirmed documents', pack.documents),
@@ -226,5 +253,6 @@ export function renderContextPack(pack: ContextPack): string {
     ...section('Working memory', pack.memory),
     ...section('Related knowledge', pack.related),
   )
-  return lines.join('\n').trimEnd() + '\n'
+  const md = lines.join('\n').trimEnd() + '\n'
+  return code ? `${md}\n${renderCode(code)}` : md
 }

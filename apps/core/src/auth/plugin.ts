@@ -27,6 +27,10 @@ export class HttpError extends Error {
         | 'repo_not_found'
         | 'issue_not_found'
         | 'gitlab_unavailable'
+        | 'empty_patch'
+        | 'invalid_branch'
+      /** Machine-readable detail for some errors (runner claims: why `invalid_state`). */
+      reason?: string
     },
   ) {
     super(body.error)
@@ -39,7 +43,8 @@ export const lastAdmin = () => new HttpError(409, { error: 'last_admin' })
 export const lastPm = () => new HttpError(409, { error: 'last_pm' })
 export const notStaff = () => new HttpError(422, { error: 'not_staff' })
 export const forbidden = () => new HttpError(403, { error: 'forbidden' })
-export const invalidState = () => new HttpError(409, { error: 'invalid_state' })
+export const invalidState = (reason?: string) =>
+  new HttpError(409, reason ? { error: 'invalid_state', reason } : { error: 'invalid_state' })
 export const notMember = () => new HttpError(422, { error: 'not_member' })
 export const decisionRequired = () => new HttpError(422, { error: 'decision_required' })
 export const tooLarge = () => new HttpError(413, { error: 'too_large' })
@@ -50,6 +55,10 @@ export const gitlabNotConnected = () => new HttpError(422, { error: 'gitlab_not_
 export const repoNotFound = () => new HttpError(422, { error: 'repo_not_found' })
 export const issueNotFound = () => new HttpError(422, { error: 'issue_not_found' })
 export const commentRequired = () => new HttpError(422, { error: 'comment_required' })
+export const emptyPatch = () => new HttpError(422, { error: 'empty_patch' })
+export const invalidBranch = (reason?: string) =>
+  new HttpError(422, reason ? { error: 'invalid_branch', reason } : { error: 'invalid_branch' })
+export const gitlabUnavailable = () => new HttpError(502, { error: 'gitlab_unavailable' })
 
 /**
  * Verify the bearer token. Returns validated claims, or null for any failure

@@ -3,6 +3,7 @@ import type { Todo } from '@yoda/shared'
 import { localized } from '~/utils/localized'
 import { proposalFallbackKey } from '~/utils/requests'
 import { guardOf } from '~/utils/guards'
+import { waitingFor } from '~/utils/runners'
 
 const { t, locale } = useI18n()
 const api = useApi()
@@ -144,7 +145,7 @@ const isEmpty = computed(
             <v-list-item-title>{{ localized(task.title, locale) }}</v-list-item-title>
             <v-list-item-subtitle>
               {{ task.projectName }} · {{ task.workItemTitle }} ·
-              {{ task.proposedAssigneeName ?? (task.executor === 'ai' && !task.assigneeId ? t('todo.waitingForAi') : t('todo.needsAssignee')) }}
+              {{ task.proposedAssigneeName ?? (task.executor === 'ai' && !task.assigneeId ? t(waitingFor(task) === 'runner' ? 'todo.waitingForRunner' : 'todo.waitingForAi') : t('todo.needsAssignee')) }}
               <template v-if="task.aiStatus"> · <AiStatus :task="task" can-retry @retried="load" /></template>
             </v-list-item-subtitle>
             <template #append>

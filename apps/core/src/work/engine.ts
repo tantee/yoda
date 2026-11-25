@@ -841,22 +841,62 @@ export async function submitAiResult(
   text: string,
   meta: { model: string; overBudget?: boolean; confidence?: 'high' | 'low'; missing?: string[] },
 ): Promise<boolean> {
-  const { tx } = ctx
-  const { item, task } = await lockTask(tx, taskId)
+  const { item, task } = await lockTask(ctx.tx, taskId)
   if (item.state !== 'active' || !awaitingAi(task)) return false
-  // The drafter's confidence note (guard G3 reads it when the step completes).
-  const result: TaskResult = { text, attachmentIds: [], confidence: meta.confidence ?? 'high', missing: meta.missing ?? [] }
-  const base = { projectId: task.projectId, workItemId: task.workItemId, taskId }
-  await tx.update(tasks).set({ state: 'accepted', result, updatedAt: sql`now()` }).where(eq(tasks.id, taskId))
-  await recordEvent(ctx, {
-    type: 'ai.drafted',
-    ...base,
-    payload: meta.overBudget ? { model: meta.model, overBudget: true } : { model: meta.model },
+  await acceptAiTask(ctx, item, task, text, {
+    confidence: meta.confidence,
+    missing: meta.missing,
+    drafted: meta.overBudget ? { model: meta.model, overBudget: true } : { model: meta.model },
   })
-  await recordEvent(ctx, { type: 'task.accepted', ...base })
+  return true
+}
+
+/**
+ * A runner's result for an AI task it claimed (the context's actor is `{ owner, ai }`): accepted through the
+ * drafter's path (`ai.drafted`, `task.accepted` with reason `runner_result`, a draft progress entry, then the
+ * work item advances, so guard rails, proposals and open discussions apply alike). Unlike the drafter, the task
+ * may be `in_progress` (claimed); the caller has checked the claim is this run's. No-op (false) unless the item
+ * is active and the task is still an unassigned AI task of its current step, open or in progress: an MR effect
+ * or a person may have finished it meanwhile.
+ */
+export async function submitRunnerResult(
+  ctx: WorkCtx,
+  taskId: string,
+  text: string,
+  meta: { model: string | null; runId: string },
+): Promise<boolean> {
+  const { item, task } = await lockTask(ctx.tx, taskId)
+  const claimable = (task.state === 'open' || task.state === 'in_progress') && task.assigneeId === null && task.executor === 'ai'
+  if (item.state !== 'active' || task.supersededAt || task.stepKey !== item.currentStepKey || !claimable) return false
+  await acceptAiTask(ctx, item, task, text, {
+    drafted: { model: meta.model, runId: meta.runId },
+    accepted: { reason: 'runner_result', payload: { runId: meta.runId } },
+  })
+  return true
+}
+
+/** The AI's text becomes the (locked) task's accepted result; then the work item advances. */
+async function acceptAiTask(
+  ctx: WorkCtx,
+  item: WorkItemRow,
+  task: TaskRow,
+  text: string,
+  o: {
+    confidence?: 'high' | 'low'
+    missing?: string[]
+    drafted: Record<string, unknown>
+    accepted?: { reason: string; payload: Record<string, unknown> }
+  },
+): Promise<void> {
+  const { tx } = ctx
+  // The drafter's confidence note (guard G3 reads it when the step completes).
+  const result: TaskResult = { text, attachmentIds: [], confidence: o.confidence ?? 'high', missing: o.missing ?? [] }
+  const base = { projectId: task.projectId, workItemId: task.workItemId, taskId: task.id }
+  await tx.update(tasks).set({ state: 'accepted', result, updatedAt: sql`now()` }).where(eq(tasks.id, task.id))
+  await recordEvent(ctx, { type: 'ai.drafted', ...base, payload: o.drafted })
+  await recordEvent(ctx, { type: 'task.accepted', ...base, reason: o.accepted?.reason ?? null, payload: o.accepted?.payload })
   await recordAcceptedKnowledge(ctx, item, task, result)
   await progressWorkItem(ctx, task.workItemId)
-  return true
 }
 
 /**
@@ -875,7 +915,10 @@ export async function failAiTask(ctx: WorkCtx, taskId: string, reason: string): 
   })
 }
 
-/** PM/admin: queue another drafting attempt for an open, unassigned `draft-text` AI task. */
+/**
+ * PM/admin: try the AI again on an open, unassigned AI task. A `draft-text` task gets another drafting job;
+ * a runner task that the runners gave up on (`ai.failed`) is offered to runners again, with fresh strikes.
+ */
 export async function retryAiTask(ctx: WorkCtx, me: Me, taskId: string): Promise<void> {
   const { tx } = ctx
   const { item, task } = await lockTask(tx, taskId)
@@ -883,20 +926,22 @@ export async function retryAiTask(ctx: WorkCtx, me: Me, taskId: string): Promise
   if (item.state !== 'active' || !awaitingAi(task)) throw invalidState()
   const def = await definitionOf(tx, item)
   const templateTask = def.steps.find((s) => s.key === task.stepKey)?.tasks.find((t) => t.key === task.templateTaskKey)
-  if (templateTask?.capability !== 'draft-text') throw invalidState()
+  if (!templateTask?.capability) throw invalidState()
+  const drafted = templateTask.capability === 'draft-text'
   const [proj] = await tx.select({ noAi: projects.noAi }).from(projects).where(eq(projects.id, task.projectId))
   if (!proj || proj.noAi) throw invalidState()
   // After a failed draft, or when no draft was ever attempted (e.g. its job was lost). A pending ai.retried
   // means a job is already queued. A duplicate job is harmless: the draft-task queue keeps one per task.
+  // Runner tasks are listed until they fail, so only a failure can be retried.
   const [last] = await tx
     .select({ type: events.type })
     .from(events)
     .where(and(eq(events.taskId, taskId), like(events.type, 'ai.%')))
     .orderBy(desc(events.seq))
     .limit(1)
-  if (last && last.type !== 'ai.failed') throw invalidState()
+  if (drafted ? last && last.type !== 'ai.failed' : last?.type !== 'ai.failed') throw invalidState()
   await recordEvent(ctx, { type: 'ai.retried', projectId: task.projectId, workItemId: task.workItemId, taskId })
-  ctx.jobs.push({ name: 'draft-task', id: taskId })
+  if (drafted) ctx.jobs.push({ name: 'draft-task', id: taskId })
 }
 
 /**

@@ -5,6 +5,7 @@ export type FakeRequest = { method: string; path: string; body: unknown }
 type Project = { id: number; path_with_namespace: string; web_url: string; default_branch: string | null }
 /** `byBot`: created through the API (i.e. by the token's user), as `scope=created_by_me` sees it. */
 type Issue = { iid: number; title: string; description: string; web_url: string; state: string; byBot: boolean }
+type Send = (status: number, data?: unknown) => void
 export type FakeMergeRequest = { project_id: number; iid: number; title: string; web_url: string; state: string; source_branch: string; description: string }
 
 /** GitLab's basic search splits on non-alphanumerics and needs every term (here: as a whole word). */
@@ -23,7 +24,14 @@ export class FakeGitLab {
   readonly notes = new Map<string, string[]>()
   /** Related merge requests by `<projectId>/<issueIid>`. */
   readonly related = new Map<string, FakeMergeRequest[]>()
+  /** MRs opened through the API, by project. */
+  readonly mergeRequests = new Map<number, (FakeMergeRequest & { target_branch: string; remove_source_branch: boolean })[]>()
+  /** Branches that exist (were pushed), by project; MRs can only be opened from these. */
+  readonly branches = new Map<number, Set<string>>()
+  /** DEV ONLY (fake-gitlab-dev): the fake hosts no git, so treat every source branch as pushed. */
+  acceptAnyBranch = false
   private readonly nextIid = new Map<number, number>()
+  private readonly nextMrIid = new Map<number, number>()
   private server: Server | null = null
   private fails: { status: number; count: number; retryAfter?: number } | null = null
   private delay: { ms: number; count: number } | null = null
@@ -54,6 +62,10 @@ export class FakeGitLab {
     this.related.set(k, [...list, full])
     return full
   }
+  /** Makes a branch exist in the project, as a runner's push would. */
+  pushBranch(projectId: number, branch: string) {
+    this.branches.set(projectId, (this.branches.get(projectId) ?? new Set()).add(branch))
+  }
   failNext(status: number, count = 1, retryAfterSecs?: number) { this.fails = { status, count, retryAfter: retryAfterSecs } }
   delayNext(ms: number, count = 1) { this.delay = { ms, count } }
   requireToken(token: string | null) { this.token = token }
@@ -71,6 +83,38 @@ export class FakeGitLab {
   async stop(): Promise<void> {
     this.server?.closeAllConnections()
     await new Promise<void>((r) => (this.server ? this.server.close(() => r()) : r()))
+  }
+
+  /** `GET` (by `source_branch` / `state`) and `POST /projects/:id/merge_requests`, with GitLab's 409 for a duplicate. */
+  private handleMergeRequests(project: Project, method: string, rawUrl: string, body: unknown, send: Send) {
+    const list = this.mergeRequests.get(project.id) ?? []
+    if (method === 'GET') {
+      const params = new URL(rawUrl, 'http://x').searchParams
+      const branch = params.get('source_branch')
+      const state = params.get('state')
+      return send(200, list.filter((m) => (branch === null || m.source_branch === branch) && (state === null || state === 'all' || m.state === state)))
+    }
+    if (method !== 'POST') return send(404, { message: '404 Not Found' })
+    const b = (body ?? {}) as { source_branch?: string; target_branch?: string; title?: string; description?: string; remove_source_branch?: boolean }
+    if (!b.title || !b.source_branch || !b.target_branch) return send(400, { message: 'source_branch, target_branch and title are required' })
+    if (!this.acceptAnyBranch && !this.branches.get(project.id)?.has(b.source_branch)) return send(400, { message: 'Source branch does not exist' })
+    const dup = list.find((m) => m.source_branch === b.source_branch && m.state === 'opened')
+    if (dup) return send(409, { message: [`Another open merge request already exists for this source branch: !${dup.iid}`] })
+    const iid = (this.nextMrIid.get(project.id) ?? 0) + 1
+    this.nextMrIid.set(project.id, iid)
+    const mr = {
+      project_id: project.id,
+      iid,
+      title: b.title,
+      web_url: `${project.web_url}/-/merge_requests/${iid}`,
+      state: 'opened',
+      source_branch: b.source_branch,
+      target_branch: b.target_branch,
+      description: b.description ?? '',
+      remove_source_branch: b.remove_source_branch ?? false,
+    }
+    this.mergeRequests.set(project.id, [...list, mr])
+    return send(201, mr)
   }
 
   private async handle(method: string, rawUrl: string, tokenHeader: string | string[] | undefined, raw: string, res: import('node:http').ServerResponse) {
@@ -100,6 +144,7 @@ export class FakeGitLab {
     const project = this.projects.find((p) => String(p.id) === key || p.path_with_namespace === key)
     if (!project) return send(404, { message: '404 Project Not Found' })
     if (parts.length === 2 && method === 'GET') return send(200, project)
+    if (parts[2] === 'merge_requests' && parts.length === 3) return this.handleMergeRequests(project, method, rawUrl, body, send)
     if (parts[2] !== 'issues') return send(404, { message: '404 Not Found' })
     const list = this.issues.get(project.id)!
     const b = (body ?? {}) as { title?: string; description?: string; body?: string }

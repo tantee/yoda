@@ -1,9 +1,10 @@
 import { ACTIVE_TASK_STATES, type TemplateStep } from '@yoda/shared'
 import { and, asc, desc, eq, inArray, isNull, sql } from 'drizzle-orm'
 import type { Tx } from '../db/client.js'
-import { events, mergeRequests, projectRepos, tasks, workItemRepos } from '../db/schema.js'
+import { agentRuns, events, mergeRequests, projectRepos, tasks, workItemRepos } from '../db/schema.js'
 import type { JobRun } from '../jobs/queue.js'
 import { notify, projectPms } from '../notifications/service.js'
+import { endRun } from '../runners/records.js'
 import { runWork, type WorkCtx, type WorkDeps } from '../work/context.js'
 import { acceptTaskAsSystem, definitionOf, lockItem, type WorkItemRow } from '../work/engine.js'
 import { implementTask } from './webhook.js'
@@ -63,6 +64,8 @@ async function mrEffect(ctx: WorkCtx, mergeRequestId: string): Promise<void> {
         { text: await implementText(tx, item.id), attachmentIds: [] },
         { reason: 'mr_opened_in_gitlab', payload: { mergeRequestId: mr.id } },
       )
+      // A runner still working the task is done: its slot frees now (its later submit is `already_done`).
+      if (implementAccepted) await endRunningRun(ctx, impl.id)
     }
   }
 
@@ -98,6 +101,12 @@ export async function latestMergedMrs(tx: Tx, workItemIds: string[]): Promise<st
     ORDER BY m.work_item_id, e.seq DESC NULLS LAST, m.id
   `)
   return rows.map((r) => r.id)
+}
+
+/** Ends the task's running agent run, if any, as `succeeded` (reason `mr_effect`). The task is locked. */
+async function endRunningRun(ctx: WorkCtx, taskId: string): Promise<void> {
+  const [run] = await ctx.tx.select({ id: agentRuns.id }).from(agentRuns).where(and(eq(agentRuns.taskId, taskId), eq(agentRuns.state, 'running')))
+  if (run) await endRun(ctx, run.id, { state: 'succeeded', event: 'run.succeeded', reason: 'mr_effect', reopen: false })
 }
 
 const mrRef = (m: { path: string; mrIid: number; url: string }) => `${m.path}!${m.mrIid} (${m.url})`

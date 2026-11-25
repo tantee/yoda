@@ -3,7 +3,10 @@ import { createOpenAI } from '@ai-sdk/openai'
 import type { EmbeddingModel, LanguageModel } from 'ai'
 import type { Config } from '../config.js'
 
-export type AiJob = 'draft' | 'fast' | 'embed'
+/** Jobs core runs on its own models. */
+export type ModelJob = 'draft' | 'fast' | 'embed'
+/** The `ai_calls.job` of a call: core's own jobs, or usage a runner reported with its result. */
+export type AiJob = ModelJob | 'runner'
 export const EMBEDDING_DIMENSIONS = 1024
 
 export type ModelSet = {
@@ -11,7 +14,7 @@ export type ModelSet = {
   fast: LanguageModel | null
   embed: EmbeddingModel | null
   /** `provider:model` per job; null when the job has no usable model. */
-  ids: Record<AiJob, string | null>
+  ids: Record<ModelJob, string | null>
 }
 
 type Warn = (msg: string) => void

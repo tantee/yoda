@@ -13,6 +13,7 @@ import {
   type Me,
   type RequestStatus,
   type TaskInput,
+  type TaskRunSummary,
   type TemplateTask,
 } from '@yoda/shared'
 import { and, asc, desc, eq, inArray, isNull, or, sql, type SQL } from 'drizzle-orm'
@@ -21,7 +22,7 @@ import { forbidden, notFound } from '../auth/plugin.js'
 import { attachmentsByTask } from '../attachments/service.js'
 import type { Db, Tx } from '../db/client.js'
 import { pendingForDecider } from '../proposals/service.js'
-import { discussions, events, people, projectMembers, projects, proposals, tasks, workflowTemplates, workItems } from '../db/schema.js'
+import { agentRuns, discussions, events, people, projectMembers, projects, proposals, runners, tasks, workflowTemplates, workItems } from '../db/schema.js'
 
 type Conn = Db | Tx
 type TaskRow = typeof tasks.$inferSelect
@@ -109,14 +110,12 @@ function templateTask(def: WorkflowTemplateDef | undefined, row: TaskRow): Templ
 type AiState = { status: 'drafting' | 'failed'; reason: string | null }
 
 /**
- * AI draft status of the tasks that still await the AI (open, unassigned, `ai` executor, `draft-text`, project
- * not noAi): 'failed' when the latest `ai.failed` / `ai.retried` event is a failure, else 'drafting'.
+ * AI status of the tasks that still await the AI (open, unassigned, `ai` executor, project not noAi), from the
+ * latest `ai.failed` / `ai.retried` event: `draft-text` tasks are 'failed' after a failure, else 'drafting';
+ * runner tasks are 'failed' after the runners gave up (three strikes), else null (waiting for a runner).
  */
 async function aiStates(db: Conn, items: { row: TaskRow; def: WorkflowTemplateDef | undefined }[]): Promise<Map<string, AiState>> {
-  const waiting = items.filter(
-    ({ row, def }) =>
-      row.state === 'open' && row.executor === 'ai' && !row.assigneeId && templateTask(def, row).capability === 'draft-text',
-  )
+  const waiting = items.filter(({ row }) => row.state === 'open' && row.executor === 'ai' && !row.assigneeId)
   const out = new Map<string, AiState>()
   if (!waiting.length) return out
   const noAi = new Set(
@@ -127,20 +126,64 @@ async function aiStates(db: Conn, items: { row: TaskRow; def: WorkflowTemplateDe
         .where(and(inArray(projects.id, [...new Set(waiting.map((w) => w.row.projectId))]), eq(projects.noAi, true)))
     ).map((p) => p.id),
   )
-  const ids = waiting.filter((w) => !noAi.has(w.row.projectId)).map((w) => w.row.id)
-  if (!ids.length) return out
+  const live = waiting.filter((w) => !noAi.has(w.row.projectId))
+  if (!live.length) return out
   const evs = await db
     .select({ taskId: events.taskId, type: events.type, reason: events.reason })
     .from(events)
-    .where(and(inArray(events.taskId, ids), inArray(events.type, ['ai.failed', 'ai.retried'])))
+    .where(and(inArray(events.taskId, live.map((w) => w.row.id)), inArray(events.type, ['ai.failed', 'ai.retried'])))
     .orderBy(asc(events.seq))
   const latest = new Map<string, { type: string; reason: string | null }>()
   for (const e of evs) latest.set(e.taskId!, e)
-  for (const id of ids) {
-    const e = latest.get(id)
-    out.set(id, e?.type === 'ai.failed' ? { status: 'failed', reason: e.reason } : { status: 'drafting', reason: null })
+  for (const { row, def } of live) {
+    const e = latest.get(row.id)
+    if (e?.type === 'ai.failed') out.set(row.id, { status: 'failed', reason: e.reason })
+    else if (templateTask(def, row).capability === 'draft-text') out.set(row.id, { status: 'drafting', reason: null })
   }
   return out
+}
+
+/**
+ * Tasks waiting on a runner's question: parked on a discussion that has not been decided (as claims see it).
+ * Staff only, like runs.
+ */
+async function parkedTasks(db: Conn, taskIds: string[]): Promise<Set<string>> {
+  if (!taskIds.length) return new Set()
+  const rows = await db
+    .select({ id: tasks.id })
+    .from(tasks)
+    .leftJoin(discussions, eq(discussions.id, tasks.parkedDiscussionId))
+    .where(
+      and(
+        inArray(tasks.id, taskIds),
+        sql`${tasks.parkedDiscussionId} is not null`,
+        or(isNull(discussions.state), sql`${discussions.state} <> 'decided'`),
+      ),
+    )
+  return new Set(rows.map((r) => r.id))
+}
+
+/** The latest runner run of each task (work item detail, staff only). */
+async function latestRuns(db: Conn, taskIds: string[]): Promise<Map<string, TaskRunSummary>> {
+  if (!taskIds.length) return new Map()
+  const rows = await db
+    .selectDistinctOn([agentRuns.taskId], {
+      taskId: agentRuns.taskId,
+      state: agentRuns.state,
+      runnerName: runners.name,
+      heartbeatAt: agentRuns.heartbeatAt,
+      branch: agentRuns.branch,
+    })
+    .from(agentRuns)
+    .innerJoin(runners, eq(runners.id, agentRuns.runnerId))
+    .where(inArray(agentRuns.taskId, taskIds))
+    .orderBy(agentRuns.taskId, desc(agentRuns.startedAt), desc(agentRuns.id))
+  return new Map(
+    rows.map((r) => [
+      r.taskId,
+      { state: r.state as TaskRunSummary['state'], runnerName: r.runnerName, heartbeatAt: r.heartbeatAt.toISOString(), branch: r.branch },
+    ]),
+  )
 }
 
 function toTask(row: TaskRow, def: WorkflowTemplateDef | undefined, who: Map<string, string>, ai: Map<string, AiState>): Task {
@@ -166,6 +209,7 @@ function toTask(row: TaskRow, def: WorkflowTemplateDef | undefined, who: Map<str
     result: row.result ?? null,
     aiStatus: ai.get(row.id)?.status ?? null,
     aiFailReason: ai.get(row.id)?.reason ?? null,
+    capability: tt.capability ?? null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   })
@@ -246,6 +290,8 @@ export async function tasksWithContext(
     return TaskWithContext.parse({
       ...task,
       result: requesterView && task.result ? forRequesterResult(task.result) : task.result,
+      // Requesters see no template internals (which tasks run on AI runners).
+      capability: requesterView ? null : task.capability,
       workItemTitle: r.workItemTitle,
       workItemPriority: r.workItemPriority,
       projectName: r.projectName,
@@ -431,10 +477,12 @@ export async function getWorkItemDetail(db: Conn, me: Me, id: string): Promise<W
 
   const who = await names(db, taskRows.flatMap((t) => [t.assigneeId, t.proposedAssigneeId]))
   const ai = await aiStates(db, taskRows.map((row) => ({ row, def })))
+  const runs = await latestRuns(db, taskRows.map((t) => t.id))
+  const parked = await parkedTasks(db, taskRows.map((t) => t.id))
   return WorkItemDetail.parse({
     ...toWorkItem(r, await advanceState(db, [r])),
     steps,
-    tasks: taskRows.map((t) => toTask(t, def, who, ai)),
+    tasks: taskRows.map((t) => ({ ...toTask(t, def, who, ai), run: runs.get(t.id) ?? null, parked: parked.has(t.id) })),
     events: eventRows.map(({ e, actorName }) =>
       EventEntry.parse({
         id: e.id,
@@ -467,7 +515,11 @@ export async function getTask(db: Conn, me: Me, id: string): Promise<TaskWithCon
   const [t] = await tasksWithContext(db, eq(tasks.id, id), [], me)
   if (!t) throw notFound()
   if (!(await staffSeesProject(db, me, t.projectId)) && !ownRequesterTask(me, t)) throw notFound()
-  return t
+  // Requesters never see runs.
+  if (t.viewerIsRequester) return t
+  const runs = await latestRuns(db, [t.id])
+  const parked = await parkedTasks(db, [t.id])
+  return { ...t, run: runs.get(t.id) ?? null, parked: parked.has(t.id) }
 }
 
 export async function getTodo(db: Conn, me: Me): Promise<Todo> {

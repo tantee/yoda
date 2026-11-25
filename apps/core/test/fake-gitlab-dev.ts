@@ -13,6 +13,8 @@ const fake = new FakeGitLab()
 await fake.start(port)
 // Optional: make the fake reject any other token (an obvious placeholder, never a real one).
 if (process.env.FAKE_GITLAB_TOKEN) fake.requireToken(process.env.FAKE_GITLAB_TOKEN)
+// The fake hosts no git: a runner pushes to a local bare repo, so let MRs open from any branch.
+if (process.env.FAKE_GITLAB_ANY_BRANCH) fake.acceptAnyBranch = true
 for (const path of paths) {
   const p = fake.addProject(path)
   console.log(`fake-gitlab: project ${p.id} ${p.path_with_namespace}`)

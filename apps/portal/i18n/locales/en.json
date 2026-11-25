@@ -21,7 +21,8 @@
       "people": "People admin",
       "ai": "AI budget",
       "gitlab": "GitLab"
-    }
+    },
+    "runners": "Runners"
   },
   "projects": {
     "title": "Projects",
@@ -87,7 +88,8 @@
     "back": "Back to to-do",
     "proposals": "Waiting for your decision",
     "stepAdvance": "The current step is finished. Move this work item to the next step?",
-    "awaitingAdvance": "This work item finished its current step and is waiting to move on"
+    "awaitingAdvance": "This work item finished its current step and is waiting to move on",
+    "waitingForRunner": "Waiting for a runner — or assign to a person"
   },
   "task": {
     "state": {
@@ -167,7 +169,8 @@
     "reopenTitle": "Send this work item back to an earlier step?",
     "reopenConfirm": "Open tasks in the current and later steps will stop. The chosen step starts again, with the requester's latest change request as feedback, and the steps after it are done again.",
     "reopenStep": "Step to reopen",
-    "raiseDiscussion": "Raise a discussion"
+    "raiseDiscussion": "Raise a discussion",
+    "waitingForRunner": "Waiting for a runner"
   },
   "steps": {
     "done": "Done",
@@ -205,6 +208,7 @@
       "no_candidate": "No eligible person found",
       "budget_exceeded": "Monthly AI budget reached",
       "ai_failed": "The AI could not produce a draft",
+      "runner_failed": "The AI runners could not finish it",
       "ai_unavailable": "AI is not configured",
       "no_ai": "This project does not use AI",
       "reopened": "Work item reopened to an earlier step",
@@ -215,7 +219,14 @@
       "unavailable": "GitLab could not be reached",
       "bad_request": "GitLab rejected the request",
       "internal": "Internal error",
-      "issue_missing": "The issue was deleted or moved in GitLab"
+      "issue_missing": "The issue was deleted or moved in GitLab",
+      "runner_result": "Result submitted by an AI runner",
+      "mr_effect": "Merge request opened",
+      "task_unavailable": "The task was no longer available",
+      "asked_human": "Asked a person a question",
+      "lease_expired": "No heartbeat before the lease ran out",
+      "runner_revoked": "The runner was revoked",
+      "runner_released": "The runner gave the task back"
     },
     "ai": {
       "drafted": "AI drafted a result",
@@ -233,11 +244,21 @@
     "gitlab": {
       "issue_synced": "GitLab issue synced",
       "issue_sync_failed": "GitLab issue sync failed",
+      "mr_requested": "Merge request requested by AI",
       "mr_opened": "Merge request opened",
       "mr_merged": "Merge request merged",
       "mr_closed": "Merge request closed without merging",
       "pipeline": "Pipeline status changed",
       "note": "New comment in GitLab"
+    },
+    "run": {
+      "claimed": "AI runner started the task",
+      "progress": "AI runner reported progress",
+      "succeeded": "AI runner finished the task",
+      "failed": "AI runner couldn't finish the task",
+      "expired": "AI runner stopped responding; task returned to the queue",
+      "parked": "AI runner is waiting for an answer",
+      "released": "AI runner gave the task back"
     },
     "discussion": {
       "raised": "Discussion raised",
@@ -607,6 +628,112 @@
       "webhookUrl": "Webhook URL to configure in GitLab",
       "webhookHint": "In GitLab, Settings → Webhooks: enter this URL, set the secret token to GITLAB_WEBHOOK_SECRET, and enable Merge request, Pipeline and Comments events.",
       "copy": "Copy"
+    }
+  },
+  "runners": {
+    "title": "Runners",
+    "intro": "A runner works AI tasks (code changes, repo analysis, tests) with a coding agent on your machine or a server, and acts on behalf of its owner.",
+    "docs": "How to install and configure a runner",
+    "mine": "My runners",
+    "all": "All runners",
+    "create": "Create runner",
+    "empty": "No runners yet",
+    "col": {
+      "name": "Name",
+      "kind": "Kind",
+      "owner": "Owner",
+      "accountType": "Account",
+      "mode": "Mode",
+      "capabilities": "Capabilities",
+      "lastSeen": "Last seen",
+      "activeRuns": "Active runs",
+      "status": "Status",
+      "actions": "Actions"
+    },
+    "never": "Never",
+    "active": "Active",
+    "paused": "Paused",
+    "revoked": "Revoked",
+    "outsideHours": "Outside working hours",
+    "pause": "Pause",
+    "resume": "Resume",
+    "revoke": "Revoke",
+    "keep": "Keep",
+    "confirm": {
+      "pauseTitle": "Pause this runner?",
+      "pauseText": "The runner stops claiming new tasks. Work it already claimed can still be submitted.",
+      "resumeTitle": "Resume this runner?",
+      "resumeText": "The runner can claim tasks again.",
+      "revokeTitle": "Revoke this runner?",
+      "revokeText": "Its token stops working at once and its running tasks go back to the queue. This cannot be undone."
+    },
+    "state": {
+      "running": "Running",
+      "succeeded": "Succeeded",
+      "failed": "Failed",
+      "expired": "Stopped responding",
+      "parked": "Waiting for an answer",
+      "released": "Given back"
+    },
+    "kind": {
+      "server": "Server",
+      "dev-machine": "Dev machine"
+    },
+    "mode": {
+      "on-demand": "On demand",
+      "unattended": "Unattended"
+    },
+    "accountType": {
+      "api-key": "API key",
+      "org-plan": "Organization plan",
+      "personal-subscription": "Personal subscription"
+    },
+    "capability": {
+      "analyze-repo": "Analyze repo",
+      "code-change": "Code change",
+      "run-tests": "Run tests"
+    },
+    "dialog": {
+      "title": "Create runner",
+      "name": "Name",
+      "nameHint": "e.g. the machine name",
+      "owner": "Owner (staff)",
+      "maxConcurrent": "Max concurrent tasks",
+      "limitHours": "Only during working hours",
+      "days": "Days",
+      "start": "Start",
+      "end": "End",
+      "hoursHint": "Times are in Asia/Bangkok. The window cannot cross midnight.",
+      "invalidHours": "Pick at least one day and an end time after the start",
+      "personalHint": "A personal subscription works tasks on demand only, unless an admin allows personal subscriptions unattended."
+    },
+    "days": {
+      "0": "Sun",
+      "1": "Mon",
+      "2": "Tue",
+      "3": "Wed",
+      "4": "Thu",
+      "5": "Fri",
+      "6": "Sat"
+    },
+    "tokenTitle": "Runner token",
+    "tokenOnce": "This token is shown once. Copy it into the runner's config now; it cannot be shown again.",
+    "copy": "Copy",
+    "copied": "Copied",
+    "done": "Done",
+    "run": {
+      "chip": "{state} · {name}",
+      "runningOn": "Running on {name}",
+      "heartbeat": "Heartbeat {n} min ago",
+      "branch": "Branch {branch}"
+    },
+    "settings": {
+      "title": "Runner settings",
+      "pauseAll": "Pause all runners",
+      "pauseAllHint": "While on, no runner can claim new tasks. Work already claimed can still be submitted.",
+      "allowPersonalUnattended": "Allow personal subscriptions unattended",
+      "personalCaveat": "Unattended use must run under an account whose terms allow automated use (an API key, or an organization Team/Enterprise plan whose terms cover it). Whether a personal consumer subscription may be used unattended must be confirmed against the provider's current terms before turning this on.",
+      "saved": "Saved"
     }
   }
 }

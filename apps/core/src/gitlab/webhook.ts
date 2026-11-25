@@ -201,6 +201,8 @@ export type MergeRequestInput = {
   state: string
   sourceBranch: string
   description: string
+  /** The work item the MR belongs to in this repo, when the caller knows it (core opened the MR for a run). */
+  linkTo?: { repoId: string; workItemId: string }
 }
 
 /**
@@ -217,7 +219,7 @@ export async function upsertMergeRequest(ctx: WorkCtx, a: MergeRequestInput): Pr
   const sourceBranch = clip(a.sourceBranch, 255)
   const rows: string[] = []
   for (const repo of repos) {
-    const match = await matchWorkItem(ctx.tx, repo, a.description, a.sourceBranch)
+    const match = a.linkTo?.repoId === repo.id ? a.linkTo.workItemId : await matchWorkItem(ctx.tx, repo, a.description, a.sourceBranch)
     const [inserted] = await ctx.tx
       .insert(mergeRequests)
       .values({ repoId: repo.id, mrIid: a.iid, workItemId: match, title, url: a.url, state, sourceBranch })

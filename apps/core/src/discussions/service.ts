@@ -121,7 +121,13 @@ export async function resetStaleVotes(
  * no-AI project it fails at once with `no_ai` (the reason stays visible; people write the brief); without
  * `requestBrief` the given options become a ready, person-written brief.
  */
-export async function createDiscussion(ctx: WorkCtx, me: Me, input: DiscussionCreate): Promise<string> {
+export async function createDiscussion(
+  ctx: WorkCtx,
+  me: Me,
+  input: DiscussionCreate,
+  /** `ai`: the given options were written by the AI (a runner's question); the brief is still ready. */
+  opts: { optionsBy?: 'ai' | 'person' } = {},
+): Promise<string> {
   const { tx } = ctx
   if (!me.isStaff) throw forbidden()
   requireUniqueKeys(input.options)
@@ -158,7 +164,7 @@ export async function createDiscussion(ctx: WorkCtx, me: Me, input: DiscussionCr
     options: input.options,
     recommendation: '',
     recommendedKey: null,
-    source: input.requestBrief ? 'ai' : 'person',
+    source: input.requestBrief ? 'ai' : (opts.optionsBy ?? 'person'),
     status: wantsAi ? 'pending' : input.requestBrief ? 'failed' : 'ready',
     failReason: input.requestBrief && noAi ? 'no_ai' : null,
   }
@@ -311,6 +317,26 @@ export async function resumeAfterDiscussion(ctx: WorkCtx, workItemId: string): P
  * finished task's step may already have advanced, and its discussion would hold a step it was not raised on.
  */
 export async function raiseFromTask(ctx: WorkCtx, me: Me, taskId: string, input: TaskDiscussionCreate): Promise<string> {
+  return raiseOnTask(ctx, me, taskId, input, { anyStaffMember: false, optionsBy: 'person' })
+}
+
+/**
+ * A runner's question (`ask_human`), raised as its owner with `raiseFromTask`'s rules except who may raise:
+ * any staff member who sees the project (createDiscussion checks that), since an unattended runner's task has
+ * no assignee and its owner need not be a PM. The caller has checked the owner's runner holds a live run on
+ * the task; people always go through `raiseFromTask`.
+ */
+export async function raiseFromRunnerTask(ctx: WorkCtx, owner: Me, taskId: string, input: TaskDiscussionCreate): Promise<string> {
+  return raiseOnTask(ctx, owner, taskId, input, { anyStaffMember: true, optionsBy: 'ai' })
+}
+
+async function raiseOnTask(
+  ctx: WorkCtx,
+  me: Me,
+  taskId: string,
+  input: TaskDiscussionCreate,
+  o: { anyStaffMember: boolean; optionsBy: 'ai' | 'person' },
+): Promise<string> {
   const { tx } = ctx
   if (!me.isStaff) throw forbidden()
   const allowed = async () => {
@@ -325,7 +351,9 @@ export async function raiseFromTask(ctx: WorkCtx, me: Me, taskId: string, input:
       .from(tasks)
       .where(eq(tasks.id, taskId))
     if (!task) throw notFound()
-    if (task.assigneeId !== me.id && !(await isPmOrAdmin(tx, me, task.projectId))) throw forbidden()
+    if (o.anyStaffMember) {
+      if (!(await canSeeProject(tx, me, task.projectId))) throw notFound()
+    } else if (task.assigneeId !== me.id && !(await isPmOrAdmin(tx, me, task.projectId))) throw forbidden()
     return task
   }
   const ref = await allowed()
@@ -333,7 +361,20 @@ export async function raiseFromTask(ctx: WorkCtx, me: Me, taskId: string, input:
   const task = await allowed()
   const active = (ACTIVE_TASK_STATES as readonly string[]).includes(task.state)
   if (item.state !== 'active' || !active || task.stepKey !== item.currentStepKey) throw invalidState()
-  return createDiscussion(ctx, me, { ...input, workItemId: task.workItemId, taskId })
+  return createDiscussion(ctx, me, { ...input, workItemId: task.workItemId, taskId }, { optionsBy: o.optionsBy })
+}
+
+/**
+ * A runner's question is answered (decided or withdrawn): tasks parked on these discussions are offered to
+ * runners again. Runs in the decide / withdraw transaction, which holds the work item lock, so no task locker
+ * of the item (all take the item lock first) can interleave.
+ */
+async function unparkTasks(tx: Tx, discussionIds: string[]): Promise<void> {
+  if (!discussionIds.length) return
+  await tx
+    .update(tasks)
+    .set({ parkedDiscussionId: null, updatedAt: sql`now()` })
+    .where(inArray(tasks.parkedDiscussionId, discussionIds))
 }
 
 /**
@@ -357,6 +398,7 @@ export async function withdrawItemDiscussions(
   for (const d of rows) {
     await tx.update(discussions).set({ state: 'withdrawn', updatedAt: sql`now()` }).where(eq(discussions.id, d.id))
     await recordDiscussionEvent(ctx, d, 'discussion.withdrawn', { reason })
+    await unparkTasks(tx, [d.id])
     await notifyDiscussionEnded(ctx, 'withdrawn', {
       id: d.id,
       projectId: d.projectId,
@@ -456,6 +498,7 @@ export async function decideDiscussion(ctx: WorkCtx, me: Me, id: string, input: 
     })
     .where(eq(discussions.id, id))
   await recordDiscussionEvent(ctx, d, 'discussion.decided', { payload: { optionKey: option?.key ?? null } })
+  await unparkTasks(tx, [d.id])
   await createEntry(ctx, null, {
     scope: d.workItemId ? 'work_item' : d.projectId ? 'project' : 'department',
     projectId: d.projectId ?? undefined,
@@ -496,6 +539,7 @@ export async function withdrawDiscussion(ctx: WorkCtx, me: Me, id: string, input
   const d = await lockForFinal(ctx, me, id, canManage)
   await ctx.tx.update(discussions).set({ state: 'withdrawn', updatedAt: sql`now()` }).where(eq(discussions.id, id))
   await recordDiscussionEvent(ctx, d, 'discussion.withdrawn', { reason: input.reason })
+  await unparkTasks(ctx.tx, [d.id])
   await notifyDiscussionEnded(ctx, 'withdrawn', {
     id: d.id,
     projectId: d.projectId,

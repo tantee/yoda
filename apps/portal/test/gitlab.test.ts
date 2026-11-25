@@ -45,7 +45,7 @@ describe('closesHint', () => {
 })
 
 describe('timeline labels', () => {
-  const LIVE_ONLY = new Set(['message.created', 'notification.created'])
+  const LIVE_ONLY = new Set(['message.created', 'notification.created', 'run.heartbeat'])
   it('every stored event type (incl. gitlab.* and discussion.*) has a label in th and en', () => {
     const types = EventType.options.filter(t => !LIVE_ONLY.has(t))
     expect(types.some(t => t.startsWith('gitlab.'))).toBe(true)

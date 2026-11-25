@@ -3,6 +3,7 @@ import { ProjectRole } from './projects.js'
 import { Attachment } from './knowledge.js'
 import { ActorKind } from './actors.js'
 import { Proposal } from './proposals.js'
+import { TaskRunSummary } from './runners.js'
 
 export { ActorKind }
 
@@ -135,6 +136,12 @@ export const Task = z.object({
   /** 'drafting' while an AI draft is pending, 'failed' (see aiFailReason) when it needs a person; null otherwise. */
   aiStatus: z.enum(['drafting', 'failed']).nullable(),
   aiFailReason: z.string().nullable(),
+  /** The template task's capability (AI tasks only; null for people's tasks). */
+  capability: TaskCapability.nullable(),
+  /** Work item detail and task detail (staff only): the task's latest runner run, null when none. Absent elsewhere. */
+  run: TaskRunSummary.nullable().optional(),
+  /** Alongside `run` (staff only): the task waits on a runner's question (an undecided parked discussion). */
+  parked: z.boolean().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
 })
@@ -224,9 +231,12 @@ export const EventType = z.enum([
   'knowledge.created', 'knowledge.updated', 'knowledge.confirmed',
   'proposal.created', 'proposal.accepted', 'proposal.rejected', 'proposal.superseded', 'work_item.priority_changed',
   'gitlab.issue_synced', 'gitlab.issue_sync_failed', 'gitlab.mr_opened', 'gitlab.mr_merged', 'gitlab.mr_closed', 'gitlab.pipeline', 'gitlab.note',
+  'run.claimed', 'run.progress', 'run.succeeded', 'run.failed', 'run.expired', 'run.parked', 'run.released', 'gitlab.mr_requested',
   'discussion.raised', 'discussion.brief_ready', 'discussion.brief_failed', 'discussion.scheduled', 'discussion.decided', 'discussion.withdrawn',
   /** Live-only (never stored in `events`): someone gave an opinion or voted on a discussion. */
   'discussion.responded',
+  /** Live-only (never stored in `events`): a runner's heartbeat on a task (throttled), so open pages refresh the run. */
+  'run.heartbeat',
   /** Live-only (never stored in `events`): a message was posted in `conversationId`. */
   'message.created',
   /** Live-only (never stored in `events`): a notification was created for `personId`. */

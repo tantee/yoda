@@ -18,6 +18,7 @@ export function navItemsFor(me: Me): NavItem[] {
     item('discussions', '/discussions', 'mdi-forum-outline'),
     item('status', '/status', 'mdi-chart-timeline-variant'),
     item('projects', '/projects', 'mdi-folder-multiple-outline'),
+    item('runners', '/runners', 'mdi-robot-industrial-outline'),
   ]
   if (me.isAdmin) {
     items.push(item('admin.people', '/admin/people', 'mdi-account-cog-outline'))
@@ -27,7 +28,7 @@ export function navItemsFor(me: Me): NavItem[] {
   return items
 }
 
-const STAFF_PREFIXES = ['/todo', '/discussions', '/agendas', '/status', '/projects', '/work-items', '/admin']
+const STAFF_PREFIXES = ['/todo', '/discussions', '/agendas', '/status', '/projects', '/work-items', '/runners', '/admin']
 
 export function isStaffPath(path: string): boolean {
   // A single task page (/todo/<id>) is also reached by requesters, from notifications and "answers".

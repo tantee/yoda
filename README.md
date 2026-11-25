@@ -122,7 +122,144 @@ the time of the last webhook.
 **Local try-out (DEV ONLY).** `FAKE_GITLAB_PORT=4100 FAKE_GITLAB_PROJECTS=demo/app pnpm --filter @yoda/core fake-gitlab`
 runs the in-memory FakeGitLab used by the tests. Start core with `GITLAB_URL=http://127.0.0.1:4100`,
 any placeholder `GITLAB_TOKEN` (e.g. `fake-dev-token`) and a placeholder `GITLAB_WEBHOOK_SECRET`, then
-post webhooks with `curl` using that secret. Never point a real deployment at it.
+post webhooks with `curl` using that secret. Never point a real deployment at it. To try a runner
+against it, add `FAKE_GITLAB_ANY_BRANCH=1` (the fake hosts no git, so MRs open from any branch) and give
+the runner a `clonePath` whose `origin` is a local bare repo.
+
+## Runners
+
+A runner is a program on a staff machine or a server that works AI tasks with a coding agent (Claude
+Code, or Codex). It talks to core's MCP endpoint (`<core>/mcp`) with a runner token, works in a git
+worktree on a `yoda/<8hex>-<slug>` branch, pushes that branch, and core opens the merge request. Runners
+act for their owner: results and notes show as "AI on behalf of <owner>".
+
+**Create a runner.** In the portal's **Runners** page, staff create runners for their own machines;
+admins create server runners and choose the staff owner. Pick the account type, capabilities
+(`code-change`, `analyze-repo`, `run-tests`), mode (on demand or unattended), max concurrency and
+optional working hours. The token (`yoda_rt_…`) is shown once: copy it into the runner's config. Use a
+**dedicated token per machine**, and revoke it in the portal if the machine is lost; a revoked token
+stops working at once.
+
+**Account types.** A runner on a **personal subscription** works tasks only on demand
+(`yoda-runner work <taskId>`); unattended claims are refused (`personal_unattended_not_allowed`, and
+`yoda-runner start` exits with code 2). An admin can turn on "Allow personal subscriptions unattended"
+in the runner settings, but only after checking the provider's current terms. API-key and org-plan
+runners can work unattended.
+
+**Install and configure** (from this repo: `pnpm --filter @yoda/runner build`, then
+`node apps/runner/dist/cli.js …`, or link it as `yoda-runner`). The config lives in
+`~/.config/yoda-runner/config.json` (or the path in `YODA_RUNNER_CONFIG`); `YODA_CORE_URL` and
+`YODA_RUNNER_TOKEN` override the file. Placeholders only:
+
+```json
+{
+  "coreUrl": "https://yoda-core.example.org",
+  "token": "yoda_rt_<paste-the-token-shown-once>",
+  "executor": "claude",
+  "repos": {
+    "group/app": { "clonePath": "~/src/app" },
+    "group/lib": { "cloneUrl": "https://gitlab.example.org/group/lib.git" }
+  },
+  "pollSeconds": 30,
+  "maxConcurrent": 1,
+  "maxTurnsMinutes": 60,
+  "permissionMode": "acceptEdits",
+  "extraArgs": ["--model", "sonnet"]
+}
+```
+
+Keep the file private (`chmod 600`). `repos` maps GitLab paths to an existing local clone
+(`clonePath`) or a URL cloned once into `workRoot` (`cloneUrl`; keep credentials out of the URL and use
+a git credential helper). Set `maxConcurrent` to the runner's max concurrency in the portal: core
+refuses claims beyond it (`at_capacity`) and the runner waits for the next poll.
+`yoda-runner config show` prints the config with the token masked, and warns about
+`bypassPermissions` or a plain-http `coreUrl` off this machine.
+
+**On demand vs unattended.**
+
+- `yoda-runner work <taskId>` claims one task now (your own assigned task, or an AI task in the
+  queue), works it and exits.
+- `yoda-runner start` polls every `pollSeconds`, claims and works up to `maxConcurrent` tasks, and
+  waits when core refuses with `outside_hours`, a pause or `at_capacity`. SIGINT / SIGTERM stops
+  polling, aborts the agents and gives their tasks back to the queue (not counted as failures).
+  A runner set to **on demand** in the portal may not poll: core refuses (`on_demand_runner`) and
+  `start` exits with code 2.
+- A run that asks a person (`ask_human`) stops without pushing; it is picked up again once the
+  question is decided. A failed run (agent error, refused push) is released as failed; after 3 failed
+  runs the task goes back to people.
+- A problem with the machine rather than the task (no clone configured for the repo, a clone or fetch
+  that fails, a worktree in the way, the agent CLI not installed) gives the task back without counting
+  as a failure (reason `runner_environment: …`). `start` skips that task for 10 minutes, and exits with
+  code 3 when the agent CLI cannot be started at all. A worktree a killed run left under `workRoot` is
+  removed before the next run; if the run's branch is checked out somewhere else (e.g. in your own
+  clone), the run is given back with a message saying where.
+- When the task is cancelled, reassigned or done while the agent works, core ends the run at the next
+  heartbeat and the runner stops (not a failure). Heartbeats go every min(60 s, lease / 3); core's
+  `RUNNER_LEASE_SECONDS` is at least 180.
+
+**What the agent may do (Claude Code).** Runs are headless with `--permission-mode` from the config
+(default `acceptEdits`; avoid `bypassPermissions` outside a sandbox) and tool lists from
+`allowedTools` / `disallowedTools`. The defaults allow the `yoda` MCP tools and `git add` / `commit` /
+`status` / `diff` / `log`, and deny `git push` / `checkout` / `switch` / `branch` / `reset --hard` /
+`remote` plus the run lifecycle tools (`claim_task`, `heartbeat`, `open_merge_request`,
+`submit_result`, `release_task`, `list_available_tasks`), which the runner calls itself. Whatever the
+agent does, the runner refuses to push anything but the run's branch, and core refuses MRs from the
+default branch. The default `allowedTools` permit only git, so an agent cannot build or run tests until
+you allow it. Add the commands your projects need to `allowedTools`, per runner and capability, e.g. a
+`run-tests` or `code-change` runner for a pnpm repo:
+
+```json
+"allowedTools": [
+  "mcp__yoda", "Bash(git add:*)", "Bash(git commit:*)", "Bash(git status:*)", "Bash(git diff:*)", "Bash(git log:*)",
+  "Bash(pnpm install:*)", "Bash(pnpm test:*)", "Bash(pnpm vitest:*)", "Bash(pnpm -r typecheck:*)"
+]
+```
+
+An `analyze-repo` runner usually needs nothing beyond the defaults (reading files is always allowed).
+Setting either list replaces its defaults, so copy them in, and keep the allowed commands narrow: a
+build or test script runs whatever the repo's scripts say.
+
+**The agent can read the runner's secrets.** The agent runs as the same OS user as the runner, so it
+can read anything that user can: the MCP config file the runner writes for it, the runner config (with
+its token), the runner's environment (e.g. via `/proc`) and any credentials in that user's home. Use
+scoped credentials only: a runner token per machine with just the capabilities it needs, git
+credentials limited to the repos it works, and no personal tokens; on a shared machine run the runner
+as its own OS user. Revoke the token if in doubt.
+
+**Interactive Claude Code.** To use the Yoda tools in your own Claude Code session,
+`yoda-runner mcp-config` prints the MCP config with `Bearer ${YODA_RUNNER_TOKEN}` (Claude Code expands
+the variable from its environment); `--with-token` prints the real token instead, so do not paste that
+output anywhere shared. Save it as an MCP config file and start `claude --mcp-config <file>`.
+
+**Codex (experimental, untested).** `"executor": "codex"` runs `codex exec` with the yoda MCP server
+configured through `-c` overrides and the token in the child environment only. The agent gets the same
+yoda tools as Claude's defaults (`mcp_servers.yoda.enabled_tools`: the yoda tools minus those
+`disallowedTools` denies). It has not been tested against a real Codex; it needs a Codex version with
+streamable-HTTP MCP servers, `bearer_token_env_var` and `enabled_tools` (roughly 0.50 or later, not
+verified). `yoda-runner start` refuses Codex unless the config sets `"allowExperimentalCodex": true`;
+`yoda-runner work <taskId>` runs it either way.
+
+**Server runner container.** `apps/runner/Dockerfile` (node:22-slim, git, a pinned
+`@anthropic-ai/claude-code`, non-root `node` user, no secrets in the image) runs `yoda-runner start`.
+With the prod overlay: `docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile runner up -d runner`.
+Environment (from the deploy environment only):
+
+- `YODA_RUNNER_TOKEN`: the server runner's token (required); `YODA_RUNNER_CORE_URL` (default
+  `http://core:4000` inside the compose network, so `config show` warns about plain http; use https
+  when core is elsewhere)
+- `YODA_RUNNER_ANTHROPIC_API_KEY`: passed to Claude Code as `ANTHROPIC_API_KEY`
+- git credentials for clone and push: `YODA_GIT_USERNAME` (default `oauth2`) / `YODA_GIT_PASSWORD`
+  (e.g. a GitLab project or group access token with `write_repository`), answered through the image's
+  `GIT_ASKPASS` helper and removed from the agent's environment; or mount your own credential helper.
+  Like the MCP token, the push credential is still readable by the agent (same OS user, e.g. via
+  `/proc`), so give each runner its own scoped credential: a deploy or project/group access token
+  limited to the repos it works, with `write_repository` only, never a personal token.
+- `YODA_RUNNER_GIT_NAME` / `YODA_RUNNER_GIT_EMAIL`: the commit identity
+- `YODA_RUNNER_CONFIG_FILE` (default `./runner-config.json`): mounted read-only as the config file. It
+  holds `repos` with `cloneUrl` entries and executor settings, and no token (that comes from env).
+  Create the file before starting, or Docker mounts an empty directory in its place.
+
+Worktrees and clones live in the `runner-work` volume.
 
 ## Hospital Keycloak requirements
 
@@ -136,4 +273,5 @@ post webhooks with `curl` using that secret. Never point a real deployment at it
 ## CI
 
 `.gitlab-ci.yml` (and the equivalent `.github/workflows/ci.yml`): `secrets` (gitleaks over full
-history), `test` (pgvector service, typecheck, tests), `build` (images on the default branch and tags).
+history), `test` (pgvector service, typecheck, tests), `build` (images on the default branch and tags;
+the runner image is built but not pushed).

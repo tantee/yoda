@@ -154,6 +154,8 @@ describe('requesters in the workflow', () => {
 
     const mine = (await call(nurse, 'GET', `/tasks/${answer.id}`)).json() as TaskWithContext
     expect(mine.viewerIsRequester).toBe(true)
+    expect(mine).not.toHaveProperty('run') // requesters never see runs
+    expect(mine.capability).toBeNull()
     expect(mine.inputs[0]!.result).toEqual({ text: 'คำถาม: รายวันหรือรายเดือน?', attachmentIds: [] })
     expect(mine.result).toEqual({ text: 'ร่างคำตอบ', attachmentIds: [] })
     expect(JSON.stringify(await answers(nurse))).not.toContain('รูปแบบรายงานภายใน')
