@@ -1,7 +1,14 @@
 import { PgBoss } from 'pg-boss'
 
-export type JobName = 'embed-entry' | 'draft-task' | 'secretary-chat' | 'secretary-event' | 'secretary-sweep'
-export const JOB_NAMES: readonly JobName[] = ['embed-entry', 'draft-task', 'secretary-chat', 'secretary-event', 'secretary-sweep']
+export type JobName = 'embed-entry' | 'draft-task' | 'secretary-chat' | 'secretary-event' | 'secretary-sweep' | 'discussion-brief'
+export const JOB_NAMES: readonly JobName[] = [
+  'embed-entry',
+  'draft-task',
+  'secretary-chat',
+  'secretary-event',
+  'secretary-sweep',
+  'discussion-brief',
+]
 
 /** Recurring jobs (cron, Asia/Bangkok): pg-boss sends them; tests run them with `InlineJobQueue.runScheduled`. */
 export const SCHEDULES: Partial<Record<JobName, string>> = { 'secretary-sweep': '*/15 * * * *' }

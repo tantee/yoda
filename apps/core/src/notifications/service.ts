@@ -197,6 +197,64 @@ export async function notifyProposalPending(
   }
 }
 
+/** Of `ids`, the staff who may still see a discussion of `projectId` (null: a department discussion). */
+async function staffWhoSee(ctx: WorkCtx, ids: string[], projectId: string | null): Promise<string[]> {
+  if (!ids.length) return []
+  const rows = await ctx.tx
+    .select({ id: people.id })
+    .from(people)
+    .where(
+      and(
+        inArray(people.id, ids),
+        sql`(${people.isAdmin} or coalesce(${people.staffOverride}, ${people.lastSeenStaff}))`,
+        projectId
+          ? sql`(${people.isAdmin} or exists (select 1 from ${projectMembers} where ${projectMembers.projectId} = ${projectId} and ${projectMembers.personId} = ${people.id}))`
+          : undefined,
+      ),
+    )
+  return rows.map((r) => r.id).sort()
+}
+
+type DiscussionRef = { id: string; projectId: string | null; question: string }
+
+/**
+ * A new discussion: its deciders hear about it, the project's PMs (admins when it has none); admins for a
+ * department discussion. Not the raiser themself.
+ */
+export async function notifyDiscussionRaised(ctx: WorkCtx, d: DiscussionRef & { raisedBy: string }): Promise<void> {
+  let recipients = d.projectId ? await projectPms(ctx, d.projectId) : []
+  if (!recipients.length) recipients = await admins(ctx)
+  for (const personId of [...new Set(recipients)].sort()) {
+    if (personId === d.raisedBy) continue
+    await notify(ctx, {
+      personId,
+      kind: 'discussion',
+      title: 'มีประเด็นหารือใหม่',
+      body: d.question,
+      link: `/discussions/${d.id}`,
+      dedupeKey: `discussion:${d.id}:raised`,
+    })
+  }
+}
+
+/** A decision was made: the raiser and everyone who responded hear about it (not the decider). */
+export async function notifyDiscussionDecided(
+  ctx: WorkCtx,
+  d: DiscussionRef & { raisedBy: string; decision: string; responders: string[] },
+): Promise<void> {
+  const ids = [...new Set([d.raisedBy, ...d.responders])].filter((id) => id !== ctx.actorId)
+  for (const personId of await staffWhoSee(ctx, ids, d.projectId)) {
+    await notify(ctx, {
+      personId,
+      kind: 'discussion',
+      title: `ได้ข้อสรุปแล้ว: ${d.question}`,
+      body: d.decision,
+      link: `/discussions/${d.id}`,
+      dedupeKey: `discussion:${d.id}:decided`,
+    })
+  }
+}
+
 type Row = typeof notifications.$inferSelect
 
 const toNotification = (r: Row): Notification => ({

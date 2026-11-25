@@ -12,4 +12,6 @@ export async function registerJobHandlers(deps: Pick<AppDeps, 'db' | 'ai' | 'bus
   await deps.jobs.work('secretary-chat', (run) => secretaryChat(deps, run))
   await deps.jobs.work('secretary-event', (run) => secretaryEvent(deps, run))
   await deps.jobs.work('secretary-sweep', () => secretarySweep(deps))
+  // Placeholder until AI briefs land (plan 5, task 5): the brief stays `pending`; sends must not fail.
+  await deps.jobs.work('discussion-brief', async () => {})
 }
