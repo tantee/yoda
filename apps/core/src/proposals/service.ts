@@ -59,13 +59,21 @@ export async function createProposal(ctx: WorkCtx, input: ProposalCreate): Promi
     })
     .returning({ id: proposals.id })
   const id = row!.id
+  // A guard rail's reason travels with the proposal: on its timeline event and in the PMs' notification.
+  const guard = typeof input.payload.guard === 'string' ? input.payload.guard : null
+  const guardDetail = typeof input.payload.guardDetail === 'string' ? input.payload.guardDetail : null
   if (projectId) {
     await recordEvent(ctx, {
       type: 'proposal.created',
       projectId,
       workItemId: input.workItemId,
       taskId: null,
-      payload: { proposalId: id, kind: input.kind },
+      payload: {
+        proposalId: id,
+        kind: input.kind,
+        ...(guard ? { guard } : {}),
+        ...(guardDetail ? { guardDetail } : {}),
+      },
     })
   }
   await notifyProposalPending(ctx, {
@@ -74,6 +82,7 @@ export async function createProposal(ctx: WorkCtx, input: ProposalCreate): Promi
     workItemId: input.workItemId,
     kind: input.kind,
     summary: input.summary,
+    reason: guard ? input.reason : '',
     onBehalfOf: input.onBehalfOf,
   })
   return id

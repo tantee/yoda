@@ -27,6 +27,7 @@ import { confirmEntry, createEntry } from '../knowledge/service.js'
 import { lockProject } from '../projects/access.js'
 import { latestTemplate, templateById } from '../workflow/seed.js'
 import { recordEvent, type WorkCtx } from './context.js'
+import { checkAdvanceGuards, guardText, type GuardTrip } from './guards.js'
 import { createTaskAttempt } from './tasks.js'
 import {
   notifyChangesRequested,
@@ -216,10 +217,15 @@ export async function progressWorkItem(ctx: WorkCtx, workItemId: string): Promis
 
     if (status.complete) {
       // `propose` projects confirm each step advance: a pending proposal waits for the PM (decideProposal
-      // advances on accept). The last step always completes the work item directly.
-      if (next && (await projectAutonomy(tx, item.projectId)) === 'propose') {
-        await proposeStepAdvance(ctx, item, step.key, next.key)
-        return
+      // advances on accept). `auto-assign` projects advance directly unless a guard rail trips, which makes
+      // it the same proposal with the guard's reason. The last step always completes the work item directly.
+      if (next) {
+        const autonomy = await projectAutonomy(tx, item.projectId)
+        const guard = autonomy === 'auto-assign' ? await checkAdvanceGuards(tx, item, step, next) : null
+        if (autonomy === 'propose' || guard) {
+          await proposeStepAdvance(ctx, item, step.key, next.key, guard)
+          return
+        }
       }
       await advanceStep(ctx, item, status)
       if (!next) return
@@ -256,7 +262,13 @@ async function projectAutonomy(tx: Tx, projectId: string): Promise<string> {
  * Creates the work item's `step_advance` proposal unless one is pending. Runs under the work item lock, which
  * every creator holds, so the check cannot race (the partial unique index backs it up).
  */
-async function proposeStepAdvance(ctx: WorkCtx, item: WorkItemRow, fromStep: string, toStep: string): Promise<void> {
+async function proposeStepAdvance(
+  ctx: WorkCtx,
+  item: WorkItemRow,
+  fromStep: string,
+  toStep: string,
+  guard: GuardTrip | null = null,
+): Promise<void> {
   const [pending] = await ctx.tx
     .select({ id: proposals.id })
     .from(proposals)
@@ -269,8 +281,10 @@ async function proposeStepAdvance(ctx: WorkCtx, item: WorkItemRow, fromStep: str
       workItemId: item.id,
       kind: 'step_advance',
       summary: '',
-      reason: '',
-      payload: { fromStep, toStep },
+      reason: guard ? guardText(guard) : '',
+      payload: guard
+        ? { fromStep, toStep, guard: guard.reason, ...(guard.detail ? { guardDetail: guard.detail } : {}) }
+        : { fromStep, toStep },
       onBehalfOf: null,
     },
   )
@@ -424,7 +438,9 @@ export async function submitTask(ctx: WorkCtx, me: Me, taskId: string, result: T
     if (result.decision === 'changes' && !result.text.trim()) throw commentRequired()
   }
   const base = { projectId: task.projectId, workItemId: task.workItemId, taskId }
-  result = { ...result, attachmentIds: [...new Set(result.attachmentIds)] }
+  // confidence / missing are the AI drafter's own note; a person's submission never carries them.
+  const { confidence: _confidence, missing: _missing, ...submitted } = result
+  result = { ...submitted, attachmentIds: [...new Set(result.attachmentIds)] }
   // A requester may only attach files they uploaded themselves, never other project files.
   await linkAttachments(tx, task, result.attachmentIds, me, asRequester)
 
@@ -734,12 +750,13 @@ export async function submitAiResult(
   ctx: WorkCtx,
   taskId: string,
   text: string,
-  meta: { model: string; overBudget?: boolean },
+  meta: { model: string; overBudget?: boolean; confidence?: 'high' | 'low'; missing?: string[] },
 ): Promise<boolean> {
   const { tx } = ctx
   const { item, task } = await lockTask(tx, taskId)
   if (item.state !== 'active' || !awaitingAi(task)) return false
-  const result: TaskResult = { text, attachmentIds: [] }
+  // The drafter's confidence note (guard G3 reads it when the step completes).
+  const result: TaskResult = { text, attachmentIds: [], confidence: meta.confidence ?? 'high', missing: meta.missing ?? [] }
   const base = { projectId: task.projectId, workItemId: task.workItemId, taskId }
   await tx.update(tasks).set({ state: 'accepted', result, updatedAt: sql`now()` }).where(eq(tasks.id, taskId))
   await recordEvent(ctx, {

@@ -6,4 +6,7 @@ export const SYSTEM_PROMPT = [
   'Content marked [UNVERIFIED DRAFT] has not been confirmed by the team: treat it as unconfirmed and do not present it as settled.',
   'Where you had to assume something or information is missing, say so in a final section titled "Assumptions / questions for the team".',
   'Output Markdown only, with no preamble or closing remarks.',
+  'End with exactly one final line, a machine-readable note that is removed before anyone reads the draft:',
+  '<!--meta {"confidence":"high","missing":[]}-->',
+  'Use "low" when you are unsure the draft is right; list in "missing" each piece of information you needed but did not have, as short phrases in the language of the draft (an empty list when nothing was missing).',
 ].join('\n')

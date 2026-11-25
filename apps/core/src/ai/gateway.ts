@@ -1,7 +1,7 @@
 import { embedMany, isStepCount, streamText, type ModelMessage, type ToolSet } from 'ai'
 import type { AiUsage } from '@yoda/shared'
 import { and, eq, gte, isNull, sql, type SQL } from 'drizzle-orm'
-import type { Db } from '../db/client.js'
+import type { Db, Tx } from '../db/client.js'
 import { aiCalls, events, people, projects } from '../db/schema.js'
 import type { LiveBus } from '../live/bus.js'
 import { notify } from '../notifications/service.js'
@@ -73,7 +73,7 @@ export type ChatToolCall = { name: string; input: unknown; output: unknown }
 const billedProject = (b: BillingTarget): string | null => ('projectId' in b ? b.projectId : null)
 
 /** Cost and call count for the current Asia/Bangkok calendar month. */
-export async function monthUsage(db: Db, projectId: string): Promise<AiUsage> {
+export async function monthUsage(db: Db | Tx, projectId: string): Promise<AiUsage> {
   return usageOf(db, eq(aiCalls.projectId, projectId), sql`(select ai_budget_usd from projects where id = ${projectId})`)
 }
 
@@ -82,7 +82,7 @@ export async function departmentMonthUsage(db: Db): Promise<AiUsage> {
   return usageOf(db, isNull(aiCalls.projectId), sql`(select ai_budget_usd from department_settings where id = 1)`)
 }
 
-async function usageOf(db: Db, scope: SQL, budget: SQL): Promise<AiUsage> {
+async function usageOf(db: Db | Tx, scope: SQL, budget: SQL): Promise<AiUsage> {
   const [row] = await db
     .select({
       month: sql<string>`to_char(now() at time zone 'Asia/Bangkok', 'YYYY-MM')`,

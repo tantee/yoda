@@ -81,7 +81,7 @@ describe('daily task cap', () => {
     await app.close()
   })
 
-  it('auto-assigns at most 8 intake tasks to the only PM; the rest wait for the PM', async () => {
+  it('auto-assigns at most 8 intake tasks to the only PM; the rest are proposed to the PM', async () => {
     const p = await project([[pm, ['PM']], [dev, ['DEV']]], 'auto-assign')
     const items: WorkItemDetail[] = []
     for (let i = 0; i < 10; i++) items.push(await createItem(p, { title: `บั๊ก ${i}` }))
@@ -90,7 +90,8 @@ describe('daily task cap', () => {
     const waiting = intake.filter((t) => t.assigneeId === null)
     expect(assigned).toHaveLength(8)
     expect(waiting).toHaveLength(2)
-    expect(waiting.every((t) => t.state === 'open' && t.proposedAssigneeId === null)).toBe(true)
+    // Guard G6: proposed (to the least-loaded PM, ignoring the cap) for the PM to confirm.
+    expect(waiting.every((t) => t.state === 'proposed' && t.proposedAssigneeId === pm.id)).toBe(true)
 
     const db = await testDb()
     const created = await db

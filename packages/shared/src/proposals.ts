@@ -8,6 +8,22 @@ export type ProposalKind = z.infer<typeof ProposalKind>
 export const ProposalState = z.enum(['pending', 'accepted', 'rejected', 'superseded'])
 export type ProposalState = z.infer<typeof ProposalState>
 
+/**
+ * Why an `auto-assign` project handed a decision back to the PM: on a `step_advance` proposal's payload
+ * (`guard`, `guardDetail`), and as the reason of `task.created` / `task.proposed` events for assignments.
+ */
+export const GuardReason = z.enum([
+  'rework',
+  'repeated_rework',
+  'ai_low_confidence',
+  'high_priority',
+  'ai_budget',
+  'daily_cap',
+  'no_assignee',
+  'requester_changes',
+])
+export type GuardReason = z.infer<typeof GuardReason>
+
 export const Proposal = z.object({
   id: uuid,
   projectId: uuid.nullable(),
@@ -15,6 +31,7 @@ export const Proposal = z.object({
   kind: ProposalKind,
   summary: z.string(),
   reason: z.string(),
+  /** `guard?: GuardReason` and `guardDetail?: string` when a guard rail made this a proposal. */
   payload: z.record(z.unknown()),
   state: ProposalState,
   createdByKind: ActorKind,

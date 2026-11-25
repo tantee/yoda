@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { EventEntry } from '@yoda/shared'
+import { guardOf } from '~/utils/guards'
 
 defineProps<{ events: EventEntry[] }>()
 const { t, te, locale } = useI18n()
@@ -16,7 +17,8 @@ const fmt = (s: string) => new Date(s).toLocaleString(locale.value === 'en' ? 'e
         <template v-else>{{ ev.actorName ?? t('events.system') }}</template>
         · {{ fmt(ev.createdAt) }}
       </div>
-      <div v-if="ev.reason" class="text-body-2" style="white-space: pre-wrap">{{ te(`events.reason.${ev.reason}`) ? t(`events.reason.${ev.reason}`) : ev.reason }}</div>
+      <GuardNote v-if="guardOf(ev.payload, ev.reason)" :guard="guardOf(ev.payload, ev.reason)!" class="mt-1" />
+      <div v-else-if="ev.reason" class="text-body-2" style="white-space: pre-wrap">{{ te(`events.reason.${ev.reason}`) ? t(`events.reason.${ev.reason}`) : ev.reason }}</div>
     </v-timeline-item>
   </v-timeline>
 </template>
