@@ -3,6 +3,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { eq } from 'drizzle-orm'
 import Fastify, { type FastifyBaseLogger, type FastifyInstance } from 'fastify'
+import { request } from 'node:http'
 import { Writable } from 'node:stream'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { buildApp, LOGGER_OPTIONS, type AppDeps } from '../src/app.js'
@@ -214,13 +215,28 @@ describe('MCP server', () => {
   })
 
   it('authenticates before reading the body: an anonymous 2 MB body is 401, not 413', async () => {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
-      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: { pad: 'x'.repeat(2 * 1024 * 1024) } }),
+    // Headers only (Content-Length 2 MB, over the body limit), no body bytes sent: the answer has to come from
+    // the auth hook. A body parser would wait for the body, and Fastify's size check would answer 413.
+    const size = 2 * 1024 * 1024
+    const { status, body } = await new Promise<{ status: number; body: string }>((resolve, reject) => {
+      const req = request(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream', 'content-length': size },
+      })
+      req.on('response', (res) => {
+        let text = ''
+        res.setEncoding('utf8')
+        res.on('data', (c: string) => (text += c))
+        res.on('end', () => {
+          resolve({ status: res.statusCode ?? 0, body: text })
+          req.destroy()
+        })
+      })
+      req.on('error', reject)
+      req.flushHeaders()
     })
-    expect(res.status).toBe(401)
-    expect(await res.json()).toMatchObject({ error: { code: -32000 } })
+    expect(status).toBe(401)
+    expect(JSON.parse(body)).toMatchObject({ error: { code: -32000 } })
   })
 
   it('answers invalid JSON from a runner with a JSON-RPC parse error', async () => {
