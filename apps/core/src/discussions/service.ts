@@ -1,15 +1,16 @@
-import type {
-  DiscussionBrief,
-  DiscussionBriefEdit,
-  DiscussionCreate,
-  DiscussionDecide,
-  DiscussionOption,
-  DiscussionResponse,
-  DiscussionResponseCreate,
-  DiscussionWithdraw,
-  TaskDiscussionCreate,
-  EventType,
-  Me,
+import {
+  ACTIVE_TASK_STATES,
+  type DiscussionBrief,
+  type DiscussionBriefEdit,
+  type DiscussionCreate,
+  type DiscussionDecide,
+  type DiscussionOption,
+  type DiscussionResponse,
+  type DiscussionResponseCreate,
+  type DiscussionWithdraw,
+  type TaskDiscussionCreate,
+  type EventType,
+  type Me,
 } from '@yoda/shared'
 import { and, asc, eq, inArray, sql } from 'drizzle-orm'
 import { forbidden, HttpError, invalidState, notFound } from '../auth/plugin.js'
@@ -212,13 +213,21 @@ export async function resumeAfterDiscussion(ctx: WorkCtx, workItemId: string): P
  * `POST /tasks/:id/raise-discussion`: the task's assignee, or a PM / admin of its project, raises a
  * discussion linked to the task's work item, the task and its step. The caller has checked the task is
  * visible (404 otherwise). Rights are re-checked under the work item lock, which createDiscussion re-takes.
+ * Only an active task (proposed / open / in_progress / submitted) on the item's current step, else 409: a
+ * finished task's step may already have advanced, and its discussion would hold a step it was not raised on.
  */
 export async function raiseFromTask(ctx: WorkCtx, me: Me, taskId: string, input: TaskDiscussionCreate): Promise<string> {
   const { tx } = ctx
   if (!me.isStaff) throw forbidden()
   const allowed = async () => {
     const [task] = await tx
-      .select({ workItemId: tasks.workItemId, projectId: tasks.projectId, assigneeId: tasks.assigneeId })
+      .select({
+        workItemId: tasks.workItemId,
+        projectId: tasks.projectId,
+        assigneeId: tasks.assigneeId,
+        state: tasks.state,
+        stepKey: tasks.stepKey,
+      })
       .from(tasks)
       .where(eq(tasks.id, taskId))
     if (!task) throw notFound()
@@ -226,8 +235,10 @@ export async function raiseFromTask(ctx: WorkCtx, me: Me, taskId: string, input:
     return task
   }
   const ref = await allowed()
-  await lockItem(tx, ref.workItemId)
+  const item = await lockItem(tx, ref.workItemId)
   const task = await allowed()
+  const active = (ACTIVE_TASK_STATES as readonly string[]).includes(task.state)
+  if (item.state !== 'active' || !active || task.stepKey !== item.currentStepKey) throw invalidState()
   return createDiscussion(ctx, me, { ...input, workItemId: task.workItemId, taskId })
 }
 
