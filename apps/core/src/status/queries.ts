@@ -13,7 +13,7 @@ import {
   type Priority,
   type WorkflowTemplateDef,
 } from '@yoda/shared'
-import { and, asc, desc, eq, inArray, isNull, like, sql, type SQL } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, isNull, like, lt, sql, type SQL } from 'drizzle-orm'
 import { forbidden, notFound } from '../auth/plugin.js'
 import { departmentMonthUsage, monthUsage, projectsMonthSpend } from '../ai/gateway.js'
 import type { Db } from '../db/client.js'
@@ -33,6 +33,7 @@ import { toRepo } from '../gitlab/repos.js'
 import { DAY_START } from '../work/assign.js'
 import { canSeeProject } from '../work/queries.js'
 import { bangkokDate, computeHealth, HEALTH_RULES, type HealthItem } from './health.js'
+import { isoWeek, weeklyRef } from './weekly.js'
 
 type ProjectRow = { id: string; name: string; aiBudgetUsd: string | null }
 
@@ -337,44 +338,66 @@ async function recentEvents(db: Db, projectId: string): Promise<TimelineEvent[]>
   )
 }
 
-/** The latest weekly summary entry (ref key `weekly:<projectId>:<week>`), null when none yet. */
-async function latestWeeklySummary(db: Db, projectId: string): Promise<WeeklySummary | null> {
-  const prefix = `weekly:${projectId}:`
-  const [row] = await db
-    .select()
-    .from(knowledgeEntries)
-    .where(
-      and(
-        eq(knowledgeEntries.projectId, projectId),
-        like(knowledgeEntries.sourceRef, `${prefix}%`),
-        isNull(knowledgeEntries.supersededAt),
-      ),
-    )
-    .orderBy(desc(knowledgeEntries.sourceRef), desc(knowledgeEntries.createdAt))
-    .limit(1)
-  if (!row) return null
-  return WeeklySummary.parse({
+const toWeeklySummary = (prefix: string, row: typeof knowledgeEntries.$inferSelect): WeeklySummary =>
+  WeeklySummary.parse({
     entryId: row.id,
     week: row.sourceRef!.slice(prefix.length),
     body: row.body,
     status: row.status,
     createdAt: row.createdAt.toISOString(),
   })
+
+/**
+ * The project's weekly summaries (ref key `weekly:<projectId>:<week>`): `latest` is the newest summary of a
+ * finished week (the Monday run's, or an older one), `inProgress` the regenerated draft of `currentWeek`, the
+ * week still running. Either is null when there is none. ISO weeks (`YYYY-Www`) sort as text.
+ */
+export async function weeklySummaries(
+  db: Db,
+  projectId: string,
+  currentWeek: string,
+): Promise<{ latest: WeeklySummary | null; inProgress: WeeklySummary | null }> {
+  const prefix = `weekly:${projectId}:`
+  const live = [eq(knowledgeEntries.projectId, projectId), isNull(knowledgeEntries.supersededAt)]
+  const [[latest], [inProgress]] = await Promise.all([
+    db
+      .select()
+      .from(knowledgeEntries)
+      .where(and(...live, like(knowledgeEntries.sourceRef, `${prefix}%`), lt(knowledgeEntries.sourceRef, weeklyRef(projectId, currentWeek))))
+      .orderBy(desc(knowledgeEntries.sourceRef), desc(knowledgeEntries.createdAt))
+      .limit(1),
+    db
+      .select()
+      .from(knowledgeEntries)
+      .where(and(...live, eq(knowledgeEntries.sourceRef, weeklyRef(projectId, currentWeek))))
+      .orderBy(desc(knowledgeEntries.createdAt))
+      .limit(1),
+  ])
+  return {
+    latest: latest ? toWeeklySummary(prefix, latest) : null,
+    inProgress: inProgress ? toWeeklySummary(prefix, inProgress) : null,
+  }
 }
 
 /** Staff who can see the project (403 for requesters, 404 for non-members and unknown ids). */
-export async function getProjectStatus(db: Db, me: Me, projectId: string, opts: { aiConfigured: boolean }): Promise<ProjectStatus> {
+export async function getProjectStatus(
+  db: Db,
+  me: Me,
+  projectId: string,
+  opts: { aiConfigured: boolean; now?: Date },
+): Promise<ProjectStatus> {
   if (!me.isStaff) throw forbidden()
   const [project] = await db.select(projectCols).from(projects).where(eq(projects.id, projectId))
   if (!project || !(await canSeeProject(db, me, projectId))) throw notFound()
   const usage = await monthUsage(db, projectId)
+  const currentWeek = isoWeek(opts.now ?? new Date())
   const { summaries, items, discussions: ds } = await summarize(db, [project], new Map([[projectId, usage.costUsd]]))
   const [columns, load, timeline, repos, weekly] = await Promise.all([
     board(db, items),
     peopleLoad(db, projectId),
     recentEvents(db, projectId),
     db.select().from(projectRepos).where(eq(projectRepos.projectId, projectId)).orderBy(asc(projectRepos.pathWithNamespace)),
-    latestWeeklySummary(db, projectId),
+    weeklySummaries(db, projectId, currentWeek),
   ])
   const open = [...ds]
     .sort((a, b) => priorityRank(a.priority) - priorityRank(b.priority) || a.createdAt.getTime() - b.createdAt.getTime())
@@ -397,7 +420,9 @@ export async function getProjectStatus(db: Db, me: Me, projectId: string, opts: 
     recentEvents: timeline,
     discussions: open,
     repos: repos.map(toRepo),
-    weeklySummary: weekly,
+    weeklySummary: weekly.latest,
+    weeklyInProgress: weekly.inProgress,
+    currentWeek,
     aiConfigured: opts.aiConfigured,
   })
 }

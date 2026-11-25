@@ -97,6 +97,7 @@ describe('status routes', () => {
         discussions: [],
         repos: [],
         weeklySummary: null,
+        weeklyInProgress: null,
       })
       expect(s.people.map((p) => p.name).sort()).toEqual(['สมชาย', 'สมศรี', 'สมหญิง'].sort())
       expect(s.people.every((p) => p.openTasks >= 0 && Number.isInteger(p.inProgressTasks))).toBe(true)

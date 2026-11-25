@@ -6,7 +6,16 @@ import { outcomeMessageKey } from '~/utils/status'
 const GIVE_UP_MS = 5 * 60_000
 const POLL_MS = 10_000
 
-const props = defineProps<{ projectId: string; summary: WeeklySummary | null; noAi: boolean; aiConfigured: boolean; canManage: boolean }>()
+/** `summary`: the newest finished week; `inProgress`: this week's regenerated draft (`currentWeek`), shown below it. */
+const props = defineProps<{
+  projectId: string
+  summary: WeeklySummary | null
+  inProgress: WeeklySummary | null
+  currentWeek: string
+  noAi: boolean
+  aiConfigured: boolean
+  canManage: boolean
+}>()
 const emit = defineEmits<{ refresh: [] }>()
 const { t, locale } = useI18n()
 const api = useApi()
@@ -20,7 +29,9 @@ const error = ref('')
 let giveUp: ReturnType<typeof setTimeout> | null = null
 let poll: ReturnType<typeof setInterval> | null = null
 
-const signature = (s: WeeklySummary | null) => (s ? `${s.entryId}:${s.createdAt}:${s.body}` : '')
+const one = (s: WeeklySummary | null) => (s ? `${s.entryId}:${s.createdAt}:${s.body}` : '')
+/** A regenerate writes the week in progress; either summary changing ends the wait. */
+const signature = () => `${one(props.summary)}|${one(props.inProgress)}`
 let before = ''
 
 function stop() {
@@ -32,7 +43,7 @@ function stop() {
 onBeforeUnmount(stop)
 
 // A new summary ends the wait and clears any stale message.
-watch(() => signature(props.summary), (now) => {
+watch(signature, (now) => {
   if (generating.value && now === before) return
   stop()
   outcomeKey.value = null
@@ -45,7 +56,7 @@ async function regenerate() {
   try {
     await api(`/projects/${props.projectId}/weekly-summary`, { method: 'POST' })
     confirmOpen.value = false
-    before = signature(props.summary)
+    before = signature()
     outcomeKey.value = null
     generating.value = true
     poll = setInterval(() => emit('refresh'), POLL_MS)
@@ -110,13 +121,24 @@ const fmt = (s: string) => new Date(s).toLocaleString(locale.value === 'en' ? 'e
       <v-alert v-if="outcomeKey" type="info" variant="tonal" density="compact" class="mb-3" data-testid="weekly-outcome">{{ t(outcomeKey) }}</v-alert>
       <v-alert v-if="!noAi && !aiConfigured" type="info" variant="tonal" density="compact" class="mb-3" data-testid="weekly-not-configured">{{ t('status.weekly.notConfigured') }}</v-alert>
       <p v-if="noAi" class="text-medium-emphasis" data-testid="weekly-no-ai">{{ t('status.weekly.noAi') }}</p>
-      <MarkdownView v-else-if="summary" :source="summary.body" data-testid="weekly-body" />
-      <p v-else class="text-medium-emphasis" data-testid="weekly-empty">{{ t('status.weekly.empty') }}</p>
+      <template v-else>
+        <MarkdownView v-if="summary" :source="summary.body" data-testid="weekly-body" />
+        <p v-else-if="!inProgress" class="text-medium-emphasis" data-testid="weekly-empty">{{ t('status.weekly.empty') }}</p>
+        <section v-if="inProgress" :class="{ 'mt-4 pt-4 border-t': summary }" data-testid="weekly-in-progress">
+          <div class="d-flex align-center flex-wrap ga-2 mb-2">
+            <span class="text-subtitle-2">{{ t('status.weekly.thisWeek') }}</span>
+            <span class="text-body-2 text-medium-emphasis">{{ t('status.weekly.week', { week: inProgress.week }) }}</span>
+            <v-chip v-if="inProgress.status === 'draft'" size="x-small" color="warning" variant="tonal">{{ t('status.weekly.draft') }}</v-chip>
+            <span class="text-caption text-medium-emphasis">{{ fmt(inProgress.createdAt) }}</span>
+          </div>
+          <MarkdownView :source="inProgress.body" data-testid="weekly-in-progress-body" />
+        </section>
+      </template>
     </v-card-text>
 
     <v-dialog v-model="confirmOpen" max-width="460">
       <v-card :title="t('status.weekly.confirmTitle')" data-testid="weekly-confirm-dialog">
-        <v-card-text>{{ t('status.weekly.confirm') }}</v-card-text>
+        <v-card-text>{{ t('status.weekly.confirm', { week: currentWeek }) }}</v-card-text>
         <v-card-actions>
           <v-spacer />
           <v-btn @click="confirmOpen = false">{{ t('common.cancel') }}</v-btn>

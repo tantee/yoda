@@ -61,6 +61,8 @@ const fmt = (s: string) => new Date(s).toLocaleString(locale.value === 'en' ? 'e
             ref="weekly"
             :project-id="projectId"
             :summary="status.weeklySummary"
+            :in-progress="status.weeklyInProgress"
+            :current-week="status.currentWeek"
             :no-ai="noAi"
             :ai-configured="status.aiConfigured"
             :can-manage="canManage"

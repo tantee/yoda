@@ -10,6 +10,7 @@ import { aiCalls, discussions, events, knowledgeEntries, people, projectMembers,
 import { InlineJobQueue, type JobName } from '../src/jobs/queue.js'
 import { LiveBus } from '../src/live/bus.js'
 import { createEntry } from '../src/knowledge/service.js'
+import { weeklySummaries } from '../src/status/queries.js'
 import { isoWeek, queueWeeklyRegenerate, runWeeklySummary, summaryWeek, weekStart, weeklyMaterial } from '../src/status/weekly.js'
 import { runWork } from '../src/work/context.js'
 import { createWorkItem } from '../src/work/engine.js'
@@ -231,12 +232,15 @@ describe('runWeeklySummary', () => {
     })
     expect(await typedEvents(s.projectId, 'status.weekly_summary')).toHaveLength(1)
 
-    // The project status shows it.
+    // The project status shows it as the week in progress (this week is not over yet).
     const app = await makeApp({ jobs })
     try {
       const boss = await login(app, 'boss')
       const res = await app.inject({ url: `/projects/${s.projectId}/status`, headers: auth(boss) })
-      expect((res.json() as ProjectStatus).weeklySummary).toMatchObject({ entryId: rows[0]!.id, week, status: 'draft' })
+      const status = res.json() as ProjectStatus
+      expect(status.currentWeek).toBe(week)
+      expect(status.weeklyInProgress).toMatchObject({ entryId: rows[0]!.id, week, status: 'draft' })
+      expect(status.weeklySummary).toBeNull()
     } finally {
       await app.close()
     }
@@ -389,6 +393,40 @@ describe('summary window', () => {
     // The current week's material starts on Monday: last week's event is not in it.
     expect(prompts[1]).not.toContain('task.started')
   })
+
+  it('the status shows the newest finished week, and the regenerated week in progress separately', async () => {
+    const s = await setup()
+    const thisWeek = isoWeek(new Date())
+    const inLastWeek = new Date(weekStart(lastWeek()).getTime() + 86_400_000)
+    await db.insert(events).values({ projectId: s.projectId, workItemId: s.workItemId, type: 'task.started', createdAt: inLastWeek })
+    const app = await makeApp({ jobs })
+    try {
+      const boss = await login(app, 'boss')
+      const status = async () =>
+        (await app.inject({ url: `/projects/${s.projectId}/status`, headers: auth(boss) })).json() as ProjectStatus
+
+      // Monday's run: last week's summary is the one shown, nothing in progress.
+      await runWeeklySummary(deps, { projectId: s.projectId, week: lastWeek(), force: false })
+      let st = await status()
+      expect(st.currentWeek).toBe(thisWeek)
+      expect(st.weeklySummary).toMatchObject({ week: lastWeek(), body: '## ความคืบหน้า\nสรุปรอบที่ 1' })
+      expect(st.weeklyInProgress).toBeNull()
+
+      // A PM regenerates: this week's draft appears beside it; last week's summary still leads.
+      await runWeeklySummary(deps, { projectId: s.projectId, week: thisWeek, force: true })
+      st = await status()
+      expect(st.weeklySummary).toMatchObject({ week: lastWeek(), body: '## ความคืบหน้า\nสรุปรอบที่ 1' })
+      expect(st.weeklyInProgress).toMatchObject({ week: thisWeek, body: '## ความคืบหน้า\nสรุปรอบที่ 2', status: 'draft' })
+
+      // Next week, the formerly in-progress week is the newest finished one.
+      const nextWeek = new Date(weekStart(thisWeek).getTime() + 7 * 86_400_000 + 3_600_000)
+      const later = await weeklySummaries(db, s.projectId, isoWeek(nextWeek))
+      expect(later.latest).toMatchObject({ week: thisWeek })
+      expect(later.inProgress).toBeNull()
+    } finally {
+      await app.close()
+    }
+  }, 15_000)
 })
 
 describe('weekly summary jobs', () => {

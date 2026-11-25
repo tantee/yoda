@@ -133,7 +133,12 @@ export const ProjectStatus = ProjectStatusSummary.extend({
   /** Open or scheduled, most urgent first. */
   discussions: z.array(DiscussionSummary).max(20),
   repos: z.array(Repo),
+  /** The newest summary of a finished week. */
   weeklySummary: WeeklySummary.nullable(),
+  /** The summary of the week still running (`currentWeek`), written by a regenerate; null when none. */
+  weeklyInProgress: WeeklySummary.nullable(),
+  /** The ISO week in progress (Asia/Bangkok); a regenerate writes this week. */
+  currentWeek: z.string().regex(/^\d{4}-W\d{2}$/),
   /** The AI gateway has a usable fast model (weekly summaries can be written). */
   aiConfigured: z.boolean(),
 })
