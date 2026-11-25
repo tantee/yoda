@@ -33,6 +33,13 @@ describe('.gitlab-ci.yml', () => {
     expect(ci.stages).toEqual(['secrets', 'test', 'build', 'deploy'])
   })
 
+  it('installs bash and flock for the ops script tests', () => {
+    const test = ci.test!
+    expect(String(test.image)).toMatch(/alpine/)
+    expect(test.before_script?.[0]).toMatch(/^apk add --no-cache (.* )?bash( |$)/)
+    expect(test.before_script?.[0]).toMatch(/ util-linux( |$)/)
+  })
+
   it('builds and pushes every image to $CI_REGISTRY_IMAGE/<name>', () => {
     const build = ci['.build']!
     expect(build.stage).toBe('build')

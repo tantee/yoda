@@ -28,6 +28,8 @@ test:
     TEST_STORAGE: memory
     LEFTHOOK: '0'
   before_script:
+    # bash runs the ops/backup script tests; util-linux brings flock for their lock test.
+    - apk add --no-cache bash util-linux
     - corepack enable
     - pnpm install --frozen-lockfile --ignore-scripts
   script:

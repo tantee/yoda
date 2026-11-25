@@ -5,6 +5,8 @@ import { describe, expect, it } from 'vitest'
 // The pure parts of ops/backup (retention, URL parsing) and restore.sh's confirmation guard, run through bash.
 const dir = fileURLToPath(new URL('../../../ops/backup/', import.meta.url))
 const lib = `${dir}lib.sh`
+/** CI installs bash (`.gitlab-ci.yml` test job); skip rather than fail where an image lacks it. */
+const noBash = process.platform === 'win32' || spawnSync('bash', ['-c', 'true']).status !== 0
 
 function bash(script: string, opts: { input?: string; env?: Record<string, string> } = {}) {
   const r = spawnSync('bash', ['-c', script], {
@@ -34,7 +36,7 @@ function backupsOver(today: string, days: number) {
 const expired = (keep: string, today: string, names: string[]) =>
   bash(`source "${lib}"; select_expired ${keep} ${today}`, { input: names.join('\n') + '\n' })
 
-describe.skipIf(process.platform === 'win32')('ops/backup retention', () => {
+describe.skipIf(noBash)('ops/backup retention', () => {
   it.each([
     ['2026-11-25'],
     ['2026-03-05'], // crosses the end of February
@@ -62,7 +64,7 @@ describe.skipIf(process.platform === 'win32')('ops/backup retention', () => {
   })
 })
 
-describe.skipIf(process.platform === 'win32')('ops/backup database URL', () => {
+describe.skipIf(noBash)('ops/backup database URL', () => {
   it('turns DATABASE_URL into libpq variables, decoding the user and password', () => {
     const r = bash(
       `source "${lib}"; pg_env_from_url 'postgres://us%40er:p%3As%25s@db.example.org:6543/yoda_prod?sslmode=require'
@@ -83,7 +85,7 @@ describe.skipIf(process.platform === 'win32')('ops/backup database URL', () => {
   })
 })
 
-describe.skipIf(process.platform === 'win32')('ops/backup restore.sh guard', () => {
+describe.skipIf(noBash)('ops/backup restore.sh guard', () => {
   const restore = (env: Record<string, string>, stampArg = '20261125-0200') =>
     bash(`bash "${dir}restore.sh" ${stampArg}`, { env })
 
@@ -103,7 +105,7 @@ describe.skipIf(process.platform === 'win32')('ops/backup restore.sh guard', () 
   })
 })
 
-describe.skipIf(process.platform === 'win32')('ops/backup scheduling and health', () => {
+describe.skipIf(noBash)('ops/backup scheduling and health', () => {
   it.each([
     ['today when it is still ahead', '1000 2000 88400 0', '2000'],
     ['tomorrow once today has passed', '2000 2000 88400 0', '88400'],
@@ -171,7 +173,7 @@ export DATABASE_URL=postgres://u:p@db.example.org/yoda S3_ENDPOINT=http://s3.exa
 calls() { [ -e "$FAKE/$1-calls" ] && wc -l <"$FAKE/$1-calls" | tr -d ' ' || echo 0; }
 `
 
-describe.skipIf(process.platform === 'win32' || !hasFlock)('ops/backup lock and retry (fake pg_dump and rclone)', () => {
+describe.skipIf(noBash || !hasFlock)('ops/backup lock and retry (fake pg_dump and rclone)', () => {
   it('lets only one of two concurrent backups run, leaving the first one intact', () => {
     const r = bash(`${fakes}
       FAKE_PG_SLEEP=2 bash "${dir}backup.sh" --now >"$F/a.log" 2>&1 & a=$!
