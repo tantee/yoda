@@ -68,10 +68,12 @@ export function streamRoutes(app: FastifyInstance): void {
 /**
  * Who receives an event, by its most specific address: a conversation → whoever can see that conversation;
  * a person → only that person; otherwise the project → staff who can see it (requesters never get project events).
+ * A department discussion's events (no project) go to all staff.
  */
-async function deliverable(db: Db, me: Me, e: LiveEvent): Promise<boolean> {
+export async function deliverable(db: Db, me: Me, e: LiveEvent): Promise<boolean> {
   if (e.conversationId) return canSeeConversation(db, me, e.conversationId)
   if (e.personId) return e.personId === me.id
   if (e.projectId) return me.isStaff && canSeeProject(db, me, e.projectId)
+  if (e.type.startsWith('discussion.')) return me.isStaff
   return false
 }

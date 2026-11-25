@@ -1,5 +1,6 @@
 import type { AppDeps } from '../app.js'
 import { runDraft } from '../ai/drafter.js'
+import { runBrief } from '../discussions/brief.js'
 import { embedEntry } from '../knowledge/service.js'
 import { secretaryChat } from '../secretary/chat.js'
 import { secretaryEvent } from '../secretary/events.js'
@@ -12,4 +13,5 @@ export async function registerJobHandlers(deps: Pick<AppDeps, 'db' | 'ai' | 'bus
   await deps.jobs.work('secretary-chat', (run) => secretaryChat(deps, run))
   await deps.jobs.work('secretary-event', (run) => secretaryEvent(deps, run))
   await deps.jobs.work('secretary-sweep', () => secretarySweep(deps))
+  await deps.jobs.work('discussion-brief', (run) => runBrief(deps, run.id, run))
 }

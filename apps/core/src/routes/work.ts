@@ -1,7 +1,9 @@
-import { TaskAssign, TaskResult, WorkItemCreate, WorkItemReopen, type Me } from '@yoda/shared'
+import { TaskAssign, TaskDiscussionCreate, TaskResult, WorkItemCreate, WorkItemReopen, type Me } from '@yoda/shared'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { notFound, requireSignedIn, requireStaff } from '../auth/plugin.js'
+import { getDiscussion } from '../discussions/queries.js'
+import { raiseFromTask } from '../discussions/service.js'
 import { runWork, type WorkCtx } from '../work/context.js'
 import {
   advanceWorkItem,
@@ -136,4 +138,17 @@ export function workRoutes(app: FastifyInstance): void {
   taskAction('confirm', 'staff', none, (ctx, me, id) => confirmTask(ctx, me, id))
   taskAction('assign', 'staff', (b) => TaskAssign.parse(b), (ctx, me, id, { personId }) => assignTask(ctx, me, id, personId))
   taskAction('retry-ai', 'staff', none, (ctx, me, id) => retryAiTask(ctx, me, id))
+
+  /** The task's assignee, or a PM / admin: raise a discussion on the task (it holds the step until it ends). */
+  app.post('/tasks/:id/raise-discussion', async (request, reply) => {
+    requireStaff(request)
+    const { id } = IdParams.parse(request.params)
+    const body = TaskDiscussionCreate.parse(request.body)
+    const me = request.me
+    const discussionId = await runWork(app.deps, { id: me.id, kind: 'person' }, async (ctx) => {
+      await requireTaskVisible(ctx.tx, me, id, { requesterTask: false })
+      return raiseFromTask(ctx, me, id, body)
+    })
+    return reply.status(201).send(await getDiscussion(db(), me, discussionId))
+  })
 }

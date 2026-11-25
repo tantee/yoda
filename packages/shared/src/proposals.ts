@@ -3,7 +3,7 @@ import { ActorKind } from './actors.js'
 
 const uuid = z.string().uuid()
 
-export const ProposalKind = z.enum(['step_advance', 'create_work_item', 'priority_change'])
+export const ProposalKind = z.enum(['step_advance', 'create_work_item', 'priority_change', 'raise_discussion'])
 export type ProposalKind = z.infer<typeof ProposalKind>
 export const ProposalState = z.enum(['pending', 'accepted', 'rejected', 'superseded'])
 export type ProposalState = z.infer<typeof ProposalState>

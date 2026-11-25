@@ -160,7 +160,8 @@
     "reopen": "Reopen step",
     "reopenTitle": "Send this work item back to an earlier step?",
     "reopenConfirm": "Open tasks in the current and later steps will stop. The chosen step starts again, with the requester's latest change request as feedback, and the steps after it are done again.",
-    "reopenStep": "Step to reopen"
+    "reopenStep": "Step to reopen",
+    "raiseDiscussion": "Raise a discussion"
   },
   "steps": {
     "done": "Done",
@@ -365,6 +366,141 @@
     "detail": {
       "ai_low_confidence": "Missing: {detail}",
       "no_assignee": "Roles: {detail}"
+    }
+  },
+  "discussions": {
+    "title": "Discussions",
+    "back": "Back to discussions",
+    "agendas": "Meeting agendas",
+    "raise": "Raise a discussion",
+    "tabs": {
+      "open": "Open",
+      "scheduled": "Scheduled",
+      "decided": "Decided"
+    },
+    "allProjects": "All projects",
+    "filterProject": "Project",
+    "sortBy": "Sort by",
+    "sort": {
+      "priority": "Priority",
+      "created": "Newest",
+      "project": "Project"
+    },
+    "empty": "No discussions here",
+    "votes": "{n} votes",
+    "responses": "{n} responses",
+    "onAgenda": "On an agenda",
+    "department": "Department",
+    "raisedBy": "Raised by {name}",
+    "workItem": "Work item",
+    "project": "Project",
+    "details": "Details",
+    "question": "Question",
+    "priority": "Priority",
+    "options": "Options",
+    "optionTitle": "Option",
+    "addOption": "Add option",
+    "removeOption": "Remove option",
+    "requestBrief": "Ask AI to prepare a brief",
+    "requestBriefHint": "AI drafts the context and options; you can edit it.",
+    "raiseSubmit": "Raise",
+    "brief": {
+      "title": "Brief",
+      "aiPrepared": "AI-prepared",
+      "personWritten": "Written by a person",
+      "preparing": "AI is preparing a brief…",
+      "failed": "Brief failed: {reason}",
+      "none": "No brief yet",
+      "context": "Context",
+      "options": "Options",
+      "pros": "Pros",
+      "cons": "Cons",
+      "recommendation": "Recommendation",
+      "recommended": "Recommended",
+      "edit": "Edit brief",
+      "retry": "Retry AI brief",
+      "save": "Save brief",
+      "noOptionTitle": "Every option needs a title",
+      "noRecommended": "No recommendation"
+    },
+    "failReason": {
+      "no_ai": "AI is not set up",
+      "budget_exceeded": "AI budget used up",
+      "ai_unavailable": "AI is unavailable",
+      "ai_failed": "AI could not prepare it"
+    },
+    "thread": {
+      "title": "Responses",
+      "opinion": "Your opinion",
+      "send": "Send",
+      "vote": "Vote",
+      "myVote": "Your vote",
+      "noResponses": "No responses yet",
+      "voted": "voted for {option}",
+      "opinionBy": "opinion"
+    },
+    "decide": {
+      "button": "Decide",
+      "title": "Record the decision",
+      "option": "Chosen option",
+      "none": "No specific option",
+      "text": "Decision",
+      "submit": "Decide"
+    },
+    "withdraw": {
+      "button": "Withdraw",
+      "title": "Withdraw this discussion",
+      "reason": "Reason",
+      "submit": "Withdraw"
+    },
+    "decision": {
+      "title": "Decision",
+      "by": "Decided by {name} on {date}",
+      "withdrawn": "Withdrawn"
+    },
+    "blocked": "Waiting on {n} discussion | Waiting on {n} discussions",
+    "blockedHint": "This work item cannot move on until they are decided or withdrawn.",
+    "proposal": {
+      "question": "Question",
+      "details": "Details",
+      "options": "Options",
+      "none": "No options given"
+    },
+    "state": {
+      "open": "Open",
+      "scheduled": "Scheduled",
+      "decided": "Decided",
+      "withdrawn": "Withdrawn"
+    },
+    "agenda": {
+      "title": "Meeting agendas",
+      "new": "New agenda",
+      "name": "Title",
+      "meetingAt": "Date and time",
+      "create": "Create",
+      "upcoming": "Upcoming",
+      "past": "Past",
+      "empty": "No agendas yet",
+      "items": "{n} items",
+      "back": "Back to agendas",
+      "noItems": "No discussions on this agenda",
+      "moveUp": "Move up",
+      "moveDown": "Move down",
+      "remove": "Remove from agenda",
+      "add": "Add a discussion",
+      "addNone": "No open discussions to add",
+      "addAction": "Add",
+      "present": "Present",
+      "print": "Print",
+      "delete": "Delete agenda",
+      "deleteConfirm": "Delete this agenda? Its discussions go back to open.",
+      "notes": "Notes",
+      "prev": "Previous",
+      "next": "Next",
+      "position": "{n} of {total}",
+      "presentHint": "Use the left and right arrow keys to move between discussions",
+      "exit": "Exit",
+      "readOnly": "Only project managers and admins can edit agendas"
     }
   }
 }

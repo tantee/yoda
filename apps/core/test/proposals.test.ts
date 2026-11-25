@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify'
 import type { Me, Proposal, Todo, WorkItemDetail } from '@yoda/shared'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { and, asc, eq } from 'drizzle-orm'
-import { events, proposals, tasks, workItems } from '../src/db/schema.js'
+import { discussions, events, proposals, tasks, workItems } from '../src/db/schema.js'
 import { createProposal, decideProposal } from '../src/proposals/service.js'
 import { runWork } from '../src/work/context.js'
 import { progressWorkItem, submitTask } from '../src/work/engine.js'
@@ -428,5 +428,62 @@ describe('proposals', () => {
     expect(res.json()).toEqual({ error: 'invalid_state' })
     expect((await rows(wi.id))[0]!.state).toBe('pending')
     expect((await decide(pm, prop!.id, { decision: 'accept', projectId: p })).statusCode).toBe(200)
+  })
+
+  describe('raise_discussion', () => {
+    async function raiseProposal(projectId: string, workItemId: string | null, onBehalfOf: string | null) {
+      return runWork(app.deps, { id: onBehalfOf ?? pm.id, kind: 'ai' }, (ctx) =>
+        createProposal(ctx, {
+          projectId,
+          workItemId,
+          kind: 'raise_discussion',
+          summary: 'เลือกวิธีเก็บข้อมูล',
+          reason: '',
+          payload: { question: 'เลือกวิธีเก็บข้อมูล', details: 'รายละเอียด', priority: 'normal', options: [] },
+          onBehalfOf,
+        }),
+      )
+    }
+
+    it('the person, a PM or an admin may accept; other members 403, outsiders 404; the discussion id comes back', async () => {
+      const p = await project()
+      const id = await raiseProposal(p, null, dev.id)
+      expect((await decide(ba, id)).statusCode).toBe(403)
+      expect((await decide(outsider, id)).statusCode).toBe(404)
+      const res = await decide(dev, id)
+      expect(res.statusCode, res.body).toBe(200)
+      const db = await testDb()
+      const [d] = await db.select().from(discussions)
+      expect(d).toMatchObject({ raisedBy: dev.id, projectId: p, question: 'เลือกวิธีเก็บข้อมูล' })
+      expect(d!.brief).toMatchObject({ status: 'pending' })
+      expect((res.json() as Proposal).payload).toMatchObject({ discussionId: d!.id })
+      const id2 = await raiseProposal(p, null, dev.id)
+      expect((await decide(pm, id2)).statusCode).toBe(200)
+      const id3 = await raiseProposal(p, null, dev.id)
+      expect((await decide(admin, id3)).statusCode).toBe(200)
+    })
+
+    it('when the person is no longer a member the deciding PM raises it', async () => {
+      const p = await project()
+      const id = await raiseProposal(p, null, outsider.id)
+      expect((await decide(pm, id)).statusCode).toBe(200)
+      const [d] = await (await testDb()).select().from(discussions)
+      expect(d!.raisedBy).toBe(pm.id)
+    })
+
+    it('a work item no longer active → 409 and no discussion', async () => {
+      const p = await project()
+      const wi = await createItem(p)
+      const id = await raiseProposal(p, wi.id, dev.id)
+      expect((await call(pm, 'POST', `/work-items/${wi.id}/cancel`, {})).statusCode).toBe(200)
+      expect((await decide(dev, id)).statusCode).toBe(409)
+      expect(await (await testDb()).select().from(discussions)).toHaveLength(0)
+    })
+
+    it('appears in the person’s to-do', async () => {
+      const p = await project()
+      const id = await raiseProposal(p, null, dev.id)
+      expect((await todo(dev)).proposals.map((x) => x.id)).toEqual([id])
+    })
   })
 })

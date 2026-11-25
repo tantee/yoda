@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { ProjectDetail, Task, WorkItemDetail, WorkflowTemplateSummary } from '@yoda/shared'
+import type { Discussion, ProjectDetail, Task, WorkItemDetail, WorkflowTemplateSummary } from '@yoda/shared'
 import { localized } from '~/utils/localized'
 import { reopenTargets } from '~/utils/workItems'
 
@@ -20,9 +20,13 @@ const reopenOpen = ref(false)
 const reopenStep = ref<string | null>(null)
 const assigningId = ref<string | null>(null)
 const assignee = ref<string | null>(null)
+const raiseOpen = ref(false)
+const blockers = ref<Discussion[]>([])
 
 const isPm = computed(() => !!project.value?.members.some(m => m.personId === me.value?.id && m.roles.includes('PM')))
 const canManage = computed(() => !!me.value?.isAdmin || isPm.value)
+const isMember = computed(() => !!project.value?.members.some(m => m.personId === me.value?.id))
+const canRaise = computed(() => !!item.value && item.value.state === 'active' && (!!me.value?.isAdmin || isMember.value))
 const isActive = computed(() => item.value?.state === 'active')
 /** PM/admin may send an active item back to an earlier step (e.g. the requester asked for changes). */
 const reopenSteps = computed(() => (canManage.value && isActive.value && item.value ? reopenTargets(item.value.steps) : []))
@@ -49,6 +53,14 @@ async function load() {
     if (mine !== seq) return
     item.value = loaded
     loadError.value = ''
+    if (loaded.openDiscussions > 0) {
+      try {
+        const all = await api<Discussion[]>('/discussions', { query: { projectId: loaded.projectId } })
+        if (mine === seq) blockers.value = all.filter(x => x.workItemId === id && (x.state === 'open' || x.state === 'scheduled'))
+      } catch {
+        blockers.value = []
+      }
+    } else blockers.value = []
     if (!project.value) {
       try {
         project.value = await api<ProjectDetail>(`/projects/${loaded.projectId}`)
@@ -127,7 +139,7 @@ function toggleAssign(taskId: string) {
 
 onMounted(load)
 useLiveEvents((e) => {
-  if (e.workItemId === id) loadSoon()
+  if (e.workItemId === id || (e.type.startsWith('discussion.') && e.projectId === item.value?.projectId)) loadSoon()
 }, loadSoon)
 </script>
 
@@ -145,13 +157,21 @@ useLiveEvents((e) => {
         <h1 class="text-h5">{{ item.title }}</h1>
         <v-spacer />
         <v-btn
-          v-if="canManage && item.awaitingAdvance"
+          v-if="canManage && item.awaitingAdvance && !item.openDiscussions"
           color="primary"
           class="mr-2"
           :loading="busy"
           data-testid="advance-btn"
           @click="advance"
         >{{ t('workItems.advance') }}</v-btn>
+        <v-btn
+          v-if="canRaise"
+          variant="outlined"
+          class="mr-2"
+          prepend-icon="mdi-forum-outline"
+          data-testid="raise-btn"
+          @click="raiseOpen = true"
+        >{{ t('workItems.raiseDiscussion') }}</v-btn>
         <v-btn
           v-if="reopenSteps.length"
           variant="outlined"
@@ -173,6 +193,14 @@ useLiveEvents((e) => {
       </div>
       <p v-if="item.description" class="mb-4" style="white-space: pre-wrap">{{ item.description }}</p>
       <v-alert v-if="error" type="error" class="mb-4" data-testid="action-error">{{ error }}</v-alert>
+
+      <v-alert v-if="item.openDiscussions > 0" type="warning" variant="tonal" class="mb-4" data-testid="blocked-banner">
+        <div class="font-weight-medium">{{ t('discussions.blocked', { n: item.openDiscussions }, item.openDiscussions) }}</div>
+        <div class="text-body-2">{{ t('discussions.blockedHint') }}</div>
+        <ul class="pl-5">
+          <li v-for="b in blockers" :key="b.id"><NuxtLink :to="`/discussions/${b.id}`" data-testid="blocker-link">{{ b.question }}</NuxtLink></li>
+        </ul>
+      </v-alert>
 
       <v-stepper :model-value="item.steps.findIndex(s => s.status === 'current')" flat class="mb-4" data-testid="stepper">
         <v-stepper-header>
@@ -237,6 +265,14 @@ useLiveEvents((e) => {
 
       <h2 class="text-h6 mt-6 mb-2">{{ t('workItems.timeline') }}</h2>
       <EventTimeline :events="item.events" />
+
+      <DiscussionsRaiseDiscussionDialog
+        v-model="raiseOpen"
+        :project-id="item.projectId"
+        :work-item-id="item.id"
+        :no-ai="project?.noAi"
+        @raised="(did: string) => navigateTo(`/discussions/${did}`)"
+      />
 
       <v-dialog v-model="reopenOpen" max-width="480">
         <v-card :title="t('workItems.reopenTitle')" data-testid="reopen-dialog">

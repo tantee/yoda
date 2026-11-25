@@ -42,6 +42,7 @@ const workItemLink = computed(() => {
         </div>
         <template v-if="proposal">
           <div data-testid="proposal-summary">{{ proposal.summary || (proposalFallbackKey(proposal) ? t(proposalFallbackKey(proposal)!) : '') }}</div>
+          <ProposalPreview :proposal="proposal" />
           <div v-if="proposal.requesterName" class="text-caption" data-testid="proposal-requester">
             {{ t('chat.card.requester') }}: {{ proposal.requesterName }}
           </div>

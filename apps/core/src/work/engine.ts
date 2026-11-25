@@ -13,6 +13,7 @@ import type { Db, Tx } from '../db/client.js'
 import {
   attachments,
   conversations,
+  discussions,
   events,
   knowledgeEntries,
   people,
@@ -24,6 +25,7 @@ import {
 } from '../db/schema.js'
 import { createProposal, supersedePending } from '../proposals/service.js'
 import { confirmEntry, createEntry } from '../knowledge/service.js'
+import { withdrawItemDiscussions } from '../discussions/service.js'
 import { lockProject } from '../projects/access.js'
 import { latestTemplate, templateById } from '../workflow/seed.js'
 import { recordEvent, type WorkCtx } from './context.js'
@@ -42,11 +44,14 @@ export type WorkItemRow = typeof workItems.$inferSelect
 type TaskRow = typeof tasks.$inferSelect
 
 // Lock order everywhere: project row (only work item creation and member removal), then work_items row
-// FOR UPDATE, then the task row. Serialising on the work item is what makes concurrent sibling
-// completions advance a step once.
+// FOR NO KEY UPDATE, then the task row. Serialising on the work item is what makes concurrent sibling
+// completions advance a step once. NO KEY UPDATE (not FOR UPDATE) still excludes other work item lockers
+// but not the FOR KEY SHARE that FK checks take: a path holding a discussion lock that inserts an event
+// referencing the item must not wait on the item lock, or it deadlocks against decide/withdraw (item, then
+// discussion).
 
 export async function lockItem(tx: Tx, workItemId: string): Promise<WorkItemRow> {
-  const [row] = await tx.select().from(workItems).where(eq(workItems.id, workItemId)).for('update')
+  const [row] = await tx.select().from(workItems).where(eq(workItems.id, workItemId)).for('no key update')
   if (!row) throw notFound()
   return row
 }
@@ -155,6 +160,20 @@ export type StepStatus = {
   satisfied: (key: string) => boolean
   /** Every task of the current step is accepted (latest attempt). */
   complete: boolean
+  /** Open or scheduled discussions on the item: while any exist the step does not advance. */
+  openDiscussions: number
+}
+
+/**
+ * Open / scheduled discussions linked to the work item. Read under the work item lock: raising, deciding and
+ * withdrawing a linked discussion all hold that lock, so the count cannot change until the caller commits.
+ */
+export async function openDiscussionCount(tx: Tx, workItemId: string): Promise<number> {
+  const [row] = await tx
+    .select({ n: sql<number>`count(*)::int` })
+    .from(discussions)
+    .where(and(eq(discussions.workItemId, workItemId), inArray(discussions.state, ['open', 'scheduled'])))
+  return row?.n ?? 0
 }
 
 /** Where the (locked, active) work item stands on its current step. */
@@ -177,7 +196,10 @@ async function stepStatus(tx: Tx, item: WorkItemRow): Promise<StepStatus> {
     if (!cur || r.attempt > cur.attempt) latest.set(r.templateTaskKey, r)
   }
   const satisfied = (key: string) => latest.get(key)?.state === 'accepted'
-  return { def, step, next, latest, lastAttempt, active, satisfied, complete: step.tasks.every((t) => satisfied(t.key)) }
+  const complete = step.tasks.every((t) => satisfied(t.key))
+  // Only a finished step can be held back, so the count is read only then.
+  const openDiscussions = complete ? await openDiscussionCount(tx, item.id) : 0
+  return { def, step, next, latest, lastAttempt, active, satisfied, complete, openDiscussions }
 }
 
 /**
@@ -200,6 +222,8 @@ async function advanceStep(ctx: WorkCtx, item: WorkItemRow, status: StepStatus):
       .where(eq(workItems.id, item.id))
     await recordEvent(ctx, { type: 'work_item.done', ...base })
     await notifyRequestEnded(ctx, item, 'done')
+    // Nothing left to decide for a finished item (e.g. a pending raise_discussion); work item lock held.
+    await supersedePending(ctx, item.id)
     // The secretary reacts in its own job, after this transaction (and its locks) are released.
     ctx.jobs.push({ name: 'secretary-event', id: item.id })
     return
@@ -216,6 +240,9 @@ export async function progressWorkItem(ctx: WorkCtx, workItemId: string): Promis
     const { step, next, latest, lastAttempt, active, satisfied } = status
 
     if (status.complete) {
+      // An open discussion holds the finished step: no advance, no proposal, no guard check. Deciding or
+      // withdrawing it re-runs this (resumeAfterDiscussion), so the item continues exactly once.
+      if (status.openDiscussions > 0) return
       // `propose` projects confirm each step advance: a pending proposal waits for the PM (decideProposal
       // advances on accept). `auto-assign` projects advance directly unless a guard rail trips, which makes
       // it the same proposal with the guard's reason. The last step always completes the work item directly.
@@ -293,7 +320,8 @@ async function proposeStepAdvance(
 /**
  * Accepting a `step_advance` proposal (work item locked by the caller): the advance still applies only while
  * the item is active, on `fromStep`, with every task of that step accepted and `toStep` next. Returns the
- * step status to pass to applyStepAdvance, or null when the situation changed.
+ * step status to pass to applyStepAdvance, or null when the situation changed. A step held by an open
+ * discussion → 409 `invalid_state` (a pending proposal stays pending until the discussion ends).
  */
 export async function stepAdvanceReady(
   tx: Tx,
@@ -306,6 +334,7 @@ export async function stepAdvanceReady(
   if (!status.complete || !status.next) return null
   // `toStep` undefined: a direct advance to whatever step is next.
   if (toStep !== undefined && status.next.key !== toStep) return null
+  if (status.openDiscussions > 0) throw invalidState()
   return status
 }
 
@@ -350,6 +379,8 @@ export async function reopenWorkItem(ctx: WorkCtx, me: Me, workItemId: string, s
   // Not an earlier step: a bad request about this item's template rather than a race.
   if (current < 0 || target < 0 || target >= current) throw new HttpError(422, { error: 'invalid_state' })
   const base = { projectId: item.projectId, workItemId, taskId: null }
+  // The steps they were raised on are redone: whatever they asked is moot.
+  await withdrawItemDiscussions(ctx, workItemId, 'work_item_reopened')
 
   const rejected = await tx
     .update(tasks)
@@ -682,7 +713,7 @@ export async function unassignMemberTasks(
     .from(workItems)
     .where(and(eq(workItems.projectId, projectId), eq(workItems.state, 'active')))
     .orderBy(asc(workItems.id))
-    .for('update')
+    .for('no key update')
   const cleared = await tx
     .update(tasks)
     .set({ assigneeId: null, proposedAssigneeId: null, state: 'open', updatedAt: sql`now()` })
@@ -716,6 +747,7 @@ export async function cancelWorkItem(ctx: WorkCtx, me: Me, workItemId: string): 
   const ownerStillMember = item.ownerId === me.id && (await memberRoles(tx, item.projectId, me.id)) !== null
   if (!ownerStillMember && !(await isPmOrAdmin(tx, me, item.projectId))) throw forbidden()
   if (item.state !== 'active') throw invalidState()
+  await withdrawItemDiscussions(ctx, workItemId, 'work_item_cancelled')
 
   const rejected = await tx
     .update(tasks)
