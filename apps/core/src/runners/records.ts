@@ -102,7 +102,7 @@ export async function reopenTaskAfterRun(tx: Tx, task: typeof tasks.$inferSelect
 
 /**
  * Revokes a runner in two transactions. The first sets `revoked_at`: a claim in flight holds the runner row
- * FOR SHARE, so this waits for it to commit, and any later claim sees the revoke and is refused. The second
+ * FOR NO KEY UPDATE, so this waits for it to commit, and any later claim sees the revoke and is refused. The second
  * then releases every running run (including one claimed just before), locking in the global order:
  * projects, then work items, then tasks, each sorted.
  */
@@ -131,32 +131,34 @@ export async function revokeRunner(deps: WorkDeps, me: Me, runnerId: string): Pr
 }
 
 /**
- * Ends a running run (`released`, `failed` or `expired`) and records its event; the task goes back to the
- * queue when it is an unassigned AI task (see `reopenTaskAfterRun`). The run's task must already be locked.
- * `where` narrows the update (e.g. "the lease has passed"). Returns the ended run, or null when it was not
- * running (anymore).
+ * Ends a running run and records its event; unless `reopen` is false, the task goes back to the queue when it
+ * is an unassigned AI task (see `reopenTaskAfterRun`). The run's task must already be locked. `where` narrows
+ * the update (e.g. "the lease has passed"). Returns the ended run, or null when it was not running (anymore).
  */
 export async function endRun(
   ctx: WorkCtx,
   runId: string,
   opts: {
-    state: 'released' | 'failed' | 'expired'
-    event: 'run.released' | 'run.failed' | 'run.expired'
-    reason: string
+    state: 'released' | 'failed' | 'expired' | 'succeeded' | 'parked'
+    event: 'run.released' | 'run.failed' | 'run.expired' | 'run.succeeded' | 'run.parked'
+    reason: string | null
     error?: string | null
     where?: SQL
     payload?: Record<string, unknown>
+    /** Also set on the run (e.g. the usage reported with a result). */
+    set?: Partial<Pick<typeof agentRuns.$inferInsert, 'usage'>>
+    reopen?: boolean
   },
 ): Promise<typeof agentRuns.$inferSelect | null> {
   const [run] = await ctx.tx
     .update(agentRuns)
-    .set({ state: opts.state, endedAt: sql`now()`, error: opts.error ?? null })
+    .set({ ...opts.set, state: opts.state, endedAt: sql`now()`, error: opts.error ?? null })
     .where(and(eq(agentRuns.id, runId), eq(agentRuns.state, 'running'), opts.where))
     .returning()
   if (!run) return null
   const [task] = await ctx.tx.select().from(tasks).where(eq(tasks.id, run.taskId))
   if (!task) return run
-  await reopenTaskAfterRun(ctx.tx, task)
+  if (opts.reopen !== false) await reopenTaskAfterRun(ctx.tx, task)
   await recordEvent(ctx, {
     type: opts.event,
     projectId: task.projectId,

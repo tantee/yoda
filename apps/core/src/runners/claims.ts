@@ -9,7 +9,7 @@ import {
 } from '@yoda/shared'
 import { and, asc, eq, gt, inArray, isNull, lt, or, sql } from 'drizzle-orm'
 import { invalidState, notFound } from '../auth/plugin.js'
-import type { Tx } from '../db/client.js'
+import type { Db, Tx } from '../db/client.js'
 import { agentRuns, discussions, events, projectMembers, projects, runners, tasks, workflowTemplates, workItems } from '../db/schema.js'
 import { lockProject } from '../projects/access.js'
 import { recordEvent, runWork, type WorkCtx, type WorkDeps } from '../work/context.js'
@@ -33,9 +33,9 @@ type RunRow = typeof agentRuns.$inferSelect
 export const RUN_STRIKES = 3
 const LIST_LIMIT = 20
 
-const nowOf = (deps: { now?: () => Date }) => deps.now?.() ?? new Date()
-const leaseFrom = (deps: RunnerDeps, now: Date) => new Date(now.getTime() + deps.config.runnerLeaseSeconds * 1000)
-const asOwner = (rc: RunnerCtx) => ({ id: rc.owner.id, kind: 'ai' as const })
+export const nowOf = (deps: { now?: () => Date }) => deps.now?.() ?? new Date()
+export const leaseFrom = (deps: RunnerDeps, now: Date) => new Date(now.getTime() + deps.config.runnerLeaseSeconds * 1000)
+export const asOwner = (rc: RunnerCtx) => ({ id: rc.owner.id, kind: 'ai' as const })
 
 const priorityRank = sql`case ${workItems.priority} when 'urgent' then 0 when 'high' then 1 when 'normal' then 2 else 3 end`
 
@@ -224,7 +224,7 @@ async function gaveUp(tx: Tx, taskId: string): Promise<boolean> {
  * The run, when it is `running`, belongs to this runner and its lease has not passed; else 409
  * `invalid_state` (`run_not_active`). Takes no lock: callers lock the task (global order) before writing.
  */
-export async function requireLiveRun(tx: Tx, rc: RunnerCtx, runId: string, now: Date = new Date()): Promise<RunRow> {
+export async function requireLiveRun(tx: Db | Tx, rc: RunnerCtx, runId: string, now: Date = new Date()): Promise<RunRow> {
   const [run] = await tx.select().from(agentRuns).where(eq(agentRuns.id, runId))
   if (!run || run.runnerId !== rc.runner.id || run.state !== 'running' || run.leaseExpiresAt <= now) {
     throw invalidState('run_not_active')
@@ -253,7 +253,7 @@ export async function heartbeat(deps: RunnerDeps, rc: RunnerCtx, runId: string):
 }
 
 /** Locks the task's project (share), work item and task, in the global order. */
-async function lockRunTask(tx: Tx, taskId: string): Promise<TaskRow> {
+export async function lockRunTask(tx: Tx, taskId: string): Promise<TaskRow> {
   const [ref] = await tx.select({ projectId: tasks.projectId, workItemId: tasks.workItemId }).from(tasks).where(eq(tasks.id, taskId))
   if (!ref) throw notFound()
   await lockProject(tx, ref.projectId, 'share')
@@ -321,11 +321,16 @@ export async function expireLeases(deps: RunnerDeps): Promise<void> {
     .where(and(eq(agentRuns.state, 'running'), lt(agentRuns.leaseExpiresAt, now)))
     .orderBy(asc(agentRuns.leaseExpiresAt))
   for (const r of due) {
-    await runWork(deps, { id: null, kind: 'system' }, async (ctx) => {
-      await lockRunTask(ctx.tx, r.taskId)
-      // A heartbeat that landed meanwhile keeps the run alive.
-      const ended = await endRun(ctx, r.id, { state: 'expired', event: 'run.expired', reason: 'lease_expired', where: lt(agentRuns.leaseExpiresAt, now) })
-      if (ended) await applyStrikes(ctx, r.taskId)
-    })
+    // One run's failure (e.g. a deadlock victim) must not stop the sweep; the next sweep retries it.
+    try {
+      await runWork(deps, { id: null, kind: 'system' }, async (ctx) => {
+        await lockRunTask(ctx.tx, r.taskId)
+        // A heartbeat that landed meanwhile keeps the run alive.
+        const ended = await endRun(ctx, r.id, { state: 'expired', event: 'run.expired', reason: 'lease_expired', where: lt(agentRuns.leaseExpiresAt, now) })
+        if (ended) await applyStrikes(ctx, r.taskId)
+      })
+    } catch (err) {
+      console.error(`runner-lease-sweep: failed to expire run ${r.id}`, err)
+    }
   }
 }
