@@ -10,7 +10,7 @@ import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { requireStaff } from '../auth/plugin.js'
 import { getDiscussion, listDiscussions, listResponses } from '../discussions/queries.js'
-import { createDiscussion, decideDiscussion, editBrief, respond, withdrawDiscussion } from '../discussions/service.js'
+import { createDiscussion, decideDiscussion, editBrief, respond, retryBrief, withdrawDiscussion } from '../discussions/service.js'
 import { runWork } from '../work/context.js'
 
 const IdParams = z.object({ id: z.string().uuid() })
@@ -64,6 +64,14 @@ export function discussionRoutes(app: FastifyInstance): void {
     const body = DiscussionBriefEdit.parse(request.body)
     const me = request.me
     await runWork(app.deps, asPerson(me.id), (ctx) => editBrief(ctx, me, id, body))
+    return getDiscussion(db(), me, id)
+  })
+
+  app.post('/discussions/:id/brief/retry', async (request) => {
+    requireStaff(request)
+    const { id } = IdParams.parse(request.params)
+    const me = request.me
+    await runWork(app.deps, asPerson(me.id), (ctx) => retryBrief(ctx, me, id))
     return getDiscussion(db(), me, id)
   })
 

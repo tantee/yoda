@@ -1,6 +1,7 @@
-import { embedMany, isStepCount, streamText, type ModelMessage, type ToolSet } from 'ai'
+import { embedMany, isStepCount, Output, streamText, type ModelMessage, type ToolSet } from 'ai'
 import type { AiUsage } from '@yoda/shared'
 import { and, eq, gte, isNull, sql, type SQL } from 'drizzle-orm'
+import type { ZodType, ZodTypeDef } from 'zod'
 import type { Db, Tx } from '../db/client.js'
 import { aiCalls, events, people, projects } from '../db/schema.js'
 import type { LiveBus } from '../live/bus.js'
@@ -171,6 +172,73 @@ export class AiGateway {
     await this.log(input, provider, model, inTok, outTok, true, null)
     await this.warnIfNeeded(input.projectId, input.taskId ?? null)
     return { text, model }
+  }
+
+  /**
+   * Structured output: the model answers with JSON for `schema` (its refinements are checked too, though they
+   * are not sent to the provider). Output that does not parse or validate is billed and logged as
+   * `invalid_output` (AiFailed('invalid_output'): retrying may help). Same guard, abort and logging as
+   * generateText.
+   */
+  async generateObject<T>(input: {
+    job: 'draft' | 'fast'
+    billing: BillingTarget
+    system: string
+    prompt: string
+    schema: ZodType<T, ZodTypeDef, unknown>
+    maxOutputTokens?: number
+    signal?: AbortSignal
+  }): Promise<{ object: T; model: string }> {
+    const { models } = this.deps
+    const spec = models.ids[input.job]
+    const lm = models[input.job]
+    if (!spec || !lm) throw new AiFailed('not_configured')
+    const { provider, model } = parseModelId(spec)
+    const projectId = billedProject(input.billing)
+    await this.guard(projectId, null, model)
+    const logInput = { job: input.job, projectId, taskId: null }
+
+    let result
+    let inTok: number
+    let outTok: number
+    let streamError: unknown
+    try {
+      result = streamText({
+        model: lm,
+        system: input.system,
+        prompt: input.prompt,
+        output: Output.object({ schema: input.schema }),
+        maxOutputTokens: input.maxOutputTokens,
+        maxRetries: 1,
+        abortSignal: input.signal,
+        onError: ({ error }) => {
+          streamError = error
+        },
+      })
+      await result.text
+      const usage = await result.totalUsage
+      if (streamError) throw streamError
+      inTok = usage.inputTokens ?? 0
+      outTok = usage.outputTokens ?? 0
+    } catch (err) {
+      if (input.signal?.aborted) return this.abort(logInput, provider, model, null, null)
+      const e = streamError ?? err
+      const message = e instanceof Error ? e.message : String(e)
+      await this.log(logInput, provider, model, null, null, false, message)
+      throw new AiFailed('provider_error', message)
+    }
+    if (input.signal?.aborted) return this.abort(logInput, provider, model, inTok, outTok)
+    let object: T
+    try {
+      object = await result.output
+    } catch {
+      // Billed even though unusable: keep tokens and cost. The parse error may quote model output: not logged.
+      await this.log(logInput, provider, model, inTok, outTok, false, 'invalid_output')
+      throw new AiFailed('invalid_output')
+    }
+    await this.log(logInput, provider, model, inTok, outTok, true, null)
+    await this.warnIfNeeded(projectId, null)
+    return { object, model }
   }
 
   /**

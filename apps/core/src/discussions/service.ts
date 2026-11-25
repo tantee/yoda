@@ -26,7 +26,7 @@ import { requireDiscussionVisible, toResponse, type DiscussionRow } from './quer
 /** A request that is well-formed but does not fit the data (unknown option, mismatched project). */
 const unprocessable = () => new HttpError(422, { error: 'invalid_state' })
 
-const isUndecided = (state: string) => state === 'open' || state === 'scheduled'
+export const isUndecided = (state: string) => state === 'open' || state === 'scheduled'
 
 function requireUniqueKeys(options: DiscussionOption[]): void {
   if (new Set(options.map((o) => o.key)).size !== options.length) throw unprocessable()
@@ -40,7 +40,7 @@ function briefOptions(row: Pick<DiscussionRow, 'brief'>): DiscussionOption[] {
  * Discussion events: a project discussion records a normal event (live-pushed by the project rule); a
  * department one has no project to record it under, so it is only pushed live (to all staff, see stream.ts).
  */
-async function recordDiscussionEvent(
+export async function recordDiscussionEvent(
   ctx: WorkCtx,
   d: Pick<DiscussionRow, 'id' | 'projectId' | 'workItemId' | 'taskId'>,
   type: Extract<EventType, `discussion.${string}`>,
@@ -64,8 +64,9 @@ async function recordDiscussionEvent(
  * Raises a discussion as `me` (staff). Links: `workItemId` (and optionally a `taskId` of that item) gives the
  * project; a given `projectId` must match it (422). The raiser must see the project (404 otherwise; any staff
  * for a department discussion). A linked work item is locked and must be active (409). With `requestBrief` on
- * an AI-enabled project the brief is left `pending` for the `discussion-brief` job (sent after commit);
- * otherwise the given options become a ready, person-written brief.
+ * an AI-enabled project the brief is left `pending` for the `discussion-brief` job (sent after commit); on a
+ * no-AI project it fails at once with `no_ai` (the reason stays visible; people write the brief); without
+ * `requestBrief` the given options become a ready, person-written brief.
  */
 export async function createDiscussion(ctx: WorkCtx, me: Me, input: DiscussionCreate): Promise<string> {
   const { tx } = ctx
@@ -104,9 +105,9 @@ export async function createDiscussion(ctx: WorkCtx, me: Me, input: DiscussionCr
     options: input.options,
     recommendation: '',
     recommendedKey: null,
-    source: wantsAi ? 'ai' : 'person',
-    status: wantsAi ? 'pending' : 'ready',
-    failReason: null,
+    source: input.requestBrief ? 'ai' : 'person',
+    status: wantsAi ? 'pending' : input.requestBrief ? 'failed' : 'ready',
+    failReason: input.requestBrief && noAi ? 'no_ai' : null,
   }
   const [row] = await tx
     .insert(discussions)
@@ -137,7 +138,7 @@ async function visibleRef(tx: Tx, me: Me, id: string): Promise<DiscussionRow> {
   return row
 }
 
-async function lockDiscussion(tx: Tx, id: string): Promise<DiscussionRow> {
+export async function lockDiscussion(tx: Tx, id: string): Promise<DiscussionRow> {
   const [row] = await tx.select().from(discussions).where(eq(discussions.id, id)).for('update')
   if (!row) throw notFound()
   return row
@@ -197,6 +198,24 @@ export async function editBrief(ctx: WorkCtx, me: Me, id: string, input: Discuss
   if (!isUndecided(d.state)) throw invalidState()
   const brief: DiscussionBrief = { ...input, source: 'person', status: 'ready', failReason: null }
   await tx.update(discussions).set({ brief, updatedAt: sql`now()` }).where(eq(discussions.id, id))
+}
+
+/**
+ * `POST /discussions/:id/brief/retry`: the raiser, a PM or an admin asks the AI again for a failed brief of an
+ * open / scheduled discussion (409 otherwise). The brief goes back to `pending`; the job is sent after commit.
+ */
+export async function retryBrief(ctx: WorkCtx, me: Me, id: string): Promise<void> {
+  const { tx } = ctx
+  const ref = await visibleRef(tx, me, id)
+  if (!(await canManage(tx, me, ref))) throw forbidden()
+  const d = await lockDiscussion(tx, id)
+  await requireDiscussionVisible(tx, me, d)
+  if (!(await canManage(tx, me, d))) throw forbidden()
+  const brief = d.brief as DiscussionBrief | null
+  if (!isUndecided(d.state) || !brief || brief.status !== 'failed') throw invalidState()
+  const next: DiscussionBrief = { ...brief, source: 'ai', status: 'pending', failReason: null }
+  await tx.update(discussions).set({ brief: next, updatedAt: sql`now()` }).where(eq(discussions.id, id))
+  ctx.jobs.push({ name: 'discussion-brief', id })
 }
 
 /**
