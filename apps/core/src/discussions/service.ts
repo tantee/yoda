@@ -15,7 +15,7 @@ import { forbidden, HttpError, invalidState, notFound } from '../auth/plugin.js'
 import type { Tx } from '../db/client.js'
 import { discussionResponses, discussions, projects, tasks, workItems } from '../db/schema.js'
 import { createEntry } from '../knowledge/service.js'
-import { notifyDiscussionDecided, notifyDiscussionRaised } from '../notifications/service.js'
+import { notifyDiscussionEnded, notifyDiscussionRaised } from '../notifications/service.js'
 import { recordEvent, type WorkCtx } from '../work/context.js'
 import { isPmOrAdmin, lockItem } from '../work/engine.js'
 import { canSeeProject } from '../work/queries.js'
@@ -189,6 +189,9 @@ export async function editBrief(ctx: WorkCtx, me: Me, id: string, input: Discuss
   requireUniqueKeys(input.options)
   if (input.recommendedKey !== null && !input.options.some((o) => o.key === input.recommendedKey)) throw unprocessable()
   const d = await lockDiscussion(tx, id)
+  // Re-checked under the lock (membership or roles may have changed while waiting).
+  await requireDiscussionVisible(tx, me, d)
+  if (!(await canManage(tx, me, d))) throw forbidden()
   if (!isUndecided(d.state)) throw invalidState()
   const brief: DiscussionBrief = { ...input, source: 'person', status: 'ready', failReason: null }
   await tx.update(discussions).set({ brief, updatedAt: sql`now()` }).where(eq(discussions.id, id))
@@ -202,7 +205,7 @@ export async function resumeAfterDiscussion(_ctx: WorkCtx, _workItemId: string):
 
 /**
  * Checks visibility (404) and permission (403) unlocked, then locks the work item (if any) and the
- * discussion, in that order, and re-reads it: a discussion that is no longer open / scheduled → 409.
+ * discussion, in that order, re-reads it and re-checks both: a discussion no longer open / scheduled → 409.
  */
 async function lockForFinal(
   ctx: WorkCtx,
@@ -216,13 +219,23 @@ async function lockForFinal(
   // work_item_id never changes, so the unlocked read tells which item to lock.
   if (ref.workItemId) await lockItem(tx, ref.workItemId)
   const d = await lockDiscussion(tx, id)
+  await requireDiscussionVisible(tx, me, d)
+  if (!(await allowed(tx, me, d))) throw forbidden()
   if (!isUndecided(d.state)) throw invalidState()
   return d
+}
+
+/** Knowledge titles are at most 300 characters; the full question stays in the body. */
+export const KNOWLEDGE_TITLE_MAX = 300
+function knowledgeTitle(question: string): string {
+  const chars = [...question]
+  return chars.length <= KNOWLEDGE_TITLE_MAX ? question : `${chars.slice(0, KNOWLEDGE_TITLE_MAX - 1).join('')}…`
 }
 
 function decisionBody(d: DiscussionRow, decision: string, option: DiscussionOption | null): string {
   const brief = d.brief as DiscussionBrief | null
   return [
+    `คำถาม: ${d.question}`,
     `ข้อสรุป: ${decision}`,
     option ? `ทางเลือกที่เลือก: ${option.title}` : '',
     d.details ? `รายละเอียด: ${d.details}` : '',
@@ -263,26 +276,30 @@ export async function decideDiscussion(ctx: WorkCtx, me: Me, id: string, input: 
     projectId: d.projectId ?? undefined,
     workItemId: d.workItemId ?? undefined,
     type: 'decision',
-    title: d.question,
+    title: knowledgeTitle(d.question),
     body: decisionBody(d, input.decision, option),
     noAi: false,
     status: 'confirmed',
     sourceKind: 'person',
     sourceRef: d.id,
   })
-  const responders = await tx
-    .selectDistinct({ id: discussionResponses.authorId })
-    .from(discussionResponses)
-    .where(eq(discussionResponses.discussionId, id))
-  await notifyDiscussionDecided(ctx, {
+  await notifyDiscussionEnded(ctx, 'decided', {
     id: d.id,
     projectId: d.projectId,
     question: d.question,
     raisedBy: d.raisedBy,
-    decision: input.decision,
-    responders: responders.map((r) => r.id),
+    text: input.decision,
+    responders: await responderIds(tx, id),
   })
   if (d.workItemId) await resumeAfterDiscussion(ctx, d.workItemId)
+}
+
+async function responderIds(tx: Tx, discussionId: string): Promise<string[]> {
+  const rows = await tx
+    .selectDistinct({ id: discussionResponses.authorId })
+    .from(discussionResponses)
+    .where(eq(discussionResponses.discussionId, discussionId))
+  return rows.map((r) => r.id)
 }
 
 /** Withdraws an open / scheduled discussion (raiser, project PM, admin); the work item resumes. */
@@ -290,5 +307,13 @@ export async function withdrawDiscussion(ctx: WorkCtx, me: Me, id: string, input
   const d = await lockForFinal(ctx, me, id, canManage)
   await ctx.tx.update(discussions).set({ state: 'withdrawn', updatedAt: sql`now()` }).where(eq(discussions.id, id))
   await recordDiscussionEvent(ctx, d, 'discussion.withdrawn', { reason: input.reason })
+  await notifyDiscussionEnded(ctx, 'withdrawn', {
+    id: d.id,
+    projectId: d.projectId,
+    question: d.question,
+    raisedBy: d.raisedBy,
+    text: input.reason,
+    responders: await responderIds(ctx.tx, id),
+  })
   if (d.workItemId) await resumeAfterDiscussion(ctx, d.workItemId)
 }

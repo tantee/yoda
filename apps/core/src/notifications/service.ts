@@ -224,8 +224,8 @@ type DiscussionRef = { id: string; projectId: string | null; question: string }
 export async function notifyDiscussionRaised(ctx: WorkCtx, d: DiscussionRef & { raisedBy: string }): Promise<void> {
   let recipients = d.projectId ? await projectPms(ctx, d.projectId) : []
   if (!recipients.length) recipients = await admins(ctx)
-  for (const personId of [...new Set(recipients)].sort()) {
-    if (personId === d.raisedBy) continue
+  const ids = [...new Set(recipients)].filter((id) => id !== d.raisedBy)
+  for (const personId of await staffWhoSee(ctx, ids, d.projectId)) {
     await notify(ctx, {
       personId,
       kind: 'discussion',
@@ -237,20 +237,24 @@ export async function notifyDiscussionRaised(ctx: WorkCtx, d: DiscussionRef & { 
   }
 }
 
-/** A decision was made: the raiser and everyone who responded hear about it (not the decider). */
-export async function notifyDiscussionDecided(
+/**
+ * A discussion was decided or withdrawn: the raiser and everyone who responded hear about it (not whoever
+ * decided / withdrew it). `text` is the decision or the withdrawal reason.
+ */
+export async function notifyDiscussionEnded(
   ctx: WorkCtx,
-  d: DiscussionRef & { raisedBy: string; decision: string; responders: string[] },
+  event: 'decided' | 'withdrawn',
+  d: DiscussionRef & { raisedBy: string; text: string; responders: string[] },
 ): Promise<void> {
   const ids = [...new Set([d.raisedBy, ...d.responders])].filter((id) => id !== ctx.actorId)
   for (const personId of await staffWhoSee(ctx, ids, d.projectId)) {
     await notify(ctx, {
       personId,
       kind: 'discussion',
-      title: `ได้ข้อสรุปแล้ว: ${d.question}`,
-      body: d.decision,
+      title: event === 'decided' ? `ได้ข้อสรุปแล้ว: ${d.question}` : `ประเด็นหารือถูกถอน: ${d.question}`,
+      body: d.text,
       link: `/discussions/${d.id}`,
-      dedupeKey: `discussion:${d.id}:decided`,
+      dedupeKey: `discussion:${d.id}:${event}`,
     })
   }
 }
