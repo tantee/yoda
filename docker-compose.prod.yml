@@ -86,7 +86,21 @@ services:
       RUSTFS_SECRET_KEY: ${S3_SECRET_KEY:?S3_SECRET_KEY is required}
     restart: unless-stopped
 
-  # The dev mail catcher never runs in production (a profile nobody enables).
+  # Production credentials replace the dev ones (the base file's healthcheck hard-codes the dev user).
+  postgres:
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-yoda}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:-yoda}
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+    restart: unless-stopped
+
+  # The dev Keycloak and mail catcher never run in production (a profile nobody enables); production signs in
+  # against the organisation's Keycloak at OIDC_ISSUER.
+  keycloak:
+    profiles: [dev-only]
+
   mailpit:
     profiles: [dev-only]
 

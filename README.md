@@ -88,9 +88,16 @@ Inside containers:
   do not leave the dev `localhost` URL there when running the overlay.
 - `OIDC_ISSUER` must equal the browser-facing token `iss`. Core fetches the signing keys from
   `OIDC_JWKS_URL` when set (e.g. Keycloak's internal address,
-  `http://keycloak:8080/realms/yoda/protocol/openid-connect/certs`), otherwise from
+  `http://keycloak.internal.example.org/realms/yoda/protocol/openid-connect/certs`), otherwise from
   `${OIDC_ISSUER}/protocol/openid-connect/certs`, which must then be reachable from the core container.
   Tokens are checked against `OIDC_ISSUER` either way.
+
+- Postgres: the overlay requires `POSTGRES_PASSWORD` (and takes `POSTGRES_USER` / `POSTGRES_DB`,
+  default `yoda`) instead of the dev password; `DATABASE_URL` must use the same credentials. Postgres
+  only applies them when it creates a fresh `pgdata` volume, so change an existing database's password
+  with `ALTER ROLE` as well.
+- The dev `keycloak` and `mailpit` services are behind the `dev-only` profile in the overlay and never
+  start in production: sign-in uses the organisation's Keycloak at `OIDC_ISSUER`.
 
 Production secrets come only from the deploy environment / CI variables, never from committed files.
 The dev compose services use throwaway credentials and must not be exposed publicly.
