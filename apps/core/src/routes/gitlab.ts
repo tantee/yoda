@@ -5,6 +5,7 @@ import { z } from 'zod'
 import { forbidden, gitlabNotConnected, HttpError, invalidState, notFound, repoNotFound, requireAdmin, requireStaff } from '../auth/plugin.js'
 import { gitlabSettings, projectRepos, workItemRepos, workItems } from '../db/schema.js'
 import { GitLabError } from '../gitlab/client.js'
+import { latestMergedMrs } from '../gitlab/effects.js'
 import { devStarted, listProjectRepos, repoHasIssues, toRepo, workItemCode } from '../gitlab/repos.js'
 import { handleWebhook, needsBotUser, tokenMatches } from '../gitlab/webhook.js'
 import { canSeeProject } from '../work/queries.js'
@@ -104,19 +105,33 @@ export function gitlabRoutes(app: FastifyInstance): void {
     return reply.status(201).send(toRepo(row))
   })
 
+  /** Changed repo links can complete "every repo merged": the item's latest merged MR re-runs its effect (after commit). */
+  const queueMrEffects = async (ids: string[]) => {
+    for (const mrId of ids) {
+      try {
+        await app.deps.jobs.send('gitlab-mr-effect', { id: mrId })
+      } catch (err) {
+        console.error(`jobs: failed to send gitlab-mr-effect ${mrId}`, err)
+      }
+    }
+  }
+
   app.delete('/projects/:id/repos/:repoId', async (request, reply) => {
     requireStaff(request)
     const { id, repoId } = RepoParams.parse(request.params)
     const me = request.me
     if (!(await canSeeProject(db(), me, id))) throw notFound()
     if (!(await canManageProject(db(), me, id))) throw forbidden()
-    await db().transaction(async (tx) => {
+    const effects = await db().transaction(async (tx) => {
       await lockProject(tx, id)
       const [repo] = await tx.select({ id: projectRepos.id }).from(projectRepos).where(and(eq(projectRepos.id, repoId), eq(projectRepos.projectId, id)))
       if (!repo) throw notFound()
       if (await repoHasIssues(tx, repoId)) throw invalidState()
+      const linked = await tx.select({ id: workItemRepos.workItemId }).from(workItemRepos).where(eq(workItemRepos.repoId, repoId))
       await tx.delete(projectRepos).where(eq(projectRepos.id, repoId))
+      return latestMergedMrs(tx, linked.map((l) => l.id))
     })
+    await queueMrEffects(effects)
     return reply.status(204).send()
   })
 
@@ -134,7 +149,7 @@ export function gitlabRoutes(app: FastifyInstance): void {
     const { repoIds } = WorkItemReposPut.parse(request.body)
     const me = request.me
     const wanted = [...new Set(repoIds)]
-    return db().transaction(async (tx) => {
+    const { code, effects } = await db().transaction(async (tx) => {
       const [ref] = await tx.select({ projectId: workItems.projectId }).from(workItems).where(eq(workItems.id, id))
       if (!ref || !(await canSeeProject(tx, me, ref.projectId))) throw notFound()
       if (!(await isPmOrAdmin(tx, me, ref.projectId))) throw forbidden()
@@ -152,8 +167,10 @@ export function gitlabRoutes(app: FastifyInstance): void {
       if (withIssue.length) throw invalidState()
       await tx.delete(workItemRepos).where(dropped)
       if (wanted.length) await tx.insert(workItemRepos).values(wanted.map((repoId) => ({ workItemId: id, repoId }))).onConflictDoNothing()
-      return workItemCode(tx, item, app.deps.gitlab !== null)
+      return { code: await workItemCode(tx, item, app.deps.gitlab !== null), effects: await latestMergedMrs(tx, [id]) }
     })
+    await queueMrEffects(effects)
+    return code
   })
 
   app.get('/admin/gitlab', async (request): Promise<GitLabStatus> => {
