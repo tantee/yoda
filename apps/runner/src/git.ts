@@ -27,7 +27,8 @@ export class PushRefused extends Error {
 /** Strips `user:password@` from URLs, so git errors and `config show` never carry clone credentials. */
 export const scrub = (s: string) => s.replace(/(\/\/)[^/@\s]+@/g, '$1***@')
 
-class GitError extends Error {
+/** A git command failed (its message has clone credentials removed). */
+export class GitError extends Error {
   override name = 'GitError'
 }
 

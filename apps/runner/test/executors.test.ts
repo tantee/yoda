@@ -5,7 +5,7 @@ import { mcpConfigFile, removeMcpConfigFile, RunnerConfig, withMcpConfigFile } f
 import { claudeExecutor } from '../src/executors/claude.js'
 import { codexExecutor } from '../src/executors/codex.js'
 import { fakeExecutor } from '../src/executors/fake.js'
-import { createExecutor } from '../src/executors/index.js'
+import { childEnv, createExecutor } from '../src/executors/index.js'
 import { git, isolateGit, makeOrigin, tempDir, TOKEN } from './helpers.js'
 
 const tmp = tempDir()
@@ -124,6 +124,12 @@ printf '%s\\n' '${JSON.stringify(claudeResult)}'`,
       'Bash(git branch:*)',
       'Bash(git reset --hard:*)',
       'Bash(git remote:*)',
+      'mcp__yoda__list_available_tasks',
+      'mcp__yoda__claim_task',
+      'mcp__yoda__heartbeat',
+      'mcp__yoda__open_merge_request',
+      'mcp__yoda__submit_result',
+      'mcp__yoda__release_task',
       '--permission-mode',
       'acceptEdits',
       '--model',
@@ -260,5 +266,12 @@ describe('fake executor', () => {
     expect(createExecutor(cfg({ executor: 'claude' })).name).toBe('claude')
     expect(createExecutor(cfg({ executor: 'codex' })).name).toBe('codex')
     expect(createExecutor(cfg({ executor: 'fake' })).name).toBe('fake')
+  })
+})
+
+describe('childEnv', () => {
+  it('drops the runner token, config path and git push credentials', () => {
+    const env = childEnv({ PATH: '/bin', YODA_RUNNER_TOKEN: 'x', YODA_RUNNER_CONFIG: 'y', YODA_GIT_USERNAME: 'u', YODA_GIT_PASSWORD: 'p' })
+    expect(env).toEqual({ PATH: '/bin' })
   })
 })

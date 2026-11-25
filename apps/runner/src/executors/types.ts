@@ -40,11 +40,16 @@ export function readMarker(message: string): { needsHuman: boolean; summary: str
   return { needsHuman: false, summary: text }
 }
 
-/** The child env without the runner's own secrets (the agent gets MCP access only through its config). */
+/**
+ * The child env without the runner's own secrets: the agent gets MCP access only through its config, and the
+ * git push credentials of the server image (`YODA_GIT_USERNAME` / `YODA_GIT_PASSWORD`) stay with the runner.
+ */
 export function childEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const out = { ...env }
   delete out.YODA_RUNNER_TOKEN
   delete out.YODA_RUNNER_CONFIG
+  delete out.YODA_GIT_USERNAME
+  delete out.YODA_GIT_PASSWORD
   return out
 }
 

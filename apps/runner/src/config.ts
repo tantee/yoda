@@ -26,7 +26,11 @@ export const DEFAULT_ALLOWED_TOOLS = [
   'Bash(git diff:*)',
   'Bash(git log:*)',
 ]
-/** Git commands that would push or leave the run's branch (the push guard refuses those runs anyway). */
+/**
+ * Git commands that would push or leave the run's branch (the push guard refuses those runs anyway), and the
+ * run lifecycle tools, which the runner calls itself (the agent keeps context, search, knowledge, progress and
+ * ask_human).
+ */
 export const DEFAULT_DISALLOWED_TOOLS = [
   'Bash(git push:*)',
   'Bash(git checkout:*)',
@@ -34,6 +38,12 @@ export const DEFAULT_DISALLOWED_TOOLS = [
   'Bash(git branch:*)',
   'Bash(git reset --hard:*)',
   'Bash(git remote:*)',
+  'mcp__yoda__list_available_tasks',
+  'mcp__yoda__claim_task',
+  'mcp__yoda__heartbeat',
+  'mcp__yoda__open_merge_request',
+  'mcp__yoda__submit_result',
+  'mcp__yoda__release_task',
 ]
 
 export const RunnerConfig = z.object({
@@ -45,6 +55,11 @@ export const RunnerConfig = z.object({
   /** Keyed by GitLab path with namespace (`group/repo`). */
   repos: z.record(z.string(), RepoSource).default({}),
   pollSeconds: z.number().int().min(5).max(3600).default(30),
+  /**
+   * Tasks `start` works at once. Set it to the runner's max concurrency in the portal: core refuses claims
+   * beyond that (`at_capacity`), and the runner then waits for the next poll.
+   */
+  maxConcurrent: z.number().int().min(1).max(4).default(1),
   /** Hard timeout per task, in minutes. */
   maxTurnsMinutes: z.number().int().min(1).max(24 * 60).default(60),
   permissionMode: PermissionMode.default('acceptEdits'),

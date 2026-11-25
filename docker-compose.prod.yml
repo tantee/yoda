@@ -61,3 +61,31 @@ services:
       NUXT_PUBLIC_KEYCLOAK_REALM: ${NUXT_PUBLIC_KEYCLOAK_REALM:-yoda}
       NUXT_PUBLIC_KEYCLOAK_CLIENT_ID: ${NUXT_PUBLIC_KEYCLOAK_CLIENT_ID:-yoda-portal}
     restart: unless-stopped
+
+  # Optional server runner (README "Runners"): docker compose ... --profile runner up -d runner
+  # The runner token, model key and git credentials come from the deploy environment only.
+  runner:
+    profiles: [runner]
+    build:
+      context: .
+      dockerfile: apps/runner/Dockerfile
+    image: yoda-runner
+    depends_on:
+      - core
+    environment:
+      YODA_CORE_URL: ${YODA_RUNNER_CORE_URL:-http://core:4000}
+      YODA_RUNNER_TOKEN: ${YODA_RUNNER_TOKEN:-} # required: the runner exits with a config error without it
+      ANTHROPIC_API_KEY: ${YODA_RUNNER_ANTHROPIC_API_KEY:-}
+      YODA_GIT_USERNAME: ${YODA_GIT_USERNAME:-oauth2}
+      YODA_GIT_PASSWORD: ${YODA_GIT_PASSWORD:-}
+      GIT_AUTHOR_NAME: ${YODA_RUNNER_GIT_NAME:-Yoda runner}
+      GIT_AUTHOR_EMAIL: ${YODA_RUNNER_GIT_EMAIL:-yoda-runner@example.invalid}
+      GIT_COMMITTER_NAME: ${YODA_RUNNER_GIT_NAME:-Yoda runner}
+      GIT_COMMITTER_EMAIL: ${YODA_RUNNER_GIT_EMAIL:-yoda-runner@example.invalid}
+    volumes:
+      - ${YODA_RUNNER_CONFIG_FILE:-./runner-config.json}:/home/node/.config/yoda-runner/config.json:ro
+      - runner-work:/home/node/.local/share/yoda-runner
+    restart: unless-stopped
+
+volumes:
+  runner-work:
