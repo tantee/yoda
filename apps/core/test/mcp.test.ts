@@ -213,6 +213,27 @@ describe('MCP server', () => {
     })
   })
 
+  it('authenticates before reading the body: an anonymous 2 MB body is 401, not 413', async () => {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: { pad: 'x'.repeat(2 * 1024 * 1024) } }),
+    })
+    expect(res.status).toBe(401)
+    expect(await res.json()).toMatchObject({ error: { code: -32000 } })
+  })
+
+  it('answers invalid JSON from a runner with a JSON-RPC parse error', async () => {
+    const { token } = await addRunner('r1')
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+      body: '{"jsonrpc": "2.0", ',
+    })
+    expect(res.status).toBe(400)
+    expect(await res.json()).toEqual({ jsonrpc: '2.0', error: { code: -32700, message: 'Parse error' }, id: null })
+  })
+
   it('GET and DELETE are 405 in stateless mode', async () => {
     for (const method of ['GET', 'DELETE']) {
       const res = await fetch(url, { method })
@@ -230,7 +251,8 @@ describe('unexpected errors', () => {
     const owner = meFromPerson((await db.select().from(people).where(eq(people.id, ownerId)))[0]!)
     const logged: unknown[] = []
     const log = { error: (...a: unknown[]) => logged.push(a) } as unknown as FastifyBaseLogger
-    const broken = { ...app.deps, db: { select: () => { throw new Error('db down') } } } as unknown as AppDeps
+    const dbError = Object.assign(new Error('db down'), { query: 'select secret', params: ['param-value'] })
+    const broken = { ...app.deps, db: { select: () => { throw dbError } } } as unknown as AppDeps
     const server = createMcpServer(broken, { runner: row!, owner }, log)
     const [clientSide, serverSide] = InMemoryTransport.createLinkedPair()
     await server.connect(serverSide)
@@ -239,7 +261,8 @@ describe('unexpected errors', () => {
     await client.connect(clientSide)
     expect(await call(client, 'list_available_tasks', {})).toEqual({ isError: true, body: { code: 'internal' } })
     expect(logged).toHaveLength(1)
-    expect(JSON.stringify(logged)).not.toMatch(/yoda_rt_/)
+    expect(JSON.stringify(logged)).toContain('db down')
+    expect(JSON.stringify(logged)).not.toMatch(/yoda_rt_|param-value|select secret/)
   })
 })
 

@@ -150,7 +150,9 @@ export function createMcpServer(deps: AppDeps, rc: RunnerCtx, log: FastifyBaseLo
         return text(reason ? { code: error, reason } : { code: error }, true)
       }
       if (err instanceof ZodError) return text({ code: 'validation', reason: zodReason(err) }, true)
-      log.error({ err, tool: name, runnerId: rc.runner.id }, 'mcp tool failed')
+      // Name, message and stack only: a driver error's own fields (a query's params) may carry tool input.
+      const e = err instanceof Error ? err : new Error(String(err))
+      log.error({ err: { name: e.name, message: e.message, stack: e.stack }, tool: name, runnerId: rc.runner.id }, 'mcp tool failed')
       return text({ code: 'internal' }, true)
     }
   })
