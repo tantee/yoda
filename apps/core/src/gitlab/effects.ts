@@ -12,8 +12,9 @@ import { implementTask } from './webhook.js'
  * Job `gitlab-mr-effect` `{ id: mergeRequestRowId }`: what an MR's state means for the work item it is linked
  * to now (a relinked MR acts on its current work item only). Runs as the system and goes through the engine.
  * - opened / merged: the step's active code-change task is accepted with the MR links (reason
- *   `mr_opened_in_gitlab`), at most once per MR and work item: an MR that already accepted one attempt never
- *   accepts the rework a reviewer asked for afterwards; a new MR does.
+ *   `mr_opened_in_gitlab`). An opened MR does so at most once per work item: the rework a reviewer asks for
+ *   afterwards waits for a new MR, or for the merge. A merged MR accepts the attempt only when the merge is newer
+ *   than the attempt (rework pushed to the same MR, then merged), so replaying an old merge accepts nothing.
  * - merged, and every repo of the item has a merged MR: the active review of the code-change task is approved
  *   (reason `merged_in_gitlab`). Only a merge newer than that review counts, so replaying an old merge never
  *   approves a later review attempt.
@@ -52,9 +53,10 @@ async function mrEffect(ctx: WorkCtx, mergeRequestId: string): Promise<void> {
   if (!codeKeys.length) return
 
   let implementAccepted = false
-  if (!(await acceptedImplementBefore(tx, item.id, mr.id))) {
-    const impl = await activeTask(tx, item.id, step, codeKeys)
-    if (impl) {
+  const impl = await activeTask(tx, item.id, step, codeKeys)
+  if (impl) {
+    const accepts = mr.state === 'merged' ? await mergedAfter(tx, item.id, mr.id, impl.id) : !(await acceptedImplementBefore(tx, item.id, mr.id))
+    if (accepts) {
       implementAccepted = await acceptTaskAsSystem(
         ctx,
         impl.id,
@@ -81,6 +83,21 @@ async function mrEffect(ctx: WorkCtx, mergeRequestId: string): Promise<void> {
     { text: `Merged in GitLab: ${merged.map(mrRef).join(', ')}`, decision: 'approve', attachmentIds: [] },
     { reason: 'merged_in_gitlab', payload: { mergeRequestId: mr.id } },
   )
+}
+
+/**
+ * After a work item's repo links changed (a repo unlinked can complete "every repo merged"): for each item, its
+ * most recently merged linked MR, whose gitlab-mr-effect job re-evaluates the item. Queue them after commit.
+ */
+export async function latestMergedMrs(tx: Tx, workItemIds: string[]): Promise<string[]> {
+  if (!workItemIds.length) return []
+  const rows = await tx.execute<{ id: string }>(sql`
+    SELECT DISTINCT ON (m.work_item_id) m.id FROM merge_requests m
+    LEFT JOIN events e ON e.work_item_id = m.work_item_id AND e.type = 'gitlab.mr_merged' AND e.payload->>'mergeRequestId' = m.id::text
+    WHERE m.state = 'merged' AND m.work_item_id IN (${sql.join(workItemIds.map((id) => sql`${id}::uuid`), sql`, `)})
+    ORDER BY m.work_item_id, e.seq DESC NULLS LAST, m.id
+  `)
+  return rows.map((r) => r.id)
 }
 
 const mrRef = (m: { path: string; mrIid: number; url: string }) => `${m.path}!${m.mrIid} (${m.url})`
@@ -121,8 +138,8 @@ async function acceptedImplementBefore(tx: Tx, workItemId: string, mergeRequestI
   return !!row
 }
 
-/** The MR's merge (its `gitlab.mr_merged` event on this work item) was recorded after the review task was created. */
-async function mergedAfter(tx: Tx, workItemId: string, mergeRequestId: string, reviewTaskId: string): Promise<boolean> {
+/** The MR's merge (its `gitlab.mr_merged` event on this work item) was recorded after the task was created. */
+async function mergedAfter(tx: Tx, workItemId: string, mergeRequestId: string, taskId: string): Promise<boolean> {
   const [mergedAt] = await tx
     .select({ seq: sql<string>`max(${events.seq})` })
     .from(events)
@@ -136,7 +153,7 @@ async function mergedAfter(tx: Tx, workItemId: string, mergeRequestId: string, r
   const [createdAt] = await tx
     .select({ seq: sql<string>`min(${events.seq})` })
     .from(events)
-    .where(and(eq(events.taskId, reviewTaskId), eq(events.type, 'task.created')))
+    .where(and(eq(events.taskId, taskId), eq(events.type, 'task.created')))
   if (mergedAt?.seq == null || createdAt?.seq == null) return false
   return BigInt(mergedAt.seq) > BigInt(createdAt.seq)
 }

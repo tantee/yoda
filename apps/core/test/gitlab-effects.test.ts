@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify'
 import type { Task, WorkItemDetail } from '@yoda/shared'
 import { and, eq } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { events, knowledgeEntries, mergeRequests, notifications, proposals, tasks } from '../src/db/schema.js'
+import { events, knowledgeEntries, mergeRequests, notifications, projectRepos, proposals, tasks, workItemRepos } from '../src/db/schema.js'
 import { GitLabClient } from '../src/gitlab/client.js'
 import { InlineJobQueue } from '../src/jobs/queue.js'
 import { FakeGitLab, startFakeGitLab } from './fake-gitlab.js'
@@ -17,13 +17,14 @@ let app: FastifyInstance
 let fake: FakeGitLab
 let jobs: InlineJobQueue
 let failures: string[]
+let sent: { name: string; id: string }[]
 let admin: Who
 let pm: Who
 let dev: Who
 let projectId: string
 let uuidSeq = 0
 
-const call = (who: Who, method: 'GET' | 'POST' | 'PUT' | 'PATCH', url: string, payload?: unknown) =>
+const call = (who: Who, method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE', url: string, payload?: unknown) =>
   app.inject({ method, url, headers: auth(who), payload: payload as object | undefined })
 const approve = { text: '', decision: 'approve' }
 
@@ -65,6 +66,12 @@ async function setup(opts: { repos: number[]; autonomy?: 'propose' | 'auto-assig
     },
     ignore: ['draft-task', 'secretary-chat', 'secretary-event', 'discussion-brief'],
   })
+  sent = []
+  const send = jobs.send.bind(jobs)
+  jobs.send = async (name, data) => {
+    sent.push({ name, id: data.id })
+    return send(name, data)
+  }
   app = await makeApp({ jobs, gitlab: new GitLabClient({ baseUrl: fake.url, token: 'fake-test-token', retryBaseMs: 1 }) })
   app.deps.config.gitlabWebhookSecret = SECRET
   admin = await login(app, 'boss', { staff: true })
@@ -199,28 +206,37 @@ describe('merge request effects', () => {
       expect((await latest(id, 'implement'))!).toMatchObject({ id: impl.id, state: 'accepted', executor: 'human' })
     })
 
-    it('a review already sent back by a person is left alone; the new attempt is accepted by a new MR', async () => {
+    it('rework pushed to the same MR: its merge accepts the new attempt and approves the new review', async () => {
+      const id = await itemInDev()
+      await mrHook({ workItemId: id })
+      await submit(id, 'draft-tests', dev, { text: 'กรณีทดสอบ' })
+      await submit(id, 'review-code', dev, { text: 'ต้องแก้ query', decision: 'changes' })
+      expect((await attempts(id, 'implement')).map((t) => t.state)).toEqual(['accepted', 'open'])
+      // The same opened MR never accepts the rework by itself.
+      await rerun(5)
+      expect((await attempts(id, 'implement')).map((t) => t.state)).toEqual(['accepted', 'open'])
+
+      await mrHook({ workItemId: id, state: 'merged' })
+      expect((await attempts(id, 'implement')).map((t) => t.state)).toEqual(['accepted', 'accepted'])
+      expect((await attempts(id, 'review-code')).map((t) => t.state)).toEqual(['rejected', 'accepted'])
+      expect(await pendingAdvance(id)).toHaveLength(1)
+
+      await rerun(5)
+      expect(await accepted(id, 'mr_opened_in_gitlab')).toHaveLength(2)
+      expect(await accepted(id, 'merged_in_gitlab')).toHaveLength(1)
+      expect(await pendingAdvance(id)).toHaveLength(1)
+    })
+
+    it('rework in a new MR: its opening accepts the new attempt, its merge approves the new review', async () => {
       const id = await itemInDev()
       await mrHook({ workItemId: id })
       await submit(id, 'review-code', dev, { text: 'ต้องแก้ query', decision: 'changes' })
-      const impls = await attempts(id, 'implement')
-      expect(impls.map((t) => t.state)).toEqual(['accepted', 'open'])
-
-      // The old MR merges anyway: the review is no longer active and the rework stays open.
-      await mrHook({ workItemId: id, state: 'merged' })
-      expect((await attempts(id, 'implement')).map((t) => t.state)).toEqual(['accepted', 'open'])
-      expect((await attempts(id, 'review-code')).map((t) => t.state)).toEqual(['rejected'])
-      expect(await accepted(id, 'merged_in_gitlab')).toHaveLength(0)
-
-      // A new MR for the rework: the new attempt is accepted, and its merge approves the new review.
+      await mrHook({ workItemId: id, iid: 5, state: 'closed' })
       await mrHook({ workItemId: id, iid: 6 })
       expect((await attempts(id, 'implement')).map((t) => t.state)).toEqual(['accepted', 'accepted'])
       const reviews = await attempts(id, 'review-code')
-      expect(reviews).toHaveLength(2)
+      expect(reviews.map((t) => t.state)).toEqual(['rejected', reviews[1]!.state])
       expect(reviews[1]!.state).not.toBe('accepted')
-      // Replaying the old merge does not approve the new review.
-      await rerun(5)
-      expect((await latest(id, 'review-code'))!.state).not.toBe('accepted')
       await mrHook({ workItemId: id, iid: 6, state: 'merged' })
       expect((await latest(id, 'review-code'))!.state).toBe('accepted')
       expect(await accepted(id, 'merged_in_gitlab')).toHaveLength(1)
@@ -298,6 +314,41 @@ describe('merge request effects', () => {
       await rerun(8)
       expect(await accepted(id, 'merged_in_gitlab')).toHaveLength(1)
       expect(await pendingAdvance(id)).toHaveLength(1)
+    })
+
+    it('a merge older than the rework accepts nothing when replayed', async () => {
+      const id = await itemInDev()
+      await mrHook({ workItemId: id, project: 11, iid: 5 })
+      await mrHook({ workItemId: id, project: 12, iid: 8, state: 'merged' })
+      await submit(id, 'review-code', dev, { text: 'ต้องแก้ query', decision: 'changes' })
+      await rerun(8)
+      expect((await attempts(id, 'implement')).map((t) => t.state)).toEqual(['accepted', 'open'])
+      expect(await accepted(id, 'merged_in_gitlab')).toHaveLength(0)
+    })
+
+    it('unlinking the repo still waiting for a merge approves the review', async () => {
+      const id = await itemInDev()
+      const [b] = await app.deps.db.select().from(projectRepos).where(eq(projectRepos.gitlabProjectId, 12))
+      await mrHook({ workItemId: id, project: 11, iid: 5 })
+      await mrHook({ workItemId: id, project: 11, iid: 5, state: 'merged' })
+      expect((await latest(id, 'review-code'))!.state).not.toBe('accepted')
+      // As if its issue was never created (e.g. sync failing), so the PM may remove the repo.
+      await app.deps.db.update(workItemRepos).set({ issueIid: null, issueUrl: null }).where(eq(workItemRepos.repoId, b!.id))
+      expect((await call(pm, 'DELETE', `/projects/${projectId}/repos/${b!.id}`)).statusCode).toBe(204)
+      await jobs.drain()
+      expect((await latest(id, 'review-code'))!.state).toBe('accepted')
+      expect(await accepted(id, 'merged_in_gitlab')).toHaveLength(1)
+    })
+
+    it('narrowing the repos of an item queues the effect of its merged MR', async () => {
+      const res = await call(pm, 'POST', `/projects/${projectId}/work-items`, { title: 'แก้รายงานแล็บ', description: 'ผลแล็บไม่แสดง', templateKey: 'bug-fix' })
+      const id = (res.json() as { id: string }).id
+      await mrHook({ workItemId: id, project: 11, iid: 5, state: 'merged' })
+      const [a] = await app.deps.db.select().from(projectRepos).where(eq(projectRepos.gitlabProjectId, 11))
+      sent.length = 0
+      expect((await call(pm, 'PUT', `/work-items/${id}/repos`, { repoIds: [a!.id] })).statusCode).toBe(200)
+      await jobs.drain()
+      expect(sent).toContainEqual({ name: 'gitlab-mr-effect', id: (await mrRow(5)).id })
     })
   })
 })
