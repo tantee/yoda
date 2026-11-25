@@ -1,4 +1,4 @@
-import { TaskAssign, TaskDiscussionCreate, TaskResult, WorkItemCreate, WorkItemReopen, type Me } from '@yoda/shared'
+import { TaskAssign, TaskDiscussionCreate, TaskResult, WorkItemCreate, WorkItemPatch, WorkItemReopen, type Me } from '@yoda/shared'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { notFound, requireSignedIn, requireStaff } from '../auth/plugin.js'
@@ -11,6 +11,7 @@ import {
   cancelWorkItem,
   confirmTask,
   createWorkItem,
+  patchWorkItem,
   reopenWorkItem,
   retryAiTask,
   startTask,
@@ -57,6 +58,19 @@ export function workRoutes(app: FastifyInstance): void {
     if (!request.me.isStaff) throw notFound()
     const { id } = IdParams.parse(request.params)
     return getWorkItemDetail(db(), request.me, id)
+  })
+
+  /** The PM (or admin) or the owner: set or clear the target date. */
+  app.patch('/work-items/:id', async (request) => {
+    requireStaff(request)
+    const { id } = IdParams.parse(request.params)
+    const body = WorkItemPatch.parse(request.body ?? {})
+    const me = request.me
+    await runWork(app.deps, { id: me.id, kind: 'person' }, async (ctx) => {
+      await requireWorkItemVisible(ctx.tx, me, id)
+      await patchWorkItem(ctx, me, id, body)
+    })
+    return getWorkItemDetail(db(), me, id)
   })
 
   app.post('/work-items/:id/cancel', async (request) => {

@@ -13,7 +13,7 @@ import { secretaryEvent } from '../src/secretary/events.js'
 import { runWork } from '../src/work/context.js'
 import { assignTask, createWorkItem, submitTask } from '../src/work/engine.js'
 import { textStream } from './ai-mocks.js'
-import { mockModels, resetDb, testDb, testDeps } from './helpers.js'
+import { mockModels, resetDb, testConfig, testDb, testDeps } from './helpers.js'
 import { proposals } from '../src/db/schema.js'
 
 /** Records every send, and lets `draft-task` / `secretary-chat` through only when asked (they are dropped). */
@@ -118,7 +118,7 @@ beforeEach(async () => {
   jobs = new SpyQueue({ onError: (err, name, id) => console.warn(`job ${name} ${id} failed`, err) })
   deps = await testDeps({
     jobs,
-    ai: new AiGateway({ db, bus: new LiveBus(), models: mockModels({ fast: model }), config: { dailyTaskCap: 8 } }),
+    ai: new AiGateway({ db, bus: new LiveBus(), models: mockModels({ fast: model }), config: testConfig() }),
   })
 })
 

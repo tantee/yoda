@@ -29,11 +29,12 @@ export function testDb(): Promise<Db> {
 }
 
 export async function resetDb(db: Db): Promise<void> {
-  await db.execute(sql`TRUNCATE runner_settings, agent_runs, runners, gitlab_settings, gitlab_deliveries, merge_requests, work_item_repos, project_repos, department_settings, discussion_responses, discussions, agendas, notifications, proposals, conversation_reads, messages, conversations, ai_calls, knowledge_chunks, knowledge_entries, attachments, people, projects, project_members, events, tasks, work_items, workflow_templates CASCADE`)
+  await db.execute(sql`TRUNCATE channel_link_attempts, notification_deliveries, notification_prefs, channel_links, channel_link_codes, notification_channel_settings, runner_settings, agent_runs, runners, gitlab_settings, gitlab_deliveries, merge_requests, work_item_repos, project_repos, department_settings, discussion_responses, discussions, agendas, notifications, proposals, conversation_reads, messages, conversations, ai_calls, knowledge_chunks, knowledge_entries, attachments, people, projects, project_members, events, tasks, work_items, workflow_templates CASCADE`)
   // The migration seeds the single department_settings row; TRUNCATE (cascading from people) removes it.
   await db.execute(sql`INSERT INTO department_settings (id) VALUES (1) ON CONFLICT DO NOTHING`)
   await db.execute(sql`INSERT INTO gitlab_settings (id) VALUES (1) ON CONFLICT DO NOTHING`)
   await db.execute(sql`INSERT INTO runner_settings (id) VALUES (1) ON CONFLICT DO NOTHING`)
+  await db.execute(sql`INSERT INTO notification_channel_settings (id) VALUES (1) ON CONFLICT DO NOTHING`)
   await seedTemplates(db)
 }
 
@@ -62,12 +63,14 @@ export function mockModels(overrides: Partial<ModelSet> = {}): ModelSet {
   }
 }
 
-export async function testDeps(overrides: Partial<AppDeps> = {}): Promise<AppDeps> {
-  const config: AppDeps['config'] = {
+/** The test Config: no SMTP, LINE or Telegram, so no outside channel is configured unless a test sets one. */
+export function testConfig(): AppDeps['config'] {
+  return {
       port: 0,
       databaseUrl: process.env.TEST_DATABASE_URL ?? DEFAULT_TEST_URL,
       oidcIssuer: TEST_ISSUER,
       oidcClientId: TEST_CLIENT_ID,
+      migrateOnStart: false,
       staffGroup: '/it-dev',
       bootstrapAdmins: [],
       aiModelDraft: 'anthropic:claude-opus-5-5',
@@ -83,7 +86,16 @@ export async function testDeps(overrides: Partial<AppDeps> = {}): Promise<AppDep
       portalUrl: 'http://localhost:3000',
       runnerLeaseSeconds: 600,
       mcpEnabled: true,
+      // No SMTP, LINE or Telegram credentials: those channels are not configured unless a test sets them.
+      smtpPort: 587,
+      smtpSecure: false,
+      lineApiUrl: 'http://127.0.0.1:9',
+      telegramApiUrl: 'http://127.0.0.1:9',
   }
+}
+
+export async function testDeps(overrides: Partial<AppDeps> = {}): Promise<AppDeps> {
+  const config = testConfig()
   const db = await testDb()
   const bus = new LiveBus()
   const deps: AppDeps = {

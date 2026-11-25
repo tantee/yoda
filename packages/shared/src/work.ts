@@ -27,6 +27,16 @@ export type Priority = z.infer<typeof Priority>
 export const WorkItemState = z.enum(['active', 'done', 'cancelled'])
 export type WorkItemState = z.infer<typeof WorkItemState>
 
+/** A calendar date, `YYYY-MM-DD` (a real date: `2026-02-30` is refused). */
+export const IsoDate = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/)
+  .refine((s) => {
+    const d = new Date(`${s}T00:00:00Z`)
+    return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s
+  }, 'invalid date')
+export type IsoDate = z.infer<typeof IsoDate>
+
 export const TaskCapability = z.enum(['draft-text', 'analyze-repo', 'code-change', 'run-tests'])
 export type TaskCapability = z.infer<typeof TaskCapability>
 
@@ -196,6 +206,8 @@ export const WorkItem = z.object({
   templateVersion: z.number().int(),
   currentStepKey: z.string().nullable(),
   priority: Priority,
+  /** Optional target date (`YYYY-MM-DD`, Asia/Bangkok), set by the PM or owner; overdue once it has passed. */
+  targetDate: IsoDate.nullable(),
   ownerId: uuid,
   ownerName: z.string(),
   requesterId: uuid.nullable(),
@@ -212,6 +224,14 @@ export const WorkItem = z.object({
   updatedAt: z.string(),
 })
 export type WorkItem = z.infer<typeof WorkItem>
+
+/** PATCH /work-items/:id (the PM or the owner). `targetDate: null` clears it. */
+export const WorkItemPatch = z
+  .object({
+    targetDate: IsoDate.nullable().optional(),
+  })
+  .strict()
+export type WorkItemPatch = z.infer<typeof WorkItemPatch>
 
 export const Todo = z.object({
   tasks: z.array(TaskWithContext),
@@ -230,8 +250,14 @@ export const EventType = z.enum([
   'ai.drafted', 'ai.failed', 'ai.retried', 'ai.budget_warning', 'ai.budget_exceeded',
   'knowledge.created', 'knowledge.updated', 'knowledge.confirmed',
   'proposal.created', 'proposal.accepted', 'proposal.rejected', 'proposal.superseded', 'work_item.priority_changed',
+  /** The PM or owner set or cleared the target date (payload `{ from, to }`, `YYYY-MM-DD` or null). */
+  'work_item.target_date_changed',
   'gitlab.issue_synced', 'gitlab.issue_sync_failed', 'gitlab.mr_opened', 'gitlab.mr_merged', 'gitlab.mr_closed', 'gitlab.pipeline', 'gitlab.note',
   'run.claimed', 'run.progress', 'run.succeeded', 'run.failed', 'run.expired', 'run.parked', 'run.released', 'gitlab.mr_requested',
+  /** The weekly AI summary was written (payload `{ week, entryId, version }`) or skipped (`reason`, payload `{ week }`). */
+  'status.weekly_summary', 'status.weekly_summary_skipped',
+  /** Live-only (never stored in `events`): how a weekly summary run ended (payload `WeeklySummaryOutcome`). */
+  'status.weekly_summary_outcome',
   'discussion.raised', 'discussion.brief_ready', 'discussion.brief_failed', 'discussion.scheduled', 'discussion.decided', 'discussion.withdrawn',
   /** Live-only (never stored in `events`): someone gave an opinion or voted on a discussion. */
   'discussion.responded',
@@ -272,6 +298,8 @@ export const LiveEvent = z.object({
   conversationId: uuid.nullable(),
   /** Set for person-addressed events such as notifications. */
   personId: uuid.nullable(),
+  /** Only on live-only events that carry details (e.g. `status.weekly_summary_outcome`). */
+  payload: z.record(z.unknown()).optional(),
 })
 export type LiveEvent = z.infer<typeof LiveEvent>
 

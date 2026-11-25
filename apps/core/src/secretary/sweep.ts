@@ -4,6 +4,7 @@ import { errorSummary } from '../ai/gateway.js'
 import type { AppDeps } from '../app.js'
 import { events, projects, tasks, workItemRepos, workItems } from '../db/schema.js'
 import { notify, projectPms } from '../notifications/service.js'
+import { bangkokDate } from '../status/health.js'
 import { runWork } from '../work/context.js'
 import { definitionOf } from '../work/engine.js'
 import { templateById } from '../workflow/seed.js'
@@ -14,8 +15,6 @@ export type SweepDeps = Pick<AppDeps, 'db' | 'bus' | 'jobs' | 'config'> & Partia
 export const STUCK_AFTER_DAYS = 3
 /** An unassigned AI draft with no `ai.*` event after this long lost its `draft-task` job. */
 export const ORPHAN_AFTER_MINUTES = 10
-
-const bangkokDate = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' })
 
 /** Notifies the owner and the project's PMs about each stuck item, once per person, item and Bangkok day. */
 async function flagStuck(deps: SweepDeps): Promise<void> {

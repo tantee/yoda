@@ -13,6 +13,8 @@ export interface Storage {
   put(key: string, body: Buffer, contentType: string): Promise<void>
   get(key: string): Promise<NodeJS.ReadableStream>
   remove(key: string): Promise<void>
+  /** Throws when the bucket cannot be reached (readiness). */
+  ping(): Promise<void>
 }
 
 /** S3-compatible storage (RustFS in dev). Creates the bucket when missing. `prefix` namespaces every key (tests). */
@@ -49,6 +51,9 @@ export async function createS3Storage(
     },
     async remove(key) {
       await client.send(new DeleteObjectCommand({ Bucket, Key: k(key) }))
+    },
+    async ping() {
+      await client.send(new HeadBucketCommand({ Bucket }))
     },
   }
 }

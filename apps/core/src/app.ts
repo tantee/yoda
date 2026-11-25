@@ -11,6 +11,7 @@ import type { AiGateway } from './ai/gateway.js'
 import type { AttachmentStoredHook } from './attachments/service.js'
 import type { JobQueue } from './jobs/queue.js'
 import type { GitLabClient } from './gitlab/client.js'
+import type { MailTransport } from './notifications/channels/email.js'
 import { createAttachmentEntry } from './knowledge/service.js'
 import { knowledgeRoutes } from './routes/knowledge.js'
 import { aiRoutes } from './routes/ai.js'
@@ -29,7 +30,12 @@ import { notificationRoutes } from './routes/notifications.js'
 import { adminRoutes } from './routes/admin.js'
 import { gitlabRoutes } from './routes/gitlab.js'
 import { runnerRoutes } from './routes/runners.js'
+import { statusRoutes } from './routes/status.js'
 import { mcpRoutes } from './routes/mcp.js'
+import { notificationChannelRoutes } from './routes/notification-channels.js'
+import { channelWebhookRoutes } from './routes/channel-webhooks.js'
+import { readiness } from './readiness.js'
+import { VERSION } from './version.js'
 
 export type AppDeps = {
   config: Config
@@ -41,17 +47,31 @@ export type AppDeps = {
   jobs: JobQueue
   /** Null when GITLAB_URL / GITLAB_TOKEN are not both set. */
   gitlab: GitLabClient | null
+  /** SMTP transport for the email channel (server.ts builds it when SMTP is configured; tests inject a fake). */
+  mailTransport?: MailTransport
   /** Replaces the default upload hook (create the attachment's knowledge entry); tests use it to observe calls. */
   onAttachmentStored?: AttachmentStoredHook
 }
 
 /**
  * Pino options. Request logs carry no headers today; credentials are redacted anyway, should a serializer or a
- * log call ever include them (Keycloak and runner bearer tokens, the GitLab webhook secret, cookies).
+ * log call ever include them (Keycloak and runner bearer tokens, the GitLab and Telegram webhook secrets, the
+ * LINE signature, cookies).
  */
 export const LOGGER_OPTIONS = {
   redact: {
-    paths: ['req.headers.authorization', 'req.headers["x-gitlab-token"]', 'req.headers.cookie', 'headers.authorization', 'headers["x-gitlab-token"]', 'headers.cookie'],
+    paths: [
+      'req.headers.authorization',
+      'req.headers["x-gitlab-token"]',
+      'req.headers["x-telegram-bot-api-secret-token"]',
+      'req.headers["x-line-signature"]',
+      'req.headers.cookie',
+      'headers.authorization',
+      'headers["x-gitlab-token"]',
+      'headers["x-telegram-bot-api-secret-token"]',
+      'headers["x-line-signature"]',
+      'headers.cookie',
+    ],
     censor: '[redacted]',
   },
 } satisfies Exclude<FastifyServerOptions['logger'], boolean | undefined>
@@ -84,7 +104,12 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     ...({ defParamCharset: 'utf8' } as object),
   })
 
-  app.get('/health', { config: { public: true } }, async () => ({ status: 'ok' }))
+  // Liveness: the process answers. Readiness: its database, storage and queue answer too (load balancers, compose).
+  app.get('/health', { config: { public: true } }, async () => ({ status: 'ok', version: VERSION }))
+  app.get('/ready', { config: { public: true } }, async (_req, reply) => {
+    const r = await readiness(app.deps)
+    return reply.status(r.ok ? 200 : 503).send({ status: r.ok ? 'ok' : 'unavailable', checks: r.checks })
+  })
   meRoutes(app)
   peopleRoutes(app)
   projectRoutes(app)
@@ -94,9 +119,12 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   proposalRoutes(app)
   discussionRoutes(app)
   notificationRoutes(app)
+  notificationChannelRoutes(app)
+  channelWebhookRoutes(app)
   adminRoutes(app)
   gitlabRoutes(app)
   runnerRoutes(app)
+  statusRoutes(app)
   if (deps.config.mcpEnabled) mcpRoutes(app)
   streamRoutes(app)
   // Text-bearing uploads become `document` entries. The attachment is already committed, so a failure here

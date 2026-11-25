@@ -1,8 +1,10 @@
-import type { ActorKind, EventType, LiveEvent } from '@yoda/shared'
+import type { ActorKind, ChannelName, EventType, LiveEvent } from '@yoda/shared'
+import type { Config } from '../config.js'
 import type { Db, Tx } from '../db/client.js'
 import { events } from '../db/schema.js'
 import type { JobName, JobQueue } from '../jobs/queue.js'
 import type { LiveBus } from '../live/bus.js'
+import { configuredChannels } from '../notifications/channels/index.js'
 
 export type WorkCtx = {
   tx: Tx
@@ -14,6 +16,8 @@ export type WorkCtx = {
   jobs: { name: JobName; id: string }[]
   /** Daily cap on automatic task assignments per person (config `dailyTaskCap`). */
   dailyTaskCap: number
+  /** Outside notification channels configured in env; `notify` queues delivery only when one may apply. */
+  channels: readonly ChannelName[]
 }
 
 export type Actor = { id: string | null; kind: ActorKind }
@@ -22,7 +26,11 @@ export type WorkDeps = {
   db: Db
   bus: LiveBus
   jobs: Pick<JobQueue, 'send'>
-  config: { dailyTaskCap: number }
+  /**
+   * The full Config: its SMTP / LINE / Telegram fields decide which outside channels are configured, so a
+   * partial object would silently turn every outside notification off.
+   */
+  config: Config
 }
 
 export async function runWork<T>(
@@ -32,6 +40,7 @@ export async function runWork<T>(
 ): Promise<T> {
   const emitted: LiveEvent[] = []
   const jobs: WorkCtx['jobs'] = []
+  const channels = configuredChannels(deps.config)
   const result = await deps.db.transaction((tx) => fn({
       tx,
       actorId: actor.id,
@@ -39,6 +48,7 @@ export async function runWork<T>(
       emitted,
       jobs,
       dailyTaskCap: deps.config.dailyTaskCap,
+      channels,
     }),
   )
   for (const e of emitted) deps.bus.publish(e)

@@ -1,18 +1,11 @@
-import { existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { migrate } from 'drizzle-orm/postgres-js/migrator'
-import { createDb, type Db } from './client.js'
+import { createDb } from './client.js'
+import { runMigrations } from './migrations.js'
 
-// src/db/migrate.ts (dev/test) or dist/migrate.js (built image): find the drizzle folder either way.
-const migrationsFolder = ['../../drizzle', '../drizzle']
-  .map((p) => fileURLToPath(new URL(p, import.meta.url)))
-  .find((p) => existsSync(p)) as string
+export { runMigrations }
 
-export async function runMigrations(db: Db): Promise<void> {
-  await migrate(db, { migrationsFolder })
-}
-
-// CLI entry: `pnpm --filter @yoda/core db:migrate`
+// CLI entry: `pnpm --filter @yoda/core db:migrate`, or `node dist/migrate.js` (the production `migrate` service).
+// The server imports ./migrations.js instead, so bundling never pulls this entry check into dist/server.js.
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const url = process.env.DATABASE_URL
   if (!url) throw new Error('DATABASE_URL is required')

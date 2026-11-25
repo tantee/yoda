@@ -2,6 +2,7 @@
 import type { Discussion, ProjectDetail, Task, WorkItemDetail, WorkflowTemplateSummary } from '@yoda/shared'
 import { localized } from '~/utils/localized'
 import { waitingFor } from '~/utils/runners'
+import { bangkokToday, isOverdue } from '~/utils/status'
 import { reopenTargets } from '~/utils/workItems'
 
 const { t, locale } = useI18n()
@@ -34,6 +35,12 @@ const isActive = computed(() => item.value?.state === 'active')
 const reopenSteps = computed(() => (canManage.value && isActive.value && item.value ? reopenTargets(item.value.steps) : []))
 const reopenItems = computed(() => reopenSteps.value.map(s => ({ value: s.key, title: localized(s.name, locale.value) })))
 const canCancel = computed(() => isActive.value && (canManage.value || item.value?.ownerId === me.value?.id))
+/** PM/admin, or the owner while still a member, may set the target date of an active item (the server enforces). */
+const canSetTarget = computed(() => isActive.value && (canManage.value || (item.value?.ownerId === me.value?.id && isMember.value)))
+const overdue = computed(() => isActive.value && isOverdue(item.value?.targetDate ?? null, bangkokToday()))
+const targetInput = ref('')
+watch(() => item.value?.targetDate, (v) => (targetInput.value = v ?? ''), { immediate: true })
+const fmtDate = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString(locale.value === 'en' ? 'en-GB' : 'th-TH', { day: 'numeric', month: 'short', year: 'numeric' })
 const templateName = computed(() => {
   const tpl = templates.value.find(x => x.key === item.value?.templateKey)
   return tpl ? localized(tpl.name, locale.value) : (item.value?.templateKey ?? '')
@@ -135,6 +142,10 @@ async function cancelItem() {
   cancelOpen.value = false
   await act(() => api(`/work-items/${id}/cancel`, { method: 'POST' }))
 }
+async function setTargetDate(targetDate: string | null) {
+  const ok = await act(() => api(`/work-items/${id}`, { method: 'PATCH', body: { targetDate } }))
+  if (!ok) targetInput.value = item.value?.targetDate ?? ''
+}
 function toggleAssign(taskId: string) {
   assigningId.value = assigningId.value === taskId ? null : taskId
   assignee.value = null
@@ -193,6 +204,31 @@ useLiveEvents((e) => {
         <v-chip v-if="item.requesterName" size="small" variant="outlined" data-testid="requester-chip" prepend-icon="mdi-account-voice">
           {{ t('workItems.requester') }}: {{ item.requesterName }}
         </v-chip>
+        <v-chip v-if="item.targetDate && !canSetTarget" size="small" variant="outlined" prepend-icon="mdi-calendar-outline" data-testid="target-chip">
+          {{ t('status.due', { date: fmtDate(item.targetDate) }) }}
+        </v-chip>
+        <v-chip v-if="overdue" size="small" color="error" prepend-icon="mdi-calendar-alert" data-testid="overdue-chip">{{ t('status.overdue') }}</v-chip>
+      </div>
+      <div v-if="canSetTarget" class="d-flex flex-wrap align-center ga-2 mb-2" data-testid="target-date">
+        <v-text-field
+          v-model="targetInput"
+          type="date"
+          :label="t('workItems.targetDate')"
+          :hint="t('workItems.targetDateHint')"
+          persistent-hint
+          density="compact"
+          style="max-width: 260px"
+          data-testid="target-date-input"
+        />
+        <v-btn
+          size="small"
+          color="primary"
+          :loading="busy"
+          :disabled="!targetInput || targetInput === (item.targetDate ?? '')"
+          data-testid="target-date-save"
+          @click="setTargetDate(targetInput)"
+        >{{ t('workItems.saveTargetDate') }}</v-btn>
+        <v-btn v-if="item.targetDate" size="small" variant="text" :loading="busy" data-testid="target-date-clear" @click="setTargetDate(null)">{{ t('workItems.clearTargetDate') }}</v-btn>
       </div>
       <p v-if="item.description" class="mb-4" style="white-space: pre-wrap">{{ item.description }}</p>
       <v-alert v-if="error" type="error" class="mb-4" data-testid="action-error">{{ error }}</v-alert>

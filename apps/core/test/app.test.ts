@@ -1,7 +1,15 @@
+import { createServer } from 'node:http'
+import type { AddressInfo } from 'node:net'
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { loadConfig } from '../src/config.js'
 import { buildApp } from '../src/app.js'
+import { jwksUrl, remoteJwks } from '../src/auth/jwks.js'
+import { readiness } from '../src/readiness.js'
 import { testDeps } from './helpers.js'
+import { signToken, testJwksDocument, TEST_ISSUER } from './jwt.js'
+
+const VERSION = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version as string
 
 const baseEnv = {
   DATABASE_URL: 'postgres://x',
@@ -64,6 +72,16 @@ describe('loadConfig', () => {
     expect(() => loadConfig({ ...baseEnv, RUNNER_LEASE_SECONDS: '120' })).toThrow(/RUNNER_LEASE_SECONDS/)
     expect(() => loadConfig({ ...baseEnv, MCP_ENABLED: 'yes' })).toThrow(/MCP_ENABLED/)
   })
+  it('configures the JWKS URL and migrations on start', () => {
+    const c = loadConfig(baseEnv)
+    expect(c.oidcJwksUrl).toBeUndefined()
+    expect(c.migrateOnStart).toBe(true)
+    const p = loadConfig({ ...baseEnv, OIDC_JWKS_URL: 'http://kc.internal.test/certs', MIGRATE_ON_START: 'false' })
+    expect(p).toMatchObject({ oidcJwksUrl: 'http://kc.internal.test/certs', migrateOnStart: false })
+    expect(loadConfig({ ...baseEnv, OIDC_JWKS_URL: '', MIGRATE_ON_START: '' })).toMatchObject({ oidcJwksUrl: undefined, migrateOnStart: true })
+    expect(() => loadConfig({ ...baseEnv, MIGRATE_ON_START: 'yes' })).toThrow(/MIGRATE_ON_START/)
+    expect(() => loadConfig({ ...baseEnv, OIDC_JWKS_URL: 'not a url' })).toThrow(/OIDC_JWKS_URL/)
+  })
   it('requires S3 credentials', () => {
     const { S3_ACCESS_KEY: _a, S3_SECRET_KEY: _s, ...rest } = baseEnv
     expect(() => loadConfig(rest)).toThrow(/S3_ACCESS_KEY/)
@@ -81,7 +99,8 @@ describe('app', () => {
     const app = await buildApp(await testDeps())
     const res = await app.inject({ url: '/health' })
     expect(res.statusCode).toBe(200)
-    expect(res.json()).toEqual({ status: 'ok' })
+    expect(res.json()).toEqual({ status: 'ok', version: VERSION })
+    expect(VERSION).toBe('1.0.0')
     await app.close()
   })
   it('unexpected errors return a generic 500', async () => {
@@ -93,5 +112,67 @@ describe('app', () => {
     expect(res.statusCode).toBe(500)
     expect(res.json()).toEqual({ error: 'internal' })
     await app.close()
+  })
+})
+
+describe('readiness', () => {
+  it('GET /ready is public and 200 when the database, storage and queue are up', async () => {
+    const app = await buildApp(await testDeps())
+    const res = await app.inject({ url: '/ready' })
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toEqual({ status: 'ok', checks: { db: 'ok', storage: 'ok', queue: 'ok' } })
+    await app.close()
+  })
+  it('is 503 when storage is down, without echoing the error', async () => {
+    const deps = await testDeps()
+    const storage = { ...deps.storage, ping: async () => { throw new Error('connect ECONNREFUSED 10.1.2.3:9000 secret-bucket') } }
+    const app = await buildApp({ ...deps, storage })
+    const res = await app.inject({ url: '/ready' })
+    expect(res.statusCode).toBe(503)
+    expect(res.json()).toEqual({ status: 'unavailable', checks: { db: 'ok', storage: 'fail', queue: 'ok' } })
+    expect(res.body).not.toMatch(/ECONNREFUSED|10\.1\.2\.3|secret-bucket/)
+    await app.close()
+  })
+  it('a check that hangs fails after its timeout; a stopped queue fails', async () => {
+    const deps = await testDeps()
+    const started = Date.now()
+    const r = await readiness(
+      { ...deps, storage: { ...deps.storage, ping: () => new Promise(() => {}) }, jobs: { ...deps.jobs, started: () => false } },
+      { timeoutMs: 50 },
+    )
+    expect(r).toEqual({ ok: false, checks: { db: 'ok', storage: 'fail', queue: 'fail' } })
+    expect(Date.now() - started).toBeLessThan(1000)
+  })
+})
+
+describe('OIDC_JWKS_URL', () => {
+  it('defaults to the issuer certs endpoint', () => {
+    expect(jwksUrl({ oidcIssuer: 'http://kc.test/realms/r' }).href).toBe('http://kc.test/realms/r/protocol/openid-connect/certs')
+    expect(jwksUrl({ oidcIssuer: 'http://kc.test/realms/r', oidcJwksUrl: 'http://kc.internal.test/certs' }).href).toBe('http://kc.internal.test/certs')
+  })
+  it('keys come from the JWKS URL while the issuer is still checked against OIDC_ISSUER', async () => {
+    const doc = JSON.stringify(await testJwksDocument())
+    let fetched = 0
+    const server = createServer((_req, res) => {
+      fetched++
+      res.setHeader('content-type', 'application/json')
+      res.end(doc)
+    })
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r))
+    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/certs`
+    const deps = await testDeps()
+    const config = { ...deps.config, oidcJwksUrl: url }
+    const app = await buildApp({ ...deps, config, jwks: remoteJwks(config) })
+    try {
+      const ok = await app.inject({ url: '/me', headers: { authorization: `Bearer ${await signToken({ sub: 'jwks-user', preferred_username: 'jwksuser' })}` } })
+      expect(ok.statusCode).toBe(200)
+      expect(fetched).toBeGreaterThan(0)
+      expect(TEST_ISSUER).not.toBe(url)
+      const wrongIss = await app.inject({ url: '/me', headers: { authorization: `Bearer ${await signToken({ sub: 'jwks-user', preferred_username: 'jwksuser', iss: url })}` } })
+      expect(wrongIss.statusCode).toBe(401)
+    } finally {
+      await app.close()
+      await new Promise((r) => server.close(r))
+    }
   })
 })

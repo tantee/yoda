@@ -13,3 +13,6 @@ secrets/
 .nuxt/
 .output/
 .playwright-mcp/
+# deploy host: the pinned release (ops/deploy/deploy.sh)
+release.env
+release.env.next

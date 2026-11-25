@@ -1,13 +1,15 @@
 import { embedMany, isStepCount, Output, streamText, type ModelMessage, type ToolSet } from 'ai'
 import type { AiUsage } from '@yoda/shared'
-import { and, eq, gte, isNull, sql, type SQL } from 'drizzle-orm'
+import { and, eq, gte, inArray, isNull, sql, type SQL } from 'drizzle-orm'
 import type { ZodType, ZodTypeDef } from 'zod'
+import type { Config } from '../config.js'
 import type { Db, Tx } from '../db/client.js'
+import type { JobQueue } from '../jobs/queue.js'
 import { aiCalls, events, people, projects } from '../db/schema.js'
 import type { LiveBus } from '../live/bus.js'
 import { notify } from '../notifications/service.js'
 import { recordEvent, runWork } from '../work/context.js'
-import { EMBEDDING_DIMENSIONS, parseModelId, type AiJob, type ModelSet } from './models.js'
+import { EMBEDDING_DIMENSIONS, parseModelId, type AiJob, type ModelJob, type ModelSet } from './models.js'
 import prices from './prices.json' with { type: 'json' }
 
 export class AiRefused extends Error {
@@ -47,7 +49,7 @@ const priceOf = (model: string) =>
 
 export const isPriced = (model: string): boolean => priceOf(model) !== undefined
 
-/** The gateway only records events; it never enqueues jobs. */
+/** Without a queue (tests) the gateway only records events and portal notifications; it never enqueues jobs. */
 const NO_JOBS = {
   send: async (): Promise<void> => {
     throw new Error('AiGateway does not enqueue jobs')
@@ -83,6 +85,17 @@ export async function departmentMonthUsage(db: Db): Promise<AiUsage> {
   return usageOf(db, isNull(aiCalls.projectId), sql`(select ai_budget_usd from department_settings where id = 1)`)
 }
 
+/** `monthUsage` cost for several projects in one query; projects without calls are absent. */
+export async function projectsMonthSpend(db: Db | Tx, projectIds: string[]): Promise<Map<string, number>> {
+  if (!projectIds.length) return new Map()
+  const rows = await db
+    .select({ projectId: aiCalls.projectId, cost: sql<string>`coalesce(sum(${aiCalls.costUsd}), 0)` })
+    .from(aiCalls)
+    .where(and(inArray(aiCalls.projectId, projectIds), gte(aiCalls.createdAt, MONTH_START)))
+    .groupBy(aiCalls.projectId)
+  return new Map(rows.map((r) => [r.projectId!, Number(r.cost)]))
+}
+
 async function usageOf(db: Db | Tx, scope: SQL, budget: SQL): Promise<AiUsage> {
   const [row] = await db
     .select({
@@ -103,7 +116,15 @@ async function usageOf(db: Db | Tx, scope: SQL, budget: SQL): Promise<AiUsage> {
 
 export class AiGateway {
   constructor(
-    private deps: { db: Db; bus: LiveBus; models: ModelSet; config: { dailyTaskCap: number } },
+    private deps: {
+      db: Db
+      bus: LiveBus
+      models: ModelSet
+      /** The full Config (see WorkDeps): budget alerts go out on the configured outside channels. */
+      config: Config
+      /** Queues the outside delivery of budget alerts; without it they stay portal-only. */
+      jobs?: Pick<JobQueue, 'send'>
+    },
     warn: (msg: string) => void = (m) => console.warn(m),
   ) {
     const unpriced = (['draft', 'fast', 'embed'] as const)
@@ -115,6 +136,11 @@ export class AiGateway {
           'and refused for projects that have an AI budget (add the model to apps/core/src/ai/prices.json)',
       )
     }
+  }
+
+  /** The job has a usable model (its provider key is set); calls for it fail with `not_configured` otherwise. */
+  available(job: ModelJob): boolean {
+    return !!this.deps.models.ids[job] && !!this.deps.models[job]
   }
 
   async generateText(input: {
@@ -458,7 +484,7 @@ export class AiGateway {
   /** Tells every admin, once per Bangkok month and level (dedupe key), that the department budget is running out. */
   private async notifyDepartmentBudget(level: 'warning' | 'exceeded', usage: AiUsage): Promise<void> {
     const spent = `ใช้ไป $${usage.costUsd.toFixed(2)} จากงบ $${(usage.budgetUsd ?? 0).toFixed(2)} (${usage.month})`
-    await runWork({ ...this.deps, jobs: NO_JOBS }, { id: null, kind: 'system' }, async (ctx) => {
+    await runWork({ ...this.deps, jobs: this.deps.jobs ?? NO_JOBS }, { id: null, kind: 'system' }, async (ctx) => {
       const admins = await ctx.tx.select({ id: people.id }).from(people).where(eq(people.isAdmin, true))
       for (const { id } of admins) {
         await notify(ctx, {

@@ -113,6 +113,34 @@
       "when": 1795589521061,
       "tag": "0015_runners",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1795602123867,
+      "tag": "0016_status",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1795610992367,
+      "tag": "0017_notification_channels",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1795612194520,
+      "tag": "0018_delivery_permanent",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1795613370141,
+      "tag": "0019_link_attempts",
+      "breakpoints": true
     }
   ]
 }

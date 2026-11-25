@@ -1,23 +1,49 @@
-# Overlay: docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
-# All values come from the environment (CI variables / server env / local .env). No secrets here.
+# Overlay over docker-compose.yml. All values come from the environment (the host's .env and release.env, or
+# your shell). No secrets here.
+# Images: ${YODA_IMAGE_PREFIX}/<name>:${YODA_VERSION}. YODA_VERSION is required: a deploy host pulls that release
+# from the registry and ops/deploy/deploy.sh pins it in release.env (docs/operations.md). Locally, build and run
+# a prod-like stack under yoda/<name>:latest with:
+#   YODA_VERSION=latest docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
+# Core and the portal publish on 127.0.0.1 by default (a reverse proxy goes in front); Postgres and RustFS
+# publish nothing (reach them with `docker compose exec`).
 services:
+  # Runs the database migrations once, before core starts; the only container that migrates in production.
+  migrate:
+    build:
+      context: .
+      dockerfile: apps/core/Dockerfile
+    image: ${YODA_IMAGE_PREFIX:-yoda}/core:${YODA_VERSION:?YODA_VERSION is required (see release.env)}
+    command: ['node', 'dist/migrate.js']
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+    restart: 'no'
+
   core:
     build:
       context: .
       dockerfile: apps/core/Dockerfile
-    image: yoda-core
+    image: ${YODA_IMAGE_PREFIX:-yoda}/core:${YODA_VERSION:?YODA_VERSION is required (see release.env)}
     depends_on:
       postgres:
         condition: service_healthy
       rustfs:
         condition: service_started
+      migrate:
+        condition: service_completed_successfully
     ports:
-      - '${CORE_PORT:-4000}:4000'
+      - '${CORE_BIND:-127.0.0.1}:${CORE_PORT:-4000}:4000'
     environment:
       PORT: 4000
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
       OIDC_ISSUER: ${OIDC_ISSUER:?OIDC_ISSUER is required}
       OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-yoda-portal}
+      # Optional: fetch signing keys from an internal address; tokens are still checked against OIDC_ISSUER.
+      OIDC_JWKS_URL: ${OIDC_JWKS_URL:-}
+      # The `migrate` service has already run; core never migrates in production.
+      MIGRATE_ON_START: 'false'
       STAFF_GROUP: ${STAFF_GROUP:-/it-dev}
       BOOTSTRAP_ADMINS: ${BOOTSTRAP_ADMINS:-}
       S3_ENDPOINT: http://rustfs:9000
@@ -36,30 +62,112 @@ services:
       GITLAB_URL: ${GITLAB_URL:-}
       GITLAB_TOKEN: ${GITLAB_TOKEN:-}
       GITLAB_WEBHOOK_SECRET: ${GITLAB_WEBHOOK_SECRET:-}
-      PORTAL_URL: ${PORTAL_URL:-http://localhost:3000}
+      PORTAL_URL: ${PORTAL_URL:?PORTAL_URL is required}
+      RUNNER_LEASE_SECONDS: ${RUNNER_LEASE_SECONDS:-600}
+      MCP_ENABLED: ${MCP_ENABLED:-true}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      MAIL_FROM: ${MAIL_FROM:-}
+      LINE_CHANNEL_ACCESS_TOKEN: ${LINE_CHANNEL_ACCESS_TOKEN:-}
+      LINE_CHANNEL_SECRET: ${LINE_CHANNEL_SECRET:-}
+      LINE_API_URL: ${LINE_API_URL:-https://api.line.me}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:-}
+      TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
+      TELEGRAM_API_URL: ${TELEGRAM_API_URL:-https://api.telegram.org}
+    # Ready = database, storage and job queue all answer (GET /ready).
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:4000/ready').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     restart: unless-stopped
 
-  # Replaces the dev credentials: core signs in with the same S3_ACCESS_KEY / S3_SECRET_KEY.
+  # Replaces the dev credentials: core signs in with the same S3_ACCESS_KEY / S3_SECRET_KEY. No published ports
+  # and no web console in production (`!reset` needs Compose v2.24+).
   rustfs:
+    ports: !reset []
     environment:
+      RUSTFS_CONSOLE_ENABLE: 'false'
       RUSTFS_ACCESS_KEY: ${S3_ACCESS_KEY:?S3_ACCESS_KEY is required}
       RUSTFS_SECRET_KEY: ${S3_SECRET_KEY:?S3_SECRET_KEY is required}
     restart: unless-stopped
+
+  # Production credentials replace the dev ones (the base file's healthcheck hard-codes the dev user). No
+  # published port, and only the data volume: the base file's dev init.sql (a test database) is not mounted.
+  postgres:
+    ports: !reset []
+    volumes: !override
+      - pgdata:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-yoda}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:-yoda}
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+    restart: unless-stopped
+
+  # The dev Keycloak and mail catcher never run in production (a profile nobody enables); production signs in
+  # against the organisation's Keycloak at OIDC_ISSUER.
+  keycloak:
+    profiles: [dev-only]
+
+  mailpit:
+    profiles: [dev-only]
 
   portal:
     build:
       context: .
       dockerfile: apps/portal/Dockerfile
-    image: yoda-portal
+    image: ${YODA_IMAGE_PREFIX:-yoda}/portal:${YODA_VERSION:?YODA_VERSION is required (see release.env)}
     depends_on:
-      - core
+      core:
+        condition: service_healthy
     ports:
-      - '${PORTAL_PORT:-3000}:3000'
+      - '${PORTAL_BIND:-127.0.0.1}:${PORTAL_PORT:-3000}:3000'
     environment:
       NUXT_CORE_URL: http://core:4000
       NUXT_PUBLIC_KEYCLOAK_URL: ${NUXT_PUBLIC_KEYCLOAK_URL:?NUXT_PUBLIC_KEYCLOAK_URL is required}
       NUXT_PUBLIC_KEYCLOAK_REALM: ${NUXT_PUBLIC_KEYCLOAK_REALM:-yoda}
       NUXT_PUBLIC_KEYCLOAK_CLIENT_ID: ${NUXT_PUBLIC_KEYCLOAK_CLIENT_ID:-yoda-portal}
+      NUXT_PUBLIC_LINE_ADD_FRIEND_URL: ${NUXT_PUBLIC_LINE_ADD_FRIEND_URL:-}
+      NUXT_PUBLIC_RUNNER_DOCS_URL: ${NUXT_PUBLIC_RUNNER_DOCS_URL:-https://github.com/tantee/yoda#runners}
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:3000/health').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+  # Daily backups (ops/backup): at BACKUP_AT in TZ a pg_dump -Fc of the database and a mirror of the bucket go
+  # into the `backups` volume, kept BACKUP_KEEP_DAYS days. One-shot: `run --rm backup --now`. Restore (core
+  # and portal stopped): `run --rm -e RESTORE_CONFIRM=yes --entrypoint restore.sh backup <stamp|latest>`.
+  backup:
+    build:
+      context: ops/backup
+    image: ${YODA_IMAGE_PREFIX:-yoda}/backup:${YODA_VERSION:?YODA_VERSION is required (see release.env)}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rustfs:
+        condition: service_started
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      S3_ENDPOINT: http://rustfs:9000
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_BUCKET: ${S3_BUCKET:-yoda}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:?S3_ACCESS_KEY is required}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:?S3_SECRET_KEY is required}
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
+      BACKUP_AT: ${BACKUP_AT:-02:00}
+      TZ: Asia/Bangkok
+    volumes:
+      - backups:/backups
     restart: unless-stopped
 
   # Optional server runner (README "Runners"): docker compose ... --profile runner up -d runner
@@ -69,7 +177,7 @@ services:
     build:
       context: .
       dockerfile: apps/runner/Dockerfile
-    image: yoda-runner
+    image: ${YODA_IMAGE_PREFIX:-yoda}/runner:${YODA_VERSION:?YODA_VERSION is required (see release.env)}
     depends_on:
       - core
     environment:
@@ -89,3 +197,4 @@ services:
 
 volumes:
   runner-work:
+  backups:

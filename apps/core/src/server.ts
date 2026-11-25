@@ -1,7 +1,8 @@
-import { createRemoteJWKSet } from 'jose'
 import { buildApp } from './app.js'
+import { remoteJwks } from './auth/jwks.js'
 import { loadConfig } from './config.js'
 import { createDb } from './db/client.js'
+import { runMigrations } from './db/migrations.js'
 import { createS3Storage } from './storage/s3.js'
 import { AiGateway } from './ai/gateway.js'
 import { buildModels } from './ai/models.js'
@@ -10,21 +11,27 @@ import { registerJobHandlers } from './jobs/handlers.js'
 import { createPgBossQueue } from './jobs/queue.js'
 import { GitLabClient } from './gitlab/client.js'
 import { seedTemplates } from './workflow/seed.js'
+import { createMailTransport, emailConfigured } from './notifications/channels/email.js'
 
 const config = loadConfig(process.env)
 const db = createDb(config.databaseUrl)
+// Dev and a plain `docker run` migrate here; production compose sets MIGRATE_ON_START=false and runs the
+// one-shot `migrate` service first, so only one container ever migrates.
+if (config.migrateOnStart) {
+  await runMigrations(db)
+  console.log('migrations applied')
+}
 await seedTemplates(db)
-const jwks = createRemoteJWKSet(
-  new URL(`${config.oidcIssuer}/protocol/openid-connect/certs`),
-)
+const jwks = remoteJwks(config)
 const storage = await createS3Storage(config)
 const bus = new LiveBus()
-const ai = new AiGateway({ db, bus, models: buildModels(config), config })
 const jobs = await createPgBossQueue(config.databaseUrl, config.aiWorkers)
+const ai = new AiGateway({ db, bus, models: buildModels(config), config, jobs })
 const gitlab = config.gitlabUrl && config.gitlabToken ? new GitLabClient({ baseUrl: config.gitlabUrl, token: config.gitlabToken }) : null
 // Caches the bot user for the webhook (which never calls GitLab); best effort, the admin status page retries it.
 if (gitlab) void gitlab.currentUser().catch(() => console.warn('gitlab: bot user not resolved at boot (GitLab unreachable?)'))
-const app = await buildApp({ config, db, jwks, bus, storage, ai, jobs, gitlab })
+const mailTransport = emailConfigured(config) ? createMailTransport(config) : undefined
+const app = await buildApp({ config, db, jwks, bus, storage, ai, jobs, gitlab, mailTransport })
 await registerJobHandlers(app.deps)
 
 let stopping = false

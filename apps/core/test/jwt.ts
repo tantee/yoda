@@ -12,8 +12,13 @@ const KID = 'test-key'
 const keysPromise = (async () => {
   const { privateKey, publicKey } = await generateKeyPair('RS256')
   const jwk = { ...(await exportJWK(publicKey)), kid: KID, alg: 'RS256', use: 'sig' }
-  return { privateKey, jwks: createLocalJWKSet({ keys: [jwk] }) }
+  return { privateKey, jwk, jwks: createLocalJWKSet({ keys: [jwk] }) }
 })()
+
+/** The public half of the test key as a JWKS document (for a test JWKS server). */
+export async function testJwksDocument(): Promise<{ keys: object[] }> {
+  return { keys: [(await keysPromise).jwk] }
+}
 
 /** Verifies tokens signed by `signToken`. */
 export const localJwks: JWTVerifyGetKey = async (header, token) => {

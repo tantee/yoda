@@ -8,6 +8,9 @@ const CODES: Record<string, string> = {
   repo_not_found: 'errors.repoNotFound',
   issue_not_found: 'errors.issueNotFound',
   gitlab_unavailable: 'errors.gitlabUnavailable',
+  invalid_prefs: 'errors.invalidPrefs',
+  channel_not_configured: 'errors.channelNotConfigured',
+  channel_unavailable: 'errors.channelUnavailable',
 }
 
 export function errorKey(e: unknown): string {

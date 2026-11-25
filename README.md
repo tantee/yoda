@@ -1,6 +1,10 @@
 # Yoda — AI work portal
 
-pnpm monorepo: `apps/core` (Fastify + Drizzle), `apps/portal` (Nuxt 4 SPA), `packages/shared`.
+pnpm monorepo: `apps/core` (Fastify + Drizzle), `apps/portal` (Nuxt 4 SPA), `apps/runner`, `packages/shared`.
+
+Running it in production: see the [operations runbook](docs/operations.md) (install, environment variables,
+upgrade and rollback, backups, GitLab, runners, notifications, secrets, troubleshooting). Changes per release:
+[CHANGELOG.md](CHANGELOG.md).
 
 ## Requirements
 
@@ -52,13 +56,23 @@ pnpm test            # uses TEST_DATABASE_URL, default postgres://yoda:yoda@loca
 ## Containers and production
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
+YODA_VERSION=latest docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
 ```
 
-Images: `yoda-core` (runs migrations, then `node dist/server.js`) and `yoda-portal`
-(`node .output/server/index.mjs`). Configuration is environment-only:
+Images: `core` (`node dist/server.js`), `portal` (`node .output/server/index.mjs`), `runner` and `backup`,
+named `${YODA_IMAGE_PREFIX:-yoda}/<name>:${YODA_VERSION}` by the overlay. `YODA_VERSION` is required (locally
+`latest`, giving `yoda/core:latest` and so on); a deploy host pulls the release from the registry and pins it in
+`release.env` (see the runbook, `docs/operations.md`).
+The core server runs the migrations itself when `MIGRATE_ON_START=true` (the default, so a plain
+`docker run` works). The prod overlay sets it to `false` and runs a one-shot `migrate` service
+(`node dist/migrate.js`, same image) first; core starts only after it completes, so only one
+container ever migrates. Configuration is environment-only:
 
-- core: `DATABASE_URL`, `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `STAFF_GROUP`, `BOOTSTRAP_ADMINS`
+- core: `DATABASE_URL`, `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_JWKS_URL` (optional), `STAFF_GROUP`,
+  `BOOTSTRAP_ADMINS`, `MIGRATE_ON_START` (`true`|`false`)
+- health: core `GET /health` (liveness, with the version) and `GET /ready` (200 when the database,
+  storage and job queue answer within 2 s each, else 503; `{ status, checks }`); portal `GET /health`.
+  The overlay's healthchecks use them, and the portal waits for a healthy core.
 - core object storage (the compose `rustfs` service): `S3_ACCESS_KEY`, `S3_SECRET_KEY` (required; the
   overlay also uses them as the RustFS credentials), `S3_REGION` (`us-east-1`), `S3_BUCKET` (`yoda`,
   created on startup). `S3_ENDPOINT` is fixed to `http://rustfs:9000` by the overlay.
@@ -72,17 +86,40 @@ Images: `yoda-core` (runs migrations, then `node dist/server.js`) and `yoda-port
   refused for projects with a budget.
 - portal: `NUXT_CORE_URL`, `NUXT_PUBLIC_KEYCLOAK_URL`, `NUXT_PUBLIC_KEYCLOAK_REALM`,
   `NUXT_PUBLIC_KEYCLOAK_CLIENT_ID` (read at runtime, not baked into the image)
-- ports: `CORE_PORT` (4000), `PORTAL_PORT` (3000)
+- ports: `CORE_PORT` (4000), `PORTAL_PORT` (3000), published on `127.0.0.1` (`CORE_BIND`, `PORTAL_BIND`)
+  for a reverse proxy in front; Postgres and RustFS publish no ports in the overlay (use `docker compose exec`)
 
 Inside containers:
 
 - `DATABASE_URL` must use the compose service host (`postgres`), not `localhost`, e.g.
   `postgres://yoda:...@postgres:5432/yoda`. Compose also reads the root `.env` for interpolation, so
   do not leave the dev `localhost` URL there when running the overlay.
-- `OIDC_ISSUER` must equal the browser-facing token `iss` AND be reachable from the core container
-  (it fetches the JWKS from it). The overlay against the dev Keycloak on `localhost` therefore only
-  smoke-tests; a real deployment needs a Keycloak URL reachable from both the browser and the core
-  container (a separate JWKS URL is planned for plan 8).
+- `OIDC_ISSUER` must equal the browser-facing token `iss`. Core fetches the signing keys from
+  `OIDC_JWKS_URL` when set (e.g. Keycloak's internal address,
+  `http://keycloak.internal.example.org/realms/yoda/protocol/openid-connect/certs`), otherwise from
+  `${OIDC_ISSUER}/protocol/openid-connect/certs`, which must then be reachable from the core container.
+  Tokens are checked against `OIDC_ISSUER` either way.
+
+- Postgres: the overlay requires `POSTGRES_PASSWORD` (and takes `POSTGRES_USER` / `POSTGRES_DB`,
+  default `yoda`) instead of the dev password; `DATABASE_URL` must use the same credentials. Postgres
+  only applies them when it creates a fresh `pgdata` volume, so change an existing database's password
+  with `ALTER ROLE` as well.
+- The dev `keycloak` and `mailpit` services are behind the `dev-only` profile in the overlay and never
+  start in production: sign-in uses the organisation's Keycloak at `OIDC_ISSUER`.
+
+- Backups: the overlay's `backup` service (image `backup`, `ops/backup`) writes
+  `pg-<YYYYMMDD-HHMM>.dump` (`pg_dump -Fc`) and `storage-<YYYYMMDD-HHMM>/` (a mirror of the bucket) to
+  the `backups` volume every day at `BACKUP_AT` (`02:00`, Asia/Bangkok), updates a `latest` marker and
+  deletes backups older than `BACKUP_KEEP_DAYS` (14). A failed run is retried 3 times, 15 minutes
+  apart; the container turns unhealthy when the last backup is older than 26 hours (a new container
+  gets 26 hours for its first one). Only one backup or restore runs at a time (a lock on the volume).
+  The volume lives on the same host: copy it off
+  the server as well. Back up now with `docker compose ... run --rm backup --now`. To restore, stop
+  `core` and `portal`, run `docker compose ... run --rm -e RESTORE_CONFIRM=yes --entrypoint restore.sh
+  backup <stamp|latest>` (`pg_restore --clean --if-exists` plus a sync of the bucket), then run
+  `migrate` and start the services again. Restoring into an empty database is the clean path: tables
+  that are not in the backup are left in place. `ops/backup/restore-check.sh` (dev only) runs the whole
+  round trip against the dev stack on a scratch database and bucket and prints `restore ok`.
 
 Production secrets come only from the deploy environment / CI variables, never from committed files.
 The dev compose services use throwaway credentials and must not be exposed publicly.
@@ -241,7 +278,8 @@ verified). `yoda-runner start` refuses Codex unless the config sets `"allowExper
 
 **Server runner container.** `apps/runner/Dockerfile` (node:22-slim, git, a pinned
 `@anthropic-ai/claude-code`, non-root `node` user, no secrets in the image) runs `yoda-runner start`.
-With the prod overlay: `docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile runner up -d runner`.
+With the prod overlay on a deploy host: `dc --profile runner up -d --no-build runner` (`dc` as in
+`docs/operations.md`, section 4).
 Environment (from the deploy environment only):
 
 - `YODA_RUNNER_TOKEN`: the server runner's token (required); `YODA_RUNNER_CORE_URL` (default
@@ -270,8 +308,16 @@ Worktrees and clones live in the `runner-work` volume.
 - The migrations run `CREATE EXTENSION vector` and `pg_trgm`, which needs a superuser; otherwise a DBA
   must pre-create both extensions in the database.
 
-## CI
+## CI and releases
 
-`.gitlab-ci.yml` (and the equivalent `.github/workflows/ci.yml`): `secrets` (gitleaks over full
-history), `test` (pgvector service, typecheck, tests), `build` (images on the default branch and tags;
-the runner image is built but not pushed).
+`.gitlab-ci.yml`: `secrets` (gitleaks over full history), `test` (pgvector service, typecheck, tests),
+`build-core` / `build-portal` / `build-runner` / `build-backup` (on the default branch and on tags: push to
+`$CI_REGISTRY_IMAGE/<name>` tagged with the short commit SHA, plus the git tag on tags and `latest` on the
+default branch), and a manual `deploy` job on tags that runs `ops/deploy/deploy.sh` on the deploy host over
+SSH (pull, migrate, up, wait for `/ready`). `.github/workflows/ci.yml` runs the same checks and only builds
+the images: the GitHub repository is public, so nothing is published from it.
+
+**Versioning.** Releases follow [semantic versioning](https://semver.org) and are git tags without a `v`
+(`1.0.0`); the tag is the image tag the deploy job runs. Bump `version` in the root and `apps/core` `package.json` with the
+release (core reports it on `/health`) and add a `CHANGELOG.md` entry. Upgrade and rollback steps are in the
+[runbook](docs/operations.md#5-upgrade-and-rollback).

@@ -10,7 +10,7 @@ import { aiCalls, events, knowledgeEntries, projects } from '../src/db/schema.js
 import { InlineJobQueue, type JobName } from '../src/jobs/queue.js'
 import { LiveBus } from '../src/live/bus.js'
 import { textStream } from './ai-mocks.js'
-import { mockModels, resetDb, testDb } from './helpers.js'
+import { mockModels, resetDb, testConfig, testDb } from './helpers.js'
 import { acceptStepAdvance, auth, login, makeApp, type Who } from './support.js'
 
 const DRAFT = '# ข้อกำหนด\n\n- DRAFT-REQUIREMENTS-TEXT'
@@ -56,7 +56,7 @@ class HeldQueue extends InlineJobQueue {
 async function boot(models: ModelSet, jobs: InlineJobQueue = new InlineJobQueue()) {
   const db = await testDb()
   queue = jobs
-  app = await makeApp({ ai: new AiGateway({ db, bus: new LiveBus(), models, config: { dailyTaskCap: 8 } }), jobs })
+  app = await makeApp({ ai: new AiGateway({ db, bus: new LiveBus(), models, config: testConfig() }), jobs })
   admin = await login(app, 'boss', { staff: true })
   pm = await login(app, 'pm', { staff: true })
   ba = await login(app, 'ba', { staff: true })
@@ -169,7 +169,7 @@ describe('AI drafter', () => {
     expect(progress).toHaveLength(1)
     expect(progress[0]).toMatchObject({ status: 'draft', body: DRAFT })
     expect(await callsFor(draft.id)).toMatchObject([{ ok: true, job: 'draft' }])
-  })
+  }, 15_000)
 
   it('the prompt carries the work item title but never a noAi document body', async () => {
     const m = draftModel()

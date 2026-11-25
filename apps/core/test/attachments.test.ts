@@ -103,6 +103,7 @@ describe('attachments API', () => {
         removed.push(k)
         return real.remove(k)
       },
+      ping: () => real.ping(),
     }
     app = await buildApp({ ...deps, config: { ...deps.config, bootstrapAdmins: ['boss'] }, storage: spy, onAttachmentStored: (r, t) => onStored(r, t) })
     admin = await login(app, 'boss')
