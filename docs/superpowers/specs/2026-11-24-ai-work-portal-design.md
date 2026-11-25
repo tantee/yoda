@@ -88,7 +88,7 @@ knowledge beyond what's attached to their own requests, or GitLab links.
   Spring Boot (`rama-spring-starter`). The AI orchestration part is better
   served by TypeScript/Node than Spring; Spring remains the choice for any
   future integration with hospital systems.
-- **GitLab:** self-hosted at `gitlab.rama.mahidol.ac.th`, reachable only on the
+- **GitLab:** the hospital GitLab, self-hosted (e.g. `gitlab.example.org`), reachable only on the
   internal network.
 - **Hosting:** on the department's own infrastructure (inside the network that
   can reach GitLab).
