@@ -7,17 +7,18 @@ import type {
   DiscussionResponse,
   DiscussionResponseCreate,
   DiscussionWithdraw,
+  TaskDiscussionCreate,
   EventType,
   Me,
 } from '@yoda/shared'
-import { and, eq, sql } from 'drizzle-orm'
+import { and, asc, eq, inArray, sql } from 'drizzle-orm'
 import { forbidden, HttpError, invalidState, notFound } from '../auth/plugin.js'
 import type { Tx } from '../db/client.js'
 import { discussionResponses, discussions, projects, tasks, workItems } from '../db/schema.js'
 import { createEntry } from '../knowledge/service.js'
 import { notifyDiscussionEnded, notifyDiscussionRaised } from '../notifications/service.js'
 import { recordEvent, type WorkCtx } from '../work/context.js'
-import { isPmOrAdmin, lockItem } from '../work/engine.js'
+import { isPmOrAdmin, lockItem, progressWorkItem } from '../work/engine.js'
 import { canSeeProject } from '../work/queries.js'
 import { requireDiscussionVisible, toResponse, type DiscussionRow } from './queries.js'
 
@@ -198,10 +199,69 @@ export async function editBrief(ctx: WorkCtx, me: Me, id: string, input: Discuss
 }
 
 /**
- * Hook for plan 5 task 4: after a decision or withdrawal (same transaction, work item still locked) the
- * blocked work item continues. A no-op until then.
+ * After a decision or withdrawal (same transaction, work item still locked): the item's step was held by its
+ * open discussions; re-running progress lets it continue once none are left (a step advance proposal in
+ * `propose` projects, unless one is already pending; a guarded advance in `auto-assign` ones). No project
+ * lock is taken here: the caller already holds the work item lock, and project → work item is the order.
  */
-export async function resumeAfterDiscussion(_ctx: WorkCtx, _workItemId: string): Promise<void> {}
+export async function resumeAfterDiscussion(ctx: WorkCtx, workItemId: string): Promise<void> {
+  await progressWorkItem(ctx, workItemId)
+}
+
+/**
+ * `POST /tasks/:id/raise-discussion`: the task's assignee, or a PM / admin of its project, raises a
+ * discussion linked to the task's work item, the task and its step. The caller has checked the task is
+ * visible (404 otherwise). Rights are re-checked under the work item lock, which createDiscussion re-takes.
+ */
+export async function raiseFromTask(ctx: WorkCtx, me: Me, taskId: string, input: TaskDiscussionCreate): Promise<string> {
+  const { tx } = ctx
+  if (!me.isStaff) throw forbidden()
+  const allowed = async () => {
+    const [task] = await tx
+      .select({ workItemId: tasks.workItemId, projectId: tasks.projectId, assigneeId: tasks.assigneeId })
+      .from(tasks)
+      .where(eq(tasks.id, taskId))
+    if (!task) throw notFound()
+    if (task.assigneeId !== me.id && !(await isPmOrAdmin(tx, me, task.projectId))) throw forbidden()
+    return task
+  }
+  const ref = await allowed()
+  await lockItem(tx, ref.workItemId)
+  const task = await allowed()
+  return createDiscussion(ctx, me, { ...input, workItemId: task.workItemId, taskId })
+}
+
+/**
+ * Cancelling or reopening the work item (its lock held by the caller): every open / scheduled discussion on
+ * it is withdrawn with `reason` (`discussion.withdrawn`, actor = the caller), and the raiser and responders
+ * are told as on a manual withdrawal.
+ */
+export async function withdrawItemDiscussions(
+  ctx: WorkCtx,
+  workItemId: string,
+  reason: 'work_item_cancelled' | 'work_item_reopened',
+): Promise<void> {
+  const { tx } = ctx
+  const rows = await tx
+    .select()
+    .from(discussions)
+    .where(and(eq(discussions.workItemId, workItemId), inArray(discussions.state, ['open', 'scheduled'])))
+    .orderBy(asc(discussions.id))
+    .for('update')
+  const text = reason === 'work_item_cancelled' ? 'งานที่เกี่ยวข้องถูกยกเลิก' : 'งานที่เกี่ยวข้องถูกส่งกลับไปทำขั้นตอนก่อนหน้า'
+  for (const d of rows) {
+    await tx.update(discussions).set({ state: 'withdrawn', updatedAt: sql`now()` }).where(eq(discussions.id, d.id))
+    await recordDiscussionEvent(ctx, d, 'discussion.withdrawn', { reason })
+    await notifyDiscussionEnded(ctx, 'withdrawn', {
+      id: d.id,
+      projectId: d.projectId,
+      question: d.question,
+      raisedBy: d.raisedBy,
+      text,
+      responders: await responderIds(tx, d.id),
+    })
+  }
+}
 
 /**
  * Checks visibility (404) and permission (403) unlocked, then locks the work item (if any) and the

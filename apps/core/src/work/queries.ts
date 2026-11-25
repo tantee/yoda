@@ -21,7 +21,7 @@ import { forbidden, notFound } from '../auth/plugin.js'
 import { attachmentsByTask } from '../attachments/service.js'
 import type { Db, Tx } from '../db/client.js'
 import { pendingForDecider } from '../proposals/service.js'
-import { events, people, projectMembers, projects, proposals, tasks, workflowTemplates, workItems } from '../db/schema.js'
+import { discussions, events, people, projectMembers, projects, proposals, tasks, workflowTemplates, workItems } from '../db/schema.js'
 
 type Conn = Db | Tx
 type TaskRow = typeof tasks.$inferSelect
@@ -314,18 +314,36 @@ function workItemQuery(db: Conn) {
 
 type WorkItemJoined = Awaited<ReturnType<ReturnType<typeof workItemQuery>['execute']>>[number]
 
+type AdvanceState = {
+  /** Ids of the items that are `awaitingAdvance`. */
+  awaiting: Set<string>
+  /** Open / scheduled discussions per item id (absent: none). */
+  openDiscussions: Map<string, number>
+}
+
 /**
- * Ids of the rows whose item is `awaitingAdvance`: active, every task of the current step accepted (latest
- * attempt), a next step exists, and no step_advance proposal is pending.
+ * Per row: its open / scheduled discussion count, and whether the item is `awaitingAdvance`: active, every
+ * task of the current step accepted (latest attempt), a next step exists, no step_advance proposal is
+ * pending, and no open discussion holds the step.
  */
-async function awaitingAdvance(db: Conn, rows: WorkItemJoined[]): Promise<Set<string>> {
+async function advanceState(db: Conn, rows: WorkItemJoined[]): Promise<AdvanceState> {
+  const openDiscussions = new Map<string, number>()
+  const active = rows.filter((r) => r.w.state === 'active').map((r) => r.w.id)
+  if (active.length) {
+    const counts = await db
+      .select({ workItemId: discussions.workItemId, n: sql<number>`count(*)::int` })
+      .from(discussions)
+      .where(and(inArray(discussions.workItemId, active), inArray(discussions.state, ['open', 'scheduled'])))
+      .groupBy(discussions.workItemId)
+    for (const c of counts) if (c.workItemId) openDiscussions.set(c.workItemId, c.n)
+  }
   const candidates = rows.filter((r) => {
-    if (r.w.state !== 'active') return false
+    if (r.w.state !== 'active' || openDiscussions.has(r.w.id)) return false
     const def = r.definition as WorkflowTemplateDef
     const i = def.steps.findIndex((s) => s.key === r.w.currentStepKey)
     return i >= 0 && i < def.steps.length - 1
   })
-  if (!candidates.length) return new Set()
+  if (!candidates.length) return { awaiting: new Set(), openDiscussions }
   const ids = candidates.map((r) => r.w.id)
   const taskRows = await db
     .select({ workItemId: tasks.workItemId, key: tasks.templateTaskKey, attempt: tasks.attempt, state: tasks.state })
@@ -348,10 +366,10 @@ async function awaitingAdvance(db: Conn, rows: WorkItemJoined[]): Promise<Set<st
     const step = (r.definition as WorkflowTemplateDef).steps.find((s) => s.key === r.w.currentStepKey)!
     if (step.tasks.every((t) => latest.get(`${r.w.id}/${t.key}`)?.state === 'accepted')) out.add(r.w.id)
   }
-  return out
+  return { awaiting: out, openDiscussions }
 }
 
-function toWorkItem(r: WorkItemJoined, awaiting: Set<string>): WorkItem {
+function toWorkItem(r: WorkItemJoined, state: AdvanceState): WorkItem {
   const w = r.w
   return WorkItem.parse({
     id: w.id,
@@ -367,8 +385,8 @@ function toWorkItem(r: WorkItemJoined, awaiting: Set<string>): WorkItem {
     requesterId: w.requesterId,
     requesterName: r.requesterName,
     state: w.state,
-    awaitingAdvance: awaiting.has(w.id),
-    openDiscussions: 0,
+    awaitingAdvance: state.awaiting.has(w.id),
+    openDiscussions: state.openDiscussions.get(w.id) ?? 0,
     createdAt: w.createdAt.toISOString(),
     updatedAt: w.updatedAt.toISOString(),
   })
@@ -414,7 +432,7 @@ export async function getWorkItemDetail(db: Conn, me: Me, id: string): Promise<W
   const who = await names(db, taskRows.flatMap((t) => [t.assigneeId, t.proposedAssigneeId]))
   const ai = await aiStates(db, taskRows.map((row) => ({ row, def })))
   return WorkItemDetail.parse({
-    ...toWorkItem(r, await awaitingAdvance(db, [r])),
+    ...toWorkItem(r, await advanceState(db, [r])),
     steps,
     tasks: taskRows.map((t) => toTask(t, def, who, ai)),
     events: eventRows.map(({ e, actorName }) =>
@@ -440,8 +458,8 @@ export async function listWorkItems(db: Conn, me: Me, projectId: string): Promis
   const rows = await workItemQuery(db)
     .where(eq(workItems.projectId, projectId))
     .orderBy(desc(workItems.createdAt), desc(workItems.id))
-  const awaiting = await awaitingAdvance(db, rows)
-  return rows.map((r) => toWorkItem(r, awaiting))
+  const state = await advanceState(db, rows)
+  return rows.map((r) => toWorkItem(r, state))
 }
 
 /** Staff see tasks of their projects; anyone sees a REQUESTER task assigned to them (the requester view). */
@@ -495,12 +513,12 @@ export async function getTodo(db: Conn, me: Me): Promise<Todo> {
   const items = await workItemQuery(db)
     .where(and(inScope(workItems.projectId), eq(workItems.state, 'active')))
     .orderBy(priorityRank, asc(workItems.updatedAt), asc(workItems.id))
-  const awaiting = await awaitingAdvance(db, items)
+  const state = await advanceState(db, items)
   return Todo.parse({
     tasks: mine,
     confirmations,
     proposals: await pendingForDecider(db, me),
-    awaitingAdvance: items.filter((r) => awaiting.has(r.w.id)).map((r) => toWorkItem(r, awaiting)),
+    awaitingAdvance: items.filter((r) => state.awaiting.has(r.w.id)).map((r) => toWorkItem(r, state)),
   })
 }
 

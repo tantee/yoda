@@ -68,6 +68,10 @@ export const DiscussionCreate = z
   .refine((v) => !v.taskId || !!v.workItemId, { message: 'taskId requires workItemId', path: ['taskId'] })
 export type DiscussionCreate = z.infer<typeof DiscussionCreate>
 
+/** `POST /tasks/:id/raise-discussion`: the task gives the project, work item, task and step. */
+export const TaskDiscussionCreate = DiscussionCreate.innerType().omit({ projectId: true, workItemId: true, taskId: true })
+export type TaskDiscussionCreate = z.infer<typeof TaskDiscussionCreate>
+
 export const DiscussionResponseKind = z.enum(['opinion', 'vote'])
 export type DiscussionResponseKind = z.infer<typeof DiscussionResponseKind>
 
