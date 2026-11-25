@@ -1,13 +1,14 @@
 import type { FastifyInstance } from 'fastify'
 import type { Discussion, DiscussionResponse, LiveEvent, Me, Notification, WorkItemDetail } from '@yoda/shared'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { and, eq } from 'drizzle-orm'
-import { discussions, events, knowledgeEntries } from '../src/db/schema.js'
+import { and, eq, sql } from 'drizzle-orm'
+import { discussions, events, knowledgeEntries, projectMembers } from '../src/db/schema.js'
 import { decideDiscussion } from '../src/discussions/service.js'
 import type { InlineJobQueue } from '../src/jobs/queue.js'
 import { searchKnowledge } from '../src/knowledge/search.js'
 import { deliverable } from '../src/routes/stream.js'
 import { runWork } from '../src/work/context.js'
+import { lockItem } from '../src/work/engine.js'
 import { resetDb, testDb } from './helpers.js'
 import { auth, login, makeApp, type Who } from './support.js'
 
@@ -343,8 +344,19 @@ describe('discussions', () => {
     expect((await call(pm, 'POST', `/discussions/${d.id}/decide`, { decision: 'สาย' })).statusCode).toBe(409)
     expect((await call(pm, 'POST', `/discussions/${d.id}/withdraw`, { reason: 'อีก' })).statusCode).toBe(409)
 
-    const d2 = await raise(dev, { workItemId: wi.id, question: 'PM ถอน' })
+    // The raiser withdrawing their own discussion notifies nobody.
+    expect((await discussionNotes(dev)).filter((n) => n.link === `/discussions/${d.id}`)).toEqual([])
+
+    const d2 = await raise(dev, { workItemId: wi.id, question: 'PM ถอน', options: OPTIONS, requestBrief: false })
+    await call(ba, 'POST', `/discussions/${d2.id}/responses`, { kind: 'vote', optionKey: 'a' })
+    await call(pm2, 'POST', `/discussions/${d2.id}/responses`, { kind: 'opinion', text: 'ถอนได้' })
     expect((await call(pm, 'POST', `/discussions/${d2.id}/withdraw`, { reason: 'ซ้ำ' })).statusCode).toBe(200)
+    const withdrawnNotes = async (who: Who) =>
+      (await discussionNotes(who)).filter((n) => n.link === `/discussions/${d2.id}` && n.body === 'ซ้ำ')
+    expect(await withdrawnNotes(dev)).toHaveLength(1)
+    expect(await withdrawnNotes(ba)).toHaveLength(1)
+    expect(await withdrawnNotes(pm2)).toHaveLength(1)
+    expect(await withdrawnNotes(pm)).toEqual([])
     const d3 = await raise(dev, { workItemId: wi.id, question: 'admin ถอน' })
     expect((await call(admin, 'POST', `/discussions/${d3.id}/withdraw`, { reason: 'ซ้ำ' })).statusCode).toBe(200)
   })
@@ -384,6 +396,55 @@ describe('discussions', () => {
     const proj: LiveEvent = { ...dept, projectId: p }
     expect(await deliverable(db, asMe(outsider, 'outsider'), proj)).toBe(false)
     expect(await deliverable(db, asMe(dev, 'dev'), proj)).toBe(true)
+  })
+
+  it('a long question: the decision knowledge title is cut to 300 characters; the body keeps it whole', async () => {
+    const p = await project()
+    const question = `${'ก'.repeat(250)}${'ข'.repeat(250)}`
+    expect(question).toHaveLength(500)
+    const d = await raise(dev, { projectId: p, question, requestBrief: false })
+    expect((await call(pm, 'POST', `/discussions/${d.id}/decide`, { decision: 'ตกลง' })).statusCode).toBe(200)
+    const db = await testDb()
+    const [entry] = await db.select().from(knowledgeEntries).where(eq(knowledgeEntries.sourceRef, d.id))
+    expect(entry!.scope).toBe('project')
+    expect([...entry!.title]).toHaveLength(300)
+    expect(entry!.title.endsWith('…')).toBe(true)
+    expect(entry!.title.startsWith('ก'.repeat(250))).toBe(true)
+    expect(entry!.body).toContain(question)
+  })
+
+  it('permission is re-checked under the locks: a PM demoted while waiting gets 403', async () => {
+    const p = await project()
+    const wi = await createItem(p)
+    const d = await raise(dev, { workItemId: wi.id, question: 'ระหว่างรอ' })
+    const db = await testDb()
+    let release!: () => void
+    const held = new Promise<void>((r) => (release = r))
+    let locked = false
+    // Holds the work item lock while demoting the PM (uncommitted until released).
+    const demotion = runWork(app.deps, { id: admin.id, kind: 'person' }, async (ctx) => {
+      await lockItem(ctx.tx, wi.id)
+      await ctx.tx
+        .update(projectMembers)
+        .set({ roles: ['DEV'] })
+        .where(and(eq(projectMembers.projectId, p), eq(projectMembers.personId, pm.id)))
+      locked = true
+      await held
+    })
+    while (!locked) await new Promise((r) => setTimeout(r, 5))
+    const decide = call(pm, 'POST', `/discussions/${d.id}/decide`, { decision: 'ตกลง' })
+    let done = false
+    void decide.finally(() => (done = true))
+    for (let i = 0; i < 400 && !done; i++) {
+      const rows = await db.execute(sql`select 1 from pg_stat_activity where wait_event_type = 'Lock' and datname = current_database()`)
+      if (rows.length > 0) break
+      await new Promise((r) => setTimeout(r, 5))
+    }
+    release()
+    await demotion
+    expect((await decide).statusCode).toBe(403)
+    const [row] = await db.select().from(discussions).where(eq(discussions.id, d.id))
+    expect(row!.state).toBe('open')
   })
 
   it('lists open and scheduled discussions by priority, then oldest first; filters by state and project', async () => {
