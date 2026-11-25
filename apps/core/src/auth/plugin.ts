@@ -28,6 +28,7 @@ export class HttpError extends Error {
         | 'issue_not_found'
         | 'gitlab_unavailable'
         | 'empty_patch'
+        | 'invalid_branch'
       /** Machine-readable detail for some errors (runner claims: why `invalid_state`). */
       reason?: string
     },
@@ -55,6 +56,9 @@ export const repoNotFound = () => new HttpError(422, { error: 'repo_not_found' }
 export const issueNotFound = () => new HttpError(422, { error: 'issue_not_found' })
 export const commentRequired = () => new HttpError(422, { error: 'comment_required' })
 export const emptyPatch = () => new HttpError(422, { error: 'empty_patch' })
+export const invalidBranch = (reason?: string) =>
+  new HttpError(422, reason ? { error: 'invalid_branch', reason } : { error: 'invalid_branch' })
+export const gitlabUnavailable = () => new HttpError(502, { error: 'gitlab_unavailable' })
 
 /**
  * Verify the bearer token. Returns validated claims, or null for any failure

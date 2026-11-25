@@ -135,6 +135,34 @@ export class GitLabClient {
     return this.request('POST', `/projects/${this.proj(projectId)}/issues`, input)
   }
 
+  /**
+   * Opens an MR (a POST: retried only on 429). GitLab answers 409 when an open MR already exists for the source
+   * branch; that MR is looked up and returned, so the call is idempotent.
+   */
+  async createMergeRequest(
+    projectId: number,
+    input: { sourceBranch: string; targetBranch: string; title: string; description: string; removeSourceBranch: true },
+  ): Promise<{ iid: number; webUrl: string; state: string }> {
+    type Mr = { iid: number; web_url: string; state: string }
+    const base = `/projects/${this.proj(projectId)}/merge_requests`
+    try {
+      const mr = await this.request<Mr>('POST', base, {
+        source_branch: input.sourceBranch,
+        target_branch: input.targetBranch,
+        title: input.title,
+        description: input.description,
+        remove_source_branch: input.removeSourceBranch,
+      })
+      return { iid: mr.iid, webUrl: mr.web_url, state: mr.state }
+    } catch (err) {
+      if (!(err instanceof GitLabError) || err.status !== 409) throw err
+      const open = await this.request<Mr[]>('GET', `${base}?source_branch=${encodeURIComponent(input.sourceBranch)}&state=opened&per_page=1`)
+      const mr = open[0]
+      if (!mr) throw err
+      return { iid: mr.iid, webUrl: mr.web_url, state: mr.state }
+    }
+  }
+
   getIssue(projectId: number, iid: number): Promise<{ iid: number; description: string; web_url: string; state: string }> {
     return this.request('GET', `/projects/${this.proj(projectId)}/issues/${iid}`)
   }

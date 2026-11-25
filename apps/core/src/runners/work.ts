@@ -124,9 +124,8 @@ async function writeDraft(
 export async function writeKnowledge(deps: RunnerDeps, rc: RunnerCtx, input: WriteKnowledgeInput): Promise<string> {
   const now = nowOf(deps)
   return runWork(deps, asOwner(rc), async (ctx) => {
-    const run = await requireLiveRun(ctx.tx, rc, input.runId, now)
-    const [task] = await ctx.tx.select().from(tasks).where(eq(tasks.id, run.taskId))
-    if (!task) throw notFound()
+    const { item, task } = await lockLiveRun(ctx.tx, rc, input.runId, now)
+    if (!workable(rc, item, task)) throw invalidState('task_unavailable')
     return writeDraft(ctx, rc, task, { type: input.type, title: input.title, body: input.body })
   })
 }
@@ -135,7 +134,7 @@ export async function writeKnowledge(deps: RunnerDeps, rc: RunnerCtx, input: Wri
  * Locks the run's task (global order), then the run row itself, which must still be live: one of this runner's,
  * `running`, its lease not passed. 409 `run_not_active` otherwise.
  */
-async function lockLiveRun(tx: Tx, rc: RunnerCtx, runId: string, now: Date): Promise<{ run: typeof agentRuns.$inferSelect; task: TaskRow; item: WorkItemRow }> {
+export async function lockLiveRun(tx: Tx, rc: RunnerCtx, runId: string, now: Date): Promise<{ run: typeof agentRuns.$inferSelect; task: TaskRow; item: WorkItemRow }> {
   const ref = await requireLiveRun(tx, rc, runId, now)
   const task = await lockRunTask(tx, ref.taskId)
   const item = await lockItem(tx, task.workItemId)
@@ -152,7 +151,8 @@ async function lockLiveRun(tx: Tx, rc: RunnerCtx, runId: string, now: Date): Pro
 export async function postProgress(deps: RunnerDeps, rc: RunnerCtx, input: ProgressInput): Promise<string> {
   const now = nowOf(deps)
   return runWork(deps, asOwner(rc), async (ctx) => {
-    const { run, task } = await lockLiveRun(ctx.tx, rc, input.runId, now)
+    const { run, task, item } = await lockLiveRun(ctx.tx, rc, input.runId, now)
+    if (!workable(rc, item, task)) throw invalidState('task_unavailable')
     await ctx.tx.update(agentRuns).set({ heartbeatAt: now, leaseExpiresAt: leaseFrom(deps, now) }).where(eq(agentRuns.id, run.id))
     const entryId = await writeDraft(ctx, rc, task, { type: 'progress', title: 'ความคืบหน้า / Progress', body: input.note })
     await recordEvent(ctx, {
@@ -167,7 +167,7 @@ export async function postProgress(deps: RunnerDeps, rc: RunnerCtx, input: Progr
 }
 
 /** May the run still finish (or ask about) its task: an unassigned AI task or the owner's own, on the current step. */
-function workable(rc: RunnerCtx, item: WorkItemRow, task: TaskRow): { ai: boolean } | null {
+export function workable(rc: RunnerCtx, item: WorkItemRow, task: TaskRow): { ai: boolean } | null {
   const current =
     item.state === 'active' &&
     !task.supersededAt &&
@@ -196,6 +196,8 @@ export async function submitResult(deps: RunnerDeps, rc: RunnerCtx, input: Submi
   const now = nowOf(deps)
   return runWork(deps, asOwner(rc), async (ctx) => {
     const { tx } = ctx
+    const [prior] = await tx.select().from(agentRuns).where(eq(agentRuns.id, input.runId))
+    if (prior?.runnerId === rc.runner.id && prior.state === 'succeeded') return alreadySucceeded(ctx, prior, input)
     const { run, task, item } = await lockLiveRun(tx, rc, input.runId, now)
     const how = workable(rc, item, task)
     let outcome: SubmitOutcome
@@ -220,22 +222,40 @@ export async function submitResult(deps: RunnerDeps, rc: RunnerCtx, input: Submi
         reopen: false,
       })
     }
-    if (usage?.costUsd !== undefined) {
-      await tx.insert(aiCalls).values({
-        projectId: task.projectId,
-        taskId: task.id,
-        job: 'runner',
-        provider: 'runner',
-        model: usage.model,
-        inputTokens: usage.inputTokens ?? null,
-        outputTokens: usage.outputTokens ?? null,
-        costUsd: usage.costUsd.toFixed(6),
-        ok: true,
-        error: null,
-      })
-    }
+    await logRunnerCost(tx, task, usage)
     return { outcome }
   })
+}
+
+/** Reported cost goes to `ai_calls` (job `runner`), so it counts toward the project's monthly budget. */
+async function logRunnerCost(tx: Tx, task: Pick<TaskRow, 'id' | 'projectId'>, usage: SubmitInput['usage'] | null): Promise<void> {
+  if (usage?.costUsd === undefined) return
+  await tx.insert(aiCalls).values({
+    projectId: task.projectId,
+    taskId: task.id,
+    job: 'runner',
+    provider: 'runner',
+    model: usage.model,
+    inputTokens: usage.inputTokens ?? null,
+    outputTokens: usage.outputTokens ?? null,
+    costUsd: usage.costUsd.toFixed(6),
+    ok: true,
+    error: null,
+  })
+}
+
+/**
+ * A submit for a run that already succeeded (an MR effect accepted its task and ended it, or a retried submit):
+ * `already_done`. Usage the runner reports is recorded once, when the run has none yet.
+ */
+async function alreadySucceeded(ctx: WorkCtx, prior: typeof agentRuns.$inferSelect, input: SubmitInput): Promise<{ outcome: SubmitOutcome }> {
+  const task = await lockRunTask(ctx.tx, prior.taskId)
+  const [run] = await ctx.tx.select().from(agentRuns).where(eq(agentRuns.id, prior.id)).for('update')
+  if (input.usage && run && run.usage === null) {
+    await ctx.tx.update(agentRuns).set({ usage: input.usage }).where(eq(agentRuns.id, run.id))
+    await logRunnerCost(ctx.tx, task, input.usage)
+  }
+  return { outcome: 'already_done' }
 }
 
 /**
