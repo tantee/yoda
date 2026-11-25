@@ -14,7 +14,7 @@ import { and, asc, eq, gt, sql } from 'drizzle-orm'
 import { AiRefused, type AiGateway } from '../ai/gateway.js'
 import { invalidState, notFound } from '../auth/plugin.js'
 import type { Tx } from '../db/client.js'
-import { agentRuns, aiCalls, projectRepos, tasks, workItemRepos, workItems } from '../db/schema.js'
+import { agentRuns, aiCalls, events, knowledgeEntries, projectRepos, tasks, workItemRepos, workItems } from '../db/schema.js'
 import { raiseFromRunnerTask } from '../discussions/service.js'
 import { workItemShortId } from '../gitlab/webhook.js'
 import { buildContextPack, PACK_MAX_CHARS, renderCode, renderContextPack, type RunCode } from '../knowledge/context-pack.js'
@@ -199,14 +199,14 @@ export async function submitResult(deps: RunnerDeps, rc: RunnerCtx, input: Submi
   return runWork(deps, asOwner(rc), async (ctx) => {
     const { tx } = ctx
     const [prior] = await tx.select().from(agentRuns).where(eq(agentRuns.id, input.runId))
-    if (prior?.runnerId === rc.runner.id && prior.state === 'succeeded') return alreadySucceeded(ctx, prior, input)
+    if (prior?.runnerId === rc.runner.id && prior.state === 'succeeded') return alreadySucceeded(ctx, rc, prior, input)
     let live: Awaited<ReturnType<typeof lockLiveRun>>
     try {
       live = await lockLiveRun(tx, rc, input.runId, now)
     } catch (err) {
       // Read again after the locks: an MR effect may have ended the run while this submit waited for them.
       const [ended] = await tx.select().from(agentRuns).where(eq(agentRuns.id, input.runId))
-      if (ended?.runnerId === rc.runner.id && ended.state === 'succeeded') return alreadySucceeded(ctx, ended, input)
+      if (ended?.runnerId === rc.runner.id && ended.state === 'succeeded') return alreadySucceeded(ctx, rc, ended, input)
       throw err
     }
     const { run, task, item } = live
@@ -255,16 +255,47 @@ async function logRunnerCost(tx: Tx, task: Pick<TaskRow, 'id' | 'projectId'>, us
   })
 }
 
+const RESULT_TITLE = 'ผลงานของ AI / Runner result'
+
 /**
  * A submit for a run that already succeeded (an MR effect accepted its task and ended it, or a retried submit):
- * `already_done`. Usage the runner reports is recorded once, when the run has none yet.
+ * `already_done`. Usage the runner reports is recorded once, when the run has none yet. When the MR effect ended
+ * the run, the task took no result from it, so the submitted text is kept as a draft `progress` entry on the
+ * work item (once per text), written as the owner.
  */
-async function alreadySucceeded(ctx: WorkCtx, prior: typeof agentRuns.$inferSelect, input: SubmitInput): Promise<{ outcome: SubmitOutcome }> {
+async function alreadySucceeded(
+  ctx: WorkCtx,
+  rc: RunnerCtx,
+  prior: typeof agentRuns.$inferSelect,
+  input: SubmitInput,
+): Promise<{ outcome: SubmitOutcome }> {
   const task = await lockRunTask(ctx.tx, prior.taskId)
   const [run] = await ctx.tx.select().from(agentRuns).where(eq(agentRuns.id, prior.id)).for('update')
   if (input.usage && run && run.usage === null) {
     await ctx.tx.update(agentRuns).set({ usage: input.usage }).where(eq(agentRuns.id, run.id))
     await logRunnerCost(ctx.tx, task, input.usage)
+  }
+  const [byEffect] = await ctx.tx
+    .select({ id: events.id })
+    .from(events)
+    .where(and(eq(events.type, 'run.succeeded'), eq(events.taskId, task.id), eq(events.reason, 'mr_effect'), sql`${events.payload}->>'runId' = ${prior.id}`))
+    .limit(1)
+  if (byEffect) {
+    const [kept] = await ctx.tx
+      .select({ id: knowledgeEntries.id })
+      .from(knowledgeEntries)
+      .where(
+        and(
+          eq(knowledgeEntries.workItemId, task.workItemId),
+          eq(knowledgeEntries.sourceKind, 'ai'),
+          eq(knowledgeEntries.sourceRef, task.id),
+          eq(knowledgeEntries.type, 'progress'),
+          eq(knowledgeEntries.title, RESULT_TITLE),
+          eq(knowledgeEntries.body, input.text),
+        ),
+      )
+      .limit(1)
+    if (!kept) await writeDraft(ctx, rc, task, { type: 'progress', title: RESULT_TITLE, body: input.text })
   }
   return { outcome: 'already_done' }
 }

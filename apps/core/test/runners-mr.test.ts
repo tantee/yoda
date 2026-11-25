@@ -2,7 +2,7 @@ import type { Me } from '@yoda/shared'
 import { and, eq } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { AppDeps } from '../src/app.js'
-import { agentRuns, aiCalls, events, mergeRequests, people, projectMembers, projectRepos, projects, runners, tasks, workItemRepos, workItems } from '../src/db/schema.js'
+import { agentRuns, aiCalls, events, knowledgeEntries, mergeRequests, people, projectMembers, projectRepos, projects, runners, tasks, workItemRepos, workItems } from '../src/db/schema.js'
 import { GitLabClient } from '../src/gitlab/client.js'
 import { InlineJobQueue } from '../src/jobs/queue.js'
 import { claimTask, type RunnerCtx } from '../src/runners/claims.js'
@@ -317,6 +317,11 @@ describe('MR effect and the run', () => {
     expect(await db.select().from(aiCalls)).toHaveLength(1)
     const accepted = await db.select().from(events).where(and(eq(events.taskId, implement.id), eq(events.type, 'task.accepted')))
     expect(accepted).toHaveLength(1)
+    // The summary is kept as a draft progress note on the work item, by the owner, once.
+    const kept = (await db.select().from(knowledgeEntries).where(and(eq(knowledgeEntries.workItemId, itemId), eq(knowledgeEntries.type, 'progress')))).filter(
+      (k) => k.body === 'Implemented',
+    )
+    expect(kept).toEqual([expect.objectContaining({ body: 'Implemented', status: 'draft', sourceKind: 'ai', createdBy: owner.id, sourceRef: implement.id })])
   })
 })
 
