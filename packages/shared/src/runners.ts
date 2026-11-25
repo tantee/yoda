@@ -100,6 +100,48 @@ export const AgentRun = z.object({
 })
 export type AgentRun = z.infer<typeof AgentRun>
 
+/** The latest run of a task, as staff see it on the work item (requesters never see runs). */
+export const TaskRunSummary = z.object({
+  state: AgentRunState,
+  runnerName: z.string(),
+  heartbeatAt: z.string(),
+  branch: z.string().nullable(),
+})
+export type TaskRunSummary = z.infer<typeof TaskRunSummary>
+
+/** Why a claim (or a call on a run) was refused: the `reason` of a 409 `invalid_state`. */
+export const ClaimRefusal = z.enum([
+  'runner_revoked',
+  'runner_paused',
+  'all_runners_paused',
+  'outside_hours',
+  'at_capacity',
+  'personal_unattended_not_allowed',
+  'no_ai',
+  'budget_exceeded',
+  'task_unavailable',
+  'already_claimed',
+  'run_not_active',
+])
+export type ClaimRefusal = z.infer<typeof ClaimRefusal>
+
+// Declared here, not imported from work.ts, which imports this file.
+const TaskTitle = z.object({ th: z.string(), en: z.string() })
+
+/** A task a runner may claim. */
+export const AvailableTask = z.object({
+  taskId: uuid,
+  title: TaskTitle,
+  workItemId: uuid,
+  workItemTitle: z.string(),
+  projectName: z.string(),
+  capability: RunnerCapability,
+  stepKey: z.string(),
+  priority: z.enum(['low', 'normal', 'high', 'urgent']),
+  createdAt: z.string(),
+})
+export type AvailableTask = z.infer<typeof AvailableTask>
+
 // MCP tool inputs, shared by core's MCP server and the runner.
 
 export const ListTasksInput = z.object({ capabilities: z.array(RunnerCapability).optional() })

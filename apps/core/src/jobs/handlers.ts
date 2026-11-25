@@ -5,6 +5,7 @@ import { runMrEffect } from '../gitlab/effects.js'
 import { reconcileMergeRequests } from '../gitlab/reconcile.js'
 import { syncIssues } from '../gitlab/sync.js'
 import { embedEntry } from '../knowledge/service.js'
+import { expireLeases } from '../runners/claims.js'
 import { secretaryChat } from '../secretary/chat.js'
 import { secretaryEvent } from '../secretary/events.js'
 import { secretarySweep } from '../secretary/sweep.js'
@@ -20,4 +21,5 @@ export async function registerJobHandlers(deps: Pick<AppDeps, 'db' | 'ai' | 'bus
   await deps.jobs.work('gitlab-issue-sync', (run) => syncIssues(deps, run))
   await deps.jobs.work('gitlab-mr-effect', (run) => runMrEffect(deps, run))
   await deps.jobs.work('gitlab-mr-reconcile', (run) => reconcileMergeRequests(deps, run))
+  await deps.jobs.work('runner-lease-sweep', () => expireLeases(deps))
 }

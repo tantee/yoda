@@ -1,6 +1,6 @@
 import { PgBoss } from 'pg-boss'
 
-export type JobName = 'embed-entry' | 'draft-task' | 'secretary-chat' | 'secretary-event' | 'secretary-sweep' | 'discussion-brief' | 'gitlab-issue-sync' | 'gitlab-mr-effect' | 'gitlab-mr-reconcile'
+export type JobName = 'embed-entry' | 'draft-task' | 'secretary-chat' | 'secretary-event' | 'secretary-sweep' | 'discussion-brief' | 'gitlab-issue-sync' | 'gitlab-mr-effect' | 'gitlab-mr-reconcile' | 'runner-lease-sweep'
 export const JOB_NAMES: readonly JobName[] = [
   'embed-entry',
   'draft-task',
@@ -11,10 +11,11 @@ export const JOB_NAMES: readonly JobName[] = [
   'gitlab-issue-sync',
   'gitlab-mr-effect',
   'gitlab-mr-reconcile',
+  'runner-lease-sweep',
 ]
 
 /** Recurring jobs (cron, Asia/Bangkok): pg-boss sends them; tests run them with `InlineJobQueue.runScheduled`. */
-export const SCHEDULES: Partial<Record<JobName, string>> = { 'secretary-sweep': '*/15 * * * *' }
+export const SCHEDULES: Partial<Record<JobName, string>> = { 'secretary-sweep': '*/15 * * * *', 'runner-lease-sweep': '* * * * *' }
 
 /** `attempt` starts at 1; with RETRY_LIMIT 2 the 3rd attempt is final. */
 /** `signal` (pg-boss) aborts when the job expires or is cancelled; the inline test queue omits it. */
@@ -38,7 +39,8 @@ const QUEUE_OPTIONS = { retryLimit: RETRY_LIMIT, retryDelay: RETRY_DELAY_SECONDS
  * queues, so at most one job per task / discussion is queued, retrying or active; a duplicate send is dropped
  * by pg-boss. `gitlab-issue-sync` (= work item id) is `stately`: one active and one queued per work item, so a
  * change made during a running sync is still picked up by the next one; `gitlab-mr-reconcile` (= work item id)
- * likewise, so the sweep and new code-change tasks never pile up reconciles of one item. The policy only applies when the
+ * likewise, so the sweep and new code-change tasks never pile up reconciles of one item. `runner-lease-sweep` is
+ * `exclusive` too, so a slow sweep never overlaps the next minute's. The policy only applies when the
  * queue is first created (pg-boss cannot change an existing queue's policy).
  */
 export const POLICY: Partial<Record<JobName, 'exclusive' | 'stately'>> = {
@@ -46,6 +48,7 @@ export const POLICY: Partial<Record<JobName, 'exclusive' | 'stately'>> = {
   'discussion-brief': 'exclusive',
   'gitlab-issue-sync': 'stately',
   'gitlab-mr-reconcile': 'stately',
+  'runner-lease-sweep': 'exclusive',
 }
 export const SINGLETON: readonly JobName[] = ['draft-task', 'discussion-brief', 'gitlab-issue-sync', 'gitlab-mr-reconcile']
 

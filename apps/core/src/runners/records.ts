@@ -101,10 +101,16 @@ export async function reopenTaskAfterRun(tx: Tx, task: typeof tasks.$inferSelect
 }
 
 /**
- * Revokes a runner: its token stops working and its running runs are released. Locks follow the global order
- * (projects, then work items, then tasks, each sorted); the runner row is updated last.
+ * Revokes a runner in two transactions. The first sets `revoked_at`: a claim in flight holds the runner row
+ * FOR SHARE, so this waits for it to commit, and any later claim sees the revoke and is refused. The second
+ * then releases every running run (including one claimed just before), locking in the global order:
+ * projects, then work items, then tasks, each sorted.
  */
 export async function revokeRunner(deps: WorkDeps, me: Me, runnerId: string): Promise<void> {
+  await deps.db
+    .update(runners)
+    .set({ revokedAt: sql`coalesce(${runners.revokedAt}, now())` })
+    .where(eq(runners.id, runnerId))
   await runWork(deps, { id: me.id, kind: 'person' }, async (ctx) => {
     const { tx } = ctx
     const running = await tx
@@ -118,30 +124,46 @@ export async function revokeRunner(deps: WorkDeps, me: Me, runnerId: string): Pr
     if (running.length > 0) {
       await tx.select({ id: tasks.id }).from(tasks).where(inArray(tasks.id, sorted(running.map((r) => r.taskId)))).orderBy(asc(tasks.id)).for('update')
     }
-    for (const r of running) await releaseRun(ctx, r.runId, r.taskId)
-    await tx
-      .update(runners)
-      .set({ revokedAt: sql`coalesce(${runners.revokedAt}, now())` })
-      .where(eq(runners.id, runnerId))
+    for (const r of running) {
+      await endRun(ctx, r.runId, { state: 'released', event: 'run.released', reason: 'runner_revoked' })
+    }
   })
 }
 
-async function releaseRun(ctx: WorkCtx, runId: string, taskId: string): Promise<void> {
+/**
+ * Ends a running run (`released`, `failed` or `expired`) and records its event; the task goes back to the
+ * queue when it is an unassigned AI task (see `reopenTaskAfterRun`). The run's task must already be locked.
+ * `where` narrows the update (e.g. "the lease has passed"). Returns the ended run, or null when it was not
+ * running (anymore).
+ */
+export async function endRun(
+  ctx: WorkCtx,
+  runId: string,
+  opts: {
+    state: 'released' | 'failed' | 'expired'
+    event: 'run.released' | 'run.failed' | 'run.expired'
+    reason: string
+    error?: string | null
+    where?: SQL
+    payload?: Record<string, unknown>
+  },
+): Promise<typeof agentRuns.$inferSelect | null> {
   const [run] = await ctx.tx
     .update(agentRuns)
-    .set({ state: 'released', endedAt: sql`now()` })
-    .where(and(eq(agentRuns.id, runId), eq(agentRuns.state, 'running')))
+    .set({ state: opts.state, endedAt: sql`now()`, error: opts.error ?? null })
+    .where(and(eq(agentRuns.id, runId), eq(agentRuns.state, 'running'), opts.where))
     .returning()
-  if (!run) return
-  const [task] = await ctx.tx.select().from(tasks).where(eq(tasks.id, taskId))
-  if (!task) return
+  if (!run) return null
+  const [task] = await ctx.tx.select().from(tasks).where(eq(tasks.id, run.taskId))
+  if (!task) return run
   await reopenTaskAfterRun(ctx.tx, task)
   await recordEvent(ctx, {
-    type: 'run.released',
+    type: opts.event,
     projectId: task.projectId,
     workItemId: task.workItemId,
     taskId: task.id,
-    reason: 'runner_revoked',
-    payload: { runId: run.id, runnerId: run.runnerId },
+    reason: opts.reason,
+    payload: { runId: run.id, runnerId: run.runnerId, ...opts.payload },
   })
+  return run
 }

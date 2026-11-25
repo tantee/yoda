@@ -28,6 +28,8 @@ export class HttpError extends Error {
         | 'issue_not_found'
         | 'gitlab_unavailable'
         | 'empty_patch'
+      /** Machine-readable detail for some errors (runner claims: why `invalid_state`). */
+      reason?: string
     },
   ) {
     super(body.error)
@@ -40,7 +42,8 @@ export const lastAdmin = () => new HttpError(409, { error: 'last_admin' })
 export const lastPm = () => new HttpError(409, { error: 'last_pm' })
 export const notStaff = () => new HttpError(422, { error: 'not_staff' })
 export const forbidden = () => new HttpError(403, { error: 'forbidden' })
-export const invalidState = () => new HttpError(409, { error: 'invalid_state' })
+export const invalidState = (reason?: string) =>
+  new HttpError(409, reason ? { error: 'invalid_state', reason } : { error: 'invalid_state' })
 export const notMember = () => new HttpError(422, { error: 'not_member' })
 export const decisionRequired = () => new HttpError(422, { error: 'decision_required' })
 export const tooLarge = () => new HttpError(413, { error: 'too_large' })

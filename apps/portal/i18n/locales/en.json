@@ -205,6 +205,7 @@
       "no_candidate": "No eligible person found",
       "budget_exceeded": "Monthly AI budget reached",
       "ai_failed": "The AI could not produce a draft",
+      "runner_failed": "The AI runners could not finish it",
       "ai_unavailable": "AI is not configured",
       "no_ai": "This project does not use AI",
       "reopened": "Work item reopened to an earlier step",

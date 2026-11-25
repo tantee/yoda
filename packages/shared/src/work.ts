@@ -3,6 +3,7 @@ import { ProjectRole } from './projects.js'
 import { Attachment } from './knowledge.js'
 import { ActorKind } from './actors.js'
 import { Proposal } from './proposals.js'
+import { TaskRunSummary } from './runners.js'
 
 export { ActorKind }
 
@@ -135,6 +136,8 @@ export const Task = z.object({
   /** 'drafting' while an AI draft is pending, 'failed' (see aiFailReason) when it needs a person; null otherwise. */
   aiStatus: z.enum(['drafting', 'failed']).nullable(),
   aiFailReason: z.string().nullable(),
+  /** Work item detail (staff only): the task's latest runner run, null when none. Absent elsewhere. */
+  run: TaskRunSummary.nullable().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
 })

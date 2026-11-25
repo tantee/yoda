@@ -875,7 +875,10 @@ export async function failAiTask(ctx: WorkCtx, taskId: string, reason: string): 
   })
 }
 
-/** PM/admin: queue another drafting attempt for an open, unassigned `draft-text` AI task. */
+/**
+ * PM/admin: try the AI again on an open, unassigned AI task. A `draft-text` task gets another drafting job;
+ * a runner task that the runners gave up on (`ai.failed`) is offered to runners again, with fresh strikes.
+ */
 export async function retryAiTask(ctx: WorkCtx, me: Me, taskId: string): Promise<void> {
   const { tx } = ctx
   const { item, task } = await lockTask(tx, taskId)
@@ -883,20 +886,22 @@ export async function retryAiTask(ctx: WorkCtx, me: Me, taskId: string): Promise
   if (item.state !== 'active' || !awaitingAi(task)) throw invalidState()
   const def = await definitionOf(tx, item)
   const templateTask = def.steps.find((s) => s.key === task.stepKey)?.tasks.find((t) => t.key === task.templateTaskKey)
-  if (templateTask?.capability !== 'draft-text') throw invalidState()
+  if (!templateTask?.capability) throw invalidState()
+  const drafted = templateTask.capability === 'draft-text'
   const [proj] = await tx.select({ noAi: projects.noAi }).from(projects).where(eq(projects.id, task.projectId))
   if (!proj || proj.noAi) throw invalidState()
   // After a failed draft, or when no draft was ever attempted (e.g. its job was lost). A pending ai.retried
   // means a job is already queued. A duplicate job is harmless: the draft-task queue keeps one per task.
+  // Runner tasks are listed until they fail, so only a failure can be retried.
   const [last] = await tx
     .select({ type: events.type })
     .from(events)
     .where(and(eq(events.taskId, taskId), like(events.type, 'ai.%')))
     .orderBy(desc(events.seq))
     .limit(1)
-  if (last && last.type !== 'ai.failed') throw invalidState()
+  if (drafted ? last && last.type !== 'ai.failed' : last?.type !== 'ai.failed') throw invalidState()
   await recordEvent(ctx, { type: 'ai.retried', projectId: task.projectId, workItemId: task.workItemId, taskId })
-  ctx.jobs.push({ name: 'draft-task', id: taskId })
+  if (drafted) ctx.jobs.push({ name: 'draft-task', id: taskId })
 }
 
 /**
