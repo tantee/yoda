@@ -78,6 +78,14 @@ async function canRead(db: Conn, me: Me, row: { projectId: string | null }): Pro
   return row.projectId === null || canSeeProject(db, me, row.projectId)
 }
 
+/**
+ * SQL condition for anything sent to the AI: not an unreviewed GitLab draft (comment text from developers is
+ * untrusted input until staff confirm it).
+ */
+export function notGitLabDraft(): SQL {
+  return sql`not (${knowledgeEntries.sourceKind} = 'gitlab' and ${knowledgeEntries.status} = 'draft')`
+}
+
 /** SQL condition: entries `me` may read. */
 export function visibleTo(me: Me): SQL | undefined {
   if (me.isAdmin) return undefined
@@ -314,6 +322,7 @@ export async function embedEntry(deps: { db: Db; ai: Pick<AiGateway, 'embed'> },
       noAi: knowledgeEntries.noAi,
       attachmentNoAi: attachments.noAi,
       supersededAt: knowledgeEntries.supersededAt,
+      gitlabDraft: sql<boolean>`not ${notGitLabDraft()}`,
     })
     .from(knowledgeEntries)
     .leftJoin(attachments, eq(attachments.id, knowledgeEntries.attachmentId))
@@ -322,7 +331,8 @@ export async function embedEntry(deps: { db: Db; ai: Pick<AiGateway, 'embed'> },
 
   const texts = chunkText(`${row.title}\n\n${row.body}`)
   let vectors: number[][] | null = null
-  if (texts.length && !row.noAi && !row.attachmentNoAi) {
+  // Confirming (or editing) the entry re-queues this job, so a reviewed GitLab note is embedded then.
+  if (texts.length && !row.noAi && !row.attachmentNoAi && !row.gitlabDraft) {
     try {
       vectors = await ai.embed({ projectId: row.projectId, texts })
     } catch (err) {
@@ -337,14 +347,14 @@ export async function embedEntry(deps: { db: Db; ai: Pick<AiGateway, 'embed'> },
   await db.transaction(async (tx) => {
     // Serialize concurrent re-chunks of one entry; recheck it is still there.
     const [locked] = await tx
-      .select({ noAi: knowledgeEntries.noAi, attachmentNoAi: attachments.noAi, supersededAt: knowledgeEntries.supersededAt })
+      .select({ noAi: knowledgeEntries.noAi, attachmentNoAi: attachments.noAi, supersededAt: knowledgeEntries.supersededAt, gitlabDraft: sql<boolean>`not ${notGitLabDraft()}` })
       .from(knowledgeEntries)
       .leftJoin(attachments, eq(attachments.id, knowledgeEntries.attachmentId))
       .where(eq(knowledgeEntries.id, row.id))
       .for('update', { of: knowledgeEntries })
     if (!locked || locked.supersededAt) return
     // A flag may have been set while embedding ran; never keep vectors for noAi content.
-    if (locked.noAi || locked.attachmentNoAi) vectors = null
+    if (locked.noAi || locked.attachmentNoAi || locked.gitlabDraft) vectors = null
     await tx.delete(knowledgeChunks).where(eq(knowledgeChunks.entryId, row.id))
     if (!texts.length) return
     await tx.insert(knowledgeChunks).values(

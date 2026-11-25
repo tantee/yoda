@@ -7,7 +7,7 @@ import { HttpError, notFound } from '../auth/plugin.js'
 import type { Db, Tx } from '../db/client.js'
 import { attachments, conversations, knowledgeEntries, people, projects, workItems } from '../db/schema.js'
 import { codeSummary, withoutGitLabLinks } from '../gitlab/repos.js'
-import { createEntry } from '../knowledge/service.js'
+import { createEntry, notGitLabDraft } from '../knowledge/service.js'
 import { searchKnowledge } from '../knowledge/search.js'
 import { createProposal, supersedePending } from '../proposals/service.js'
 import type { WorkCtx } from '../work/context.js'
@@ -527,7 +527,7 @@ async function projectNames(db: Db, ids: (string | null)[]): Promise<Map<string,
   return new Map(rows.map((r) => [r.id, r.name]))
 }
 
-/** Latest progress notes of a work item that may go to the AI (no noAi entries or entries of noAi files). */
+/** Latest progress notes of a work item that may go to the AI (no noAi entries, entries of noAi files or unreviewed GitLab notes). */
 export async function progressNotes(db: Db, workItemId: string, limit: number): Promise<{ title: string; text: string }[]> {
   const rows = await db
     .select({ title: knowledgeEntries.title, body: knowledgeEntries.body })
@@ -537,6 +537,7 @@ export async function progressNotes(db: Db, workItemId: string, limit: number): 
         eq(knowledgeEntries.workItemId, workItemId),
         eq(knowledgeEntries.type, 'progress'),
         isNull(knowledgeEntries.supersededAt),
+        notGitLabDraft(),
         sql`not ${knowledgeEntries.noAi}`,
         sql`not exists (select 1 from attachments a where a.id = ${knowledgeEntries.attachmentId} and a.no_ai)`,
       ),

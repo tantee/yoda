@@ -6,6 +6,10 @@ import { events, gitlabDeliveries, gitlabSettings, knowledgeEntries, mergeReques
 import { GitLabClient } from '../src/gitlab/client.js'
 import { PORTAL_NOTE_MARKER } from '../src/gitlab/issue-section.js'
 import { closingRefs, sanitizeNote } from '../src/gitlab/webhook.js'
+import { SYSTEM_ME } from '../src/knowledge/context-pack.js'
+import { searchKnowledge } from '../src/knowledge/search.js'
+import { summaryMaterial } from '../src/secretary/events.js'
+import { progressNotes } from '../src/secretary/tools.js'
 import { InlineJobQueue } from '../src/jobs/queue.js'
 import type { JobName } from '../src/jobs/queue.js'
 import { FakeGitLab, startFakeGitLab } from './fake-gitlab.js'
@@ -266,6 +270,25 @@ describe('gitlab webhook', () => {
       await hook(note({ iid: 12, userId: 7, username: 'somchai.dev', text }))
       expect(await app.deps.db.select().from(knowledgeEntries).where(eq(knowledgeEntries.sourceKind, 'gitlab'))).toHaveLength(1)
       expect(await eventsOf('gitlab.note')).toHaveLength(1)
+    })
+
+    it('keeps developer notes out of AI prompts until staff review them', async () => {
+      const id = await itemInDev()
+      await hook(note({ iid: 12, userId: 7, username: 'somchai.dev', text: 'ใช้ index ใหม่ใน query ผลแล็บ' }))
+      const [entry] = await app.deps.db.select().from(knowledgeEntries).where(eq(knowledgeEntries.sourceKind, 'gitlab'))
+      expect(entry).toMatchObject({ status: 'draft', noAi: true })
+      // Even with the flag cleared, an unreviewed GitLab draft stays out of every AI input.
+      await app.deps.db.update(knowledgeEntries).set({ noAi: false }).where(eq(knowledgeEntries.id, entry!.id))
+      const search = (forAi: boolean) => searchKnowledge(app.deps.db, SYSTEM_ME, { query: 'index ใหม่', workItemId: id, forAi })
+      expect((await progressNotes(app.deps.db, id, 10)).map((n) => n.text)).not.toContainEqual(expect.stringContaining('index ใหม่'))
+      expect(await summaryMaterial(app.deps.db, id)).not.toContain('index ใหม่')
+      expect((await search(true)).map((h) => h.id)).not.toContain(entry!.id)
+      // Staff still find it themselves.
+      expect((await search(false)).map((h) => h.id)).toContain(entry!.id)
+      // Confirmed by staff: it may reach the AI.
+      await app.deps.db.update(knowledgeEntries).set({ status: 'confirmed' }).where(eq(knowledgeEntries.id, entry!.id))
+      expect(await summaryMaterial(app.deps.db, id)).toContain('index ใหม่')
+      expect((await search(true)).map((h) => h.id)).toContain(entry!.id)
     })
 
     it('ignores the portal\'s own notes (by marker, and by the cached bot id) and notes on issues the portal did not create', async () => {

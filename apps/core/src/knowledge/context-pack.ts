@@ -5,6 +5,7 @@ import type { Db } from '../db/client.js'
 import { attachments, knowledgeEntries, projects, tasks, workItems } from '../db/schema.js'
 import { tasksWithContext } from '../work/queries.js'
 import { searchKnowledge } from './search.js'
+import { notGitLabDraft } from './service.js'
 
 const DEFAULT_MAX_CHARS = 60_000
 const PROGRESS_LIMIT = 10
@@ -22,6 +23,7 @@ export const SYSTEM_ME: Me = { id: '00000000-0000-0000-0000-000000000000', usern
 
 /** SQL conditions that keep anything flagged "do not send to AI" out of a prompt. */
 const sendable: SQL[] = [
+  notGitLabDraft(),
   sql`not ${knowledgeEntries.noAi}`,
   sql`not exists (select 1 from attachments a where a.id = ${knowledgeEntries.attachmentId} and a.no_ai)`,
   sql`not exists (select 1 from projects p where p.id = ${knowledgeEntries.projectId} and p.no_ai)`,

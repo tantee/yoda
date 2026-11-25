@@ -373,14 +373,15 @@ async function onNote(ctx: WorkCtx, hook: z.infer<typeof NoteHook>, botUserId: n
       taskId: null,
       payload: { repoId: repo.id, path: repo.pathWithNamespace, issueIid: hook.issue.iid, noteId: a.id, author, excerpt: clip(text, NOTE_EXCERPT) },
     })
-    // A draft for staff to review; nothing (secretary, AI) acts on it automatically.
+    // A draft for staff to review. Developer comment text never reaches an AI prompt or embedding as is: noAi,
+    // and unreviewed GitLab drafts are excluded from every AI input even if the flag is cleared.
     await createEntry(ctx, null, {
       scope: 'work_item',
       workItemId,
       type: 'progress',
       title: clip(`GitLab ${repo.pathWithNamespace}#${hook.issue.iid}: @${author}`, 300),
       body: clip(text, NOTE_BODY),
-      noAi: false,
+      noAi: true,
       status: 'draft',
       sourceKind: 'gitlab',
       sourceRef,
