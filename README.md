@@ -109,6 +109,13 @@ The token and secret come only from the deploy environment; never commit them.
 - Trigger: **Merge request events**, **Pipeline events**, **Comments** (notes)
 - Keep SSL verification enabled for an HTTPS portal.
 
+GitLab does **not** retry a failed delivery by itself, and it disables a webhook that keeps failing. If
+the portal was down or answered with an error, open the webhook's **Recent events** in GitLab and use
+**Resend request** for each failed delivery (re-enable the webhook first if GitLab disabled it). Resending
+a delivery that was already processed is harmless: MR states, notes and pipelines are recorded once. As a safety net, core also pulls the
+merge requests related to each portal issue when a code-change task starts and on every secretary sweep
+(every 15 minutes) for work items whose code is in progress or under review.
+
 The admin GitLab page shows whether core is configured, whether GitLab is reachable, the bot user and
 the time of the last webhook.
 

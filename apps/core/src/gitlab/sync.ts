@@ -6,7 +6,7 @@ import type { JobRun } from '../jobs/queue.js'
 import { recordEvent, runWork, type WorkCtx, type WorkDeps } from '../work/context.js'
 import { templateById } from '../workflow/seed.js'
 import { GitLabError, type GitLabClient } from './client.js'
-import { changedSections, mergeSection, renderIssueSection, sectionHash, workItemMarker, type IssueSectionInput } from './issue-section.js'
+import { changedSections, mergeSection, PORTAL_NOTE_MARKER, renderIssueSection, sectionHash, workItemMarker, type IssueSectionInput } from './issue-section.js'
 
 export type SyncDeps = WorkDeps & { config: WorkDeps['config'] & { portalUrl: string }; gitlab: GitLabClient | null }
 
@@ -185,7 +185,7 @@ async function syncOnce(deps: SyncDeps, run: JobRun): Promise<void> {
         const note = heads.length
           ? `ปรับปรุงจากพอร์ทัล / Updated from the portal: ${heads.join(', ')}`
           : 'ปรับปรุงจากพอร์ทัล / Updated from the portal'
-        await gitlab.addIssueNote(l.repo.gitlabProjectId, own.iid, note)
+        await gitlab.addIssueNote(l.repo.gitlabProjectId, own.iid, `${note}\n\n${PORTAL_NOTE_MARKER}`)
       }
       synced.push({ l, hash, pushed: merged !== body || created.has(l.repo.id) })
     } catch (err) {

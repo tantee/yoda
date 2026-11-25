@@ -351,4 +351,66 @@ describe('merge request effects', () => {
       expect(sent).toContainEqual({ name: 'gitlab-mr-effect', id: (await mrRow(5)).id })
     })
   })
+
+  describe('reconcile (lost webhook deliveries)', () => {
+    beforeEach(() => setup({ repos: [11] }))
+
+    /** The portal's issue in project 11 (created by the Dev step's issue sync). */
+    const issueIid = async (id: string) => (await app.deps.db.select().from(workItemRepos).where(eq(workItemRepos.workItemId, id)))[0]!.issueIid!
+    const relate = (id: string, iid: number, state: string, issue: number) =>
+      fake.relateMergeRequest(11, issue, { iid, title: `Fix ${iid}`, state, source_branch: `yoda/${id.slice(0, 8)}-fix-${iid}`, description: `Closes #${issue}` })
+
+    it('a merge whose webhook was lost is picked up by the sweep and approves the review', async () => {
+      const id = await itemInDev()
+      await mrHook({ workItemId: id })
+      expect((await latest(id, 'implement'))!.state).toBe('accepted')
+      const review = (await latest(id, 'review-code'))!
+      await submit(id, 'draft-tests', dev, { text: 'กรณีทดสอบ' })
+      // Merged in GitLab; the merge_request delivery never arrived.
+      relate(id, 5, 'merged', await issueIid(id))
+      sent.length = 0
+      await jobs.runScheduled('secretary-sweep')
+      await jobs.drain()
+      expect(sent.filter((j) => j.name === 'gitlab-mr-reconcile')).toEqual([{ name: 'gitlab-mr-reconcile', id }])
+      expect(fake.requests.some((r) => r.method === 'GET' && r.path.endsWith('/related_merge_requests'))).toBe(true)
+      expect((await mrRow(5)).state).toBe('merged')
+      const approved = (await latest(id, 'review-code'))!
+      expect(approved.id).toBe(review.id)
+      expect(approved.state).toBe('accepted')
+      expect(await accepted(id, 'merged_in_gitlab')).toHaveLength(1)
+      // A second sweep changes nothing (no new event, no second acceptance).
+      const merged = (await app.deps.db.select().from(events).where(and(eq(events.workItemId, id), eq(events.type, 'gitlab.mr_merged')))).length
+      await jobs.runScheduled('secretary-sweep')
+      await jobs.drain()
+      expect((await app.deps.db.select().from(events).where(and(eq(events.workItemId, id), eq(events.type, 'gitlab.mr_merged'))))).toHaveLength(merged)
+      expect(await accepted(id, 'merged_in_gitlab')).toHaveLength(1)
+    })
+
+    it('an MR opened before the Dev step accepts the implement task once Dev starts', async () => {
+      const res = await call(pm, 'POST', `/projects/${projectId}/work-items`, { title: 'แก้รายงานแล็บ', description: 'ผลแล็บไม่แสดง', templateKey: 'bug-fix' })
+      const id = (res.json() as { id: string }).id
+      // Opened on the work item's branch while the item is still in intake: linked, but nothing to accept yet.
+      await mrHook({ workItemId: id })
+      expect((await mrRow(5)).workItemId).toBe(id)
+      expect(await accepted(id, 'mr_opened_in_gitlab')).toHaveLength(0)
+      await submit(id, 'accept-bug', pm, approve)
+      await acceptStepAdvance(app, pm, id)
+      await jobs.drain()
+      expect((await detail(id)).currentStepKey).toBe('dev')
+      expect(sent).toContainEqual({ name: 'gitlab-mr-reconcile', id })
+      expect((await latest(id, 'implement'))!.state).toBe('accepted')
+      expect(await accepted(id, 'mr_opened_in_gitlab')).toHaveLength(1)
+    })
+
+    it('an MR GitLab relates to the issue is recorded and linked; GitLab down → the job fails and retries', async () => {
+      const id = await itemInDev()
+      relate(id, 8, 'opened', await issueIid(id))
+      fake.failNext(503, 3)
+      await jobs.send('gitlab-mr-reconcile', { id })
+      await jobs.drain()
+      // Three GETs failed (the client's own retries), the job's retry succeeded.
+      expect((await mrRow(8)).workItemId).toBe(id)
+      expect((await latest(id, 'implement'))!.state).toBe('accepted')
+    })
+  })
 })

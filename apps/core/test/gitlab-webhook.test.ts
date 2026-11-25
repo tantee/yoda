@@ -4,6 +4,7 @@ import { and, eq } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { events, gitlabDeliveries, gitlabSettings, knowledgeEntries, mergeRequests, notifications } from '../src/db/schema.js'
 import { GitLabClient } from '../src/gitlab/client.js'
+import { PORTAL_NOTE_MARKER } from '../src/gitlab/issue-section.js'
 import { closingRefs, sanitizeNote } from '../src/gitlab/webhook.js'
 import { InlineJobQueue } from '../src/jobs/queue.js'
 import type { JobName } from '../src/jobs/queue.js'
@@ -267,8 +268,15 @@ describe('gitlab webhook', () => {
       expect(await eventsOf('gitlab.note')).toHaveLength(1)
     })
 
-    it('ignores notes by the bot and notes on issues the portal did not create', async () => {
+    it('ignores the portal\'s own notes (by marker, and by the cached bot id) and notes on issues the portal did not create', async () => {
       await itemInDev()
+      // Bot id not known yet: the portal's note marker is enough.
+      expect(app.deps.gitlab!.botUser).toBeNull()
+      const marked = await hook(note({ iid: 12, userId: BOT_ID, username: 'yoda-bot', text: `ปรับปรุงจากพอร์ทัล\n\n${PORTAL_NOTE_MARKER}`, id: 900 }))
+      expect(marked.json()).toEqual({ ok: true, ignored: true })
+      // Once cached (boot or the admin status page), any note by the bot is skipped.
+      expect((await call(admin, 'GET', '/admin/gitlab')).json()).toMatchObject({ reachable: true, botUsername: 'yoda-bot' })
+      expect(app.deps.gitlab!.botUser).toEqual({ id: BOT_ID, username: 'yoda-bot' })
       const bot = await hook(note({ iid: 12, userId: BOT_ID, username: 'yoda-bot', text: 'ปรับปรุงจากพอร์ทัล', id: 901 }))
       expect(bot.json()).toEqual({ ok: true, ignored: true })
       const other = await hook(note({ iid: 3, userId: 7, username: 'somchai.dev', text: 'hello', id: 902 }))
@@ -277,15 +285,14 @@ describe('gitlab webhook', () => {
       expect(await app.deps.db.select().from(knowledgeEntries).where(eq(knowledgeEntries.sourceKind, 'gitlab'))).toHaveLength(0)
     })
 
-    it('answers 503 without marking the delivery seen when the bot user cannot be resolved', async () => {
+    it('handles notes without calling GitLab, even when GitLab is down', async () => {
       const id = await itemInDev()
-      fake.failNext(500, 3)
-      const payload = note({ iid: 12, userId: 7, username: 'somchai.dev', text: 'ลองใหม่' })
-      const res = await hook(payload, { uuid: 'fake-uuid-retry' })
-      expect(res.statusCode).toBe(503)
-      expect(await app.deps.db.select().from(gitlabDeliveries)).toHaveLength(0)
-      const retry = await hook(payload, { uuid: 'fake-uuid-retry' })
-      expect(retry.json()).toEqual({ ok: true })
+      const before = fake.requests.length
+      fake.failNext(500, 10)
+      const res = await hook(note({ iid: 12, userId: 7, username: 'somchai.dev', text: 'ลองใหม่' }))
+      expect(res.statusCode).toBe(200)
+      expect(res.json()).toEqual({ ok: true })
+      expect(fake.requests.length).toBe(before)
       expect((await eventsOf('gitlab.note'))[0]!.workItemId).toBe(id)
     })
 

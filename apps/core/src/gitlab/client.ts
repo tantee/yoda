@@ -41,12 +41,27 @@ function retryAfterMs(res: Response): number | null {
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 
+export type GitLabMergeRequest = {
+  project_id: number
+  iid: number
+  title: string
+  web_url: string
+  state: string
+  source_branch: string
+  description: string
+}
+
 export class GitLabClient {
   private readonly api: string
   private readonly token: string
   private readonly fetchFn: typeof fetch
   private readonly timeoutMs: number
   private readonly retryBaseMs: number
+  /**
+   * The bot user, once any `currentUser()` call has succeeded (at boot, or the admin status page). The webhook
+   * reads only this cache and never calls GitLab itself.
+   */
+  botUser: { id: number; username: string } | null = null
 
   constructor(opts: GitLabClientOptions) {
     this.api = `${opts.baseUrl.replace(/\/+$/, '')}/api/v4`
@@ -106,8 +121,10 @@ export class GitLabClient {
     return encodeURIComponent(String(id))
   }
 
-  currentUser(): Promise<{ id: number; username: string }> {
-    return this.request('GET', '/user')
+  async currentUser(): Promise<{ id: number; username: string }> {
+    const u = await this.request<{ id: number; username: string }>('GET', '/user')
+    this.botUser = { id: u.id, username: u.username }
+    return u
   }
 
   getProject(pathOrId: string | number): Promise<{ id: number; path_with_namespace: string; web_url: string; default_branch: string }> {
@@ -138,6 +155,15 @@ export class GitLabClient {
     )
     const hit = list.find((i) => (i.description ?? '').includes(marker))
     return hit ? { iid: hit.iid, web_url: hit.web_url, description: hit.description ?? '' } : null
+  }
+
+  /** Merge requests GitLab relates to the issue (closing or mentioning it), from any project the bot can see. */
+  async relatedMergeRequests(projectId: number, iid: number): Promise<GitLabMergeRequest[]> {
+    const list = await this.request<(Omit<GitLabMergeRequest, 'description'> & { description: string | null })[]>(
+      'GET',
+      `/projects/${this.proj(projectId)}/issues/${iid}/related_merge_requests?per_page=100`,
+    )
+    return list.map((m) => ({ ...m, description: m.description ?? '' }))
   }
 
   async importIssue(projectId: number, iid: number): Promise<{ title: string; description: string; web_url: string; iid: number }> {

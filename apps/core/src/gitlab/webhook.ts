@@ -5,7 +5,7 @@ import { z } from 'zod'
 import type { Tx } from '../db/client.js'
 import { events, gitlabDeliveries, gitlabSettings, knowledgeEntries, mergeRequests, projectRepos, tasks, workItemRepos, workItems } from '../db/schema.js'
 import { createEntry } from '../knowledge/service.js'
-import { stripCommentMarkers } from './issue-section.js'
+import { PORTAL_NOTE_MARKER, stripCommentMarkers } from './issue-section.js'
 import { notify } from '../notifications/service.js'
 import { recordEvent, runWork, type WorkCtx, type WorkDeps } from '../work/context.js'
 import { templateById } from '../workflow/seed.js'
@@ -102,11 +102,6 @@ const NoteHook = z.object({
   issue: z.object({ iid: z.number().int() }).nullish(),
 })
 
-/** Whether handling this payload needs the bot's GitLab user id (resolved by the caller, outside any transaction). */
-export function needsBotUser(body: unknown): boolean {
-  return typeof body === 'object' && body !== null && (body as { object_kind?: unknown }).object_kind === 'note'
-}
-
 const MR_STATES: Record<string, MergeRequestState> = { opened: 'opened', locked: 'opened', reopened: 'opened', merged: 'merged', closed: 'closed' }
 const PIPELINE_STATES: Record<string, PipelineStatus> = {
   created: 'pending',
@@ -126,7 +121,9 @@ const lockKey = (ctx: WorkCtx, key: string) => ctx.tx.execute(sql`select pg_advi
 
 /**
  * Handles one verified delivery. The event UUID is stored in the same transaction as its effects, so a
- * delivery that fails is not marked seen and GitLab's retry is processed. `botUserId`: notes by it are ignored.
+ * delivery that failed is not marked seen and an admin's "Resend request" in GitLab is processed (GitLab does
+ * not retry failed deliveries by itself). `botUserId`: the bot's id when known (cached, never fetched here);
+ * notes by it, and notes carrying the portal's note marker, are ignored.
  */
 export async function handleWebhook(deps: WorkDeps, eventUuid: string, body: unknown, botUserId: number | null): Promise<WebhookResult> {
   return runWork(deps, { id: null, kind: 'system' }, async (ctx) => {
@@ -183,14 +180,44 @@ const MR_EVENT = { opened: 'gitlab.mr_opened', merged: 'gitlab.mr_merged', close
 
 async function onMergeRequest(ctx: WorkCtx, hook: z.infer<typeof MrHook>): Promise<WebhookResult> {
   const a = hook.object_attributes
+  const linked = await upsertMergeRequest(ctx, {
+    gitlabProjectId: hook.project.id,
+    iid: a.iid,
+    title: a.title,
+    url: a.url,
+    state: a.state,
+    sourceBranch: a.source_branch,
+    description: a.description ?? '',
+  })
+  return linked === null ? IGNORED : OK
+}
+
+export type MergeRequestInput = {
+  gitlabProjectId: number
+  iid: number
+  title: string
+  url: string
+  /** GitLab's state (`opened`, `merged`, `closed`, `locked`, …). */
+  state: string
+  sourceBranch: string
+  description: string
+}
+
+/**
+ * Records an MR's current state, from a webhook or from reconciling with GitLab: upserts its row for every
+ * portal repo of its GitLab project, records `gitlab.mr_*` when its state changed or it got linked to a work
+ * item, and queues `gitlab-mr-effect` for those (after commit). Null when the state or project is unknown.
+ */
+export async function upsertMergeRequest(ctx: WorkCtx, a: MergeRequestInput): Promise<string[] | null> {
   const state = MR_STATES[a.state]
-  if (!state) return IGNORED
-  const repos = await reposOf(ctx.tx, hook.project.id)
-  if (!repos.length) return IGNORED
+  if (!state) return null
+  const repos = await reposOf(ctx.tx, a.gitlabProjectId)
+  if (!repos.length) return null
   const title = clip(a.title, 500)
-  const sourceBranch = clip(a.source_branch, 255)
+  const sourceBranch = clip(a.sourceBranch, 255)
+  const rows: string[] = []
   for (const repo of repos) {
-    const match = await matchWorkItem(ctx.tx, repo, a.description ?? '', a.source_branch)
+    const match = await matchWorkItem(ctx.tx, repo, a.description, a.sourceBranch)
     const [inserted] = await ctx.tx
       .insert(mergeRequests)
       .values({ repoId: repo.id, mrIid: a.iid, workItemId: match, title, url: a.url, state, sourceBranch })
@@ -221,6 +248,7 @@ async function onMergeRequest(ctx: WorkCtx, hook: z.infer<typeof MrHook>): Promi
         .returning()
     }
     const mr = row!
+    rows.push(mr.id)
     if (!mr.workItemId) continue
     const stateChanged = !prev || prev.state !== mr.state
     const newlyLinked = !prev || prev.workItemId !== mr.workItemId
@@ -232,9 +260,9 @@ async function onMergeRequest(ctx: WorkCtx, hook: z.infer<typeof MrHook>): Promi
       taskId: null,
       payload: { mergeRequestId: mr.id, repoId: repo.id, path: repo.pathWithNamespace, mrIid: mr.mrIid, url: mr.url, state: mr.state },
     })
-    ctx.jobs.push({ name: 'gitlab-mr-effect', id: mr.id })
+    if (!ctx.jobs.some((j) => j.name === 'gitlab-mr-effect' && j.id === mr.id)) ctx.jobs.push({ name: 'gitlab-mr-effect', id: mr.id })
   }
-  return OK
+  return rows
 }
 
 /** The work item's current code-change (`implement`) task, latest attempt first. */
@@ -317,7 +345,8 @@ async function onPipeline(ctx: WorkCtx, hook: z.infer<typeof PipelineHook>): Pro
 async function onNote(ctx: WorkCtx, hook: z.infer<typeof NoteHook>, botUserId: number | null): Promise<WebhookResult> {
   const a = hook.object_attributes
   if (a.noteable_type !== 'Issue' || !hook.issue || a.system) return IGNORED
-  if (botUserId !== null && hook.user.id === botUserId) return IGNORED
+  // The portal's own notes: by marker always, by author once the bot's id is cached.
+  if (a.note.includes(PORTAL_NOTE_MARKER) || (botUserId !== null && hook.user.id === botUserId)) return IGNORED
   const text = sanitizeNote(a.note)
   if (!text) return IGNORED
   const links = await ctx.tx

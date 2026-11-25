@@ -90,11 +90,11 @@ export async function testDeps(overrides: Partial<AppDeps> = {}): Promise<AppDep
     bus,
     ai: new AiGateway({ db, bus, models: mockModels(), config }),
     storage: await testStorage(config),
-    // Most tests drive AI tasks by hand, so drafting, secretary, discussion-brief and GitLab issue-sync / MR-effect jobs
+    // Most tests drive AI tasks by hand, so drafting, secretary, discussion-brief and GitLab issue-sync / MR-effect / MR-reconcile jobs
     // are dropped by default; tests that assert on them pass their own queue.
     jobs: new InlineJobQueue({
       onError: (err, name, id) => console.warn(`test job ${name} ${id} failed`, err),
-      ignore: ['draft-task', 'secretary-chat', 'secretary-event', 'discussion-brief', 'gitlab-issue-sync', 'gitlab-mr-effect'],
+      ignore: ['draft-task', 'secretary-chat', 'secretary-event', 'discussion-brief', 'gitlab-issue-sync', 'gitlab-mr-effect', 'gitlab-mr-reconcile'],
     }),
     gitlab: null,
     ...overrides,

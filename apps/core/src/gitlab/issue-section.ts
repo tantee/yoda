@@ -4,6 +4,8 @@ import { createHash } from 'node:crypto'
 export const ISSUE_BEGIN = '<!-- yoda:begin -->'
 export const ISSUE_END = '<!-- yoda:end -->'
 /** Hidden marker that finds the issue again if its creation response was lost (createIssue is not retried). */
+/** Hidden marker on every note the portal posts, so the webhook can skip its own notes without asking GitLab. */
+export const PORTAL_NOTE_MARKER = '<!-- yoda:portal-note -->'
 export const workItemMarker = (workItemId: string) => `<!-- yoda:work-item:${workItemId} -->`
 
 export const MAX_DOC_CHARS = 6000

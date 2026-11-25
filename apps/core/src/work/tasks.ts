@@ -5,6 +5,7 @@ import { projectMembers, projects, tasks, workItems } from '../db/schema.js'
 import { notifyTaskAssigned, notifyTaskProposed } from '../notifications/service.js'
 import { lockAutoAssign, pickAssignee } from './assign.js'
 import { templateById } from '../workflow/seed.js'
+import { queueMrReconcile } from '../gitlab/reconcile.js'
 import { queueIssueSync } from '../gitlab/sync.js'
 import { recordEvent, type WorkCtx } from './context.js'
 import { guardText, REPEATED_REWORK, reworkCount } from './guards.js'
@@ -119,8 +120,12 @@ export async function createTaskAttempt(
     const [proj] = await tx.select({ noAi: projects.noAi }).from(projects).where(eq(projects.id, input.projectId))
     if (proj && !proj.noAi) ctx.jobs.push({ name: 'draft-task', id: taskId })
   }
-  // The Dev step started (or the code was sent back with feedback): create / refresh the GitLab issues.
-  if (input.task.capability === 'code-change') await queueIssueSync(ctx, input.workItemId, { withIssues: false })
+  // The Dev step started (or the code was sent back with feedback): create / refresh the GitLab issues, and
+  // pull MR state (an MR may exist already, or a webhook delivery may have been lost).
+  if (input.task.capability === 'code-change') {
+    await queueIssueSync(ctx, input.workItemId, { withIssues: false })
+    queueMrReconcile(ctx, input.workItemId)
+  }
   return taskId
 }
 

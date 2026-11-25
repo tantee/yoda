@@ -4,7 +4,7 @@ import { and, eq } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { events } from '../src/db/schema.js'
 import { GitLabClient } from '../src/gitlab/client.js'
-import { ISSUE_BEGIN, workItemMarker } from '../src/gitlab/issue-section.js'
+import { ISSUE_BEGIN, PORTAL_NOTE_MARKER, workItemMarker } from '../src/gitlab/issue-section.js'
 import { InlineJobQueue } from '../src/jobs/queue.js'
 import { FakeGitLab, startFakeGitLab } from './fake-gitlab.js'
 import { resetDb, testDb } from './helpers.js'
@@ -205,6 +205,8 @@ describe('gitlab issue sync', () => {
     expect(fake.notes.get('11/1')).toHaveLength(1)
     expect(fake.notes.get('12/1')).toHaveLength(1)
     expect(fake.notes.get('11/1')![0]).toContain('การตัดสินใจ / Decisions')
+    // Marked so the webhook skips the portal's own note without asking GitLab who wrote it.
+    expect(fake.notes.get('11/1')![0]).toContain(PORTAL_NOTE_MARKER)
     // The decision appears once (the discussion, not also its knowledge entry).
     expect(issue(11, 1).description.split('ใช้ตารางผลแล็บเดิมไหม')).toHaveLength(2)
   })

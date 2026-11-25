@@ -9,7 +9,7 @@ import { latestMergedMrs } from '../gitlab/effects.js'
 import { importedText } from '../gitlab/import.js'
 import { devStarted, listProjectRepos, repoHasIssues, toRepo, workItemCode } from '../gitlab/repos.js'
 import { queueIssueSync } from '../gitlab/sync.js'
-import { handleWebhook, needsBotUser, tokenMatches } from '../gitlab/webhook.js'
+import { handleWebhook, tokenMatches } from '../gitlab/webhook.js'
 import { runWork } from '../work/context.js'
 import { canSeeProject, getWorkItemDetail } from '../work/queries.js'
 import { createWorkItem, isPmOrAdmin, lockItem } from '../work/engine.js'
@@ -25,21 +25,6 @@ const EventUuid = z.string().trim().min(1).max(200)
 export function gitlabRoutes(app: FastifyInstance): void {
   const db = () => app.deps.db
 
-  // The bot's GitLab user id, fetched once (outside any transaction) to ignore the portal's own notes.
-  let botUser: Promise<number> | null = null
-  const botUserId = (): Promise<number> | null => {
-    const gitlab = app.deps.gitlab
-    if (!gitlab) return null
-    botUser ??= gitlab.currentUser().then(
-      (u) => u.id,
-      (err) => {
-        botUser = null
-        throw err
-      },
-    )
-    return botUser
-  }
-
   app.post(
     '/gitlab/webhook',
     {
@@ -52,16 +37,9 @@ export function gitlabRoutes(app: FastifyInstance): void {
     },
     async (request) => {
       const eventUuid = EventUuid.parse(request.headers['x-gitlab-event-uuid'])
-      let bot: number | null = null
-      if (needsBotUser(request.body)) {
-        try {
-          bot = (await botUserId()) ?? null
-        } catch {
-          // Not marked as seen: GitLab retries the delivery.
-          throw new HttpError(503, { error: 'gitlab_unavailable' })
-        }
-      }
-      return handleWebhook(app.deps, eventUuid, request.body, bot)
+      // GitLab does not retry failed deliveries (and disables a hook that keeps failing), so this path never
+      // calls GitLab: the bot's id comes from the client's cache (filled at boot or by the admin status page).
+      return handleWebhook(app.deps, eventUuid, request.body, app.deps.gitlab?.botUser?.id ?? null)
     },
   )
 
