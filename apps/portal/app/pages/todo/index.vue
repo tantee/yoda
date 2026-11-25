@@ -108,6 +108,7 @@ const isEmpty = computed(
             <v-btn
               color="primary"
               size="small"
+              v-if="!w.openDiscussions"
               :loading="advancing === w.id"
               data-testid="todo-advance-btn"
               @click="advance(w.id)"
@@ -123,6 +124,7 @@ const isEmpty = computed(
         >
           <v-card-text>
             <div class="font-weight-medium" data-testid="proposal-summary">{{ p.summary || (proposalFallbackKey(p) ? t(proposalFallbackKey(p)!) : '') }}</div>
+            <ProposalPreview :proposal="p" />
             <GuardNote v-if="guardOf(p.payload)" :guard="guardOf(p.payload)!" />
             <div v-else-if="p.reason" class="text-caption text-medium-emphasis">{{ p.reason }}</div>
             <div v-if="p.requesterName" class="text-caption" data-testid="proposal-requester">{{ t('chat.card.requester') }}: {{ p.requesterName }}</div>

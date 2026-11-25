@@ -32,6 +32,12 @@ describe('isStaffPath', () => {
   })
 })
 
+describe('discussion and agenda paths', () => {
+  it('are staff only', () => {
+    for (const p of ['/discussions', '/discussions/abc', '/agendas', '/agendas/abc', '/agendas/abc/present']) expect(isStaffPath(p)).toBe(true)
+  })
+})
+
 describe('homeFor', () => {
   it('staff land on their to-do list, requesters on their requests', () => {
     expect(homeFor({ ...base, isStaff: true, isAdmin: false })).toBe('/todo')
