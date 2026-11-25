@@ -140,6 +140,8 @@ export const Task = z.object({
   capability: TaskCapability.nullable(),
   /** Work item detail and task detail (staff only): the task's latest runner run, null when none. Absent elsewhere. */
   run: TaskRunSummary.nullable().optional(),
+  /** Alongside `run` (staff only): the task waits on a runner's question (an undecided parked discussion). */
+  parked: z.boolean().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
 })

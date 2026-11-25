@@ -143,6 +143,26 @@ async function aiStates(db: Conn, items: { row: TaskRow; def: WorkflowTemplateDe
   return out
 }
 
+/**
+ * Tasks waiting on a runner's question: parked on a discussion that has not been decided (as claims see it).
+ * Staff only, like runs.
+ */
+async function parkedTasks(db: Conn, taskIds: string[]): Promise<Set<string>> {
+  if (!taskIds.length) return new Set()
+  const rows = await db
+    .select({ id: tasks.id })
+    .from(tasks)
+    .leftJoin(discussions, eq(discussions.id, tasks.parkedDiscussionId))
+    .where(
+      and(
+        inArray(tasks.id, taskIds),
+        sql`${tasks.parkedDiscussionId} is not null`,
+        or(isNull(discussions.state), sql`${discussions.state} <> 'decided'`),
+      ),
+    )
+  return new Set(rows.map((r) => r.id))
+}
+
 /** The latest runner run of each task (work item detail, staff only). */
 async function latestRuns(db: Conn, taskIds: string[]): Promise<Map<string, TaskRunSummary>> {
   if (!taskIds.length) return new Map()
@@ -458,10 +478,11 @@ export async function getWorkItemDetail(db: Conn, me: Me, id: string): Promise<W
   const who = await names(db, taskRows.flatMap((t) => [t.assigneeId, t.proposedAssigneeId]))
   const ai = await aiStates(db, taskRows.map((row) => ({ row, def })))
   const runs = await latestRuns(db, taskRows.map((t) => t.id))
+  const parked = await parkedTasks(db, taskRows.map((t) => t.id))
   return WorkItemDetail.parse({
     ...toWorkItem(r, await advanceState(db, [r])),
     steps,
-    tasks: taskRows.map((t) => ({ ...toTask(t, def, who, ai), run: runs.get(t.id) ?? null })),
+    tasks: taskRows.map((t) => ({ ...toTask(t, def, who, ai), run: runs.get(t.id) ?? null, parked: parked.has(t.id) })),
     events: eventRows.map(({ e, actorName }) =>
       EventEntry.parse({
         id: e.id,
@@ -497,7 +518,8 @@ export async function getTask(db: Conn, me: Me, id: string): Promise<TaskWithCon
   // Requesters never see runs.
   if (t.viewerIsRequester) return t
   const runs = await latestRuns(db, [t.id])
-  return { ...t, run: runs.get(t.id) ?? null }
+  const parked = await parkedTasks(db, [t.id])
+  return { ...t, run: runs.get(t.id) ?? null, parked: parked.has(t.id) }
 }
 
 export async function getTodo(db: Conn, me: Me): Promise<Todo> {

@@ -71,6 +71,11 @@ describe('waitingFor', () => {
       expect(waitingFor({ ...task, run: { state, runnerName: 'r', heartbeatAt: '2026-11-25T10:00:00Z', branch: null } })).toBeNull()
     }
   })
+  it('a parked run whose question is cleared waits for a runner again', () => {
+    const run = { state: 'parked' as const, runnerName: 'r', heartbeatAt: '2026-11-25T10:00:00Z', branch: null }
+    expect(waitingFor({ ...task, run, parked: false })).toBe('runner')
+    expect(waitingFor({ ...task, run, parked: true })).toBeNull()
+  })
   it('draft-text waits for AI; AI status, assigned, human or closed tasks are not waiting', () => {
     expect(waitingFor({ ...task, capability: 'draft-text' })).toBe('ai')
     expect(waitingFor({ ...task, aiStatus: 'failed' })).toBeNull()

@@ -36,16 +36,20 @@ export function heartbeatAgeMinutes(iso: string, now: Date): number {
 
 const RUNNER_CAPS: readonly string[] = RunnerCapability.options
 
-type WaitingTask = Pick<Task, 'executor' | 'assigneeId' | 'state' | 'aiStatus' | 'capability' | 'run'>
+type WaitingTask = Pick<Task, 'executor' | 'assigneeId' | 'state' | 'aiStatus' | 'capability' | 'run' | 'parked'>
 
 /**
- * What an open, unassigned AI task is waiting for: 'runner' for the capabilities runners work (unless a
- * run is going or parked, which the run chip shows), 'ai' for core's drafting; null when not waiting.
+ * What an open, unassigned AI task is waiting for: 'runner' for the capabilities runners work (unless a run
+ * is going, or parked on a question still open, which the run chip shows), 'ai' for core's drafting; null when
+ * not waiting. A parked run whose question was decided waits for a runner again; without `parked` (an older
+ * core) a parked run counts as still waiting on its question.
  */
 export function waitingFor(t: WaitingTask): 'runner' | 'ai' | null {
   if (t.executor !== 'ai' || t.assigneeId || t.state !== 'open' || t.aiStatus) return null
   if (t.capability && RUNNER_CAPS.includes(t.capability)) {
-    return t.run?.state === 'running' || t.run?.state === 'parked' ? null : 'runner'
+    if (t.run?.state === 'running') return null
+    if (t.run?.state === 'parked' && t.parked !== false) return null
+    return 'runner'
   }
   return 'ai'
 }

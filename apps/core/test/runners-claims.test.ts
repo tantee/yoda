@@ -494,4 +494,20 @@ describe('task view', () => {
     expect(t.run).toMatchObject({ state: 'running', runnerName: 'dev-runner' })
     expect((await getTask(db, owner, draftTests.id)).run).toBeNull()
   })
+
+  it('staff see whether a task is still parked on its question; a decided question clears it', async () => {
+    const db = await testDb()
+    const [d] = await db
+      .insert(discussions)
+      .values({ projectId, workItemId: itemId, taskId: implement.id, question: 'which?', raisedBy: owner.id })
+      .returning()
+    await db.update(tasks).set({ parkedDiscussionId: d!.id }).where(eq(tasks.id, implement.id))
+    const parkedOf = async () => (await getWorkItemDetail(db, owner, itemId)).tasks.find((x) => x.id === implement.id)!.parked
+    expect(await parkedOf()).toBe(true)
+    expect((await getTask(db, owner, implement.id)).parked).toBe(true)
+    await db.update(discussions).set({ state: 'decided' }).where(eq(discussions.id, d!.id))
+    expect(await parkedOf()).toBe(false)
+    expect((await getTask(db, owner, implement.id)).parked).toBe(false)
+    expect((await getTask(db, owner, draftTests.id)).parked).toBe(false)
+  })
 })
