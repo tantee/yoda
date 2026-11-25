@@ -85,7 +85,9 @@ export class GitLabClient {
       }
       const status = res ? res.status : null
       const code = status === null ? 'unavailable' : codeFor(status)
-      if (code === 'unavailable' && attempt < MAX_RETRIES) {
+      // POST is not idempotent: a 5xx/timeout may have succeeded server-side, so only 429 (never processed) is retried.
+      const retryable = method === 'POST' ? status === 429 : code === 'unavailable'
+      if (retryable && attempt < MAX_RETRIES) {
         const wait = (res && retryAfterMs(res)) ?? this.retryBaseMs * 2 ** attempt
         await res?.body?.cancel().catch(() => {})
         await sleep(wait)
@@ -126,6 +128,16 @@ export class GitLabClient {
 
   async addIssueNote(projectId: number, iid: number, body: string): Promise<void> {
     await this.request('POST', `/projects/${this.proj(projectId)}/issues/${iid}/notes`, { body })
+  }
+
+  /** Finds an issue whose description contains `marker` (GitLab search is fuzzy, so the match is confirmed). */
+  async findIssueByMarker(projectId: number, marker: string): Promise<{ iid: number; web_url: string; description: string } | null> {
+    const list = await this.request<{ iid: number; web_url: string; description: string | null }[]>(
+      'GET',
+      `/projects/${this.proj(projectId)}/issues?search=${encodeURIComponent(marker)}&in=description&per_page=20`,
+    )
+    const hit = list.find((i) => (i.description ?? '').includes(marker))
+    return hit ? { iid: hit.iid, web_url: hit.web_url, description: hit.description ?? '' } : null
   }
 
   async importIssue(projectId: number, iid: number): Promise<{ title: string; description: string; web_url: string; iid: number }> {

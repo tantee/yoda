@@ -49,6 +49,26 @@ describe('GitLabClient', () => {
     expect(fake.requests).toHaveLength(2)
   })
 
+  it('does not retry POST on 5xx', async () => {
+    fake.failNext(500, 2)
+    expect(await caught(client.createIssue(42, { title: 'T', description: '' }))).toMatchObject({ code: 'unavailable', status: 500 })
+    expect(fake.requests).toHaveLength(1)
+  })
+
+  it('retries POST on 429', async () => {
+    fake.failNext(429, 1, 0)
+    await client.addIssueNote(42, (await client.createIssue(42, { title: 'T', description: '' })).iid, 'n')
+    expect(fake.requests.filter((r) => r.method === 'POST')).toHaveLength(3)
+  })
+
+  it('finds an issue by marker and ignores near-misses', async () => {
+    fake.seedIssue(42, { title: 'a', description: 'x <!-- yoda:work-item:aaa-111 --> y' })
+    fake.seedIssue(42, { title: 'b', description: '<!-- yoda:work-item:aaa-112 -->' })
+    expect(await client.findIssueByMarker(42, '<!-- yoda:work-item:aaa-111 -->')).toMatchObject({ iid: 1 })
+    expect(await client.findIssueByMarker(42, '<!-- yoda:work-item:aaa-11 -->')).toBeNull()
+    expect(await client.findIssueByMarker(42, '<!-- yoda:work-item:zzz -->')).toBeNull()
+  })
+
   it('gives up after 3 attempts as unavailable', async () => {
     fake.failNext(503, 10)
     const e = await caught(client.getProject(42))

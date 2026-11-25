@@ -11,6 +11,7 @@ export class FakeGitLab {
   readonly projects: Project[] = []
   readonly issues = new Map<number, Issue[]>()
   readonly notes = new Map<string, string[]>()
+  private readonly nextIid = new Map<number, number>()
   private server: Server | null = null
   private fails: { status: number; count: number; retryAfter?: number } | null = null
   private delay: { ms: number; count: number } | null = null
@@ -22,6 +23,14 @@ export class FakeGitLab {
     this.projects.push(p)
     this.issues.set(id, [])
     return p
+  }
+  seedIssue(projectId: number, input: { title: string; description: string }): Issue {
+    const project = this.projects.find((p) => p.id === projectId)!
+    const iid = (this.nextIid.get(projectId) ?? 0) + 1
+    this.nextIid.set(projectId, iid)
+    const issue = { iid, title: input.title, description: input.description, web_url: `${project.web_url}/-/issues/${iid}`, state: 'opened' }
+    this.issues.get(projectId)!.push(issue)
+    return issue
   }
   failNext(status: number, count = 1, retryAfterSecs?: number) { this.fails = { status, count, retryAfter: retryAfterSecs } }
   delayNext(ms: number, count = 1) { this.delay = { ms, count } }
@@ -72,12 +81,13 @@ export class FakeGitLab {
     if (parts[2] !== 'issues') return send(404, { message: '404 Not Found' })
     const list = this.issues.get(project.id)!
     const b = (body ?? {}) as { title?: string; description?: string; body?: string }
+    if (parts.length === 3 && method === 'GET') {
+      const q = new URL(rawUrl, 'http://x').searchParams.get('search') ?? ''
+      return send(200, list.filter((i) => i.description.includes(q) || i.title.includes(q)))
+    }
     if (parts.length === 3 && method === 'POST') {
       if (!b.title) return send(400, { message: 'title is missing' })
-      const iid = list.length + 1
-      const issue = { iid, title: b.title, description: b.description ?? '', web_url: `${project.web_url}/-/issues/${iid}`, state: 'opened' }
-      list.push(issue)
-      return send(201, issue)
+      return send(201, this.seedIssue(project.id, { title: b.title, description: b.description ?? '' }))
     }
     const issue = list.find((i) => String(i.iid) === parts[3])
     if (!issue) return send(404, { message: '404 Not Found' })
