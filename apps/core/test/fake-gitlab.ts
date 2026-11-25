@@ -28,6 +28,8 @@ export class FakeGitLab {
   readonly mergeRequests = new Map<number, (FakeMergeRequest & { target_branch: string; remove_source_branch: boolean })[]>()
   /** Branches that exist (were pushed), by project; MRs can only be opened from these. */
   readonly branches = new Map<number, Set<string>>()
+  /** DEV ONLY (fake-gitlab-dev): the fake hosts no git, so treat every source branch as pushed. */
+  acceptAnyBranch = false
   private readonly nextIid = new Map<number, number>()
   private readonly nextMrIid = new Map<number, number>()
   private server: Server | null = null
@@ -95,7 +97,7 @@ export class FakeGitLab {
     if (method !== 'POST') return send(404, { message: '404 Not Found' })
     const b = (body ?? {}) as { source_branch?: string; target_branch?: string; title?: string; description?: string; remove_source_branch?: boolean }
     if (!b.title || !b.source_branch || !b.target_branch) return send(400, { message: 'source_branch, target_branch and title are required' })
-    if (!this.branches.get(project.id)?.has(b.source_branch)) return send(400, { message: 'Source branch does not exist' })
+    if (!this.acceptAnyBranch && !this.branches.get(project.id)?.has(b.source_branch)) return send(400, { message: 'Source branch does not exist' })
     const dup = list.find((m) => m.source_branch === b.source_branch && m.state === 'opened')
     if (dup) return send(409, { message: [`Another open merge request already exists for this source branch: !${dup.iid}`] })
     const iid = (this.nextMrIid.get(project.id) ?? 0) + 1

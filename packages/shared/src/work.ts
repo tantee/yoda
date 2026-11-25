@@ -136,7 +136,9 @@ export const Task = z.object({
   /** 'drafting' while an AI draft is pending, 'failed' (see aiFailReason) when it needs a person; null otherwise. */
   aiStatus: z.enum(['drafting', 'failed']).nullable(),
   aiFailReason: z.string().nullable(),
-  /** Work item detail (staff only): the task's latest runner run, null when none. Absent elsewhere. */
+  /** The template task's capability (AI tasks only; null for people's tasks). */
+  capability: TaskCapability.nullable(),
+  /** Work item detail and task detail (staff only): the task's latest runner run, null when none. Absent elsewhere. */
   run: TaskRunSummary.nullable().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),

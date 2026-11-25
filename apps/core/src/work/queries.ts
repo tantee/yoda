@@ -189,6 +189,7 @@ function toTask(row: TaskRow, def: WorkflowTemplateDef | undefined, who: Map<str
     result: row.result ?? null,
     aiStatus: ai.get(row.id)?.status ?? null,
     aiFailReason: ai.get(row.id)?.reason ?? null,
+    capability: tt.capability ?? null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   })
@@ -491,7 +492,10 @@ export async function getTask(db: Conn, me: Me, id: string): Promise<TaskWithCon
   const [t] = await tasksWithContext(db, eq(tasks.id, id), [], me)
   if (!t) throw notFound()
   if (!(await staffSeesProject(db, me, t.projectId)) && !ownRequesterTask(me, t)) throw notFound()
-  return t
+  // Requesters never see runs.
+  if (t.viewerIsRequester) return t
+  const runs = await latestRuns(db, [t.id])
+  return { ...t, run: runs.get(t.id) ?? null }
 }
 
 export async function getTodo(db: Conn, me: Me): Promise<Todo> {

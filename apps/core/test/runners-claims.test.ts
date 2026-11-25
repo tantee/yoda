@@ -8,7 +8,7 @@ import { meFromPerson, revokeRunner } from '../src/runners/records.js'
 import { newRunnerToken } from '../src/runners/tokens.js'
 import { runWork } from '../src/work/context.js'
 import { retryAiTask } from '../src/work/engine.js'
-import { getTodo, getWorkItemDetail, tasksWithContext } from '../src/work/queries.js'
+import { getTask, getTodo, getWorkItemDetail, tasksWithContext } from '../src/work/queries.js'
 import { latestTemplate } from '../src/workflow/seed.js'
 import { resetDb, testDb, testDeps } from './helpers.js'
 
@@ -429,5 +429,15 @@ describe('task view', () => {
     expect(detail.tasks.find((x) => x.id === draftTests.id)!.run).toBeNull()
     const [withContext] = await tasksWithContext(db, eq(tasks.id, implement.id), [], owner)
     expect(withContext).not.toHaveProperty('run')
+    expect(withContext!.capability).toBe('code-change')
+  })
+
+  it('staff see the latest run on the task detail too', async () => {
+    const db = await testDb()
+    const rc = await runner(owner)
+    await claimTask(deps, rc, implement.id)
+    const t = await getTask(db, owner, implement.id)
+    expect(t.run).toMatchObject({ state: 'running', runnerName: 'dev-runner' })
+    expect((await getTask(db, owner, draftTests.id)).run).toBeNull()
   })
 })

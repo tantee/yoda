@@ -122,7 +122,9 @@ the time of the last webhook.
 **Local try-out (DEV ONLY).** `FAKE_GITLAB_PORT=4100 FAKE_GITLAB_PROJECTS=demo/app pnpm --filter @yoda/core fake-gitlab`
 runs the in-memory FakeGitLab used by the tests. Start core with `GITLAB_URL=http://127.0.0.1:4100`,
 any placeholder `GITLAB_TOKEN` (e.g. `fake-dev-token`) and a placeholder `GITLAB_WEBHOOK_SECRET`, then
-post webhooks with `curl` using that secret. Never point a real deployment at it.
+post webhooks with `curl` using that secret. Never point a real deployment at it. To try a runner
+against it, add `FAKE_GITLAB_ANY_BRANCH=1` (the fake hosts no git, so MRs open from any branch) and give
+the runner a `clonePath` whose `origin` is a local bare repo.
 
 ## Runners
 

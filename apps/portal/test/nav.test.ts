@@ -6,7 +6,7 @@ const base = { id: crypto.randomUUID(), username: 'u', displayName: 'U', email: 
 describe('navItemsFor', () => {
   it('staff nav', () => {
     expect(navItemsFor({ ...base, isStaff: true, isAdmin: false }).map(i => i.key))
-      .toEqual(['nav.chat', 'nav.todo', 'nav.discussions', 'nav.status', 'nav.projects'])
+      .toEqual(['nav.chat', 'nav.todo', 'nav.discussions', 'nav.status', 'nav.projects', 'nav.runners'])
   })
   it('admin also gets people admin', () => {
     expect(navItemsFor({ ...base, isStaff: true, isAdmin: true }).map(i => i.key)).toContain('nav.admin.people')

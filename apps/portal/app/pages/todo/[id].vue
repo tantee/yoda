@@ -2,6 +2,7 @@
 import type { Attachment, Conversation, ProjectDetail, TaskInput, TaskWithContext } from '@yoda/shared'
 import { localized } from '~/utils/localized'
 import { taskViewFor } from '~/utils/requests'
+import { waitingFor } from '~/utils/runners'
 
 const { t, locale } = useI18n()
 const { me } = useMe()
@@ -155,6 +156,10 @@ useLiveEvents((e) => {
 
       <div v-if="task.aiStatus && staff" class="mb-4" data-testid="ai-status">
         <AiStatus :task="task" :can-retry="canManage" @retried="load" />
+      </div>
+      <div v-if="staff && (task.run || waitingFor(task) === 'runner')" class="mb-4 d-flex align-center flex-wrap ga-2" data-testid="run-status">
+        <RunnerRunChip v-if="task.run" :run="task.run" />
+        <v-chip v-if="waitingFor(task) === 'runner'" size="small" color="warning" data-testid="waiting-runner">{{ t('workItems.waitingForRunner') }}</v-chip>
       </div>
 
       <template v-if="task.inputs.length">
