@@ -4,7 +4,7 @@ import { AiFailed, AiRefused, type AiGateway } from '../ai/gateway.js'
 import type { Db } from '../db/client.js'
 import { knowledgeEntries, people } from '../db/schema.js'
 import { canSeeProject } from '../work/queries.js'
-import { entryColumns, toEntry, visibleTo, workItemProject } from './service.js'
+import { entryColumns, notGitLabDraft, toEntry, visibleTo, workItemProject } from './service.js'
 
 /** Reciprocal rank fusion constant. */
 const RRF_K = 60
@@ -22,8 +22,8 @@ type Ranked = { entryId: string; text: string }
  * Hybrid search over current (non-superseded) entries visible to `me`. Scope: with a work item or project,
  * that project's entries plus department entries; otherwise everything visible. Ranking fuses trigram
  * `word_similarity` over chunks (and title/body of entries not chunked yet) with cosine distance over chunk
- * embeddings when `ai` can embed the query. `forAi` drops noAi entries, entries of noAi attachments and all
- * entries of noAi projects.
+ * embeddings when `ai` can embed the query. `forAi` drops noAi entries, entries of noAi attachments, all
+ * entries of noAi projects and unreviewed GitLab drafts.
  */
 export async function searchKnowledge(
   db: Db,
@@ -50,6 +50,7 @@ export async function searchKnowledge(
       sql`not ${knowledgeEntries.noAi}`,
       sql`not exists (select 1 from attachments a where a.id = ${knowledgeEntries.attachmentId} and a.no_ai)`,
       sql`not exists (select 1 from projects p where p.id = ${knowledgeEntries.projectId} and p.no_ai)`,
+      notGitLabDraft(),
     )
   }
   const cand = sql`cand as (

@@ -5,7 +5,7 @@ import { ensurePersonalConversation, postMessage } from '../chat/service.js'
 import type { Db, Tx } from '../db/client.js'
 import { conversations, knowledgeEntries, messages, projects, workItems } from '../db/schema.js'
 import type { JobRun } from '../jobs/queue.js'
-import { createEntry } from '../knowledge/service.js'
+import { createEntry, notGitLabDraft } from '../knowledge/service.js'
 import { personAsMe } from '../proposals/service.js'
 import { runWork } from '../work/context.js'
 
@@ -23,8 +23,11 @@ const SUMMARY_SYSTEM = [
 
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}…` : s)
 
-/** Material of the work item that may go to the AI: confirmed documents and progress notes (no "do not send"). */
-async function summaryMaterial(db: EventDeps['db'], workItemId: string): Promise<string> {
+/**
+ * Material of the work item that may go to the AI: confirmed documents and progress notes (no "do not send",
+ * no unreviewed GitLab notes; AI-drafted progress counts, as in task context packs).
+ */
+export async function summaryMaterial(db: EventDeps['db'], workItemId: string): Promise<string> {
   const rows = await db
     .select({ type: knowledgeEntries.type, title: knowledgeEntries.title, body: knowledgeEntries.body, status: knowledgeEntries.status })
     .from(knowledgeEntries)
@@ -36,6 +39,7 @@ async function summaryMaterial(db: EventDeps['db'], workItemId: string): Promise
         // An earlier AI summary is output, not input.
         sql`not (${knowledgeEntries.sourceKind} = 'ai' and ${knowledgeEntries.type} = 'document')`,
         sql`not ${knowledgeEntries.noAi}`,
+        notGitLabDraft(),
         sql`not exists (select 1 from attachments a where a.id = ${knowledgeEntries.attachmentId} and a.no_ai)`,
       ),
     )
