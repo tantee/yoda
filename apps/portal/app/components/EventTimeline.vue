@@ -2,6 +2,10 @@
 import type { EventEntry } from '@yoda/shared'
 import { guardOf } from '~/utils/guards'
 
+/** Only task creation / proposal events use a guard name as their reason; elsewhere a reason is free text. */
+const guardFor = (ev: EventEntry) =>
+  guardOf(ev.payload, ev.type === 'task.created' || ev.type === 'task.proposed' ? ev.reason : null)
+
 defineProps<{ events: EventEntry[] }>()
 const { t, te, locale } = useI18n()
 const fmt = (s: string) => new Date(s).toLocaleString(locale.value === 'en' ? 'en-GB' : 'th-TH')
@@ -17,7 +21,7 @@ const fmt = (s: string) => new Date(s).toLocaleString(locale.value === 'en' ? 'e
         <template v-else>{{ ev.actorName ?? t('events.system') }}</template>
         · {{ fmt(ev.createdAt) }}
       </div>
-      <GuardNote v-if="guardOf(ev.payload, ev.reason)" :guard="guardOf(ev.payload, ev.reason)!" class="mt-1" />
+      <GuardNote v-if="guardFor(ev)" :guard="guardFor(ev)!" class="mt-1" />
       <div v-else-if="ev.reason" class="text-body-2" style="white-space: pre-wrap">{{ te(`events.reason.${ev.reason}`) ? t(`events.reason.${ev.reason}`) : ev.reason }}</div>
     </v-timeline-item>
   </v-timeline>

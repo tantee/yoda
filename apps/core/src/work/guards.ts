@@ -2,7 +2,7 @@ import type { GuardReason, TaskResult, TemplateStep } from '@yoda/shared'
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm'
 import { monthUsage } from '../ai/gateway.js'
 import type { Tx } from '../db/client.js'
-import { projectMembers, tasks } from '../db/schema.js'
+import { projectMembers, projects, tasks } from '../db/schema.js'
 import type { WorkItemRow } from './engine.js'
 
 /**
@@ -45,12 +45,15 @@ export function guardText(trip: GuardTrip): string {
 /** A rejected attempt that asked for changes (not one rejected by a cancel or a reopen). */
 const changesRequested = and(eq(tasks.state, 'rejected'), sql`${tasks.result}->>'decision' = 'changes'`)
 
+/** The task itself and the step's tasks that depend on it (whose change requests send it back). */
+const reworkKeys = (step: TemplateStep, key: string) => [key, ...step.tasks.filter((t) => t.dependsOn.includes(key)).map((t) => t.key)]
+
 /**
  * Times the task `key` was sent back in its current (not superseded) round: its own change requests, plus
  * those of the step's tasks that depend on it (a review asking for changes sends its subject back).
  */
 export async function reworkCount(tx: Tx, workItemId: string, step: TemplateStep, key: string): Promise<number> {
-  const keys = [key, ...step.tasks.filter((t) => t.dependsOn.includes(key)).map((t) => t.key)]
+  const keys = reworkKeys(step, key)
   const rows = await tx
     .select({ key: tasks.templateTaskKey, n: sql<number>`count(*)::int` })
     .from(tasks)
@@ -85,14 +88,20 @@ export async function checkAdvanceGuards(
   `)
   if (requesterChanges.length) return { reason: 'requester_changes' }
 
-  // G2 / G1: change requests in this step's current round.
+  // G2 / G1: change requests in this step's current round. G2 counts per task the same way as at assignment
+  // (reworkCount: its own change requests plus those of the tasks that depend on it).
   const rejected = await tx
     .select({ key: tasks.templateTaskKey, n: sql<number>`count(*)::int` })
     .from(tasks)
     .where(and(eq(tasks.workItemId, item.id), eq(tasks.stepKey, step.key), isNull(tasks.supersededAt), changesRequested))
     .groupBy(tasks.templateTaskKey)
-  if (rejected.some((r) => r.n >= REPEATED_REWORK)) return { reason: 'repeated_rework' }
-  if (rejected.length) return { reason: 'rework' }
+  if (rejected.length) {
+    const count = new Map(rejected.map((r) => [r.key, r.n]))
+    const sentBack = (key: string) =>
+      reworkKeys(step, key).reduce((n, k) => n + (count.get(k) ?? 0), 0)
+    if (step.tasks.some((t) => sentBack(t.key) >= REPEATED_REWORK)) return { reason: 'repeated_rework' }
+    return { reason: 'rework' }
+  }
 
   // G3: an accepted AI draft of this step said it was unsure or lacked information.
   const drafts = await tx
@@ -116,8 +125,8 @@ export async function checkAdvanceGuards(
   // G4
   if (item.priority === 'high' || item.priority === 'urgent') return { reason: 'high_priority' }
 
-  // G5: spending this month is near the budget and the next step would spend more.
-  if (next.tasks.some((t) => t.type === 'ai')) {
+  // G5: spending this month is near the budget and the next step would spend more (noAi projects spend nothing).
+  if (next.tasks.some((t) => t.type === 'ai') && !(await projectNoAi(tx, item.projectId))) {
     const usage = await monthUsage(tx, item.projectId)
     if (usage.budgetUsd !== null && usage.costUsd >= usage.budgetUsd * AI_BUDGET_GUARD_SHARE) return { reason: 'ai_budget' }
   }
@@ -131,4 +140,9 @@ export async function checkAdvanceGuards(
     if (missing.length) return { reason: 'no_assignee', detail: missing.join(', ') }
   }
   return null
+}
+
+async function projectNoAi(tx: Tx, projectId: string): Promise<boolean> {
+  const [row] = await tx.select({ noAi: projects.noAi }).from(projects).where(eq(projects.id, projectId))
+  return row?.noAi ?? false
 }
