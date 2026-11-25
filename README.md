@@ -99,6 +99,17 @@ Inside containers:
 - The dev `keycloak` and `mailpit` services are behind the `dev-only` profile in the overlay and never
   start in production: sign-in uses the organisation's Keycloak at `OIDC_ISSUER`.
 
+- Backups: the overlay's `backup` service (image `yoda-backup`, `ops/backup`) writes
+  `pg-<YYYYMMDD-HHMM>.dump` (`pg_dump -Fc`) and `storage-<YYYYMMDD-HHMM>/` (a mirror of the bucket) to
+  the `backups` volume every day at `BACKUP_AT` (`02:00`, Asia/Bangkok), updates a `latest` marker and
+  deletes backups older than `BACKUP_KEEP_DAYS` (14). The volume lives on the same host: copy it off
+  the server as well. Back up now with `docker compose ... run --rm backup --now`. To restore, stop
+  `core` and `portal`, run `docker compose ... run --rm -e RESTORE_CONFIRM=yes --entrypoint restore.sh
+  backup <stamp|latest>` (`pg_restore --clean --if-exists` plus a sync of the bucket), then run
+  `migrate` and start the services again. Restoring into an empty database is the clean path: tables
+  that are not in the backup are left in place. `ops/backup/restore-check.sh` (dev only) runs the whole
+  round trip against the dev stack on a scratch database and bucket and prints `restore ok`.
+
 Production secrets come only from the deploy environment / CI variables, never from committed files.
 The dev compose services use throwaway credentials and must not be exposed publicly.
 
