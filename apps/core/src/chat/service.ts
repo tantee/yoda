@@ -4,15 +4,16 @@ import { notFound } from '../auth/plugin.js'
 import { attachmentsByIds } from '../attachments/service.js'
 import type { Db, Tx } from '../db/client.js'
 import { attachments, conversationReads, conversations, messages, people, projectMembers, projects, workItems } from '../db/schema.js'
+import { OWN_KINDS, type ConversationRow } from './audience.js'
 import type { WorkCtx } from '../work/context.js'
 import { canSeeProject } from '../work/queries.js'
 
 type Conn = Db | Tx
-export type ConversationRow = typeof conversations.$inferSelect
+export type { ConversationRow }
 
 /** Stored title of a personal/intake conversation; the portal localizes it. */
 export const PERSONAL_TITLE = 'ผู้ช่วย'
-export const OWN_KINDS = ['personal', 'intake'] as const
+export { OWN_KINDS }
 
 /**
  * Does a person's message get a secretary reply? Always in personal/intake threads; in project/work_item

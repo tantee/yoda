@@ -1,8 +1,12 @@
 import type { ConversationKind } from '@yoda/shared'
 import { eq } from 'drizzle-orm'
 import type { Db, Tx } from '../db/client.js'
-import { workItems } from '../db/schema.js'
-import { OWN_KINDS, type ConversationRow } from './service.js'
+import { workItems, type conversations } from '../db/schema.js'
+
+export type ConversationRow = typeof conversations.$inferSelect
+
+/** Thread kinds only their owner reads. */
+export const OWN_KINDS = ['personal', 'intake'] as const
 
 export type ThreadAudience = {
   kind: ConversationKind
@@ -14,6 +18,8 @@ export type ThreadAudience = {
   workItemId: string | null
   /** A work_item thread whose item currently has a requester, who reads the replies. */
   requesterVisible: boolean
+  /** The work item's current requester (work_item threads), else null. */
+  requesterId: string | null
   /** A non-staff person can read the thread: staff names stay out of it. */
   hideStaffNames: boolean
 }
@@ -24,10 +30,10 @@ export const isTeamKind = (kind: string): boolean => !(OWN_KINDS as readonly str
 /** Single source of truth for who reads a thread, for content decisions (not access: see visibleConversation). */
 export async function threadAudience(db: Db | Tx, c: ConversationRow): Promise<ThreadAudience> {
   const team = isTeamKind(c.kind)
-  let requesterVisible = false
+  let requesterId: string | null = null
   if (c.kind === 'work_item' && c.workItemId) {
     const [w] = await db.select({ requesterId: workItems.requesterId }).from(workItems).where(eq(workItems.id, c.workItemId))
-    requesterVisible = !!w?.requesterId
+    requesterId = w?.requesterId ?? null
   }
   return {
     kind: c.kind as ConversationKind,
@@ -35,7 +41,8 @@ export async function threadAudience(db: Db | Tx, c: ConversationRow): Promise<T
     team,
     projectId: team ? c.projectId : null,
     workItemId: team ? c.workItemId : null,
-    requesterVisible,
+    requesterVisible: requesterId !== null,
+    requesterId,
     hideStaffNames: c.kind === 'work_item',
   }
 }
