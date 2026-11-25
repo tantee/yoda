@@ -83,19 +83,38 @@ describe('repository links', () => {
     expect((await call(nurse, 'GET', `/work-items/${id}/code`)).statusCode).toBe(403)
   })
 
-  it('refuses changes once the code-change task exists', async () => {
+  it('after Dev starts: adding a repo queues the issue sync; only repos with an issue cannot be removed', async () => {
     const a = (await link('dept/lab-report')).json() as Repo
+    const b = (await link('dept/lab-web')).json() as Repo
     const id = await newItem()
+    expect((await call(pm, 'PUT', `/work-items/${id}/repos`, { repoIds: [a.id] })).statusCode).toBe(200)
     const { db } = app.deps
-    const { tasks } = await import('../src/db/schema.js')
-    const { eq } = await import('drizzle-orm')
+    const { tasks, workItemRepos } = await import('../src/db/schema.js')
+    const { and, eq } = await import('drizzle-orm')
     const rows = await db.select().from(tasks).where(eq(tasks.workItemId, id))
     // Bug-fix starts with intake tasks only; force the Dev step's task into existence.
     expect(rows.some((t) => t.templateTaskKey === 'implement')).toBe(false)
     const [any] = rows
     await db.insert(tasks).values({ ...any!, id: undefined, templateTaskKey: 'implement', stepKey: await devStepKey(id) } as never)
-    const res = await call(pm, 'PUT', `/work-items/${id}/repos`, { repoIds: [a.id] })
-    expect(res.statusCode).toBe(409)
+    await db.update(workItemRepos).set({ issueIid: 4, issueUrl: `${fake.url}/dept/lab-report/-/issues/4` }).where(and(eq(workItemRepos.workItemId, id), eq(workItemRepos.repoId, a.id)))
+    const sent: string[] = []
+    const send = app.deps.jobs.send.bind(app.deps.jobs)
+    app.deps.jobs.send = async (name, data) => {
+      sent.push(`${name} ${data.id}`)
+      return send(name, data)
+    }
+
+    const add = await call(pm, 'PUT', `/work-items/${id}/repos`, { repoIds: [a.id, b.id] })
+    expect(add.statusCode).toBe(200)
+    expect((add.json() as WorkItemCode).repos.map((r) => r.id).sort()).toEqual([a.id, b.id].sort())
+    expect(sent).toContain(`gitlab-issue-sync ${id}`)
+    // The new repo has no issue yet: it can go again. The one with an issue stays.
+    sent.length = 0
+    expect((await call(pm, 'PUT', `/work-items/${id}/repos`, { repoIds: [a.id] })).statusCode).toBe(200)
+    expect(sent).not.toContain(`gitlab-issue-sync ${id}`)
+    const drop = await call(pm, 'PUT', `/work-items/${id}/repos`, { repoIds: [] })
+    expect(drop.statusCode).toBe(409)
+    expect(drop.json()).toEqual({ error: 'invalid_state' })
   })
 
   it('PUT refuses a repo of another project, and removing a repo whose issue exists', async () => {

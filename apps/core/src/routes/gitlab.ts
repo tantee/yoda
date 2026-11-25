@@ -167,20 +167,23 @@ export function gitlabRoutes(app: FastifyInstance): void {
     return workItemCode(db(), item, app.deps.gitlab !== null)
   })
 
+  /**
+   * PM/admin sets the work item's repos at any time: added repos get an issue (queued after commit once the Dev
+   * step started); a repo can be removed only while its issue does not exist yet (409 otherwise).
+   */
   app.put('/work-items/:id/repos', async (request) => {
     requireStaff(request)
     const { id } = IdParams.parse(request.params)
     const { repoIds } = WorkItemReposPut.parse(request.body)
     const me = request.me
     const wanted = [...new Set(repoIds)]
-    const { code, effects } = await db().transaction(async (tx) => {
+    const { code, effects, sync } = await db().transaction(async (tx) => {
       const [ref] = await tx.select({ projectId: workItems.projectId }).from(workItems).where(eq(workItems.id, id))
       if (!ref || !(await canSeeProject(tx, me, ref.projectId))) throw notFound()
       if (!(await isPmOrAdmin(tx, me, ref.projectId))) throw forbidden()
       // Lock order project → work item; the share lock keeps the project's repos from being deleted meanwhile.
       await lockProject(tx, ref.projectId, 'share')
       const item = await lockItem(tx, id)
-      if (await devStarted(tx, item)) throw invalidState()
       if (wanted.length) {
         const own = await tx.select({ id: projectRepos.id }).from(projectRepos).where(and(eq(projectRepos.projectId, item.projectId), inArray(projectRepos.id, wanted)))
         if (own.length !== wanted.length) throw repoNotFound()
@@ -190,10 +193,21 @@ export function gitlabRoutes(app: FastifyInstance): void {
       const withIssue = await tx.select({ r: workItemRepos.repoId }).from(workItemRepos).where(and(dropped, isNotNull(workItemRepos.issueIid))).limit(1)
       if (withIssue.length) throw invalidState()
       await tx.delete(workItemRepos).where(dropped)
-      if (wanted.length) await tx.insert(workItemRepos).values(wanted.map((repoId) => ({ workItemId: id, repoId }))).onConflictDoNothing()
-      return { code: await workItemCode(tx, item, app.deps.gitlab !== null), effects: await latestMergedMrs(tx, [id]) }
+      const added = wanted.length
+        ? await tx.insert(workItemRepos).values(wanted.map((repoId) => ({ workItemId: id, repoId }))).onConflictDoNothing().returning({ r: workItemRepos.repoId })
+        : []
+      // A repo added after the Dev step started gets its issue now (before Dev, the step's start creates them).
+      const sync = added.length > 0 && (await devStarted(tx, item))
+      return { code: await workItemCode(tx, item, app.deps.gitlab !== null), effects: await latestMergedMrs(tx, [id]), sync }
     })
     await queueMrEffects(effects)
+    if (sync) {
+      try {
+        await app.deps.jobs.send('gitlab-issue-sync', { id })
+      } catch (err) {
+        console.error(`jobs: failed to send gitlab-issue-sync ${id}`, err)
+      }
+    }
     return code
   })
 
