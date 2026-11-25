@@ -12,7 +12,7 @@ pnpm monorepo: `apps/core` (Fastify + Drizzle), `apps/portal` (Nuxt 4 SPA), `pac
 ```bash
 pnpm install            # also installs the lefthook git hooks (gitleaks pre-commit)
 cp .env.example .env    # adjust ports if needed
-docker compose up -d    # postgres, minio, keycloak (bound to 127.0.0.1)
+docker compose up -d    # postgres, rustfs (S3), keycloak (bound to 127.0.0.1)
 pnpm --filter @yoda/core db:migrate
 pnpm dev                # core on PORT, portal on PORTAL_PORT
 ```
@@ -48,9 +48,9 @@ Images: `yoda-core` (runs migrations, then `node dist/server.js`) and `yoda-port
 (`node .output/server/index.mjs`). Configuration is environment-only:
 
 - core: `DATABASE_URL`, `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `STAFF_GROUP`, `BOOTSTRAP_ADMINS`
-- core object storage (the compose `minio` service): `S3_ACCESS_KEY`, `S3_SECRET_KEY` (required; the
-  overlay also uses them as the MinIO root credentials), `S3_REGION` (`us-east-1`), `S3_BUCKET` (`yoda`,
-  created on startup). `S3_ENDPOINT` is fixed to `http://minio:9000` by the overlay.
+- core object storage (the compose `rustfs` service): `S3_ACCESS_KEY`, `S3_SECRET_KEY` (required; the
+  overlay also uses them as the RustFS credentials), `S3_REGION` (`us-east-1`), `S3_BUCKET` (`yoda`,
+  created on startup). `S3_ENDPOINT` is fixed to `http://rustfs:9000` by the overlay.
 - core AI: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENAI_BASE_URL` (all optional; jobs whose provider
   has no key are unavailable), `AI_MODEL_DRAFT` (`anthropic:claude-opus-5-5`), `AI_MODEL_FAST`
   (`anthropic:claude-haiku-5-5`), `AI_EMBEDDING_MODEL` (empty = no embeddings, trigram search only),

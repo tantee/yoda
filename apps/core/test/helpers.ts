@@ -35,7 +35,7 @@ export async function resetDb(db: Db): Promise<void> {
   await seedTemplates(db)
 }
 
-// Unique key prefix per test process so runs never collide on the shared dev MinIO.
+// Unique key prefix per test process so runs never collide on the shared dev RustFS.
 const TEST_PREFIX = `test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}/`
 let storagePromise: Promise<Storage> | undefined
 function testStorage(config: AppDeps['config']): Promise<Storage> {
@@ -74,8 +74,8 @@ export async function testDeps(overrides: Partial<AppDeps> = {}): Promise<AppDep
       s3Endpoint: process.env.S3_ENDPOINT ?? 'http://localhost:9000',
       s3Region: 'us-east-1',
       s3Bucket: 'yoda',
-      s3AccessKey: process.env.S3_ACCESS_KEY ?? 'yoda', // DEV ONLY (docker-compose MinIO)
-      s3SecretKey: process.env.S3_SECRET_KEY ?? 'yoda-dev-minio', // DEV ONLY
+      s3AccessKey: process.env.S3_ACCESS_KEY ?? 'yoda', // DEV ONLY (docker-compose RustFS)
+      s3SecretKey: process.env.S3_SECRET_KEY ?? 'yoda-dev-rustfs', // DEV ONLY
       aiWorkers: 2,
       dailyTaskCap: 8,
   }
