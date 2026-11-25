@@ -127,7 +127,7 @@ export class GitLabClient {
     return u
   }
 
-  getProject(pathOrId: string | number): Promise<{ id: number; path_with_namespace: string; web_url: string; default_branch: string }> {
+  getProject(pathOrId: string | number): Promise<{ id: number; path_with_namespace: string; web_url: string; default_branch: string | null }> {
     return this.request('GET', `/projects/${this.proj(pathOrId)}`)
   }
 
