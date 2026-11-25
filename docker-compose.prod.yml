@@ -9,7 +9,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      minio:
+      rustfs:
         condition: service_started
     ports:
       - '${CORE_PORT:-4000}:4000'
@@ -20,7 +20,7 @@ services:
       OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-yoda-portal}
       STAFF_GROUP: ${STAFF_GROUP:-/it-dev}
       BOOTSTRAP_ADMINS: ${BOOTSTRAP_ADMINS:-}
-      S3_ENDPOINT: http://minio:9000
+      S3_ENDPOINT: http://rustfs:9000
       S3_REGION: ${S3_REGION:-us-east-1}
       S3_BUCKET: ${S3_BUCKET:-yoda}
       S3_ACCESS_KEY: ${S3_ACCESS_KEY:?S3_ACCESS_KEY is required}
@@ -35,11 +35,11 @@ services:
       DAILY_TASK_CAP: ${DAILY_TASK_CAP:-8}
     restart: unless-stopped
 
-  # Replaces the dev root credentials: core signs in with the same S3_ACCESS_KEY / S3_SECRET_KEY.
-  minio:
+  # Replaces the dev credentials: core signs in with the same S3_ACCESS_KEY / S3_SECRET_KEY.
+  rustfs:
     environment:
-      MINIO_ROOT_USER: ${S3_ACCESS_KEY:?S3_ACCESS_KEY is required}
-      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:?S3_SECRET_KEY is required}
+      RUSTFS_ACCESS_KEY: ${S3_ACCESS_KEY:?S3_ACCESS_KEY is required}
+      RUSTFS_SECRET_KEY: ${S3_SECRET_KEY:?S3_SECRET_KEY is required}
     restart: unless-stopped
 
   portal:
