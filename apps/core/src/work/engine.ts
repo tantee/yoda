@@ -14,6 +14,8 @@ import {
   attachments,
   conversations,
   discussions,
+  projectRepos,
+  workItemRepos,
   events,
   knowledgeEntries,
   people,
@@ -133,6 +135,9 @@ export async function createWorkItem(
     })
     .returning({ id: workItems.id })
   const workItemId = row!.id
+  // Every repo linked to the project so far; the PM can narrow the set until the Dev step starts.
+  const repos = await tx.select({ id: projectRepos.id }).from(projectRepos).where(eq(projectRepos.projectId, projectId))
+  if (repos.length) await tx.insert(workItemRepos).values(repos.map((r) => ({ workItemId, repoId: r.id })))
   await recordEvent(ctx, { type: 'work_item.created', projectId, workItemId, taskId: null })
   await startWorkItem(ctx, workItemId)
   return workItemId
