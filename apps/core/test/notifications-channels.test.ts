@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildApp, type AppDeps } from '../src/app.js'
 import type { Db } from '../src/db/client.js'
 import { notificationChannelSettings, notificationDeliveries, notificationPrefs, notifications, people } from '../src/db/schema.js'
-import { InlineJobQueue } from '../src/jobs/queue.js'
+import { InlineJobQueue, NOTIFY_RETRY_LIMIT } from '../src/jobs/queue.js'
 import type { MailMessage, MailTransport } from '../src/notifications/channels/email.js'
 import { deliver, recordDelivery } from '../src/notifications/deliver.js'
 import { channelsFor } from '../src/notifications/prefs.js'
@@ -153,12 +153,14 @@ describe('email delivery', () => {
     expect(send).not.toHaveBeenCalled()
   })
 
-  it('a transient failure retries 3 times, then the row is failed with a code; logs carry no secret or address', async () => {
+  it('a transient failure is tried 7 times (6 retries), then the row is failed with a code; logs carry no secret or address', async () => {
+    expect(NOTIFY_RETRY_LIMIT).toBe(6)
     const dev = await person(db, 'dev', { staff: true })
-    mail.state.fail = 3
+    mail.state.fail = NOTIFY_RETRY_LIMIT + 1
     mail.state.err = Object.assign(new Error(`connect ECONNREFUSED as yoda:${SMTP.smtpPassword} for dev@example.org`), { code: 'ECONNECTION' })
     const n = await assignTask(dev)
     expect(mail.sent).toHaveLength(0)
+    expect(mail.state.fail).toBe(0)
     const [row] = await db.select().from(notificationDeliveries)
     expect(row).toMatchObject({ notificationId: n.id, channel: 'email', state: 'failed', errorCode: 'ECONNECTION' })
     const logged = JSON.stringify(warn.mock.calls)

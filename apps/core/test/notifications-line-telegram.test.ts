@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildApp, type AppDeps } from '../src/app.js'
 import { loadConfig } from '../src/config.js'
 import { channelLinkAttempts, channelLinkCodes, channelLinks, notificationChannelSettings, notificationDeliveries, notificationPrefs, notifications } from '../src/db/schema.js'
-import { InlineJobQueue } from '../src/jobs/queue.js'
+import { InlineJobQueue, NOTIFY_RETRY_LIMIT } from '../src/jobs/queue.js'
 import { deliver } from '../src/notifications/deliver.js'
 import { linkWithCode } from '../src/notifications/linking.js'
 import { channelsFor } from '../src/notifications/prefs.js'
@@ -403,11 +403,11 @@ describe('LINE and Telegram delivery', () => {
     expect(tg.messages[0]!.text).toContain('http://localhost:3000/todo/x')
   })
 
-  it('LINE 500 three times: failed and transient (retried), Telegram sent once', async () => {
+  it('LINE 500 on every attempt: failed and transient (retried 6 times), Telegram sent once', async () => {
     await linkBoth(dev)
-    line.failNext(500, 3)
+    line.failNext(500, NOTIFY_RETRY_LIMIT + 1)
     const n = await assignTask(dev.id)
-    expect(line.requests.filter((r) => r.path === '/v2/bot/message/push')).toHaveLength(3)
+    expect(line.requests.filter((r) => r.path === '/v2/bot/message/push')).toHaveLength(NOTIFY_RETRY_LIMIT + 1)
     expect(tg.messages).toHaveLength(1)
     const rows = await db().select().from(notificationDeliveries).where(eq(notificationDeliveries.notificationId, n.id))
     expect(rows.find((r) => r.channel === 'line')).toMatchObject({ state: 'failed', errorCode: 'line_500', permanent: false })
@@ -448,10 +448,10 @@ describe('LINE and Telegram delivery', () => {
   it('400/401 are permanent; 429 is transient', async () => {
     await linkBoth(dev)
     line.failNext(401, 3)
-    tg.failNext(429, 3, 'Too Many Requests: retry after 1')
+    tg.failNext(429, NOTIFY_RETRY_LIMIT + 1, 'Too Many Requests: retry after 1')
     const n = await assignTask(dev.id)
     expect(line.requests).toHaveLength(1)
-    expect(tg.requests).toHaveLength(3)
+    expect(tg.requests).toHaveLength(NOTIFY_RETRY_LIMIT + 1)
     const rows = await db().select().from(notificationDeliveries).where(eq(notificationDeliveries.notificationId, n.id))
     expect(rows.find((r) => r.channel === 'line')).toMatchObject({ errorCode: 'line_401', permanent: true })
     expect(rows.find((r) => r.channel === 'telegram')).toMatchObject({ errorCode: 'telegram_429', permanent: false })

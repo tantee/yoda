@@ -24,7 +24,7 @@ export const SCHEDULES: Partial<Record<JobName, string>> = {
   'weekly-summary': '0 8 * * 1',
 }
 
-/** `attempt` starts at 1; with RETRY_LIMIT 2 the 3rd attempt is final. */
+/** `attempt` starts at 1; with RETRY_LIMIT 2 the 3rd attempt is final (`retryLimit(name)` per queue). */
 /** `signal` (pg-boss) aborts when the job expires or is cancelled; the inline test queue omits it. */
 export type JobRun = { id: string; attempt: number; isFinalAttempt: boolean; signal?: AbortSignal }
 export type JobHandler = (run: JobRun) => Promise<void>
@@ -67,11 +67,21 @@ export const POLICY: Partial<Record<JobName, 'exclusive' | 'stately'>> = {
 }
 export const SINGLETON: readonly JobName[] = ['draft-task', 'discussion-brief', 'gitlab-issue-sync', 'gitlab-mr-reconcile', 'weekly-summary-project', 'notify-deliver']
 
-/** Per-queue retry overrides: outside channels back off exponentially (30 s, then about a minute). */
-const QUEUE_OVERRIDES: Partial<Record<JobName, { retryBackoff: boolean }>> = {
-  'notify-deliver': { retryBackoff: true },
+/** Retries of an outside-channel delivery: about 30 s, doubling up to about 16 minutes (roughly 30 min in all). */
+export const NOTIFY_RETRY_LIMIT = 6
+const NOTIFY_RETRY_DELAY_MAX_SECONDS = 16 * 60
+
+/**
+ * Per-queue retry overrides. Outside channels ride out a short SMTP / LINE / Telegram outage: 6 retries with
+ * exponential backoff (pg-boss: 30 s × 2^n with jitter, capped at 16 minutes). Delivery is at least once after
+ * the job is queued; an outage longer than this window drops the message for that channel (the feed keeps it).
+ */
+const QUEUE_OVERRIDES: Partial<Record<JobName, { retryLimit: number; retryBackoff: boolean; retryDelayMax: number }>> = {
+  'notify-deliver': { retryLimit: NOTIFY_RETRY_LIMIT, retryBackoff: true, retryDelayMax: NOTIFY_RETRY_DELAY_MAX_SECONDS },
 }
 const queueOptions = (name: JobName) => ({ ...QUEUE_OPTIONS, ...QUEUE_OVERRIDES[name] })
+/** Retries after the first attempt for jobs of `name`. */
+export const retryLimit = (name: JobName): number => QUEUE_OVERRIDES[name]?.retryLimit ?? RETRY_LIMIT
 
 /** pg-boss backed queue (its own `pgboss` schema in the app database). Used only by server.ts. */
 export async function createPgBossQueue(databaseUrl: string, concurrency: number): Promise<JobQueue> {
@@ -99,7 +109,7 @@ export async function createPgBossQueue(databaseUrl: string, concurrency: number
           await handler({
             id: job.data.id,
             attempt: job.retryCount + 1,
-            isFinalAttempt: job.retryCount >= RETRY_LIMIT,
+            isFinalAttempt: job.retryCount >= retryLimit(name),
             signal: job.signal,
           })
         }
@@ -161,8 +171,9 @@ export class InlineJobQueue implements JobQueue {
   private async run(name: JobName, id: string): Promise<void> {
     const handler = this.handlers.get(name)
     if (!handler) return
-    for (let attempt = 1; attempt <= RETRY_LIMIT + 1; attempt++) {
-      const isFinalAttempt = attempt === RETRY_LIMIT + 1
+    const attempts = retryLimit(name) + 1
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      const isFinalAttempt = attempt === attempts
       try {
         await handler({ id, attempt, isFinalAttempt })
         return
