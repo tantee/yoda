@@ -1,4 +1,5 @@
 import {
+  DiscussionCreate,
   Priority,
   Proposal,
   WorkItemCreate,
@@ -12,6 +13,7 @@ import { alias } from 'drizzle-orm/pg-core'
 import { commentRequired, forbidden, HttpError, invalidState, notFound, projectRequired } from '../auth/plugin.js'
 import type { Db, Tx } from '../db/client.js'
 import { attachments, conversations, people, projectMembers, projects, proposals, workItems } from '../db/schema.js'
+import { createDiscussion } from '../discussions/service.js'
 import { notifyProposalPending } from '../notifications/service.js'
 import { lockProject } from '../projects/access.js'
 import { recordEvent, type WorkCtx } from '../work/context.js'
@@ -137,7 +139,7 @@ async function isPmAnywhere(tx: Conn, personId: string): Promise<boolean> {
  */
 async function requireCanDecide(tx: Tx, me: Me, p: ProposalRow, target: string | null): Promise<void> {
   if (me.isAdmin) return
-  if (p.kind === 'create_work_item' && p.onBehalfOf === me.id) return
+  if ((p.kind === 'create_work_item' || p.kind === 'raise_discussion') && p.onBehalfOf === me.id) return
   if (target && (await isPmOrAdmin(tx, me, target))) return
   const sees = p.projectId ? (await memberRoles(tx, p.projectId, me.id)) !== null : await isPmAnywhere(tx, me.id)
   if (!sees) throw notFound()
@@ -151,7 +153,7 @@ async function setState(
   state: ProposalState,
   me: Me | null,
   note: string | null,
-  extra: { projectId?: string; workItemId?: string } = {},
+  extra: { projectId?: string; workItemId?: string; payload?: Record<string, unknown> } = {},
 ): Promise<void> {
   await ctx.tx
     .update(proposals)
@@ -262,6 +264,24 @@ export async function decideProposal(ctx: WorkCtx, me: Me, id: string, decision:
       const workItemId = await createWorkItem(ctx, creator, target, input)
       if (p.onBehalfOf) await linkIntakeUploads(tx, p.onBehalfOf, payload.attachmentIds, target, workItemId)
       await setState(ctx, p, 'accepted', me, note, { projectId: target, workItemId })
+      return { superseded: false }
+    }
+    case 'raise_discussion': {
+      if (!p.projectId) throw invalidState()
+      if (item && item.state !== 'active') throw invalidState()
+      const input = DiscussionCreate.safeParse({
+        ...payload,
+        projectId: p.projectId,
+        workItemId: p.workItemId ?? undefined,
+        taskId: undefined,
+        requestBrief: true,
+      })
+      if (!input.success) throw invalidState()
+      // Raised as the person it was proposed for when they may raise it there; otherwise by the deciding PM.
+      const behalf = p.onBehalfOf ? await personAsMe(tx, p.onBehalfOf) : null
+      const behalfCanRaise = !!behalf && behalf.isStaff && (behalf.isAdmin || (await memberRoles(tx, p.projectId, behalf.id)) !== null)
+      const discussionId = await createDiscussion(ctx, behalfCanRaise ? behalf! : me, input.data)
+      await setState(ctx, p, 'accepted', me, note, { payload: { ...payload, discussionId } })
       return { superseded: false }
     }
   }
@@ -383,7 +403,7 @@ export async function pendingForDecider(db: Conn, me: Me): Promise<Proposal[]> {
       eq(proposals.state, 'pending'),
       or(
         projectScope,
-        and(eq(proposals.kind, 'create_work_item'), eq(proposals.onBehalfOf, me.id)),
+        and(inArray(proposals.kind, ['create_work_item', 'raise_discussion']), eq(proposals.onBehalfOf, me.id)),
         decideProjectless ? isNull(proposals.projectId) : undefined,
       ),
       or(
