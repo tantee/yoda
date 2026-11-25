@@ -213,6 +213,20 @@ and `backup` for every pipeline on the default branch and on tags, and pushes th
 `$CI_REGISTRY_IMAGE/<name>` tagged with the commit SHA, plus the git tag on tags and `latest` on the default
 branch. GitHub Actions only builds (the GitHub repository is public; nothing is published from it).
 
+**GitLab CI runner.** The build jobs use Docker-in-Docker (`docker:27.5.1` with the `docker:27.5.1-dind`
+service and `DOCKER_TLS_CERTDIR=/certs`). They need a runner with the **docker executor** in **privileged** mode
+and a `/certs/client` volume, in the runner's `config.toml`:
+
+```toml
+[runners.docker]
+  privileged = true
+  volumes = ["/certs/client", "/cache"]
+```
+
+If the runner does not set them itself, add the CI/CD variables DOCKER_HOST = `tcp://docker:2376`,
+DOCKER_TLS_VERIFY = `1` and DOCKER_CERT_PATH = `/certs/client`. The `deploy` job runs in a plain `alpine`
+image and needs no privileges.
+
 **CI/CD variables** (Settings → CI/CD → Variables, all **protected**; protect the release tags under
 Settings → Repository → Protected tags so only maintainers can create them):
 
@@ -227,21 +241,25 @@ Settings → Repository → Protected tags so only maintainers can create them):
 
 **Upgrade.**
 
-1. Read `CHANGELOG.md` for the release, especially new required variables; add them to the host's `.env`.
-2. Tag the release on the default branch (`git tag 1.1.0 && git push origin 1.1.0`) and wait for the tag
+1. Read `CHANGELOG.md` for the release, especially new required variables; add them to the host's `.env`
+   yourself. **The deploy never reads or changes `.env`**: it only replaces the compose files and
+   `ops/deploy/deploy.sh`.
+2. **Take a backup** on the host, every time:
+   `cd /srv/yoda && docker compose -f docker-compose.yml -f docker-compose.prod.yml run --rm backup --now`
+   (wait for it to finish; it is the restore point if the upgrade or a later rollback goes wrong).
+3. Tag the release on the default branch (`git tag 1.1.0 && git push origin 1.1.0`) and wait for the tag
    pipeline's build jobs.
-3. Run the manual **deploy** job in that tag pipeline. It copies the tag's compose files and
+4. Run the manual **deploy** job in that tag pipeline. It copies the tag's compose files and
    `ops/deploy/deploy.sh` to `DEPLOY_PATH` and runs it there with `YODA_VERSION=<tag>`:
    `docker compose pull`, then `docker compose run --rm migrate` (a failed migration stops the deploy before
    any running container is replaced), then `docker compose up -d`, then it polls the portal's `/api/ready`
    for up to 2 minutes and fails the job if it never answers 200. Only one deploy runs at a time.
-4. Check the portal, and the job log's last line, `deploy: <tag> ready`.
+5. Check the portal, and the job log's last line, `deploy: <tag> ready`.
 
 **Rollback.** Run the deploy job again in the **previous tag's** pipeline (CI/CD → Pipelines, filter by tag), or
 on the host: `cd /srv/yoda && YODA_VERSION=<previous tag> sh ops/deploy/deploy.sh`. Migrations only move
 forward: an older release usually runs on a newer schema, but if the changelog says a release changed data in a
-way the older one cannot read, restore the backup taken before the upgrade instead (section 6). Take a backup
-just before risky upgrades: `docker compose -f docker-compose.yml -f docker-compose.prod.yml run --rm backup --now`.
+way the older one cannot read, restore the backup taken in step 2 of the upgrade instead (section 6).
 
 ## 6. Backups and restore
 
@@ -360,16 +378,19 @@ logged, stored or returned by the API.
 - [ ] In Telegram, talk to **@BotFather**: `/newbot`, choose a name and a username ending in `bot`. The token it
       returns → `TELEGRAM_BOT_TOKEN`; the username (without `@`) → `TELEGRAM_BOT_USERNAME`.
 - [ ] Generate `TELEGRAM_WEBHOOK_SECRET` (`openssl rand -hex 24`). Deploy.
-- [ ] Register the webhook once, from the deploy host, reading the values from `.env` so they stay out of
-      shell history (the token is on curl's command line while it runs, so do this on the deploy host only):
+- [ ] Register the webhook once, from `DEPLOY_PATH` on the deploy host. The snippet reads the two values out of
+      `.env` with `sed` (it never sources `.env`, so nothing in it runs as shell code; values must be unquoted
+      `NAME=value` lines) and hands them to curl on stdin (`-K -`), so the token stays out of shell history
+      and of other users' `ps`:
 
       ```bash
-      set -a; . ./.env; set +a
-      curl -fsS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/setWebhook" \
-        --data-urlencode "url=https://portal.example.org/api/webhooks/telegram" \
-        --data-urlencode "secret_token=${TELEGRAM_WEBHOOK_SECRET}" \
-        --data-urlencode 'allowed_updates=["message","my_chat_member"]' \
-        --data-urlencode "drop_pending_updates=true"
+      env_get() { sed -n "s/^$1=//p" .env | tail -n 1; }
+      printf 'url = "https://api.telegram.org/bot%s/setWebhook"\ndata-urlencode = "secret_token=%s"\n' \
+          "$(env_get TELEGRAM_BOT_TOKEN)" "$(env_get TELEGRAM_WEBHOOK_SECRET)" |
+        curl -fsS -K - \
+          --data-urlencode "url=https://portal.example.org/api/webhooks/telegram" \
+          --data-urlencode 'allowed_updates=["message","my_chat_member"]' \
+          --data-urlencode "drop_pending_updates=true"
       ```
 
       Expect `{"ok":true,...}`. Check later with `.../getWebhookInfo` (look at `last_error_message`).

@@ -77,6 +77,14 @@ describe('.gitlab-ci.yml', () => {
     expect(script).toContain('ops/deploy/deploy.sh')
   })
 
+  it('fails the deploy when any part of the copy pipeline fails', () => {
+    const script = ci.deploy!.script ?? []
+    const pipefail = script.indexOf('set -o pipefail')
+    const pipe = script.findIndex((l) => /\btar -cf\b[\s\S]*\|\s*ssh\b/.test(l))
+    expect(pipefail).toBeGreaterThan(-1)
+    expect(pipe).toBeGreaterThan(pipefail)
+  })
+
   it('holds no literal secrets or hosts', () => {
     // Deploy settings come from CI/CD variables, never from the file.
     for (const [name, job] of Object.entries(ci)) {

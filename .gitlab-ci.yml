@@ -103,6 +103,8 @@ deploy:
     - mkdir -p ~/.ssh && chmod 700 ~/.ssh
     - printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
   script:
+    # A failed tar must fail the job, not ship a partial archive.
+    - set -o pipefail
     - tar -cf - docker-compose.yml docker-compose.prod.yml infra/postgres/init.sql ops/deploy/deploy.sh
       | ssh -i "$DEPLOY_SSH_KEY" -o StrictHostKeyChecking=yes -o BatchMode=yes "$DEPLOY_USER@$DEPLOY_HOST"
       "mkdir -p '$DEPLOY_PATH' && tar -xf - -C '$DEPLOY_PATH'"
