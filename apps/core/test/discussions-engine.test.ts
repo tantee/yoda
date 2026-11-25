@@ -5,7 +5,7 @@ import { and, asc, desc, eq } from 'drizzle-orm'
 import type { AppDeps } from '../src/app.js'
 import type { Db } from '../src/db/client.js'
 import { discussions, events, notifications, people, projectMembers, projects, proposals, tasks, workItems } from '../src/db/schema.js'
-import { createDiscussion, decideDiscussion, withdrawDiscussion } from '../src/discussions/service.js'
+import { createDiscussion, decideDiscussion, raiseFromTask, withdrawDiscussion } from '../src/discussions/service.js'
 import type { InlineJobQueue } from '../src/jobs/queue.js'
 import { decideProposal } from '../src/proposals/service.js'
 import { runWork } from '../src/work/context.js'
@@ -241,6 +241,97 @@ describe('discussions block and resume work items', () => {
       expect(await advancesFrom(wi, 'dev')).toHaveLength(1)
       expect(await db.select().from(tasks).where(and(eq(tasks.workItemId, wi), eq(tasks.templateTaskKey, 'verify')))).toHaveLength(1)
     }
+  })
+
+  it('the final step: an open discussion keeps the item from completing; the decision completes it once', async () => {
+    const s = await setup(db, 'auto-assign')
+    const wi = await toDev(s)
+    await submitLatest(s, wi, 'implement', s.dev, { text: 'v1' })
+    await submitLatest(s, wi, 'draft-tests', s.qc, { text: 'tests' })
+    await submitLatest(s, wi, 'review-code', s.dev, approve)
+    await submitLatest(s, wi, 'verify', s.qc, { text: 'ok' })
+    await submitLatest(s, wi, 'approve-release', s.qc, approve)
+    expect((await item(wi)).currentStepKey).toBe('close')
+    await submitLatest(s, wi, 'accept-delivery', s.pm, approve)
+    const d = await raise(s.dev, wi)
+    await submitLatest(s, wi, 'close-bug', s.pm, approve)
+
+    expect(await item(wi)).toMatchObject({ state: 'active', currentStepKey: 'close' })
+    expect((await itemEvents(wi)).filter((e) => e.type === 'work_item.done')).toHaveLength(0)
+    expect(await detail(s, wi)).toMatchObject({ openDiscussions: 1, awaitingAdvance: false })
+
+    await decide(s.pm, d)
+    expect(await item(wi)).toMatchObject({ state: 'done', currentStepKey: null })
+    expect((await itemEvents(wi)).filter((e) => e.type === 'work_item.done')).toHaveLength(1)
+    expect(await advancesFrom(wi, 'close')).toHaveLength(1)
+  })
+
+  it('a raise racing the last task acceptance either holds the step or gets 409, never both', async () => {
+    const outcomes = new Set<string>()
+    for (let round = 0; round < 6; round++) {
+      await resetDb(db)
+      const s = await setup(db, 'auto-assign')
+      const wi = await toDev(s)
+      await submitLatest(s, wi, 'implement', s.dev, { text: 'v1' })
+      await submitLatest(s, wi, 'draft-tests', s.qc, { text: 'tests' })
+      const review = await latest(wi, 'review-code')
+      if (review.assigneeId !== s.dev.id) await run(s.pm, (ctx) => assignTask(ctx, s.pm, review.id, s.dev.id))
+
+      let arrived = 0
+      let release!: () => void
+      const bothOpen = new Promise<void>((r) => (release = r))
+      const barrier = () => {
+        if (++arrived === 2) release()
+        return bothOpen
+      }
+      const [raised, submitted] = await Promise.allSettled([
+        run(s.pm, async (ctx) => {
+          await barrier()
+          return raiseFromTask(ctx, s.pm, review.id, { question: 'รอก่อน?', details: '', priority: 'normal', options: [], requestBrief: false })
+        }),
+        run(s.dev, async (ctx) => {
+          await barrier()
+          await submitTask(ctx, s.dev, review.id, { text: '', attachmentIds: [], ...approve })
+        }),
+      ])
+      expect(submitted.status).toBe('fulfilled')
+      const open = await db.select().from(discussions).where(eq(discussions.workItemId, wi))
+      const advanced = await advancesFrom(wi, 'dev')
+      if (raised.status === 'fulfilled') {
+        // The raise won: the step holds.
+        outcomes.add('held')
+        expect(open.map((d) => d.state)).toEqual(['open'])
+        expect(advanced).toHaveLength(0)
+        expect((await item(wi)).currentStepKey).toBe('dev')
+      } else {
+        // The acceptance won: the step advanced and the raise was refused.
+        outcomes.add('advanced')
+        expect(raised.reason).toMatchObject({ statusCode: 409, body: { error: 'invalid_state' } })
+        expect(open).toHaveLength(0)
+        expect(advanced).toHaveLength(1)
+        expect((await item(wi)).currentStepKey).toBe('qc')
+      }
+    }
+    expect(outcomes.size).toBeGreaterThan(0)
+  })
+
+  it('a task discussion needs an active task on the current step', async () => {
+    const s = await setup(db, 'auto-assign')
+    const wi = await create(s)
+    const accept = await latest(wi, 'accept-bug')
+    await submitLatest(s, wi, 'accept-bug', s.pm, approve)
+    const body = { question: 'ถามย้อนหลัง', details: '', priority: 'normal' as const, options: [], requestBrief: false }
+    // Accepted, and its step has advanced.
+    await expect(run(s.pm, (ctx) => raiseFromTask(ctx, s.pm, accept.id, body))).rejects.toMatchObject({
+      statusCode: 409,
+      body: { error: 'invalid_state' },
+    })
+    // An active task of the current step is fine.
+    const impl = await latest(wi, 'implement')
+    expect(await run(s.pm, (ctx) => raiseFromTask(ctx, s.pm, impl.id, body))).toEqual(expect.any(String))
+    // Cancelled item: its tasks are rejected → 409.
+    await run(s.pm, (ctx) => cancelWorkItem(ctx, s.pm, wi))
+    await expect(run(s.pm, (ctx) => raiseFromTask(ctx, s.pm, impl.id, body))).rejects.toMatchObject({ statusCode: 409 })
   })
 
   it('cancelling a work item withdraws its open discussions', async () => {
