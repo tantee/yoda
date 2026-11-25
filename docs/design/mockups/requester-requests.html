@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>คำขอของฉัน</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet"><link href="https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css" rel="stylesheet">
+<style>
+/* Yoda portal design refresh: tokens mirror the proposed Vuetify theme (docs/design/portal-design-refresh.md). */
+:root {
+  --nav: #0B2545; --nav-hover: #12305A; --nav-active: #173A66; --nav-text: #C3D0E2; --nav-label: #8BA0BF; --nav-accent: #6FA8FF;
+  --primary: #1F5FBF; --primary-hover: #184C99; --primary-soft: #E8F0FB; --on-primary-soft: #1A4F9E;
+  --bg: #F4F6F9; --surface: #FFFFFF; --surface-variant: #EDF1F6; --border: #D8DEE7; --border-strong: #8A95A5;
+  --text: #1A2433; --text-2: #556275; --text-3: #6B7789;
+  --success: #1D6B3A; --success-soft: #E5F3EA; --success-dot: #2F8A4F;
+  --warning: #7A4F00; --warning-soft: #FCF0D7; --warning-dot: #B07800;
+  --error: #B3261E; --error-ink: #A8261D; --error-soft: #FBE8E6; --error-dot: #D0342C;
+  --info: #1A4F9E; --info-soft: #E8F0FB; --info-dot: #2F6FD0;
+  --neutral: #465264; --neutral-soft: #EDF1F6; --neutral-dot: #7A8699;
+  --ai: #4A3FA0; --ai-soft: #EFEDFB; --ai-dot: #6A5CD6;
+  --radius: 8px; --radius-sm: 6px;
+  --rail: 248px; --bar: 56px;
+  --font: 'IBM Plex Sans Thai', 'IBM Plex Sans', system-ui, sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { font-family: var(--font); font-size: 14px; line-height: 1.6; color: var(--text); background: var(--bg); letter-spacing: 0; -webkit-font-smoothing: antialiased; }
+:lang(en), .latin { font-family: 'IBM Plex Sans', 'IBM Plex Sans Thai', system-ui, sans-serif; }
+a { color: var(--primary); text-decoration: none; }
+a:hover { text-decoration: underline; }
+:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 4px; }
+.num { font-variant-numeric: tabular-nums; }
+.mdi::before { line-height: 1; }
+h1, h2, h3, p { margin: 0; }
+
+/* Type scale: 12 / 13 / 14 / 16 / 20 / 24 */
+.t-page { font-size: 20px; line-height: 1.4; font-weight: 600; }
+.t-section { font-size: 16px; line-height: 1.5; font-weight: 600; }
+.t-body { font-size: 14px; }
+.t-meta { font-size: 13px; color: var(--text-2); }
+.t-caption { font-size: 12px; color: var(--text-2); line-height: 1.5; }
+.t-kpi { font-size: 24px; line-height: 1.3; font-weight: 600; font-variant-numeric: tabular-nums; }
+.muted { color: var(--text-2); }
+.strong { font-weight: 600; }
+
+/* ---------------- shell ---------------- */
+.app { display: grid; grid-template-columns: var(--rail) 1fr; min-height: 100vh; }
+.rail { background: var(--nav); color: var(--nav-text); min-height: 100vh; }
+.rail-inner { position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; padding: 12px 12px 16px; overflow-y: auto; }
+.brand { display: flex; align-items: center; gap: 10px; height: 44px; padding: 0 8px; margin-bottom: 12px; color: #fff; }
+.brand-mark { width: 30px; height: 30px; border-radius: 7px; background: #fff; color: var(--nav); display: grid; place-items: center; font-weight: 700; font-size: 15px; font-family: 'IBM Plex Sans', sans-serif; }
+.brand-name { font-weight: 600; font-size: 15px; line-height: 1.2; }
+.brand-sub { font-size: 12px; color: var(--nav-label); line-height: 1.3; }
+.nav-group { margin-top: 12px; }
+.nav-label { font-size: 12px; color: var(--nav-label); padding: 4px 12px 4px; font-weight: 500; }
+.nav-item { display: flex; align-items: center; gap: 12px; height: 40px; padding: 0 12px; border-radius: var(--radius-sm); color: var(--nav-text); font-size: 14px; position: relative; }
+.nav-item:hover { background: var(--nav-hover); text-decoration: none; }
+.nav-item .mdi { font-size: 20px; width: 20px; text-align: center; }
+.nav-item.active { background: var(--nav-active); color: #fff; font-weight: 500; }
+.nav-item.active::before { content: ''; position: absolute; left: -12px; top: 8px; bottom: 8px; width: 3px; border-radius: 0 3px 3px 0; background: var(--nav-accent); }
+.nav-count { margin-left: auto; min-width: 22px; height: 20px; padding: 0 6px; border-radius: 10px; background: #1E3E6B; color: #DCE6F5; font-size: 12px; display: grid; place-items: center; font-variant-numeric: tabular-nums; }
+.nav-item.active .nav-count { background: #9CC2FF; color: var(--nav); font-weight: 600; }
+.rail-foot { margin-top: auto; padding: 12px 12px 0; font-size: 12px; color: var(--nav-label); border-top: 1px solid #1E3E6B; }
+
+.main { min-width: 0; display: flex; flex-direction: column; }
+.topbar { position: sticky; top: 0; z-index: 5; height: var(--bar); background: var(--surface); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 16px; padding: 0 24px; }
+.icon-btn.menu-btn { display: none; }
+.crumbs { display: flex; align-items: center; gap: 4px; font-size: 13px; color: var(--text-2); min-width: 0; flex: 1; white-space: nowrap; overflow: hidden; }
+.crumbs a { color: var(--text-2); }
+.crumbs .sep { color: var(--border-strong); font-size: 16px; }
+.crumbs .here { color: var(--text); font-weight: 500; overflow: hidden; text-overflow: ellipsis; }
+.search { display: flex; align-items: center; gap: 8px; width: 300px; height: 36px; padding: 0 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg); color: var(--text-3); font-size: 13px; }
+.search .mdi { font-size: 18px; }
+.kbd { margin-left: auto; font-size: 12px; border: 1px solid var(--border); border-radius: 4px; padding: 0 5px; color: var(--text-2); background: #fff; font-family: 'IBM Plex Sans', sans-serif; }
+.icon-btn { width: 36px; height: 36px; border-radius: 50%; border: 0; background: transparent; color: var(--text-2); display: grid; place-items: center; position: relative; cursor: pointer; font-size: 20px; }
+.icon-btn:hover { background: var(--surface-variant); }
+.bell-badge { position: absolute; top: 3px; right: 0; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 9px; background: var(--error); color: #fff; font-size: 11px; font-weight: 600; display: grid; place-items: center; border: 2px solid #fff; font-family: 'IBM Plex Sans', sans-serif; }
+.user { display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 6px 0 4px; border-radius: 20px; cursor: pointer; }
+.user:hover { background: var(--surface-variant); }
+.avatar { width: 32px; height: 32px; border-radius: 50%; background: var(--primary-soft); color: var(--on-primary-soft); display: grid; place-items: center; font-size: 13px; font-weight: 600; flex: none; }
+.person { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
+.avatar.sm { width: 24px; height: 24px; font-size: 11px; }
+.user-name { font-size: 13px; line-height: 1.3; }
+.user-role { font-size: 12px; color: var(--text-2); line-height: 1.3; }
+
+.content { padding: 24px; width: 100%; }
+.content.reading { max-width: 1280px; }
+
+/* page header */
+.page-head { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 16px; flex-wrap: wrap; }
+.page-head .titles { flex: 1 1 420px; min-width: 0; }
+.page-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; margin-top: 6px; font-size: 13px; color: var(--text-2); }
+.page-meta .mdi { font-size: 16px; margin-right: 4px; vertical-align: -2px; color: var(--text-3); }
+.page-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin: 0 0 20px; overflow-x: auto; scrollbar-width: none; }
+.tab { height: 40px; padding: 0 14px; display: flex; align-items: center; gap: 6px; color: var(--text-2); font-size: 14px; font-weight: 500; border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; }
+.tab.active { color: var(--primary); border-color: var(--primary); }
+.tab .count { font-size: 12px; background: var(--surface-variant); color: var(--text-2); border-radius: 10px; padding: 0 7px; font-variant-numeric: tabular-nums; }
+.tab.active .count { background: var(--primary-soft); color: var(--on-primary-soft); }
+
+/* buttons: 36px, no uppercase, no tracking */
+.btn { height: 36px; padding: 0 16px; border-radius: var(--radius-sm); border: 1px solid transparent; font: inherit; font-size: 14px; font-weight: 500; letter-spacing: 0; text-transform: none; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; white-space: nowrap; }
+.btn .mdi { font-size: 18px; }
+.btn-primary { background: var(--primary); color: #fff; }
+.btn-primary:hover { background: var(--primary-hover); }
+.btn-tonal { background: var(--primary-soft); color: var(--on-primary-soft); }
+.btn-outline { background: #fff; color: var(--text); border-color: var(--border); }
+.btn-outline:hover { background: var(--bg); }
+.btn-text { background: transparent; color: var(--primary); padding: 0 10px; }
+.btn-danger-text { background: transparent; color: var(--error); padding: 0 10px; }
+.btn-sm { height: 32px; padding: 0 12px; font-size: 13px; }
+.btn-icon { width: 36px; padding: 0; justify-content: center; }
+
+/* cards */
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+.card-head { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--border); min-height: 48px; }
+.card-head .t-section { flex: 1; }
+.card-body { padding: 16px; }
+.section-title { display: flex; align-items: center; gap: 8px; margin: 24px 0 10px; }
+.section-title:first-child { margin-top: 0; }
+.section-title .count { font-size: 12px; color: var(--text-2); background: var(--surface-variant); border-radius: 10px; padding: 0 8px; font-weight: 500; font-variant-numeric: tabular-nums; }
+
+/* chips: soft bg + strong text + dot/icon, 24px */
+.chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px 0 8px; border-radius: 12px; font-size: 12px; font-weight: 500; white-space: nowrap; line-height: 1; }
+.chip::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
+.chip.icon::before { display: none; }
+.chip .mdi { font-size: 14px; }
+.chip.success { background: var(--success-soft); color: var(--success); } .chip.success::before { background: var(--success-dot); }
+.chip.warning { background: var(--warning-soft); color: var(--warning); } .chip.warning::before { background: var(--warning-dot); }
+.chip.error { background: var(--error-soft); color: var(--error-ink); } .chip.error::before { background: var(--error-dot); }
+.chip.info { background: var(--info-soft); color: var(--info); } .chip.info::before { background: var(--info-dot); }
+.chip.neutral { background: var(--neutral-soft); color: var(--neutral); } .chip.neutral::before { background: var(--neutral-dot); }
+.chip.ai { background: var(--ai-soft); color: var(--ai); } .chip.ai::before { background: var(--ai-dot); }
+.chip.outline { background: #fff; border: 1px solid var(--border); color: var(--text-2); }
+.chip.outline::before { display: none; }
+/* priority: a glyph, not a colour flood */
+.prio { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; white-space: nowrap; }
+.prio .mdi { font-size: 16px; }
+.prio.urgent { color: var(--error-ink); font-weight: 600; }
+.prio.high { color: var(--warning); font-weight: 500; }
+.prio.normal { color: var(--text-2); }
+.prio.low { color: var(--text-3); }
+
+/* tables: 40px rows */
+.table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 14px; }
+.table th { text-align: left; font-weight: 500; font-size: 12px; color: var(--text-2); height: 36px; padding: 0 12px; background: var(--bg); border-bottom: 1px solid var(--border); white-space: nowrap; }
+.table td { height: 40px; padding: 6px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.table tr:last-child td { border-bottom: 0; }
+.table tbody tr:hover td { background: #F8FAFC; }
+.table .r { text-align: right; }
+.cell-title { font-weight: 500; color: var(--text); }
+.cell-sub { font-size: 12px; color: var(--text-2); line-height: 1.5; }
+
+/* step track: the signature element (workflow position at a glance) */
+.track { display: grid; grid-template-columns: repeat(6, 1fr); gap: 3px; width: 96px; }
+.track i { height: 6px; border-radius: 2px; background: #C4CCD8; }
+.track i.done { background: var(--primary); }
+.track i.now { background: #fff; box-shadow: inset 0 0 0 2px var(--primary); }
+.track-label { font-size: 12px; color: var(--text-2); margin-top: 4px; white-space: nowrap; }
+
+.ai-label { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 500; color: var(--ai); }
+.ai-label .mdi { font-size: 15px; }
+
+.alert { display: flex; gap: 12px; padding: 12px 16px; border-radius: var(--radius); border: 1px solid; font-size: 14px; }
+.alert > .mdi { font-size: 20px; line-height: 1.2; }
+.alert.warning { background: var(--warning-soft); border-color: #EFD9A8; color: var(--text); } .alert.warning > .mdi { color: var(--warning-dot); }
+.alert.info { background: var(--info-soft); border-color: #C9DAF3; } .alert.info > .mdi { color: var(--info-dot); }
+.alert .alert-title { font-weight: 600; }
+
+.divider { height: 1px; background: var(--border); margin: 16px 0; border: 0; }
+.row { display: flex; align-items: center; gap: 8px; }
+.grow { flex: 1; min-width: 0; }
+.stack > * + * { margin-top: 8px; }
+.ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bar { height: 6px; border-radius: 3px; background: var(--surface-variant); overflow: hidden; }
+.bar > i { display: block; height: 100%; background: var(--primary); border-radius: 3px; }
+.bar.warn > i { background: var(--warning-dot); }
+.field { height: 36px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); display: flex; align-items: center; padding: 0 10px; gap: 8px; font-size: 14px; color: var(--text-3); background: #fff; }
+.field .mdi { font-size: 18px; color: var(--text-2); }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius-sm); background: #fff; overflow: hidden; }
+.seg span { height: 32px; padding: 0 12px; display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-2); border-right: 1px solid var(--border); white-space: nowrap; }
+.seg span:last-child { border-right: 0; }
+.seg span.on { background: var(--primary-soft); color: var(--on-primary-soft); font-weight: 500; }
+.seg .n { font-variant-numeric: tabular-nums; }
+
+/* bottom nav: mobile only */
+.bottom-nav { display: none; }
+
+@media (max-width: 1023px) {
+  .app { grid-template-columns: 1fr; }
+  .rail { display: none; }
+  .icon-btn.menu-btn { display: grid; margin-left: -8px; }
+  .search { display: none; }
+  .user-text { display: none; }
+  .topbar { padding: 0 12px 0 16px; gap: 8px; }
+  .content { padding: 16px 16px 24px; }
+  .bottom-nav { display: grid; grid-template-columns: repeat(4, 1fr); position: sticky; bottom: 0; height: 64px; background: #fff; border-top: 1px solid var(--border); z-index: 6; }
+  .bottom-nav a { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; font-size: 12px; color: var(--text-2); position: relative; }
+  .bottom-nav a .mdi { font-size: 22px; line-height: 1; }
+  .bottom-nav a.active { color: var(--primary); font-weight: 500; }
+  .bottom-nav a.active .mdi { background: var(--primary-soft); border-radius: 12px; padding: 2px 16px; }
+  .bottom-nav .bn-badge { position: absolute; top: 6px; left: calc(50% + 8px); min-width: 18px; height: 18px; border-radius: 9px; background: var(--error); color: #fff; font-size: 11px; display: grid; place-items: center; padding: 0 4px; font-weight: 600; }
+  .page-head { gap: 12px; }
+  .page-head .titles { flex-basis: 100%; }
+  .page-actions { width: 100%; }
+  .hide-sm { display: none !important; }
+}
+@media (min-width: 1024px) { .show-sm { display: none !important; } }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+
+.req-wrap { max-width: none; }
+.hello { margin-bottom: 20px; }
+.waiting { border-color: #EFD9A8; }
+.waiting .card-head { background: var(--warning-soft); border-bottom-color: #EFD9A8; border-radius: var(--radius) var(--radius) 0 0; }
+.req { display: grid; grid-template-columns: minmax(0, 1fr) 280px 132px; gap: 6px 20px; padding: 14px 16px; border-top: 1px solid var(--border); align-items: center; }
+.req:first-of-type { border-top: 0; }
+.req .rt { font-weight: 500; font-size: 15px; }
+.req .rm { display: flex; flex-wrap: wrap; gap: 2px 14px; font-size: 13px; color: var(--text-2); margin-top: 2px; }
+.req .rm .mdi { font-size: 15px; vertical-align: -2px; margin-right: 3px; }
+.req .q { grid-column: 1 / -1; display: flex; gap: 10px; align-items: center; background: var(--bg); border-radius: var(--radius-sm); padding: 8px 12px; font-size: 14px; }
+.req .q .mdi { color: var(--warning-dot); font-size: 18px; }
+.prog .track { width: 100%; }
+.prog .track i { height: 8px; }
+.prog .lbl { font-size: 13px; margin-top: 6px; }
+.prog .lbl b { font-weight: 500; }
+.done-row { display: flex; align-items: center; gap: 12px; padding: 0 16px; height: 48px; border-top: 1px solid var(--border); font-size: 14px; }
+.done-row:first-of-type { border-top: 0; }
+.req .act { justify-self: end; }
+.how { display: flex; gap: 12px; align-items: center; padding: 14px 16px; margin-top: 24px; }
+.how .mdi-message-text-outline { font-size: 24px; color: var(--primary); }
+@media (max-width: 1023px) {
+  .req { grid-template-columns: 1fr; }
+  .req .act { justify-self: stretch; order: 4; }
+  .req .q { order: 3; }
+  .req .act .btn-outline { display: none; }
+  .req .act .btn { width: 100%; justify-content: center; }
+}
+
+</style>
+</head>
+<body>
+<div class="app">
+<aside class="rail" aria-label="เมนูหลัก"><div class="rail-inner">
+<div class="brand"><div class="brand-mark">Y</div><div><div class="brand-name">Yoda</div><div class="brand-sub">แจ้งและติดตามคำขอถึงฝ่าย IT</div></div></div>
+<div class="nav-group">
+<a class="nav-item active" href="#" aria-current="page"><span class="mdi mdi-clipboard-text-outline"></span><span>คำขอของฉัน</span></a>
+<a class="nav-item" href="#"><span class="mdi mdi-comment-question-outline"></span><span>คำถามถึงฉัน</span><span class="nav-count">2</span></a>
+<a class="nav-item" href="#"><span class="mdi mdi-message-text-outline"></span><span>คุยกับผู้ช่วย</span></a>
+</div>
+<div class="rail-foot">ฝ่ายเทคโนโลยีสารสนเทศ</div>
+</div></aside>
+<div class="main">
+<header class="topbar">
+<button class="icon-btn menu-btn" aria-label="เปิดเมนู"><span class="mdi mdi-menu"></span></button>
+<nav class="crumbs" aria-label="breadcrumb"><span class="here">คำขอของฉัน</span></nav>
+<div class="search" role="search"><span class="mdi mdi-magnify"></span>ค้นหาคำขอของฉัน<span class="kbd">⌘K</span></div>
+<button class="icon-btn hide-sm-search show-sm" aria-label="ค้นหา"><span class="mdi mdi-magnify"></span></button>
+<button class="icon-btn" aria-label="การแจ้งเตือน 3 รายการ"><span class="mdi mdi-bell-outline"></span><span class="bell-badge">3</span></button>
+<div class="user" role="button" aria-label="เมนูผู้ใช้"><span class="avatar">มส</span><span class="user-text"><div class="user-name">มาลี ศรีวงศ์</div><div class="user-role">พยาบาล OPD</div></span><span class="mdi mdi-chevron-down muted hide-sm"></span></div>
+</header>
+<main class="content">
+
+<div class="req-wrap">
+<div class="page-head">
+  <div class="titles">
+    <h1 class="t-page">คำขอของฉัน</h1>
+    <div class="page-meta"><span>ติดตามงานที่คุณแจ้งถึงฝ่าย IT ทั้งหมดในที่เดียว</span></div>
+  </div>
+  <div class="page-actions"><button class="btn btn-primary"><span class="mdi mdi-plus"></span>แจ้งคำขอใหม่</button></div>
+</div>
+
+<div class="card waiting" style="margin-bottom:24px">
+  <div class="card-head"><span class="mdi mdi-hand-wave-outline" style="color:var(--warning-dot);font-size:20px"></span><span class="t-section">รอคุณตอบ 2 เรื่อง</span><span class="t-meta hide-sm">ทีมจะทำงานต่อได้เมื่อคุณตอบ</span></div>
+  <div class="req"><div><div class="rt">ผู้ป่วยดูผลตรวจเลือดย้อนหลังในแอป</div><div class="rm"><span><span class="mdi mdi-account-outline"></span>ผู้ติดต่อ กนกวรรณ ทองดี</span><span><span class="mdi mdi-clock-outline"></span>ส่งถึงคุณ 24 พ.ย. 2569 16:20</span></div></div>
+<div class="prog"><div class="track" aria-hidden="true"><i class="done"></i><i class="now"></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i></div><div class="lbl"><b>ทีมกำลังเก็บความต้องการ</b> <span class="muted num">ขั้นที่ 2 จาก 6</span></div></div><div class="act"><button class="btn btn-primary">ตอบคำถาม</button></div>
+<div class="q"><span class="mdi mdi-comment-question-outline"></span>ทีมถาม 2 ข้อ: ต้องแสดงผลย้อนหลังกี่ปี และใครอนุมัติก่อนผู้ป่วยเห็นผล</div></div>
+<div class="req"><div><div class="rt">ผลแล็บซ้ำในประวัติผู้ป่วยเมื่อส่งซ้ำ</div><div class="rm"><span><span class="mdi mdi-account-outline"></span>ผู้ติดต่อ อนุชา แก้วมณี</span><span><span class="mdi mdi-clock-outline"></span>ส่งถึงคุณ 25 พ.ย. 2569 10:05</span></div></div>
+<div class="prog"><div class="track" aria-hidden="true"><i class="done"></i><i class="done"></i><i class="done"></i><i class="done"></i><i class="done"></i><i class="now"></i></div><div class="lbl"><b>รอคุณตรวจรับ</b> <span class="muted num">ขั้นที่ 6 จาก 6</span></div></div><div class="act"><button class="btn btn-primary">ตรวจรับงาน</button></div>
+<div class="q"><span class="mdi mdi-comment-question-outline"></span>งานเสร็จแล้ว ช่วยตรวจว่าแก้ปัญหาได้ตามที่ขอ</div></div>
+</div>
+
+<div class="section-title"><h2 class="t-section">กำลังดำเนินการ</h2><span class="count">4</span></div>
+<div class="card" style="margin-bottom:24px"><div class="req"><div><div class="rt"><a href="#" style="color:inherit">แจ้งเตือนนัดผ่าน SMS ล่วงหน้า 1 วัน</a></div><div class="rm"><span><span class="mdi mdi-update"></span>อัปเดต 25 พ.ย. 2569 14:05</span><span><span class="mdi mdi-account-outline"></span>ผู้ติดต่อ ปราณี วงศ์สวัสดิ์</span><span><span class="mdi mdi-calendar-outline"></span>คาดว่าเสร็จ 9 ธ.ค. 2569</span></div></div>
+<div class="prog"><div class="track" aria-hidden="true"><i class="done"></i><i class="done"></i><i class="done"></i><i class="now"></i><i class=""></i><i class=""></i></div><div class="lbl"><b>ทีมกำลังพัฒนา</b> <span class="muted num">ขั้นที่ 4 จาก 6</span></div></div><div class="act"><button class="btn btn-outline btn-sm">ดูรายละเอียด</button></div></div>
+<div class="req"><div><div class="rt"><a href="#" style="color:inherit">หน้าคิวนัดแสดงเวลาผิด 7 ชั่วโมงหลังอัปเดต</a></div><div class="rm"><span><span class="mdi mdi-update"></span>อัปเดต 25 พ.ย. 2569 09:40</span><span><span class="mdi mdi-account-outline"></span>ผู้ติดต่อ ปราณี วงศ์สวัสดิ์</span></div></div>
+<div class="prog"><div class="track" aria-hidden="true"><i class="done"></i><i class="done"></i><i class="done"></i><i class="now"></i><i class=""></i><i class=""></i></div><div class="lbl"><b>ทีมกำลังพัฒนา</b> <span class="muted num">ขั้นที่ 4 จาก 6</span></div></div><div class="act"><button class="btn btn-outline btn-sm">ดูรายละเอียด</button></div></div>
+<div class="req"><div><div class="rt"><a href="#" style="color:inherit">ตัวอักษรภาษาไทยในหน้าใบนัดตัดคำผิด</a></div><div class="rm"><span><span class="mdi mdi-update"></span>อัปเดต 23 พ.ย. 2569 15:12</span><span><span class="mdi mdi-account-outline"></span>ผู้ติดต่อ สมชาย ใจดี</span></div></div>
+<div class="prog"><div class="track" aria-hidden="true"><i class="done"></i><i class="done"></i><i class="done"></i><i class="done"></i><i class="now"></i><i class=""></i></div><div class="lbl"><b>กำลังทดสอบ</b> <span class="muted num">ขั้นที่ 5 จาก 6</span></div></div><div class="act"><button class="btn btn-outline btn-sm">ดูรายละเอียด</button></div></div>
+<div class="req"><div><div class="rt"><a href="#" style="color:inherit">บัตรพนักงานสแกนเข้าเวรไม่ได้ที่ตึก 3</a></div><div class="rm"><span><span class="mdi mdi-update"></span>อัปเดต 22 พ.ย. 2569 08:30</span><span><span class="mdi mdi-account-outline"></span>ผู้ติดต่อ สมชาย ใจดี</span></div></div>
+<div class="prog"><div class="track" aria-hidden="true"><i class="now"></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i><i class=""></i></div><div class="lbl"><b>รับเรื่องแล้ว</b> <span class="muted num">ขั้นที่ 1 จาก 6</span></div></div><div class="act"><button class="btn btn-outline btn-sm">ดูรายละเอียด</button></div></div></div>
+
+<div class="section-title"><h2 class="t-section">เสร็จแล้ว</h2><span class="count">2</span></div>
+<div class="card">
+  <div class="done-row"><span class="chip success">เสร็จแล้ว</span><span class="grow ellipsis">ปุ่มพิมพ์ใบนัดซ้ำสำหรับเวชระเบียน</span><span class="t-meta hide-sm num">13 พ.ย. 2569</span></div>
+  <div class="done-row"><span class="chip success">เสร็จแล้ว</span><span class="grow ellipsis">หน้า FAQ การชำระเงิน</span><span class="t-meta hide-sm num">2 พ.ย. 2569</span></div>
+</div>
+
+<div class="card how"><span class="mdi mdi-message-text-outline"></span><div class="grow"><div class="strong">อยากแจ้งเรื่องใหม่?</div><div class="t-meta">พิมพ์บอกผู้ช่วยในแชทได้เลยว่าต้องการอะไร ผู้ช่วยจะถามรายละเอียดที่ทีมต้องใช้แล้วส่งเรื่องให้</div></div><button class="btn btn-tonal hide-sm">คุยกับผู้ช่วย</button></div>
+</div>
+
+</main>
+</div>
+</div>
+<nav class="bottom-nav" style="grid-template-columns:repeat(3,1fr)" aria-label="เมนูหลัก">
+<a href="#" class="active"><span class="mdi mdi-clipboard-text-outline"></span>คำขอของฉัน</a>
+<a href="#"><span class="mdi mdi-comment-question-outline"></span>คำถามถึงฉัน<span class="bn-badge">2</span></a>
+<a href="#"><span class="mdi mdi-message-text-outline"></span>ผู้ช่วย</a>
+</nav>
+</body>
+</html>
