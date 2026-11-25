@@ -287,6 +287,28 @@ describe('leases', () => {
     expect(new Date(leaseExpiresAt).getTime()).toBe(clock.getTime() + 600_000)
   })
 
+  it('heartbeat ends the run (released, task_unavailable) when its task was reassigned or superseded', async () => {
+    const db = await testDb()
+    const rc = await runner(owner)
+    const { run } = await claimTask(deps, rc, implement.id)
+    await db.update(tasks).set({ assigneeId: other.id, executor: 'human' }).where(eq(tasks.id, implement.id))
+    await refused(heartbeat(deps, rc, run.id), 'run_not_active')
+    const [r] = await runsOf(implement.id)
+    expect(r).toMatchObject({ state: 'released' })
+    const [ev] = await db.select().from(events).where(and(eq(events.type, 'run.released'), eq(events.taskId, implement.id)))
+    expect(ev).toMatchObject({ reason: 'task_unavailable' })
+    // Not a strike, and a later call on the run stays refused.
+    expect(r!.error).toBeNull()
+    await refused(heartbeat(deps, rc, run.id), 'run_not_active')
+
+    await db.update(tasks).set({ assigneeId: null, executor: 'ai', state: 'open' }).where(eq(tasks.id, implement.id))
+    const { run: run2 } = await claimTask(deps, rc, implement.id)
+    await heartbeat(deps, rc, run2.id)
+    await db.update(tasks).set({ supersededAt: new Date() }).where(eq(tasks.id, implement.id))
+    await refused(heartbeat(deps, rc, run2.id), 'run_not_active')
+    expect((await runsOf(implement.id)).find((x) => x.id === run2.id)).toMatchObject({ state: 'released' })
+  })
+
   it('expireLeases: an expired run reopens its AI task; the stale heartbeat is refused', async () => {
     const rc = await runner(owner)
     const { run } = await claimTask(deps, rc, implement.id)

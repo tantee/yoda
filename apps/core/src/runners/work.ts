@@ -25,7 +25,9 @@ import { runWork, recordEvent, type WorkCtx } from '../work/context.js'
 import { lockItem, submitRunnerResult, submitTask, type WorkItemRow } from '../work/engine.js'
 import { canSeeProject } from '../work/queries.js'
 import { templateById } from '../workflow/seed.js'
-import { asOwner, leaseFrom, lockRunTask, nowOf, requireLiveRun, type RunnerCtx, type RunnerDeps } from './claims.js'
+import { asOwner, leaseFrom, lockRunTask, nowOf, requireLiveRun, workable, type RunnerCtx, type RunnerDeps } from './claims.js'
+
+export { workable }
 import { endRun } from './records.js'
 
 export type { RunCode }
@@ -182,22 +184,6 @@ export async function postProgress(deps: RunnerDeps, rc: RunnerCtx, input: Progr
   })
 }
 
-/** May the run still finish (or ask about) its task: an unassigned AI task or the owner's own, on the current step. */
-export function workable(rc: RunnerCtx, item: WorkItemRow, task: TaskRow): { ai: boolean } | null {
-  const current =
-    item.state === 'active' &&
-    !task.supersededAt &&
-    task.stepKey === item.currentStepKey &&
-    (task.state === 'open' || task.state === 'in_progress')
-  if (!current) return null
-  if (task.executor === 'ai' && task.assigneeId === null) return { ai: true }
-  if (task.assigneeId === rc.owner.id) {
-    // Claims refuse these already; a result has no decision to give them.
-    if (task.type === 'review' || task.type === 'approval') throw invalidState('needs_decision')
-    return { ai: false }
-  }
-  return null
-}
 
 export type SubmitOutcome = 'accepted' | 'already_done' | 'task_unavailable'
 

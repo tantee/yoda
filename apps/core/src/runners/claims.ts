@@ -13,7 +13,7 @@ import type { Db, Tx } from '../db/client.js'
 import { agentRuns, discussions, events, projectMembers, projects, runners, tasks, workflowTemplates, workItems } from '../db/schema.js'
 import { lockProject } from '../projects/access.js'
 import { recordEvent, runWork, type WorkCtx, type WorkDeps } from '../work/context.js'
-import { definitionOf, failAiTask, lockItem } from '../work/engine.js'
+import { definitionOf, failAiTask, lockItem, type WorkItemRow } from '../work/engine.js'
 import { endRun, type RunnerRow } from './records.js'
 import { checkSafeguards } from './safeguards.js'
 
@@ -236,9 +236,61 @@ export async function requireLiveRun(tx: Db | Tx, rc: RunnerCtx, runId: string, 
   return run
 }
 
-/** Extends a live run's lease from now. */
+/** May the run still finish (or ask about) its task: an unassigned AI task or the owner's own, on the current step. */
+export function workable(rc: RunnerCtx, item: WorkItemRow, task: TaskRow): { ai: boolean } | null {
+  const current =
+    item.state === 'active' &&
+    !task.supersededAt &&
+    task.stepKey === item.currentStepKey &&
+    (task.state === 'open' || task.state === 'in_progress')
+  if (!current) return null
+  if (task.executor === 'ai' && task.assigneeId === null) return { ai: true }
+  if (task.assigneeId === rc.owner.id) {
+    // Claims refuse these already; a result has no decision to give them.
+    if (task.type === 'review' || task.type === 'approval') throw invalidState('needs_decision')
+    return { ai: false }
+  }
+  return null
+}
+
+const stillWorkable = (rc: RunnerCtx, item: WorkItemRow | undefined, task: TaskRow | undefined) => {
+  if (!item || !task) return false
+  try {
+    return !!workable(rc, item, task)
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Extends a live run's lease from now. When its task is no longer workable (cancelled, reassigned, superseded,
+ * accepted, the work item moved on), the run ends `released` (reason `task_unavailable`) and the heartbeat is
+ * refused `run_not_active`, so the runner stops.
+ */
 export async function heartbeat(deps: RunnerDeps, rc: RunnerCtx, runId: string): Promise<{ leaseExpiresAt: string }> {
   const now = nowOf(deps)
+  const live = await requireLiveRun(deps.db, rc, runId, now)
+  const [row] = await deps.db
+    .select({ task: tasks, item: workItems })
+    .from(tasks)
+    .innerJoin(workItems, eq(workItems.id, tasks.workItemId))
+    .where(eq(tasks.id, live.taskId))
+  if (!stillWorkable(rc, row?.item, row?.task)) {
+    // Locked in the global order, then checked again: the task may have become workable meanwhile.
+    const released = await runWork(deps, asOwner(rc), async (ctx) => {
+      const task = await lockRunTask(ctx.tx, live.taskId)
+      const item = await lockItem(ctx.tx, task.workItemId)
+      if (stillWorkable(rc, item, task)) return false
+      const ended = await endRun(ctx, live.id, {
+        state: 'released',
+        event: 'run.released',
+        reason: 'task_unavailable',
+        where: and(eq(agentRuns.runnerId, rc.runner.id), gt(agentRuns.leaseExpiresAt, now)),
+      })
+      return !!ended
+    })
+    if (released) throw invalidState('run_not_active')
+  }
   // One conditional update: a run that expired (or was swept) meanwhile is never revived.
   const [run] = await deps.db
     .update(agentRuns)
