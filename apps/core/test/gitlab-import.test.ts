@@ -4,7 +4,7 @@ import { eq } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { events, workItemRepos } from '../src/db/schema.js'
 import { GitLabClient } from '../src/gitlab/client.js'
-import { ISSUE_BEGIN, ISSUE_END } from '../src/gitlab/issue-section.js'
+import { HEADINGS, ISSUE_BEGIN, ISSUE_END } from '../src/gitlab/issue-section.js'
 import { InlineJobQueue } from '../src/jobs/queue.js'
 import { personAsMe } from '../src/proposals/service.js'
 import { deliverable } from '../src/routes/stream.js'
@@ -140,6 +140,9 @@ describe('import a gitlab issue', () => {
     expect(body.startsWith(ORIGINAL)).toBe(true)
     expect(body.indexOf(ISSUE_BEGIN)).toBeGreaterThan(ORIGINAL.length - 1)
     expect(body.trimEnd().endsWith(ISSUE_END)).toBe(true)
+    // The original body is already above the section: no "original request" copy of it inside.
+    expect(body).not.toContain(HEADINGS.originalRequest)
+    expect(body.split('ผลแล็บไม่แสดงในหน้ารายงาน')).toHaveLength(2)
     // The first push of an imported issue adds no "updated from the portal" comment.
     expect(fake.notes.get(`11/${seeded.iid}`) ?? []).toEqual([])
     const c = await code(item.id)

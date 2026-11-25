@@ -5,6 +5,7 @@ import { z } from 'zod'
 import type { Tx } from '../db/client.js'
 import { events, gitlabDeliveries, gitlabSettings, knowledgeEntries, mergeRequests, projectRepos, tasks, workItemRepos, workItems } from '../db/schema.js'
 import { createEntry } from '../knowledge/service.js'
+import { stripCommentMarkers } from './issue-section.js'
 import { notify } from '../notifications/service.js'
 import { recordEvent, runWork, type WorkCtx, type WorkDeps } from '../work/context.js'
 import { templateById } from '../workflow/seed.js'
@@ -62,13 +63,7 @@ export function closingRefs(description: string, projectPath: string): number[] 
 
 /** Untrusted text from GitLab: HTML comment markers (which could fake the portal's issue markers) are removed. */
 export function sanitizeNote(text: string): string {
-  let s = text
-  let prev: string
-  do {
-    prev = s
-    s = s.replace(/<!--|-->/g, '')
-  } while (s !== prev)
-  return s.trim()
+  return stripCommentMarkers(text).trim()
 }
 
 function clip(text: string, max: number): string {

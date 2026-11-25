@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { changedSections, ISSUE_BEGIN, ISSUE_END, mergeSection, renderIssueSection, sectionHash, workItemMarker } from '../src/gitlab/issue-section.js'
+import { changedSections, ISSUE_BEGIN, ISSUE_END, mergeSection, renderIssueSection, sectionHash, stripCommentMarkers, workItemMarker } from '../src/gitlab/issue-section.js'
+import { importedText } from '../src/gitlab/import.js'
 
 const ID = '11111111-2222-4333-8444-555555555555'
 const base = {
@@ -79,6 +80,58 @@ describe('mergeSection', () => {
     const once = mergeSection(`a ${ISSUE_END} b`, section)
     expect(once).toBe(`a ${ISSUE_END} b\n\n${section}`)
     expect(mergeSection(once, section)).toBe(once)
+  })
+
+  const old = `${ISSUE_BEGIN}\n${workItemMarker(ID)}\nold\n${ISSUE_END}`
+
+  it('a stray begin marker after the section: the section is replaced in place', () => {
+    const body = `dev\n\n${old}\n\nnote ${ISSUE_BEGIN} trailing`
+    expect(mergeSection(body, section)).toBe(`dev\n\n${section}\n\nnote ${ISSUE_BEGIN} trailing`)
+  })
+
+  it('a stray end marker before the section: the section is replaced in place', () => {
+    const body = `dev ${ISSUE_END} text\n\n${old}`
+    expect(mergeSection(body, section)).toBe(`dev ${ISSUE_END} text\n\n${section}`)
+  })
+
+  it('a begin marker in developer text before the section: the section is replaced in place', () => {
+    const body = `dev ${ISSUE_BEGIN} text\n\n${old}\n\nafter`
+    expect(mergeSection(body, section)).toBe(`dev ${ISSUE_BEGIN} text\n\n${section}\n\nafter`)
+  })
+
+  it('prefers the pair holding this work item marker over another well-formed pair', () => {
+    const other = `${ISSUE_BEGIN}\nquoted, no marker\n${ISSUE_END}`
+    const body = `${old}\n\n${other}`
+    expect(mergeSection(body, section)).toBe(`${section}\n\n${other}`)
+  })
+
+  it('a missing end marker: appended once, then no growth on repeated syncs', () => {
+    const body = `dev\n\n${ISSUE_BEGIN}\n${workItemMarker(ID)}\nold, end deleted`
+    const once = mergeSection(body, section)
+    expect(once).toBe(`${body}\n\n${section}`)
+    let cur = once
+    for (let i = 0; i < 3; i++) cur = mergeSection(cur, section)
+    expect(cur).toBe(once)
+    expect(cur.split(ISSUE_END)).toHaveLength(2)
+  })
+})
+
+describe('untrusted text', () => {
+  const nested = '<!-<!---' + '- yoda ---->>'
+
+  it('stripCommentMarkers removes markers until none can reassemble', () => {
+    const out = stripCommentMarkers(nested)
+    expect(out).not.toContain('<!--')
+    expect(out).not.toContain('-->')
+    expect(stripCommentMarkers(`a ${ISSUE_BEGIN} b <!<!---->-- c`)).not.toMatch(/<!--|-->/)
+  })
+
+  it('importedText leaves no comment markers in the title or description', () => {
+    const t = importedText({ title: nested, description: `x ${nested} y`, web_url: 'http://gl.test/a/-/issues/1', iid: 1 }, 'a')
+    for (const s of [t.title, t.description]) {
+      expect(s).not.toContain('<!--')
+      expect(s).not.toContain('-->')
+    }
   })
 })
 
