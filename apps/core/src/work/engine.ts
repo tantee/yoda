@@ -33,6 +33,7 @@ import { latestTemplate, templateById } from '../workflow/seed.js'
 import { recordEvent, type WorkCtx } from './context.js'
 import { checkAdvanceGuards, guardText, type GuardTrip } from './guards.js'
 import { createTaskAttempt } from './tasks.js'
+import { queueIssueSync } from '../gitlab/sync.js'
 import {
   notifyChangesRequested,
   notifyRequestEnded,
@@ -572,6 +573,8 @@ export async function recordAcceptedKnowledge(ctx: WorkCtx, item: WorkItemRow, t
   const step = def.steps.find((s) => s.key === task.stepKey)
   const templateTask = step?.tasks.find((t) => t.key === task.templateTaskKey)
   if (!step || !templateTask) return
+  // Work accepted in the Dev step (e.g. QC's draft test cases) refreshes the work item's GitLab issues.
+  if (step.tasks.some((t) => t.capability === 'code-change')) await queueIssueSync(ctx, item.id, { withIssues: true })
   const entry = (sourceTask: TaskRow, title: string, body: string) =>
     ({
       scope: 'work_item',
