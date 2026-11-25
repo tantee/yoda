@@ -59,8 +59,9 @@ describe('loadConfig', () => {
     const c = loadConfig(baseEnv)
     expect(c.runnerLeaseSeconds).toBe(600)
     expect(c.mcpEnabled).toBe(true)
-    expect(loadConfig({ ...baseEnv, RUNNER_LEASE_SECONDS: '120', MCP_ENABLED: 'false' })).toMatchObject({ runnerLeaseSeconds: 120, mcpEnabled: false })
-    expect(() => loadConfig({ ...baseEnv, RUNNER_LEASE_SECONDS: '30' })).toThrow(/RUNNER_LEASE_SECONDS/)
+    expect(loadConfig({ ...baseEnv, RUNNER_LEASE_SECONDS: '180', MCP_ENABLED: 'false' })).toMatchObject({ runnerLeaseSeconds: 180, mcpEnabled: false })
+    // At least 3 minutes, so a heartbeat a minute leaves room for a missed one.
+    expect(() => loadConfig({ ...baseEnv, RUNNER_LEASE_SECONDS: '120' })).toThrow(/RUNNER_LEASE_SECONDS/)
     expect(() => loadConfig({ ...baseEnv, MCP_ENABLED: 'yes' })).toThrow(/MCP_ENABLED/)
   })
   it('requires S3 credentials', () => {

@@ -62,7 +62,7 @@ const envSchema = z.object({
   GITLAB_TOKEN: optional(z.string()),
   GITLAB_WEBHOOK_SECRET: optional(z.string().min(16)),
   PORTAL_URL: z.string().url().default('http://localhost:3000'),
-  RUNNER_LEASE_SECONDS: z.coerce.number().int().min(60).max(86400).default(600),
+  RUNNER_LEASE_SECONDS: z.coerce.number().int().min(180).max(86400).default(600),
   MCP_ENABLED: z.preprocess((v) => (v === '' ? undefined : v), z.enum(['true', 'false']).default('true')),
 })
 
