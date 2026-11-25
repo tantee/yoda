@@ -38,7 +38,7 @@ export async function visibleDiscussionRow(db: Conn, me: Me, id: string): Promis
 }
 
 /** Rows `me` may see: department discussions and those of projects `me` belongs to (admins: all). */
-function visibleTo(me: Me): SQL | undefined {
+export function visibleTo(me: Me): SQL | undefined {
   if (me.isAdmin) return undefined
   return or(
     isNull(discussions.projectId),
