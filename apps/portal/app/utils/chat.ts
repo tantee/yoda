@@ -67,6 +67,7 @@ export function mergeLatest(
 /** Stable markers the core stores as system message text, mapped to i18n keys. */
 const SYSTEM_MARKERS: Record<string, string> = {
   'secretary.not_ready': 'chat.marker.secretaryNotReady',
+  'request.done': 'chat.marker.requestDone',
 }
 /** `[[secretary.failed:<reason>]]`: why the secretary could not answer. */
 const SECRETARY_FAILED = new Set(['budget_exceeded', 'no_ai', 'ai_unavailable', 'ai_failed'])

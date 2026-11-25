@@ -302,6 +302,7 @@
     "textRequired": "Add a message to send the attached files",
     "marker": {
       "secretaryNotReady": "The assistant is not available yet",
+      "requestDone": "Your request is complete",
       "secretaryFailed": {
         "budget_exceeded": "The assistant can't answer right now: this month's AI budget has been used up. Please ask an administrator.",
         "no_ai": "The assistant can't answer here: this project is marked \"do not send to AI\".",

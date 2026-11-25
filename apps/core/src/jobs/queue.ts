@@ -1,7 +1,10 @@
 import { PgBoss } from 'pg-boss'
 
-export type JobName = 'embed-entry' | 'draft-task' | 'secretary-chat'
-export const JOB_NAMES: readonly JobName[] = ['embed-entry', 'draft-task', 'secretary-chat']
+export type JobName = 'embed-entry' | 'draft-task' | 'secretary-chat' | 'secretary-event' | 'secretary-sweep'
+export const JOB_NAMES: readonly JobName[] = ['embed-entry', 'draft-task', 'secretary-chat', 'secretary-event', 'secretary-sweep']
+
+/** Recurring jobs (cron, Asia/Bangkok): pg-boss sends them; tests run them with `InlineJobQueue.runScheduled`. */
+export const SCHEDULES: Partial<Record<JobName, string>> = { 'secretary-sweep': '*/15 * * * *' }
 
 /** `attempt` starts at 1; with RETRY_LIMIT 2 the 3rd attempt is final. */
 /** `signal` (pg-boss) aborts when the job expires or is cancelled; the inline test queue omits it. */
@@ -38,6 +41,10 @@ export async function createPgBossQueue(databaseUrl: string, concurrency: number
     const policy = POLICY[name]
     await boss.createQueue(name, policy ? { ...QUEUE_OPTIONS, policy } : QUEUE_OPTIONS)
     await boss.updateQueue(name, QUEUE_OPTIONS)
+  }
+  for (const [name, cron] of Object.entries(SCHEDULES)) {
+    // Insert-or-update by queue name, so every instance may call it on start.
+    await boss.schedule(name, cron, { id: 'scheduled' }, { tz: 'Asia/Bangkok' })
   }
   return {
     async send(name, data) {
@@ -90,6 +97,11 @@ export class InlineJobQueue implements JobQueue {
 
   async stop(): Promise<void> {
     await this.drain()
+  }
+
+  /** Runs a recurring job once, as pg-boss would at its cron time (tests). */
+  async runScheduled(name: JobName): Promise<void> {
+    await this.run(name, 'scheduled')
   }
 
   /** Resolves once every sent job (including jobs sent by running jobs) has finished. */
