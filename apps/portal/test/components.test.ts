@@ -26,6 +26,11 @@ describe('StatusChip', () => {
     expect(await render(StatusChip, { kind: 'request', value: 'waiting_for_you' })).toContain('mdi-hand-wave-outline')
     expect(await render(StatusChip, { kind: 'run', value: 'running' })).toContain('v-progress-circular')
   })
+  it('renders the older requester label in requester views', async () => {
+    const html = await render(StatusChip, { kind: 'task', value: 'open', audience: 'requester' })
+    expect(html).toContain('task.state.open')
+    expect(html).not.toContain('chip.task.open')
+  })
   it('takes a label override and keeps the full text as a title for ellipsis', async () => {
     const long = 'ซิงก์ไม่สำเร็จ: ไม่พบโปรเจกต์ที่ระบุใน GitLab กรุณาตรวจสอบสิทธิ์'
     const html = await render(StatusChip, { kind: 'sync', value: 'failed', label: long })

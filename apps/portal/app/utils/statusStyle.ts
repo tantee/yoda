@@ -93,9 +93,18 @@ export const STATUS_STYLES = Object.fromEntries(
   ]),
 ) as { [K in StatusKind]: Record<StatusValue<K>, StatusStyle> }
 
+/**
+ * Who reads the chip. Requesters keep the wording they had before the refresh until the requester glossary is
+ * reviewed (Task 6): their task and request labels come from the older `task.state.*` / `requests.status.*` keys.
+ */
+export type StatusAudience = 'staff' | 'requester'
+const REQUESTER_LABELS: Partial<Record<StatusKind, string>> = { task: 'task.state', request: 'requests.status' }
+
 /** The look of one state; an unknown value (a newer core) shows neutral with its raw key. */
-export function statusStyle(kind: StatusKind, value: string): StatusStyle {
-  return (STATUS_STYLES[kind] as Record<string, StatusStyle>)[value] ?? { tone: 'neutral', labelKey: `chip.${kind}.${value}` }
+export function statusStyle(kind: StatusKind, value: string, audience: StatusAudience = 'staff'): StatusStyle {
+  const style = (STATUS_STYLES[kind] as Record<string, StatusStyle>)[value] ?? { tone: 'neutral', labelKey: `chip.${kind}.${value}` }
+  const requesterKey = audience === 'requester' ? REQUESTER_LABELS[kind] : undefined
+  return requesterKey ? { ...style, labelKey: `${requesterKey}.${value}` } : style
 }
 
 /** Priority is not a chip: a glyph and a word in text colour, so mostly-normal lists stay quiet. */

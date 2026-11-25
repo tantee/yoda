@@ -48,7 +48,7 @@ useLiveEvents(loadSoon, loadSoon)
             {{ r.projectName }}<template v-if="r.currentStepName"> · {{ localized(r.currentStepName, locale) }}</template>
           </v-list-item-subtitle>
           <template #append>
-            <StatusChip kind="request" :value="r.status" data-testid="request-status" />
+            <StatusChip kind="request" :value="r.status" audience="requester" data-testid="request-status" />
           </template>
         </v-list-item>
       </v-list>

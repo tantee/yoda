@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { computed, useI18n } from '#imports'
-import { statusStyle, type StatusKind } from '~/utils/statusStyle'
+import { statusStyle, type StatusAudience, type StatusKind } from '~/utils/statusStyle'
 
 /** The one status/health/AI chip (proposal §6.5): soft background, strong text, a dot, icon or spinner. */
-const props = defineProps<{ kind: StatusKind; value: string; label?: string; size?: 'small' | 'x-small' }>()
+const props = defineProps<{ kind: StatusKind; value: string; label?: string; size?: 'small' | 'x-small'; audience?: StatusAudience }>()
 const { t } = useI18n()
-const style = computed(() => statusStyle(props.kind, props.value))
+const style = computed(() => statusStyle(props.kind, props.value, props.audience))
 const text = computed(() => props.label ?? t(style.value.labelKey))
 </script>
 

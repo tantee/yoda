@@ -48,7 +48,7 @@ useLiveEvents(loadSoon, loadSoon)
     <template v-if="request">
       <h1 class="text-h5 mb-2" data-testid="request-title">{{ request.title }}</h1>
       <div class="d-flex flex-wrap ga-2 mb-2">
-        <StatusChip kind="request" :value="request.status" data-testid="request-status" />
+        <StatusChip kind="request" :value="request.status" audience="requester" data-testid="request-status" />
         <v-chip v-if="request.currentStepName" size="small" variant="outlined" data-testid="request-step">{{ localized(request.currentStepName, locale) }}</v-chip>
         <v-chip size="small" variant="outlined">{{ request.projectName }}</v-chip>
       </div>
@@ -61,7 +61,7 @@ useLiveEvents(loadSoon, loadSoon)
           <v-list-item v-for="a in answers" :key="a.id" :to="`/todo/${a.id}`">
             <v-list-item-title>{{ localized(a.title, locale) }}</v-list-item-title>
             <template #append>
-              <StatusChip kind="task" :value="a.state" />
+              <StatusChip kind="task" :value="a.state" audience="requester" />
             </template>
           </v-list-item>
         </v-list>

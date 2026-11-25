@@ -120,7 +120,7 @@ useLiveEvents((e) => {
     <template v-if="task">
       <h1 class="text-h5 mb-2">{{ localized(task.title, locale) }}</h1>
       <div class="d-flex flex-wrap align-center ga-2 mb-2">
-        <StatusChip kind="task" :value="task.state" data-testid="state-chip" />
+        <StatusChip kind="task" :value="task.state" :audience="staff ? 'staff' : 'requester'" data-testid="state-chip" />
         <StatusChip kind="taskType" :value="task.type" />
         <PriorityMark :priority="task.workItemPriority" data-testid="priority-chip" />
       </div>
