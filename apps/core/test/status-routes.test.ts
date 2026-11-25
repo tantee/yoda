@@ -160,6 +160,13 @@ describe('status routes', () => {
       .values({ projectId: id, gitlabProjectId: 7, pathWithNamespace: 'group/app', webUrl: 'https://gitlab.example.org/group/app' })
       .returning()
     await db.insert(workItemRepos).values({ workItemId: item.id, repoId: repo!.id, syncStatus: 'failed', syncError: 'http_500' })
+    // A finished item's failed sync no longer blocks the project.
+    const done = await createItem(id, { title: 'เสร็จแล้ว' })
+    await db.update(workItems).set({ state: 'done', currentStepKey: null }).where(eq(workItems.id, done.id))
+    await db
+      .insert(workItemRepos)
+      .values({ workItemId: done.id, repoId: repo!.id, syncStatus: 'failed', syncError: 'http_500' })
+      .onConflictDoUpdate({ target: [workItemRepos.workItemId, workItemRepos.repoId], set: { syncStatus: 'failed', syncError: 'http_500' } })
     expect((await call(admin, 'PATCH', `/projects/${id}`, { aiBudgetUsd: 10 })).statusCode).toBe(200)
     await db.insert(aiCalls).values({ projectId: id, job: 'draft', ok: true, costUsd: '8.5' })
 

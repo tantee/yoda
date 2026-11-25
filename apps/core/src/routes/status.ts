@@ -1,7 +1,12 @@
 import type { FastifyInstance } from 'fastify'
+import { eq } from 'drizzle-orm'
 import { z } from 'zod'
-import { requireStaff } from '../auth/plugin.js'
+import { forbidden, notFound, requireStaff } from '../auth/plugin.js'
+import { projects } from '../db/schema.js'
+import { canManageProject } from '../projects/access.js'
 import { getDepartmentStatus, getProjectStatus } from '../status/queries.js'
+import { queueWeeklyRegenerate } from '../status/weekly.js'
+import { canSeeProject } from '../work/queries.js'
 
 const IdParams = z.object({ id: z.string().uuid() })
 
@@ -18,5 +23,16 @@ export function statusRoutes(app: FastifyInstance): void {
     requireStaff(request)
     const { id } = IdParams.parse(request.params)
     return getProjectStatus(db(), request.me, id)
+  })
+
+  /** PM or admin: regenerate the latest weekly summary (queued; the job replaces it as a new version). */
+  app.post('/projects/:id/weekly-summary', async (request, reply) => {
+    requireStaff(request)
+    const { id } = IdParams.parse(request.params)
+    const [project] = await db().select({ id: projects.id }).from(projects).where(eq(projects.id, id))
+    if (!project || !(await canSeeProject(db(), request.me, id))) throw notFound()
+    if (!(await canManageProject(db(), request.me, id))) throw forbidden()
+    await queueWeeklyRegenerate(app.deps, id)
+    return reply.code(202).send({ queued: true })
   })
 }

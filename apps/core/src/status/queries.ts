@@ -12,7 +12,7 @@ import {
   type Priority,
   type WorkflowTemplateDef,
 } from '@yoda/shared'
-import { and, asc, desc, eq, inArray, isNull, like, ne, sql, type SQL } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, isNull, like, sql, type SQL } from 'drizzle-orm'
 import { forbidden, notFound } from '../auth/plugin.js'
 import { departmentMonthUsage, monthUsage, projectsMonthSpend } from '../ai/gateway.js'
 import type { Db } from '../db/client.js'
@@ -109,7 +109,7 @@ async function undecidedDiscussions(db: Db, projectIds: string[]): Promise<Discu
     .orderBy(asc(discussions.createdAt), asc(discussions.id))
 }
 
-/** Work items (not cancelled) with a failed GitLab issue sync, one row per item. */
+/** Active work items with a failed GitLab issue sync, one row per item. */
 async function syncFailures(db: Db, projectIds: string[]): Promise<(HealthItem & { projectId: string })[]> {
   if (!projectIds.length) return []
   return db
@@ -117,7 +117,7 @@ async function syncFailures(db: Db, projectIds: string[]): Promise<(HealthItem &
     .from(workItemRepos)
     .innerJoin(workItems, eq(workItems.id, workItemRepos.workItemId))
     .where(
-      and(inArray(workItems.projectId, projectIds), eq(workItemRepos.syncStatus, 'failed'), ne(workItems.state, 'cancelled')),
+      and(inArray(workItems.projectId, projectIds), eq(workItemRepos.syncStatus, 'failed'), eq(workItems.state, 'active')),
     )
     .orderBy(asc(workItems.id))
 }

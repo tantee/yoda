@@ -260,6 +260,15 @@ export async function updateEntry(ctx: WorkCtx, me: Me | null, id: string, patch
   return insertNextVersion(ctx, old, changes, 'knowledge.updated')
 }
 
+/**
+ * System rewrite of an AI-authored entry (a regenerated weekly summary): a new version with the new text, back
+ * to `draft` whatever the old status, so AI text never carries a person's confirmation.
+ */
+export async function redraftEntry(ctx: WorkCtx, id: string, changes: { title: string; body: string }): Promise<string> {
+  const old = await lockCurrent(ctx, null, id)
+  return insertNextVersion(ctx, old, { ...changes, status: 'draft' }, 'knowledge.updated')
+}
+
 /** draft → confirmed as a new version. */
 export async function confirmEntry(ctx: WorkCtx, me: Me | null, id: string): Promise<string> {
   const old = await lockCurrent(ctx, me, id)

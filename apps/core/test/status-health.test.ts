@@ -29,6 +29,16 @@ describe('computeHealth', () => {
     })
   })
 
+  it('treats a ratio a float error below the threshold as reaching it', () => {
+    // 2.4 / 3 is 0.7999999999999999 in floating point.
+    expect(computeHealth({ ...empty, aiRatio: 2.4 / 3 })).toEqual({
+      health: 'at_risk',
+      reasons: [{ code: 'ai_budget', count: 80, sample: [] }],
+    })
+    expect(computeHealth({ ...empty, aiRatio: 0.29 }).reasons).toEqual([])
+    expect(computeHealth({ ...empty, aiRatio: 1.13 }).reasons[0]?.count).toBe(113)
+  })
+
   it('puts blocked before at risk, and blocked wins', () => {
     const r = computeHealth({ ...empty, overdue: [item(1)], aiRatio: 1.2, syncFailed: [item(2)], stuck: [item(3)] })
     expect(r.health).toBe('blocked')

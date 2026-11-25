@@ -188,6 +188,10 @@
       "priority_changed": "Priority changed",
       "target_date_changed": "Target date changed"
     },
+    "status": {
+      "weekly_summary": "Weekly AI summary written",
+      "weekly_summary_skipped": "Weekly summary skipped"
+    },
     "task": {
       "created": "Task created",
       "proposed": "Assignee proposed",

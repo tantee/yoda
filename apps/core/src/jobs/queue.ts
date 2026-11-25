@@ -1,6 +1,6 @@
 import { PgBoss } from 'pg-boss'
 
-export type JobName = 'embed-entry' | 'draft-task' | 'secretary-chat' | 'secretary-event' | 'secretary-sweep' | 'discussion-brief' | 'gitlab-issue-sync' | 'gitlab-mr-effect' | 'gitlab-mr-reconcile' | 'runner-lease-sweep'
+export type JobName = 'embed-entry' | 'draft-task' | 'secretary-chat' | 'secretary-event' | 'secretary-sweep' | 'discussion-brief' | 'gitlab-issue-sync' | 'gitlab-mr-effect' | 'gitlab-mr-reconcile' | 'runner-lease-sweep' | 'weekly-summary' | 'weekly-summary-project'
 export const JOB_NAMES: readonly JobName[] = [
   'embed-entry',
   'draft-task',
@@ -12,10 +12,16 @@ export const JOB_NAMES: readonly JobName[] = [
   'gitlab-mr-effect',
   'gitlab-mr-reconcile',
   'runner-lease-sweep',
+  'weekly-summary',
+  'weekly-summary-project',
 ]
 
 /** Recurring jobs (cron, Asia/Bangkok): pg-boss sends them; tests run them with `InlineJobQueue.runScheduled`. */
-export const SCHEDULES: Partial<Record<JobName, string>> = { 'secretary-sweep': '*/15 * * * *', 'runner-lease-sweep': '* * * * *' }
+export const SCHEDULES: Partial<Record<JobName, string>> = {
+  'secretary-sweep': '*/15 * * * *',
+  'runner-lease-sweep': '* * * * *',
+  'weekly-summary': '0 8 * * 1',
+}
 
 /** `attempt` starts at 1; with RETRY_LIMIT 2 the 3rd attempt is final. */
 /** `signal` (pg-boss) aborts when the job expires or is cancelled; the inline test queue omits it. */
@@ -40,7 +46,9 @@ const QUEUE_OPTIONS = { retryLimit: RETRY_LIMIT, retryDelay: RETRY_DELAY_SECONDS
  * by pg-boss. `gitlab-issue-sync` (= work item id) is `stately`: one active and one queued per work item, so a
  * change made during a running sync is still picked up by the next one; `gitlab-mr-reconcile` (= work item id)
  * likewise, so the sweep and new code-change tasks never pile up reconciles of one item. `runner-lease-sweep` is
- * `exclusive` too, so a slow sweep never overlaps the next minute's. The policy only applies when the
+ * `exclusive` too, so a slow sweep never overlaps the next minute's. `weekly-summary-project`
+ * (= `<projectId>:<week>`, with `:force` for a regenerate) is `exclusive`, so a restart re-sending the fan-out
+ * never queues a second run of one project-week. The policy only applies when the
  * queue is first created (pg-boss cannot change an existing queue's policy).
  */
 export const POLICY: Partial<Record<JobName, 'exclusive' | 'stately'>> = {
@@ -49,8 +57,10 @@ export const POLICY: Partial<Record<JobName, 'exclusive' | 'stately'>> = {
   'gitlab-issue-sync': 'stately',
   'gitlab-mr-reconcile': 'stately',
   'runner-lease-sweep': 'exclusive',
+  'weekly-summary': 'exclusive',
+  'weekly-summary-project': 'exclusive',
 }
-export const SINGLETON: readonly JobName[] = ['draft-task', 'discussion-brief', 'gitlab-issue-sync', 'gitlab-mr-reconcile']
+export const SINGLETON: readonly JobName[] = ['draft-task', 'discussion-brief', 'gitlab-issue-sync', 'gitlab-mr-reconcile', 'weekly-summary-project']
 
 /** pg-boss backed queue (its own `pgboss` schema in the app database). Used only by server.ts. */
 export async function createPgBossQueue(databaseUrl: string, concurrency: number): Promise<JobQueue> {

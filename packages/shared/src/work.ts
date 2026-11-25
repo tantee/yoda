@@ -254,6 +254,8 @@ export const EventType = z.enum([
   'work_item.target_date_changed',
   'gitlab.issue_synced', 'gitlab.issue_sync_failed', 'gitlab.mr_opened', 'gitlab.mr_merged', 'gitlab.mr_closed', 'gitlab.pipeline', 'gitlab.note',
   'run.claimed', 'run.progress', 'run.succeeded', 'run.failed', 'run.expired', 'run.parked', 'run.released', 'gitlab.mr_requested',
+  /** The weekly AI summary was written (payload `{ week, entryId, version }`) or skipped (`reason`, payload `{ week }`). */
+  'status.weekly_summary', 'status.weekly_summary_skipped',
   'discussion.raised', 'discussion.brief_ready', 'discussion.brief_failed', 'discussion.scheduled', 'discussion.decided', 'discussion.withdrawn',
   /** Live-only (never stored in `events`): someone gave an opinion or voted on a discussion. */
   'discussion.responded',

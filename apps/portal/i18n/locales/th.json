@@ -188,6 +188,10 @@
       "priority_changed": "เปลี่ยนความสำคัญ",
       "target_date_changed": "เปลี่ยนวันที่กำหนดเสร็จ"
     },
+    "status": {
+      "weekly_summary": "AI สรุปประจำสัปดาห์แล้ว",
+      "weekly_summary_skipped": "ข้ามสรุปประจำสัปดาห์"
+    },
     "task": {
       "created": "สร้างงานย่อย",
       "proposed": "เสนอผู้รับผิดชอบ",
