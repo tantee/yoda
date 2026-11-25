@@ -2,19 +2,19 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Two things ship in this plan, and together they make the first release usable. The Status screen shows department and project health, counts by step, overdue items, open discussions, people load, AI spend, and an AI-written weekly summary per project. The production side covers email notifications, safe migrations, readiness checks, daily backups with a tested restore, image publishing and a manual deploy job, and an operations runbook.
+**Goal:** Two things ship in this plan, and together they make the first release usable. The Status screen shows department and project health, counts by step, overdue items, open discussions, people load, AI spend, and an AI-written weekly summary per project. The production side covers notifications by email, LINE and Telegram, safe migrations, readiness checks, daily backups with a tested restore, image publishing and a manual deploy job, and an operations runbook.
 
-**Architecture:** Core gets a `status/` module with pure health rules, aggregate queries, and a weekly-summary job on the existing pg-boss schedule and AI gateway. Notifications get an optional email channel: an SMTP job with per-person preferences. Deployment becomes four steps, run by the GitLab CI pipeline that publishes images and offers a manual deploy job:
+**Architecture:** Core gets a `status/` module with pure health rules, aggregate queries, and a weekly-summary job on the existing pg-boss schedule and AI gateway. Notifications get outside channels (email over SMTP, LINE Messaging API, Telegram Bot API) behind one channel interface, with department-level switches and per-person, per-kind channel choices. Deployment becomes four steps, run by the GitLab CI pipeline that publishes images and offers a manual deploy job:
 1. A `migrate` one-shot service.
 2. The core and portal services, with health and readiness checks.
 3. A `backup` service.
 4. Restore scripts.
 
-**Tech Stack:** as plans 1–7, plus `nodemailer` (SMTP) in core and Mailpit for dev mail (`# DEV ONLY`).
+**Tech Stack:** as plans 1–7, plus `nodemailer` (SMTP) in core and Mailpit for dev mail (`# DEV ONLY`). LINE and Telegram use plain `fetch` against their HTTP APIs, with fake servers in tests.
 
 **Spec:** `docs/superpowers/specs/2026-11-24-ai-work-portal-design.md` (§13 Status, §15 Deployment and operations, §16 notification channels, §14 secrets). Follow-ups: `docs/superpowers/plans/2026-11-24-01-foundation-followups.md` ("Later / plan 8"), `2026-11-24-04-secretary-followups.md` (notification kinds), `2026-11-25-05-discussions-followups.md` (status counts from the discussions table), `2026-11-25-07-runners-followups.md` (image publishing).
 
-**Not in this plan:** LINE notifications (see default 3), Kubernetes, multi-instance core, calendar integration, GitHub image publishing.
+**Not in this plan:** Kubernetes, multi-instance core, calendar integration, GitHub image publishing.
 
 ## Defaults chosen in this plan (owner can override)
 
@@ -25,12 +25,17 @@
 
    Each project shows the reasons behind its health. The thresholds are constants in one file.
 2. **Overdue.** A work item may have an optional target date, set by its PM or owner. "Overdue" means the item is active and its target date has passed, in Asia/Bangkok.
-3. **Notifications.**
-   - Email is the only channel outside the portal in v1, sent through the hospital's SMTP server. Each person chooses which kinds they receive.
-   - Defaults for staff: `task_assigned`, `proposal_pending` and `discussion` are on.
-   - Default for requesters: `request_update` is on.
-   - LINE Notify has shut down, and LINE now needs an official account with the Messaging API, so LINE is not built.
-   - Without `SMTP_HOST`, nothing is emailed.
+3. **Notifications (owner decision).**
+   - **Channels.** Three channels go outside the portal: email (hospital SMTP), LINE (Messaging API through a LINE Official Account) and Telegram (Bot API).
+   - **When a channel is on.** It is on only when its credentials are set in env *and* an admin has enabled it in Admin → Notifications. Each person chooses which enabled channels they want for each notification kind.
+   - **Defaults when a person has no choices.**
+     - Staff get email for `task_assigned`, `proposal_pending` and `discussion`.
+     - Requesters get email for `request_update`.
+     - LINE and Telegram stay off until the person links an account.
+   - **Linking.**
+     - **LINE:** the person adds the official account and sends the one-time link code shown in the portal (`LINK-XXXXXX`, valid 15 minutes). The signed webhook binds their LINE user id.
+     - **Telegram:** the person opens `t.me/<bot>?start=<code>`. The webhook (secret token header) binds their chat id.
+     - **Unlinking:** possible from the portal at any time. A LINE unfollow or a Telegram "blocked" error unlinks automatically.
 4. **Weekly summary.** Every Monday at 08:00 Asia/Bangkok, the fast model writes a draft summary of the past 7 days for each active project. It is stored as a `draft` knowledge document titled with the ISO week, and PMs can regenerate it. No-AI projects and projects over budget are skipped.
 5. **Backups.** Every day at 02:00 Asia/Bangkok:
    - a `pg_dump -Fc` of the database;
@@ -47,7 +52,10 @@
 
 - Requesters never see the status screens, other people's load, AI spend or summaries. These routes are staff-only, and a project's status needs project visibility.
 - Weekly summaries go through the AI gateway with project billing. They respect no-AI and the budget, and their material is fenced like context packs.
-- Email bodies hold only the notification's own title, body and an absolute portal link. Nothing more goes to requesters than the portal notification already holds. SMTP credentials come only from env.
+- Outside messages (email, LINE, Telegram) hold only the notification's own title, body and an absolute portal link. Nothing more goes to requesters than the portal notification already holds.
+- **Credentials:** the SMTP password, the LINE channel access token and secret, and the Telegram bot token come only from env. They are never logged, never stored in the DB and never returned by an API.
+- **LINE webhook:** requests are verified with `X-Line-Signature`, an HMAC-SHA256 of the raw body keyed by the channel secret, compared in constant time.
+- **Telegram webhook:** requests need `X-Telegram-Bot-Api-Secret-Token` to equal `TELEGRAM_WEBHOOK_SECRET`.
 - The repo is public. No secrets and no real hostnames, including the internal GitLab host: use `example.org` placeholders. Dev-only literals are marked `# DEV ONLY`.
 - Production compose must not run migrations from more than one container. The `migrate` service runs first and core waits for it.
 - Thai is the default UI, every string goes through i18n, and th/en stay in parity. Repo style applies.
@@ -56,9 +64,9 @@
 
 1. **A project with no work items, or only cancelled ones:** shows "on track" with zeros, not an error or a NaN load. Test in Task 1.
 2. **A requester or a non-member staff calling `/status` or `/projects/:id/status`:** gets 403 or 404. Tests in Task 1.
-3. **SMTP down or misconfigured:** the email job retries and then gives up. Portal notifications are unaffected, and the password never appears in logs or errors. Test in Task 4.
+3. **A channel down or misconfigured** (SMTP refused, LINE or Telegram 5xx or 401), or **a forged webhook** (bad LINE signature, wrong Telegram secret, a reused or expired link code): the delivery job retries and then gives up, portal notifications are unaffected, credentials never appear in logs, and forged or stale requests bind nothing. Tests in Tasks 4 and 5.
 4. **The weekly summary running twice for the same week** (a restart, or a manual regenerate racing the schedule): one entry per project-week; a regenerate replaces the draft. Test in Task 2.
-5. **Restoring a backup into an empty database and storage:** the app starts and the data is there. Scripted check in Task 6.
+5. **Restoring a backup into an empty database and storage:** the app starts and the data is there. Scripted check in Task 7.
 
 ---
 
@@ -171,36 +179,107 @@
 
 ---
 
-### Task 4: Email notifications
+### Task 4: Notification channels, email and preferences
 
 **Files:**
-- Create: `apps/core/src/notifications/email.ts`, `apps/portal/app/pages/settings/notifications.vue`; Modify: `apps/core/src/notifications/service.ts` (enqueue `notify-email` after commit when the channel and preference allow), `apps/core/src/db/schema.ts` + migration `0017_notification_prefs` (`notification_prefs (person_id pk, email_kinds text[] not null)`), `apps/core/src/config.ts` (`SMTP_HOST`, `SMTP_PORT` default 587, `SMTP_SECURE` default false, `SMTP_USER`, `SMTP_PASSWORD`, `MAIL_FROM`), `apps/core/src/jobs/*`, routes `GET/PUT /me/notification-prefs`, `docker-compose.yml` (Mailpit `# DEV ONLY` on 8025/1025), `.env.example`, `docker-compose.prod.yml`, the portal user menu link
-- Test: `apps/core/test/notifications-email.test.ts` (inject a fake transport; no network)
+- Create: `apps/core/src/notifications/channels/{index,email}.ts`, `apps/core/src/notifications/deliver.ts`, `packages/shared/src/channels.ts`, `apps/portal/app/pages/settings/notifications.vue`, `apps/portal/app/pages/admin/notifications.vue`
+- Modify: `apps/core/src/notifications/service.ts` (enqueue `notify-deliver` after commit), `apps/core/src/db/schema.ts` + migration `0017_notification_channels`, `apps/core/src/config.ts` (`SMTP_HOST`, `SMTP_PORT` default 587, `SMTP_SECURE` default false, `SMTP_USER`, `SMTP_PASSWORD`, `MAIL_FROM`), `apps/core/src/jobs/*`, routes (`GET/PUT /me/notification-prefs`, `GET/PATCH /admin/notification-channels`), `docker-compose.yml` (Mailpit `# DEV ONLY` on 8025/1025), `.env.example`, `docker-compose.prod.yml`, portal user menu and admin nav, i18n
+- Test: `apps/core/test/notifications-channels.test.ts` (fake email transport, no network)
 
 **Interfaces:**
-- `Mailer = { send(msg: { to, subject, text, html }): Promise<void> }`. `createMailer(config): Mailer | null` returns null when `SMTP_HOST` is unset. `deps.mailer` can be injected in tests.
-- `NotificationPrefs = z.object({ emailKinds: z.array(NotificationKind) })`. With no row, defaults by role: staff get `['task_assigned','proposal_pending','discussion']` and requesters get `['request_update']`.
-- `notify()` unchanged for callers. After commit it enqueues `notify-email { notificationId }` only when a mailer is configured, the person has an email, and the kind is in their prefs.
-- The job loads the notification and person, renders `subject = title`, and a `text`/`html` body with the notification body and an absolute link `${PORTAL_URL}${link}`, plus a footer explaining how to change preferences, in Thai and English.
-  - It has retry 3 with backoff. The final failure is logged with the error code only, with no credentials and no recipient list.
-  - It is idempotent per notification: a `notifications.emailed_at` column is set after sending, and the job skips when it is set.
-- The portal settings page lists the kinds with switches and saves them. Requesters see only the kinds that apply to them (`request_update`, `secretary_message`).
+- `ChannelName = z.enum(['email','line','telegram'])`.
+- `NotificationPrefs = z.object({ kinds: z.record(NotificationKind, z.array(ChannelName)) })`. A missing kind means the role default from the defaults section.
+- `ChannelStatus = z.object({ name: ChannelName, configured: z.boolean(), enabled: z.boolean() })`. `ChannelSettingsPatch = z.object({ email?: boolean, line?: boolean, telegram?: boolean })`.
+- `MyChannels = z.object({ available: z.array(ChannelName), linked: z.object({ email: z.boolean(), line: z.boolean(), telegram: z.boolean() }) })`. Email counts as linked when the person has an email address.
+- Tables:
+  - `notification_channel_settings`: single row `id=1`, booleans `email_enabled`, `line_enabled`, `telegram_enabled`, all default false, seeded.
+  - `notification_prefs`: `person_id` pk, `kinds jsonb`.
+  - `channel_links`: `person_id`, `channel`, `external_id` (LINE userId / Telegram chatId), `linked_at`, with pk (`person_id`, `channel`) and unique (`channel`, `external_id`).
+  - `channel_link_codes`: `code` pk, `person_id`, `channel`, `expires_at`, `used_at`.
+  - `notification_deliveries`: `notification_id`, `channel`, `state` (`sent`/`failed`/`skipped`), `error_code`, `at`, with pk (`notification_id`, `channel`).
+- `Channel = { name: ChannelName, configured(config): boolean, send(target: { personId, email?, externalId? }, msg: { title, body, url }): Promise<void> }`. A thrown `ChannelError { code, permanent: boolean }` marks the failure, and a permanent error never retries.
+- `email` uses nodemailer (pinned); tests inject the transport through `deps.mailTransport`.
+- `channelsFor(db, config, personId, kind): Promise<ChannelName[]>` is the person's choice for the kind ∩ admin-enabled ∩ configured ∩ linked.
+- After commit, `notify()` enqueues one `notify-deliver { notificationId }` when that list is non-empty.
+- `deliver(deps, notificationId)`:
+  - It sends on each channel that has no `sent` row yet, which makes it idempotent per channel.
+  - Each result is recorded in its own row.
+  - It retries the job (3 attempts, backoff) only when a transient failure remains.
+  - Logs carry the channel and the error code only.
+- `url` = `${PORTAL_URL}${link}`.
+- The message text is the notification title and body plus the link, and a footer naming where to change preferences (th + en).
+- **Portal settings page:** a grid of notification kinds × available channels with checkboxes. Linking buttons appear for LINE and Telegram once Task 5 lands; in this task, show them disabled when the channel is unavailable. Requesters see only `request_update` and `secretary_message`.
+- **Admin page:** each channel shows configured (from env, read-only) and an enabled switch. A channel that isn't configured can't be enabled (422).
 
 - [ ] **Step 1: Write failing tests.**
-  - No `SMTP_HOST` → no job.
-  - Default staff prefs → a `task_assigned` email is sent through the fake transport with the absolute link. A kind that is turned off → none.
-  - A requester's email for `request_update` contains only the notification text, with no GitLab URL even if one were present in the work item.
-  - The transport throws 3 times → the job ends failed and the log has no password.
+  - With no SMTP config, `channelsFor` excludes email.
+  - Configured but admin-disabled → excluded.
+  - Default staff prefs → a `task_assigned` email is sent through the fake transport with an absolute link.
+  - A requester's `request_update` message contains only the notification text.
+  - The transport throws a transient error 3 times → the delivery row is `failed` with a code and the log has no password.
   - The job runs twice → one email.
-  - PUT with an unknown kind → 422.
+  - PUT prefs with an unknown kind or channel → 422.
+  - PATCH enabling an unconfigured channel → 422.
+  - A non-admin PATCH → 403.
 - [ ] **Step 2: Run** the test. Expected: FAIL.
-- [ ] **Step 3: Implement.** Add `nodemailer` and its types, pinned.
+- [ ] **Step 3: Implement.**
 - [ ] **Step 4: Run** `pnpm vitest run && pnpm -r typecheck`. Expected: PASS.
-- [ ] **Step 5: Commit** `feat: email notifications with per-person preferences`.
+- [ ] **Step 5: Commit** `feat: notification channels with email and preferences`.
 
 ---
 
-### Task 5: Production hardening
+### Task 5: LINE and Telegram
+
+**Files:**
+- Create: `apps/core/src/notifications/channels/{line,telegram}.ts`, `apps/core/src/notifications/linking.ts`, `apps/core/src/routes/channel-webhooks.ts`, `apps/core/test/fake-line.ts`, `apps/core/test/fake-telegram.ts` (node:http fakes, like `fake-gitlab.ts`)
+- Modify: `apps/core/src/config.ts` (`LINE_CHANNEL_ACCESS_TOKEN`, `LINE_CHANNEL_SECRET`, `LINE_API_URL` default `https://api.line.me`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_BOT_USERNAME`, `TELEGRAM_WEBHOOK_SECRET` ≥ 16 chars, `TELEGRAM_API_URL` default `https://api.telegram.org`), `.env.example`, `docker-compose.prod.yml`, routes `POST /me/channel-links/:channel/code` and `DELETE /me/channel-links/:channel`, portal settings page (link and unlink UI), README/runbook notes in Task 8
+- Test: `apps/core/test/notifications-line-telegram.test.ts`
+
+**Interfaces:**
+- `createLinkCode(deps, me, channel: 'line'|'telegram'): Promise<{ code, expiresAt, instructions: { addFriendUrl?: string, deepLink?: string } }>`.
+  - Codes are `LINK-` plus 6 base32 characters (no 0/O/1/I), valid 15 minutes, one active code per person and channel (a new code replaces the old).
+  - Telegram's `deepLink` is `https://t.me/<TELEGRAM_BOT_USERNAME>?start=<code without LINK->`.
+- `consumeLinkCode(tx, channel, code, externalId): Promise<'linked'|'invalid'>`.
+  - The code must be unused, unexpired and for that channel.
+  - It marks the code used and upserts `channel_links`. If that external id was linked to another person, the old link is moved.
+  - The case of the code is ignored.
+- `POST /webhooks/line` is public. It verifies `X-Line-Signature` over the raw body (constant time); a mismatch → 401 with nothing processed. It handles:
+  - `message` text events: a text matching a code → link, and reply "linked" / "code invalid or expired" through the reply API.
+  - `follow`: reply with instructions.
+  - `unfollow`: delete that user's link.
+
+  It always answers 200 quickly once verified.
+- `POST /webhooks/telegram` is public. It requires `X-Telegram-Bot-Api-Secret-Token === TELEGRAM_WEBHOOK_SECRET` (constant time); otherwise 401. It handles:
+  - `message.text` `/start <code>`: link chat id `message.chat.id` and reply through `sendMessage`.
+  - `my_chat_member` with status `kicked`: delete the link.
+- Channels:
+  - **`line.send`:** push message `POST /v2/bot/message/push` with a Bearer token, `to: externalId`, one text message of at most 5 000 characters.
+  - **`telegram.send`:** `POST /bot<token>/sendMessage` with `chat_id` and `text`, at most 4 096 characters, plain text with no parse mode.
+  - **Errors (both):** 429/5xx → transient; 400/401/403 → permanent.
+  - **Telegram 403 "blocked":** also deletes the link.
+  - **Secrets:** the token is never included in error text. Telegram's token sits in the URL path, so error messages and logs must strip it.
+- `MyChannels.linked.line/telegram` reflect `channel_links`.
+- **Portal:** "Link LINE" shows the code, the add-friend instructions (`LINE_ADD_FRIEND_URL` optional public config) and a countdown. "Link Telegram" shows a button that opens the deep link, plus the code. The page polls `GET /me/notification-prefs` (or uses live events) until linked, and shows "Unlink" when linked.
+
+- [ ] **Step 1: Write failing tests**, using the fakes:
+  - **LINE webhook:** a valid signature with a text event carrying a fresh code → linked, and the reply was sent to the fake. A bad signature → 401 with no link. A code used twice → the second is invalid. An expired code → invalid. An unfollow → unlinked.
+  - **Telegram webhook:** the right secret with `/start <code>` → linked and `sendMessage` called. A wrong or missing secret → 401. `kicked` → unlinked.
+  - **Delivery:** a linked person with `task_assigned` → [`line`,`telegram`] gets a push on both fakes with the absolute link. The LINE fake 500 ×3 → failed and transient. The Telegram 403 blocked → permanent, no retry, link removed.
+  - **Secrets and errors:** logs and errors never contain either token, including Telegram's token in the URL.
+  - **Config:** without the env set, the channel is not configured and admins can't enable it.
+- [ ] **Step 2: Run** the test. Expected: FAIL.
+- [ ] **Step 3: Implement.** Capture the raw body for the LINE signature: a route-scoped content-type parser that keeps the Buffer.
+- [ ] **Step 4: Run** `pnpm vitest run && pnpm -r typecheck`. Expected: PASS.
+- [ ] **Step 5: Browser check.** Point the dev core at the fakes, which need a small dev script `fake-channels` (`# DEV ONLY`):
+  1. Link Telegram by posting the webhook payload with curl.
+  2. Trigger a task assignment and see the message arrive in the fake's log.
+
+  Stop only processes you started.
+- [ ] **Step 6: Commit** `feat: LINE and Telegram notifications with account linking`.
+
+---
+
+### Task 6: Production hardening
 
 **Files:**
 - Modify: `apps/core/src/config.ts` (`OIDC_JWKS_URL` optional, used for fetching keys while `OIDC_ISSUER` stays the token issuer; `MIGRATE_ON_START` default `true` in dev, set `false` in prod compose), `apps/core/src/auth/plugin.ts`, `apps/core/Dockerfile` (CMD runs `node dist/server.js`; the server runs migrations only when `MIGRATE_ON_START=true`), `apps/core/src/app.ts` (`GET /ready`, public: checks the DB with `select 1`, storage `headBucket`, and pg-boss started; 200 with `{ status, checks }` or 503), `GET /health` adds `version` from package.json, `docker-compose.prod.yml` (a `migrate` service with the core image and `node dist/migrate.js`, `restart: 'no'`; core `depends_on: migrate: condition: service_completed_successfully`; healthchecks for core `/ready` and portal), `apps/portal/nuxt.config.ts` (tree-shaken Vuetify via `vite-plugin-vuetify` `autoImport: true`, so stop registering all components), `apps/portal` health route if missing, root and app `package.json` versions → `1.0.0`
@@ -218,7 +297,7 @@
 
 ---
 
-### Task 6: Backups and restore
+### Task 7: Backups and restore
 
 **Files:**
 - Create: `ops/backup/backup.sh`, `ops/backup/restore.sh`, `ops/backup/Dockerfile` (based on `postgres:17` client tools + `minio/mc` binary, or the `rustfs` CLI if it is S3-mirror capable; pin versions), `ops/backup/restore-check.sh` (dev-only end-to-end check)
@@ -246,7 +325,7 @@
 
 ---
 
-### Task 7: Release pipeline and operations runbook
+### Task 8: Release pipeline and operations runbook
 
 **Files:**
 - Modify: `.gitlab-ci.yml`:
