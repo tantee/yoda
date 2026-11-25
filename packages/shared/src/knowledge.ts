@@ -8,7 +8,7 @@ export const KnowledgeStatus = z.enum(['draft', 'confirmed'])
 export type KnowledgeStatus = z.infer<typeof KnowledgeStatus>
 export const KnowledgeScope = z.enum(['department', 'project', 'work_item'])
 export type KnowledgeScope = z.infer<typeof KnowledgeScope>
-export const SourceKind = z.enum(['person', 'ai', 'upload', 'task'])
+export const SourceKind = z.enum(['person', 'ai', 'upload', 'task', 'gitlab'])
 export type SourceKind = z.infer<typeof SourceKind>
 
 export const KnowledgeEntry = z.object({

@@ -16,6 +16,7 @@ import { and, asc, eq, inArray, sql } from 'drizzle-orm'
 import { forbidden, HttpError, invalidState, notFound } from '../auth/plugin.js'
 import type { Tx } from '../db/client.js'
 import { discussionResponses, discussions, projects, tasks, workItems } from '../db/schema.js'
+import { queueIssueSync } from '../gitlab/sync.js'
 import { createEntry } from '../knowledge/service.js'
 import { notifyDiscussionEnded, notifyDiscussionRaised, notifyVotesReset } from '../notifications/service.js'
 import { recordEvent, type WorkCtx } from '../work/context.js'
@@ -475,7 +476,11 @@ export async function decideDiscussion(ctx: WorkCtx, me: Me, id: string, input: 
     text: input.decision,
     responders: await responderIds(tx, id),
   })
-  if (d.workItemId) await resumeAfterDiscussion(ctx, d.workItemId)
+  if (d.workItemId) {
+    // Its decision goes into the work item's GitLab issues (deduplicated with the knowledge entry's request).
+    await queueIssueSync(ctx, d.workItemId, { withIssues: true })
+    await resumeAfterDiscussion(ctx, d.workItemId)
+  }
 }
 
 async function responderIds(tx: Tx, discussionId: string): Promise<string[]> {

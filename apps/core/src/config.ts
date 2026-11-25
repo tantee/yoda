@@ -21,6 +21,13 @@ export type Config = {
   aiWorkers: number
   /** Most automatic task assignments one person receives per Bangkok calendar day. */
   dailyTaskCap: number
+  /** GitLab base URL (no trailing slash); unset = GitLab features off. */
+  gitlabUrl?: string
+  /** Bot token; only ever read from the environment. */
+  gitlabToken?: string
+  gitlabWebhookSecret?: string
+  /** Base URL of the portal, used for links from GitLab issues back to it. */
+  portalUrl: string
 }
 
 const modelId = z.string().regex(/^(anthropic|openai):.+$/, 'must be provider:model with provider anthropic or openai')
@@ -47,6 +54,10 @@ const envSchema = z.object({
   S3_SECRET_KEY: z.string().min(1),
   AI_WORKERS: z.coerce.number().int().min(1).max(32).default(2),
   DAILY_TASK_CAP: z.coerce.number().int().min(1).max(1000).default(8),
+  GITLAB_URL: optional(z.string().url()),
+  GITLAB_TOKEN: optional(z.string()),
+  GITLAB_WEBHOOK_SECRET: optional(z.string().min(16)),
+  PORTAL_URL: z.string().url().default('http://localhost:3000'),
 })
 
 export function loadConfig(env: NodeJS.ProcessEnv): Config {
@@ -80,5 +91,9 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     s3SecretKey: e.S3_SECRET_KEY,
     aiWorkers: e.AI_WORKERS,
     dailyTaskCap: e.DAILY_TASK_CAP,
+    gitlabUrl: e.GITLAB_URL?.replace(/\/+$/, ''),
+    gitlabToken: e.GITLAB_TOKEN,
+    gitlabWebhookSecret: e.GITLAB_WEBHOOK_SECRET,
+    portalUrl: e.PORTAL_URL.replace(/\/+$/, ''),
   }
 }

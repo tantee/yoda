@@ -10,6 +10,7 @@ import type { LiveBus } from './live/bus.js'
 import type { AiGateway } from './ai/gateway.js'
 import type { AttachmentStoredHook } from './attachments/service.js'
 import type { JobQueue } from './jobs/queue.js'
+import type { GitLabClient } from './gitlab/client.js'
 import { createAttachmentEntry } from './knowledge/service.js'
 import { knowledgeRoutes } from './routes/knowledge.js'
 import { aiRoutes } from './routes/ai.js'
@@ -26,6 +27,7 @@ import { proposalRoutes } from './routes/proposals.js'
 import { discussionRoutes } from './routes/discussions.js'
 import { notificationRoutes } from './routes/notifications.js'
 import { adminRoutes } from './routes/admin.js'
+import { gitlabRoutes } from './routes/gitlab.js'
 
 export type AppDeps = {
   config: Config
@@ -35,6 +37,8 @@ export type AppDeps = {
   storage: Storage
   ai: AiGateway
   jobs: JobQueue
+  /** Null when GITLAB_URL / GITLAB_TOKEN are not both set. */
+  gitlab: GitLabClient | null
   /** Replaces the default upload hook (create the attachment's knowledge entry); tests use it to observe calls. */
   onAttachmentStored?: AttachmentStoredHook
 }
@@ -78,6 +82,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   discussionRoutes(app)
   notificationRoutes(app)
   adminRoutes(app)
+  gitlabRoutes(app)
   streamRoutes(app)
   // Text-bearing uploads become `document` entries. The attachment is already committed, so a failure here
   // is logged rather than failing the upload (a retried upload would duplicate the file).

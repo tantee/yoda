@@ -6,7 +6,8 @@ import { errorSummary, type AiGateway } from '../ai/gateway.js'
 import { HttpError, notFound } from '../auth/plugin.js'
 import type { Db, Tx } from '../db/client.js'
 import { attachments, conversations, knowledgeEntries, people, projects, workItems } from '../db/schema.js'
-import { createEntry } from '../knowledge/service.js'
+import { codeSummary, withoutGitLabLinks } from '../gitlab/repos.js'
+import { createEntry, notGitLabDraft } from '../knowledge/service.js'
 import { searchKnowledge } from '../knowledge/search.js'
 import { createProposal, supersedePending } from '../proposals/service.js'
 import type { WorkCtx } from '../work/context.js'
@@ -216,7 +217,7 @@ function staffTools(deps: ToolDeps, me: Me, pending: PendingAction[], scope: Too
     }),
 
     work_item: tool({
-      description: 'Details of one work item: description, steps, open tasks and recent progress notes.',
+      description: 'Details of one work item: description, steps, open tasks, recent progress notes and (where shown) its code status in GitLab.',
       inputSchema: z.object({ workItemId: uuid }),
       execute: guarded(async ({ workItemId }) => {
         const { item } = await aiVisibleWorkItem(db, me, workItemId)
@@ -224,9 +225,12 @@ function staffTools(deps: ToolDeps, me: Me, pending: PendingAction[], scope: Too
         // A requester-visible thread only ever shows its own work item.
         if (scope.requesterVisible && workItemId !== scope.workItemId) throw new ToolRefusal(OUT_OF_SCOPE)
         const d = await getWorkItemDetail(db, me, workItemId)
+        // A requester reads (or may later read) work_item threads: no GitLab links, issues or merge requests there.
+        const readable = scope.hideStaffNames || scope.requesterVisible
+        const code = readable ? null : await codeSummary(db, workItemId)
         return {
           title: d.title,
-          description: clip(d.description, 2000),
+          description: clip(readable ? await withoutGitLabLinks(db, d.projectId, d.description) : d.description, 2000),
           priority: d.priority,
           state: d.state,
           steps: d.steps.map((s) => ({ name: s.name.th, status: s.status })),
@@ -240,6 +244,7 @@ function staffTools(deps: ToolDeps, me: Me, pending: PendingAction[], scope: Too
               ...(scope.hideStaffNames ? {} : { assignee: t.assigneeName }),
             })),
           ...(scope.hideStaffNames ? {} : { recentProgress: await progressNotes(db, workItemId, 5) }),
+          ...(code ? { code } : {}),
         }
       }),
     }),
@@ -522,7 +527,7 @@ async function projectNames(db: Db, ids: (string | null)[]): Promise<Map<string,
   return new Map(rows.map((r) => [r.id, r.name]))
 }
 
-/** Latest progress notes of a work item that may go to the AI (no noAi entries or entries of noAi files). */
+/** Latest progress notes of a work item that may go to the AI (no noAi entries, entries of noAi files or unreviewed GitLab notes). */
 export async function progressNotes(db: Db, workItemId: string, limit: number): Promise<{ title: string; text: string }[]> {
   const rows = await db
     .select({ title: knowledgeEntries.title, body: knowledgeEntries.body })
@@ -532,6 +537,7 @@ export async function progressNotes(db: Db, workItemId: string, limit: number): 
         eq(knowledgeEntries.workItemId, workItemId),
         eq(knowledgeEntries.type, 'progress'),
         isNull(knowledgeEntries.supersededAt),
+        notGitLabDraft(),
         sql`not ${knowledgeEntries.noAi}`,
         sql`not exists (select 1 from attachments a where a.id = ${knowledgeEntries.attachmentId} and a.no_ai)`,
       ),

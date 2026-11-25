@@ -1,6 +1,6 @@
 import { PgBoss } from 'pg-boss'
 
-export type JobName = 'embed-entry' | 'draft-task' | 'secretary-chat' | 'secretary-event' | 'secretary-sweep' | 'discussion-brief'
+export type JobName = 'embed-entry' | 'draft-task' | 'secretary-chat' | 'secretary-event' | 'secretary-sweep' | 'discussion-brief' | 'gitlab-issue-sync' | 'gitlab-mr-effect' | 'gitlab-mr-reconcile'
 export const JOB_NAMES: readonly JobName[] = [
   'embed-entry',
   'draft-task',
@@ -8,6 +8,9 @@ export const JOB_NAMES: readonly JobName[] = [
   'secretary-event',
   'secretary-sweep',
   'discussion-brief',
+  'gitlab-issue-sync',
+  'gitlab-mr-effect',
+  'gitlab-mr-reconcile',
 ]
 
 /** Recurring jobs (cron, Asia/Bangkok): pg-boss sends them; tests run them with `InlineJobQueue.runScheduled`. */
@@ -33,11 +36,18 @@ const QUEUE_OPTIONS = { retryLimit: RETRY_LIMIT, retryDelay: RETRY_DELAY_SECONDS
 /**
  * `draft-task` (singletonKey = task id) and `discussion-brief` (= discussion id) are sent on `exclusive`
  * queues, so at most one job per task / discussion is queued, retrying or active; a duplicate send is dropped
- * by pg-boss. The policy only applies when the queue is first created (pg-boss cannot change an existing
- * queue's policy).
+ * by pg-boss. `gitlab-issue-sync` (= work item id) is `stately`: one active and one queued per work item, so a
+ * change made during a running sync is still picked up by the next one; `gitlab-mr-reconcile` (= work item id)
+ * likewise, so the sweep and new code-change tasks never pile up reconciles of one item. The policy only applies when the
+ * queue is first created (pg-boss cannot change an existing queue's policy).
  */
-export const POLICY: Partial<Record<JobName, 'exclusive'>> = { 'draft-task': 'exclusive', 'discussion-brief': 'exclusive' }
-export const SINGLETON: readonly JobName[] = ['draft-task', 'discussion-brief']
+export const POLICY: Partial<Record<JobName, 'exclusive' | 'stately'>> = {
+  'draft-task': 'exclusive',
+  'discussion-brief': 'exclusive',
+  'gitlab-issue-sync': 'stately',
+  'gitlab-mr-reconcile': 'stately',
+}
+export const SINGLETON: readonly JobName[] = ['draft-task', 'discussion-brief', 'gitlab-issue-sync', 'gitlab-mr-reconcile']
 
 /** pg-boss backed queue (its own `pgboss` schema in the app database). Used only by server.ts. */
 export async function createPgBossQueue(databaseUrl: string, concurrency: number): Promise<JobQueue> {

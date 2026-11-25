@@ -24,10 +24,13 @@ import {
   ConversationKind,
   DiscussionResponseKind,
   DiscussionState,
+  IssueSyncStatus,
   KnowledgeScope,
   KnowledgeStatus,
   KnowledgeType,
+  MergeRequestState,
   NotificationKind,
+  PipelineStatus,
   Priority,
   ProposalKind,
   ProposalState,
@@ -436,6 +439,90 @@ export const departmentSettings = pgTable(
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [check('department_settings_single_row', sql`${t.id} = 1`)],
+)
+
+export const projectRepos = pgTable(
+  'project_repos',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    gitlabProjectId: integer('gitlab_project_id').notNull(),
+    pathWithNamespace: text('path_with_namespace').notNull(),
+    webUrl: text('web_url').notNull(),
+    /** Null for an empty GitLab project (no commits yet). */
+    defaultBranch: text('default_branch'),
+    addedBy: uuid('added_by').references(() => people.id, { onDelete: 'set null' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [unique('project_repos_project_gitlab_unique').on(t.projectId, t.gitlabProjectId)],
+)
+
+export const workItemRepos = pgTable(
+  'work_item_repos',
+  {
+    workItemId: uuid('work_item_id')
+      .notNull()
+      .references(() => workItems.id, { onDelete: 'cascade' }),
+    repoId: uuid('repo_id')
+      .notNull()
+      .references(() => projectRepos.id, { onDelete: 'cascade' }),
+    issueIid: integer('issue_iid'),
+    issueUrl: text('issue_url'),
+    /** Hash of the last section pushed to the issue; a push happens only when it changes. */
+    sectionHash: text('section_hash'),
+    syncStatus: text('sync_status').notNull().default('pending'),
+    syncError: text('sync_error'),
+    lastSyncedAt: timestamp('last_synced_at', { withTimezone: true }),
+  },
+  (t) => [
+    primaryKey({ columns: [t.workItemId, t.repoId] }),
+    check('work_item_repos_sync_status_check', sql`${t.syncStatus} in (${list(IssueSyncStatus.options)})`),
+    // A GitLab issue belongs to at most one work item.
+    uniqueIndex('work_item_repos_repo_issue_unique').on(t.repoId, t.issueIid).where(sql`${t.issueIid} is not null`),
+  ],
+)
+
+export const mergeRequests = pgTable(
+  'merge_requests',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    repoId: uuid('repo_id')
+      .notNull()
+      .references(() => projectRepos.id, { onDelete: 'cascade' }),
+    mrIid: integer('mr_iid').notNull(),
+    workItemId: uuid('work_item_id').references(() => workItems.id, { onDelete: 'cascade' }),
+    title: text('title').notNull(),
+    url: text('url').notNull(),
+    state: text('state').notNull(),
+    sourceBranch: text('source_branch').notNull(),
+    pipeline: text('pipeline').notNull().default('none'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique('merge_requests_repo_iid_unique').on(t.repoId, t.mrIid),
+    index('merge_requests_work_item_idx').on(t.workItemId),
+    check('merge_requests_state_check', sql`${t.state} in (${list(MergeRequestState.options)})`),
+    check('merge_requests_pipeline_check', sql`${t.pipeline} in (${list(PipelineStatus.options)})`),
+  ],
+)
+
+/** De-duplicates webhook deliveries by `X-Gitlab-Event-UUID`. */
+export const gitlabDeliveries = pgTable('gitlab_deliveries', {
+  eventUuid: text('event_uuid').primaryKey(),
+  receivedAt: timestamp('received_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+/** GitLab settings: a single row (id 1), seeded by its migration. */
+export const gitlabSettings = pgTable(
+  'gitlab_settings',
+  {
+    id: integer('id').primaryKey().default(1),
+    lastWebhookAt: timestamp('last_webhook_at', { withTimezone: true }),
+  },
+  (t) => [check('gitlab_settings_single_row', sql`${t.id} = 1`)],
 )
 
 export const agendas = pgTable('agendas', {

@@ -15,6 +15,7 @@ import { AiRefused, errorSummary, type AiGateway } from '../ai/gateway.js'
 import type { AttachmentRow } from '../attachments/service.js'
 import type { Db, Tx } from '../db/client.js'
 import { attachments, knowledgeChunks, knowledgeEntries, people, projectMembers, projects, workItems } from '../db/schema.js'
+import { queueIssueSync } from '../gitlab/sync.js'
 import type { JobRun } from '../jobs/queue.js'
 import { canSeeProject } from '../work/queries.js'
 import { recordEvent, runWork, type WorkCtx, type WorkDeps } from '../work/context.js'
@@ -75,6 +76,14 @@ function selectEntries(db: Conn) {
 async function canRead(db: Conn, me: Me, row: { projectId: string | null }): Promise<boolean> {
   if (!me.isStaff) return false
   return row.projectId === null || canSeeProject(db, me, row.projectId)
+}
+
+/**
+ * SQL condition for anything sent to the AI: not an unreviewed GitLab draft (comment text from developers is
+ * untrusted input until staff confirm it).
+ */
+export function notGitLabDraft(): SQL {
+  return sql`not (${knowledgeEntries.sourceKind} = 'gitlab' and ${knowledgeEntries.status} = 'draft')`
 }
 
 /** SQL condition: entries `me` may read. */
@@ -202,6 +211,7 @@ export async function createEntry(ctx: WorkCtx, me: Me | null, input: CreateInpu
     .returning()
   await recordKnowledgeEvent(ctx, 'knowledge.created', row!)
   ctx.jobs.push({ name: 'embed-entry', id: row!.id })
+  await queueIssueResync(ctx, row!)
   return row!.id
 }
 
@@ -229,7 +239,14 @@ async function insertNextVersion(
     .returning()
   await recordKnowledgeEvent(ctx, event, row!)
   ctx.jobs.push({ name: 'embed-entry', id: row!.id })
+  await queueIssueResync(ctx, row!)
   return row!.id
+}
+
+/** A confirmed document / decision on a work item that already has GitLab issues refreshes their section. */
+async function queueIssueResync(ctx: WorkCtx, row: EntryRow): Promise<void> {
+  if (!row.workItemId || row.status !== 'confirmed' || (row.type !== 'document' && row.type !== 'decision')) return
+  await queueIssueSync(ctx, row.workItemId, { withIssues: true })
 }
 
 /** New version with the patch applied; a person's edit verifies the entry (status confirmed). */
@@ -305,6 +322,7 @@ export async function embedEntry(deps: { db: Db; ai: Pick<AiGateway, 'embed'> },
       noAi: knowledgeEntries.noAi,
       attachmentNoAi: attachments.noAi,
       supersededAt: knowledgeEntries.supersededAt,
+      gitlabDraft: sql<boolean>`not ${notGitLabDraft()}`,
     })
     .from(knowledgeEntries)
     .leftJoin(attachments, eq(attachments.id, knowledgeEntries.attachmentId))
@@ -313,7 +331,8 @@ export async function embedEntry(deps: { db: Db; ai: Pick<AiGateway, 'embed'> },
 
   const texts = chunkText(`${row.title}\n\n${row.body}`)
   let vectors: number[][] | null = null
-  if (texts.length && !row.noAi && !row.attachmentNoAi) {
+  // Confirming (or editing) the entry re-queues this job, so a reviewed GitLab note is embedded then.
+  if (texts.length && !row.noAi && !row.attachmentNoAi && !row.gitlabDraft) {
     try {
       vectors = await ai.embed({ projectId: row.projectId, texts })
     } catch (err) {
@@ -328,14 +347,14 @@ export async function embedEntry(deps: { db: Db; ai: Pick<AiGateway, 'embed'> },
   await db.transaction(async (tx) => {
     // Serialize concurrent re-chunks of one entry; recheck it is still there.
     const [locked] = await tx
-      .select({ noAi: knowledgeEntries.noAi, attachmentNoAi: attachments.noAi, supersededAt: knowledgeEntries.supersededAt })
+      .select({ noAi: knowledgeEntries.noAi, attachmentNoAi: attachments.noAi, supersededAt: knowledgeEntries.supersededAt, gitlabDraft: sql<boolean>`not ${notGitLabDraft()}` })
       .from(knowledgeEntries)
       .leftJoin(attachments, eq(attachments.id, knowledgeEntries.attachmentId))
       .where(eq(knowledgeEntries.id, row.id))
       .for('update', { of: knowledgeEntries })
     if (!locked || locked.supersededAt) return
     // A flag may have been set while embedding ran; never keep vectors for noAi content.
-    if (locked.noAi || locked.attachmentNoAi) vectors = null
+    if (locked.noAi || locked.attachmentNoAi || locked.gitlabDraft) vectors = null
     await tx.delete(knowledgeChunks).where(eq(knowledgeChunks.entryId, row.id))
     if (!texts.length) return
     await tx.insert(knowledgeChunks).values(

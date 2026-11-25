@@ -19,7 +19,8 @@
     "answers": "Things to answer",
     "admin": {
       "people": "People admin",
-      "ai": "AI budget"
+      "ai": "AI budget",
+      "gitlab": "GitLab"
     }
   },
   "projects": {
@@ -44,7 +45,8 @@
       "overview": "Overview",
       "items": "Work items",
       "knowledge": "Knowledge",
-      "ai": "AI settings"
+      "ai": "AI settings",
+      "repos": "Repositories"
     }
   },
   "people": {
@@ -67,7 +69,11 @@
     "commentRequired": "Please add a comment when requesting changes",
     "tooLarge": "File is larger than 25 MB",
     "unsupportedType": "This file type is not supported",
-    "projectRequired": "Choose a project first"
+    "projectRequired": "Choose a project first",
+    "gitlabNotConnected": "GitLab is not connected",
+    "repoNotFound": "Repository not found in GitLab, or the bot account cannot access it",
+    "issueNotFound": "Issue not found in GitLab, or the bot account cannot access it",
+    "gitlabUnavailable": "Cannot reach GitLab. Please try again later."
   },
   "todo": {
     "myTasks": "My tasks",
@@ -175,7 +181,8 @@
       "step_advanced": "Moved to next step",
       "done": "Work item completed",
       "cancelled": "Work item cancelled",
-      "reopened": "Sent back to an earlier step"
+      "reopened": "Sent back to an earlier step",
+      "priority_changed": "Priority changed"
     },
     "task": {
       "created": "Task created",
@@ -200,7 +207,15 @@
       "ai_failed": "The AI could not produce a draft",
       "ai_unavailable": "AI is not configured",
       "no_ai": "This project does not use AI",
-      "reopened": "Work item reopened to an earlier step"
+      "reopened": "Work item reopened to an earlier step",
+      "mr_opened_in_gitlab": "Merge request opened in GitLab",
+      "merged_in_gitlab": "Merged in GitLab",
+      "not_found": "Not found in GitLab",
+      "forbidden": "The bot account has no access",
+      "unavailable": "GitLab could not be reached",
+      "bad_request": "GitLab rejected the request",
+      "internal": "Internal error",
+      "issue_missing": "The issue was deleted or moved in GitLab"
     },
     "ai": {
       "drafted": "AI drafted a result",
@@ -209,7 +224,30 @@
       "budget_warning": "AI budget 80% used",
       "budget_exceeded": "AI budget reached"
     },
-    "aiLabel": "AI"
+    "aiLabel": "AI",
+    "knowledge": {
+      "created": "Knowledge added",
+      "updated": "Knowledge updated",
+      "confirmed": "Knowledge confirmed"
+    },
+    "gitlab": {
+      "issue_synced": "GitLab issue synced",
+      "issue_sync_failed": "GitLab issue sync failed",
+      "mr_opened": "Merge request opened",
+      "mr_merged": "Merge request merged",
+      "mr_closed": "Merge request closed without merging",
+      "pipeline": "Pipeline status changed",
+      "note": "New comment in GitLab"
+    },
+    "discussion": {
+      "raised": "Discussion raised",
+      "brief_ready": "Discussion brief ready",
+      "brief_failed": "Discussion brief failed",
+      "scheduled": "Discussion put on an agenda",
+      "decided": "Discussion decided",
+      "withdrawn": "Discussion withdrawn",
+      "responded": "New response in a discussion"
+    }
   },
   "knowledge": {
     "search": "Search knowledge",
@@ -501,6 +539,74 @@
       "presentHint": "Use the left and right arrow keys to move between discussions",
       "exit": "Exit",
       "readOnly": "Only project managers and admins can edit agendas"
+    }
+  },
+  "gitlab": {
+    "notConnected": "GitLab is not connected",
+    "sync": {
+      "pending": "Sync pending",
+      "synced": "Synced",
+      "failed": "Sync failed: {reason}"
+    },
+    "mrState": {
+      "opened": "Open",
+      "merged": "Merged",
+      "closed": "Closed"
+    },
+    "pipeline": {
+      "none": "No pipeline",
+      "pending": "Pipeline pending",
+      "running": "Pipeline running",
+      "success": "Pipeline passed",
+      "failed": "Pipeline failed",
+      "canceled": "Pipeline canceled"
+    },
+    "repos": {
+      "title": "Linked repositories",
+      "empty": "No repositories linked yet",
+      "path": "GitLab project path",
+      "pathHint": "e.g. group/sub/app",
+      "link": "Link",
+      "unlink": "Unlink",
+      "defaultBranch": "Default branch",
+      "open": "Open in GitLab",
+      "duplicate": "This repository is already linked to the project",
+      "hasIssues": "Cannot unlink: work items have issues in this repository"
+    },
+    "import": {
+      "title": "Import GitLab issue",
+      "repo": "Repository",
+      "issueIid": "Issue number",
+      "submit": "Import",
+      "duplicate": "This issue has already been imported as a work item"
+    },
+    "code": {
+      "title": "Code",
+      "repos": "Repositories for this item",
+      "noRepos": "No repositories chosen",
+      "pickHint": "Repositories can be added at any time; one whose issue exists can't be removed",
+      "hasIssue": "Issue created: can't be removed",
+      "save": "Save",
+      "locked": "A repository whose issue already exists can't be removed",
+      "issue": "Issue",
+      "noIssue": "No issue yet (created when development starts)",
+      "mergeRequests": "Merge requests",
+      "noMrs": "No merge requests yet",
+      "closesHint": "Include {hint} in your merge request"
+    },
+    "admin": {
+      "title": "GitLab connection",
+      "configured": "Configured",
+      "reachable": "Reachable",
+      "botUser": "Bot user",
+      "lastWebhook": "Last webhook",
+      "never": "Never received",
+      "yes": "Yes",
+      "no": "No",
+      "unknown": "-",
+      "webhookUrl": "Webhook URL to configure in GitLab",
+      "webhookHint": "In GitLab, Settings → Webhooks: enter this URL, set the secret token to GITLAB_WEBHOOK_SECRET, and enable Merge request, Pipeline and Comments events.",
+      "copy": "Copy"
     }
   }
 }

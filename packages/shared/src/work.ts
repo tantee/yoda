@@ -223,6 +223,7 @@ export const EventType = z.enum([
   'ai.drafted', 'ai.failed', 'ai.retried', 'ai.budget_warning', 'ai.budget_exceeded',
   'knowledge.created', 'knowledge.updated', 'knowledge.confirmed',
   'proposal.created', 'proposal.accepted', 'proposal.rejected', 'proposal.superseded', 'work_item.priority_changed',
+  'gitlab.issue_synced', 'gitlab.issue_sync_failed', 'gitlab.mr_opened', 'gitlab.mr_merged', 'gitlab.mr_closed', 'gitlab.pipeline', 'gitlab.note',
   'discussion.raised', 'discussion.brief_ready', 'discussion.brief_failed', 'discussion.scheduled', 'discussion.decided', 'discussion.withdrawn',
   /** Live-only (never stored in `events`): someone gave an opinion or voted on a discussion. */
   'discussion.responded',

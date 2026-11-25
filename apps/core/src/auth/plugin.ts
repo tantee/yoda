@@ -7,7 +7,7 @@ import { isStaff, TokenClaims, upsertPersonFromClaims } from './people.js'
 /** Thrown by guards / auth; mapped to `{ error }` bodies by the app error handler. */
 export class HttpError extends Error {
   constructor(
-    readonly statusCode: 401 | 403 | 404 | 409 | 413 | 415 | 422,
+    readonly statusCode: 401 | 403 | 404 | 409 | 413 | 415 | 422 | 502 | 503,
     readonly body: {
       error:
         | 'unauthorized'
@@ -23,6 +23,10 @@ export class HttpError extends Error {
         | 'too_large'
         | 'unsupported_type'
         | 'project_required'
+        | 'gitlab_not_connected'
+        | 'repo_not_found'
+        | 'issue_not_found'
+        | 'gitlab_unavailable'
     },
   ) {
     super(body.error)
@@ -42,6 +46,9 @@ export const tooLarge = () => new HttpError(413, { error: 'too_large' })
 export const unsupportedType = () => new HttpError(415, { error: 'unsupported_type' })
 /** Accepting a create_work_item proposal that names no project, without choosing one. */
 export const projectRequired = () => new HttpError(422, { error: 'project_required' })
+export const gitlabNotConnected = () => new HttpError(422, { error: 'gitlab_not_connected' })
+export const repoNotFound = () => new HttpError(422, { error: 'repo_not_found' })
+export const issueNotFound = () => new HttpError(422, { error: 'issue_not_found' })
 export const commentRequired = () => new HttpError(422, { error: 'comment_required' })
 
 /**

@@ -22,6 +22,7 @@ export function navItemsFor(me: Me): NavItem[] {
   if (me.isAdmin) {
     items.push(item('admin.people', '/admin/people', 'mdi-account-cog-outline'))
     items.push(item('admin.ai', '/admin/ai', 'mdi-robot-outline'))
+    items.push(item('admin.gitlab', '/admin/gitlab', 'mdi-gitlab'))
   }
   return items
 }

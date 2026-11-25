@@ -14,6 +14,8 @@ import {
   attachments,
   conversations,
   discussions,
+  projectRepos,
+  workItemRepos,
   events,
   knowledgeEntries,
   people,
@@ -31,6 +33,7 @@ import { latestTemplate, templateById } from '../workflow/seed.js'
 import { recordEvent, type WorkCtx } from './context.js'
 import { checkAdvanceGuards, guardText, type GuardTrip } from './guards.js'
 import { createTaskAttempt } from './tasks.js'
+import { queueIssueSync } from '../gitlab/sync.js'
 import {
   notifyChangesRequested,
   notifyRequestEnded,
@@ -103,6 +106,8 @@ export async function createWorkItem(
   me: Me,
   projectId: string,
   input: WorkItemCreate,
+  /** Repos to link instead of all of the project's (an imported issue links its own repo, issue known). */
+  opts: { repos?: { repoId: string; issueIid: number; issueUrl: string }[] } = {},
 ): Promise<string> {
   const { tx } = ctx
   // Waits for any in-flight member removal, so the new item's tasks never go to a departing member.
@@ -133,6 +138,13 @@ export async function createWorkItem(
     })
     .returning({ id: workItems.id })
   const workItemId = row!.id
+  if (opts.repos) {
+    if (opts.repos.length) await tx.insert(workItemRepos).values(opts.repos.map((r) => ({ workItemId, ...r })))
+  } else {
+    // Every repo linked to the project so far; the PM can narrow the set until the Dev step starts.
+    const repos = await tx.select({ id: projectRepos.id }).from(projectRepos).where(eq(projectRepos.projectId, projectId))
+    if (repos.length) await tx.insert(workItemRepos).values(repos.map((r) => ({ workItemId, repoId: r.id })))
+  }
   await recordEvent(ctx, { type: 'work_item.created', projectId, workItemId, taskId: null })
   await startWorkItem(ctx, workItemId)
   return workItemId
@@ -476,9 +488,7 @@ export async function submitTask(ctx: WorkCtx, me: Me, taskId: string, result: T
   await linkAttachments(tx, task, result.attachmentIds, me, asRequester)
 
   if (!decides || result.decision === 'approve') {
-    await tx.update(tasks).set({ state: 'accepted', result, updatedAt: sql`now()` }).where(eq(tasks.id, taskId))
-    await recordEvent(ctx, { type: 'task.accepted', ...base })
-    await recordAcceptedKnowledge(ctx, item, task, result)
+    await acceptTask(ctx, item, task, result)
   } else {
     const comment = result.text
     await tx.update(tasks).set({ state: 'rejected', result, updatedAt: sql`now()` }).where(eq(tasks.id, taskId))
@@ -511,6 +521,51 @@ export async function submitTask(ctx: WorkCtx, me: Me, taskId: string, result: T
     }
   }
   await progressWorkItem(ctx, task.workItemId)
+}
+
+/**
+ * The task (locked with its work item) is accepted with `result`: the row, a `task.accepted` event (with
+ * `reason` / `payload` when given) and the knowledge it yields. The caller runs progressWorkItem.
+ */
+async function acceptTask(
+  ctx: WorkCtx,
+  item: WorkItemRow,
+  task: TaskRow,
+  result: TaskResult,
+  ev: { reason?: string; payload?: Record<string, unknown> } = {},
+): Promise<void> {
+  await ctx.tx.update(tasks).set({ state: 'accepted', result, updatedAt: sql`now()` }).where(eq(tasks.id, task.id))
+  await recordEvent(ctx, {
+    type: 'task.accepted',
+    projectId: task.projectId,
+    workItemId: task.workItemId,
+    taskId: task.id,
+    reason: ev.reason ?? null,
+    payload: ev.payload,
+  })
+  await recordAcceptedKnowledge(ctx, item, task, result)
+}
+
+/**
+ * Accepts a task on the system's behalf (GitLab effects; the context's actor is `{ id: null, kind: 'system' }`)
+ * through the same internals as a person's approving submit, then advances the work item as usual (open
+ * discussions hold the step, auto-assign guard rails and `propose` proposals apply). No-op (false) unless the
+ * item is active, the task belongs to its current step and is still active (not accepted, rejected or
+ * superseded): a person's earlier decision wins.
+ */
+export async function acceptTaskAsSystem(
+  ctx: WorkCtx,
+  taskId: string,
+  result: TaskResult,
+  ev: { reason: string; payload?: Record<string, unknown> },
+): Promise<boolean> {
+  const { item, task } = await lockTask(ctx.tx, taskId)
+  if (item.state !== 'active' || task.stepKey !== item.currentStepKey || task.supersededAt || !isActive(task.state)) return false
+  const decides = task.type === 'review' || task.type === 'approval'
+  if (decides && result.decision !== 'approve') throw new Error('acceptTaskAsSystem: a deciding task needs decision approve')
+  await acceptTask(ctx, item, task, result, ev)
+  await progressWorkItem(ctx, task.workItemId)
+  return true
 }
 
 /**
@@ -567,6 +622,8 @@ export async function recordAcceptedKnowledge(ctx: WorkCtx, item: WorkItemRow, t
   const step = def.steps.find((s) => s.key === task.stepKey)
   const templateTask = step?.tasks.find((t) => t.key === task.templateTaskKey)
   if (!step || !templateTask) return
+  // Work accepted in the Dev step (e.g. QC's draft test cases) refreshes the work item's GitLab issues.
+  if (step.tasks.some((t) => t.capability === 'code-change')) await queueIssueSync(ctx, item.id, { withIssues: true })
   const entry = (sourceTask: TaskRow, title: string, body: string) =>
     ({
       scope: 'work_item',
