@@ -51,7 +51,10 @@ async function readContent(db: Db, item: typeof workItems.$inferSelect, projectN
       ),
     )
     .orderBy(desc(knowledgeEntries.createdAt), desc(knowledgeEntries.id))
-  const requirements = docs.find((d) => d.role === 'BA')?.body ?? (item.description.trim() ? item.description : null)
+  const requirements = docs.find((d) => d.role === 'BA')?.body ?? null
+  // Only a template without a requirements (BA) step falls back to the unreviewed original request.
+  const hasBaStep = (def?.steps ?? []).some((s) => s.tasks.some((t) => t.role === 'BA'))
+  const originalRequest = !hasBaStep && item.description.trim() ? item.description : null
   const design = docs.find((d) => d.role === 'SA')?.body ?? null
 
   const ds = await db
@@ -89,7 +92,7 @@ async function readContent(db: Db, item: typeof workItems.$inferSelect, projectN
   const latestCode = current.find((t) => codeKeys.has(t.key))
   const feedback = latestCode?.feedback?.trim() || null
 
-  return { workItem: { id: item.id, title: item.title }, projectName, portalUrl, requirements, design, decisions, testCases, feedback }
+  return { workItem: { id: item.id, title: item.title }, projectName, portalUrl, requirements, originalRequest, design, decisions, testCases, feedback }
 }
 
 const errorCode = (err: unknown) => (err instanceof GitLabError ? err.code : 'internal')
@@ -144,14 +147,15 @@ async function syncOnce(deps: SyncDeps, run: JobRun): Promise<void> {
     if (l.link.issueIid !== null) continue
     try {
       const marker = workItemMarker(item.id)
+      const section = render(l)
       const issue =
         (await gitlab.findIssueByMarker(l.repo.gitlabProjectId, marker)) ??
-        (await gitlab.createIssue(l.repo.gitlabProjectId, { title: item.title, description: render(l) }))
+        (await gitlab.createIssue(l.repo.gitlabProjectId, { title: item.title, description: section }))
       known.set(l.repo.id, { iid: issue.iid, url: issue.web_url })
       created.add(l.repo.id)
       await db
         .update(workItemRepos)
-        .set({ issueIid: issue.iid, issueUrl: issue.web_url })
+        .set({ issueIid: issue.iid, issueUrl: issue.web_url, sectionHash: sectionHash(section) })
         .where(and(eq(workItemRepos.workItemId, item.id), eq(workItemRepos.repoId, l.repo.id), isNull(workItemRepos.issueIid)))
     } catch (err) {
       failed.set(l.repo.id, errorCode(err))
@@ -172,7 +176,8 @@ async function syncOnce(deps: SyncDeps, run: JobRun): Promise<void> {
       const merged = mergeSection(body, section)
       const changed = hash !== l.link.sectionHash
       if (merged !== body) await gitlab.updateIssue(l.repo.gitlabProjectId, own.iid, { description: merged })
-      if (changed && !created.has(l.repo.id)) {
+      // Never on a brand-new issue, including one whose first sync crashed before finishing (never synced yet).
+      if (changed && !created.has(l.repo.id) && l.link.lastSyncedAt !== null) {
         const heads = changedSections(body, section)
         const note = heads.length
           ? `ปรับปรุงจากพอร์ทัล / Updated from the portal: ${heads.join(', ')}`

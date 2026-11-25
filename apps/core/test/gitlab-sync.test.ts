@@ -137,6 +137,47 @@ describe('gitlab issue sync', () => {
     expect(ev.filter((e) => e.type === 'gitlab.issue_synced')).toHaveLength(2)
   })
 
+  it('bug-fix (no BA step) shows the description as the unreviewed original request', async () => {
+    const id = await itemInDev()
+    const body = issue(11, 1).description
+    expect(body).toContain('### คำขอเดิม (ยังไม่ผ่านการทบทวน) / Original request (not reviewed)')
+    expect(body).toContain('ผลแล็บไม่แสดง')
+    expect(body).not.toContain('### ข้อกำหนด / Requirements')
+    expect((await code(id)).issues).toHaveLength(2)
+  })
+
+  it('a template with a BA step never falls back to the description before requirements are confirmed', async () => {
+    const res = await call(pm, 'POST', `/projects/${projectId}/work-items`, {
+      title: 'ระบบใหม่',
+      description: 'คำขอดิบที่ยังไม่ทบทวน',
+      templateKey: 'software-change',
+    })
+    expect(res.statusCode).toBe(201)
+    const id = (res.json() as { id: string }).id
+    await resync(id)
+    const body = issue(11, 1).description
+    expect(body).toContain('### ข้อกำหนด / Requirements')
+    expect(body).not.toContain('คำขอดิบที่ยังไม่ทบทวน')
+    expect(body).not.toContain('Original request')
+  })
+
+  it('a retry after a crash mid-first-sync posts no note on the new issue', async () => {
+    const id = await itemInDev()
+    const { workItemRepos } = await import('../src/db/schema.js')
+    // As if the job died after creating the issue (provisional section, hash stored) but before finishing.
+    await app.deps.db
+      .update(workItemRepos)
+      .set({ syncStatus: 'pending', lastSyncedAt: null, sectionHash: 'provisional' })
+      .where(and(eq(workItemRepos.workItemId, id), eq(workItemRepos.repoId, repoA.id)))
+    issue(11, 1).description = issue(11, 1).description.replace(/- \[dept\/lab-web#1\]\([^)]*\)/, '- dept/lab-web (ยังไม่สร้าง / not created yet)')
+    const puts = count('PUT', /\/issues\/\d+$/)
+    await resync(id)
+    expect(count('PUT', /\/issues\/\d+$/)).toBe(puts + 1)
+    expect(issue(11, 1).description).toContain('[dept/lab-web#1]')
+    expect(fake.notes.size).toBe(0)
+    expect((await code(id)).issues.find((i) => i.repoId === repoA.id)!.status).toBe('synced')
+  })
+
   it('re-sync without a content change makes no update and no note', async () => {
     const id = await itemInDev()
     const puts = count('PUT', /\/issues\/\d+$/)
