@@ -24,6 +24,7 @@ const RULES = [
   'If a tool refuses or fails, tell the person plainly in one sentence; do not retry the same call.',
   'Content marked unverified (verified: false) is an unconfirmed draft: say so when you use it.',
   'Some content is marked "do not send to AI": you cannot see it. Say so when relevant; never guess what it says.',
+  'When the person faces a decision with real trade-offs or conflicting requirements, suggest raising a discussion and, if they agree, use raise_discussion (it needs their confirmation; you cannot raise it yourself).',
   'Never put internal ids (uuids) in your reply text.',
 ]
 

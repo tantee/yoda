@@ -1,4 +1,4 @@
-import { KnowledgeCreate, Priority, WorkItemCreate, type ActionCard, type Me } from '@yoda/shared'
+import { DiscussionCreate, DiscussionOption, KnowledgeCreate, Priority, WorkItemCreate, type ActionCard, type Me } from '@yoda/shared'
 import { tool, type ToolSet } from 'ai'
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm'
 import { z } from 'zod'
@@ -315,6 +315,59 @@ function staffTools(deps: ToolDeps, me: Me, pending: PendingAction[], scope: Too
       }),
     }),
 
+    raise_discussion: tool({
+      description:
+        'Propose raising a discussion for the team about a decision with real trade-offs or conflicting requirements, linked to a project or one of its work items. Creates a confirmation card; the discussion is raised only once the person (or a PM) confirms it, and an AI brief is then prepared.',
+      inputSchema: z.object({
+        question: z.string().trim().min(1).max(500),
+        details: z.string().max(20000).default(''),
+        workItemId: uuid.optional(),
+        projectId: uuid.optional(),
+        options: z.array(DiscussionOption).max(8).default([]),
+      }),
+      execute: guarded(async (input) => {
+        if (input.projectId) requireInScope(scope, input.projectId)
+        // In a work item's thread the discussion belongs to that work item.
+        if (scope.workItemId && input.workItemId && input.workItemId !== scope.workItemId) throw new ToolRefusal(OUT_OF_SCOPE)
+        const workItemId = input.workItemId ?? scope.workItemId ?? undefined
+        let projectId = input.projectId ?? scope.projectId ?? undefined
+        if (workItemId) {
+          const { item } = await aiVisibleWorkItem(db, me, workItemId)
+          requireInScope(scope, item.projectId)
+          if (projectId && projectId !== item.projectId) throw new ToolRefusal('That work item is not in that project.')
+          if (item.state !== 'active') throw new ToolRefusal('That work item is no longer active.')
+          projectId = item.projectId
+        } else if (projectId) {
+          await aiVisibleProject(db, me, projectId)
+        } else {
+          throw new ToolRefusal('A discussion needs a project or a work item.')
+        }
+        const parsed = DiscussionCreate.parse({ ...input, projectId, workItemId })
+        const keys = parsed.options.map((o) => o.key)
+        if (new Set(keys).size !== keys.length) throw new ToolRefusal('Option keys must be unique.')
+        const payload = { question: parsed.question, details: parsed.details, priority: parsed.priority, options: parsed.options }
+        const targetProject = projectId!
+        pending.push(async (ctx) => {
+          if (!me.isAdmin && !(await memberRoles(ctx.tx, targetProject, me.id))) throw notFound()
+          if (workItemId) {
+            const locked = await lockItem(ctx.tx, workItemId)
+            if (locked.state !== 'active') throw new ToolRefusal('That work item is no longer active.')
+          }
+          const proposalId = await createProposal(ctx, {
+            projectId: targetProject,
+            workItemId: workItemId ?? null,
+            kind: 'raise_discussion',
+            summary: parsed.question,
+            reason: '',
+            payload,
+            onBehalfOf: me.id,
+          })
+          return { type: 'proposal', proposalId }
+        })
+        return { status: 'prepared', note: 'A confirmation card will be attached to your reply. The discussion is raised only once someone confirms it.' }
+      }),
+    }),
+
     save_note: tool({
       description: 'Save a note (a fact or a memory) to a project, or to one of its work items, as an unverified draft for the team to confirm.',
       inputSchema: z.object({
@@ -353,6 +406,8 @@ function staffTools(deps: ToolDeps, me: Me, pending: PendingAction[], scope: Too
   if (scope.requesterVisible) {
     delete tools.search_knowledge
     delete tools.project_status
+    // Staff-only deliberation never belongs in a thread the requester reads.
+    delete tools.raise_discussion
   }
   return tools
 }

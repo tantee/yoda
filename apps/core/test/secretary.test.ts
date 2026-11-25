@@ -4,7 +4,7 @@ import { and, eq, sql } from 'drizzle-orm'
 import type { FastifyInstance } from 'fastify'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { AiGateway } from '../src/ai/gateway.js'
-import { aiCalls, departmentSettings, events, knowledgeEntries, messages, proposals, workItems } from '../src/db/schema.js'
+import { aiCalls, departmentSettings, discussions, events, knowledgeEntries, messages, proposals, workItems } from '../src/db/schema.js'
 import { postMessage } from '../src/chat/service.js'
 import { runWork } from '../src/work/context.js'
 import { InlineJobQueue } from '../src/jobs/queue.js'
@@ -419,6 +419,96 @@ describe('secretary chat: team threads', () => {
     const rows = await db.select().from(proposals)
     expect(rows).toMatchObject([{ kind: 'priority_change', workItemId: wi.id }])
     expect((await db.select().from(knowledgeEntries)).map((e) => e.title)).toEqual(['โน้ตงานนี้'])
+  })
+
+  it('raise_discussion creates a pending proposal and a card, no discussion; accepting raises it as the person with a pending brief', async () => {
+    const p = await project('ระบบแล็บ', [[pm, ['PM']], [dev, ['DEV']]])
+    const wi = (await call(pm, 'POST', `/projects/${p}/work-items`, { title: 'งานเลือกเทคโนโลยี', templateKey: 'bug-fix' })).json() as WorkItemDetail
+    play(
+      {
+        toolCalls: [
+          {
+            name: 'raise_discussion',
+            input: {
+              workItemId: wi.id,
+              question: 'ใช้คิวแบบไหนดี',
+              details: 'ต้องเลือกระหว่างสองแบบ',
+              options: [{ key: 'a', title: 'ตัวเลือก ก' }, { key: 'b', title: 'ตัวเลือก ข' }],
+            },
+          },
+        ],
+      },
+      { text: 'เตรียมข้อเสนอยกประเด็นหารือไว้แล้ว กรุณายืนยัน' },
+    )
+    const c = await personal(dev)
+    await say(dev, c.id, 'ช่วยยกประเด็นหารือเรื่องคิว')
+    const db = await testDb()
+    const rows = await db.select().from(proposals)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({
+      kind: 'raise_discussion',
+      state: 'pending',
+      projectId: p,
+      workItemId: wi.id,
+      onBehalfOf: dev.id,
+      createdByKind: 'ai',
+      summary: 'ใช้คิวแบบไหนดี',
+    })
+    expect(await db.select().from(discussions)).toHaveLength(0)
+    const msgs = await thread(dev, c.id)
+    expect(msgs.at(-1)).toMatchObject({ authorKind: 'ai', actions: [{ type: 'proposal', proposalId: rows[0]!.id }] })
+    const decided = await call(dev, 'POST', `/proposals/${rows[0]!.id}/decide`, { decision: 'accept' })
+    expect(decided.statusCode, decided.body).toBe(200)
+    const [d] = await db.select().from(discussions)
+    expect(d).toMatchObject({ question: 'ใช้คิวแบบไหนดี', raisedBy: dev.id, workItemId: wi.id, projectId: p })
+    expect(d!.brief).toMatchObject({ source: 'ai', status: 'pending' })
+    expect((decided.json() as Proposal).payload).toMatchObject({ discussionId: d!.id })
+  })
+
+  it('raise_discussion into a project the person is not a member of → tool error, nothing created', async () => {
+    const p = await project('โครงการลับ', [[pm, ['PM']]])
+    play({ toolCalls: [{ name: 'raise_discussion', input: { projectId: p, question: 'คำถาม', details: '' } }] }, { text: 'ทำไม่ได้' })
+    const c = await personal(outsider)
+    await say(outsider, c.id, 'ยกประเด็น')
+    expect(lastToolOutputs()).toContain('not a member')
+    expect(await (await testDb()).select().from(proposals)).toHaveLength(0)
+  })
+
+  it('raise_discussion in a team thread works only on that thread’s own project (defaulting to it)', async () => {
+    const p = await project('ระบบแล็บ', [[pm, ['PM']], [dev, ['DEV']]])
+    const other = await project('โครงการข้างเคียง', [[dev, ['DEV']]])
+    const t = (await call(dev, 'POST', '/conversations', { kind: 'project', projectId: p })).json() as Conversation
+    play(
+      {
+        toolCalls: [
+          { name: 'raise_discussion', input: { projectId: other, question: 'ผิดโครงการ', details: '' } },
+          { name: 'raise_discussion', input: { question: 'ถูกโครงการ', details: '' } },
+        ],
+      },
+      { text: 'เรียบร้อย' },
+    )
+    await say(dev, t.id, '@ai ยกประเด็น')
+    expect(lastToolOutputs()).toContain("only work on the thread's own project")
+    const rows = await (await testDb()).select().from(proposals)
+    expect(rows.map((r) => r.summary)).toEqual(['ถูกโครงการ'])
+  })
+
+  it('raise_discussion in a personal chat needs a project or work item', async () => {
+    play({ toolCalls: [{ name: 'raise_discussion', input: { question: 'ลอย ๆ', details: '' } }] }, { text: 'ทำไม่ได้' })
+    await say(dev, (await personal(dev)).id, 'ยกประเด็น')
+    expect(lastToolOutputs()).toContain('needs a project or a work item')
+    expect(await (await testDb()).select().from(proposals)).toHaveLength(0)
+  })
+
+  it('raise_discussion is not offered in a requester-visible thread', async () => {
+    const p = await project('ระบบแล็บ', [[pm, ['PM']], [dev, ['DEV']]])
+    const wi = (await call(pm, 'POST', `/projects/${p}/work-items`, { title: 'คำขอพยาบาล', templateKey: 'bug-fix', requesterId: nurse.id })).json() as WorkItemDetail
+    const t = (await call(pm, 'POST', '/conversations', { kind: 'work_item', workItemId: wi.id })).json() as Conversation
+    await say(dev, t.id, '@ai สวัสดี')
+    expect(model.doStreamCalls[0]!.tools?.map((x) => x.name)).not.toContain('raise_discussion')
+    const own = await personal(dev)
+    await say(dev, own.id, 'สวัสดี')
+    expect(model.doStreamCalls.at(-1)!.tools?.map((x) => x.name)).toContain('raise_discussion')
   })
 
   it('a work_item thread without a requester keeps the project-scoped tools', async () => {
