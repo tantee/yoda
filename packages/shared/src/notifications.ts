@@ -2,7 +2,7 @@ import { z } from 'zod'
 
 const uuid = z.string().uuid()
 
-export const NotificationKind = z.enum(['task_assigned', 'proposal_pending', 'request_update', 'work_item_stuck', 'secretary_message', 'budget_alert'])
+export const NotificationKind = z.enum(['task_assigned', 'proposal_pending', 'request_update', 'work_item_stuck', 'secretary_message', 'budget_alert', 'discussion'])
 export type NotificationKind = z.infer<typeof NotificationKind>
 
 export const Notification = z.object({
