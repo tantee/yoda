@@ -1,14 +1,18 @@
-# Overlay: docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
-# All values come from the environment (CI variables / server env / local .env). No secrets here.
-# Images: ${YODA_IMAGE_PREFIX}/<name>:${YODA_VERSION}. A deploy host pulls the release from the registry
-# (ops/deploy/deploy.sh, docs/operations.md); locally `up --build` builds them under yoda/<name>:latest.
+# Overlay over docker-compose.yml. All values come from the environment (the host's .env and release.env, or
+# your shell). No secrets here.
+# Images: ${YODA_IMAGE_PREFIX}/<name>:${YODA_VERSION}. YODA_VERSION is required: a deploy host pulls that release
+# from the registry and ops/deploy/deploy.sh pins it in release.env (docs/operations.md). Locally, build and run
+# a prod-like stack under yoda/<name>:latest with:
+#   YODA_VERSION=latest docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
+# Core and the portal publish on 127.0.0.1 by default (a reverse proxy goes in front); Postgres and RustFS
+# publish nothing (reach them with `docker compose exec`).
 services:
   # Runs the database migrations once, before core starts; the only container that migrates in production.
   migrate:
     build:
       context: .
       dockerfile: apps/core/Dockerfile
-    image: ${YODA_IMAGE_PREFIX:-yoda}/core:${YODA_VERSION:-latest}
+    image: ${YODA_IMAGE_PREFIX:-yoda}/core:${YODA_VERSION:?YODA_VERSION is required (see release.env)}
     command: ['node', 'dist/migrate.js']
     depends_on:
       postgres:
@@ -21,7 +25,7 @@ services:
     build:
       context: .
       dockerfile: apps/core/Dockerfile
-    image: ${YODA_IMAGE_PREFIX:-yoda}/core:${YODA_VERSION:-latest}
+    image: ${YODA_IMAGE_PREFIX:-yoda}/core:${YODA_VERSION:?YODA_VERSION is required (see release.env)}
     depends_on:
       postgres:
         condition: service_healthy
@@ -30,7 +34,7 @@ services:
       migrate:
         condition: service_completed_successfully
     ports:
-      - '${CORE_PORT:-4000}:4000'
+      - '${CORE_BIND:-127.0.0.1}:${CORE_PORT:-4000}:4000'
     environment:
       PORT: 4000
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
@@ -58,7 +62,7 @@ services:
       GITLAB_URL: ${GITLAB_URL:-}
       GITLAB_TOKEN: ${GITLAB_TOKEN:-}
       GITLAB_WEBHOOK_SECRET: ${GITLAB_WEBHOOK_SECRET:-}
-      PORTAL_URL: ${PORTAL_URL:-http://localhost:3000}
+      PORTAL_URL: ${PORTAL_URL:?PORTAL_URL is required}
       RUNNER_LEASE_SECONDS: ${RUNNER_LEASE_SECONDS:-600}
       MCP_ENABLED: ${MCP_ENABLED:-true}
       SMTP_HOST: ${SMTP_HOST:-}
@@ -83,15 +87,22 @@ services:
       start_period: 30s
     restart: unless-stopped
 
-  # Replaces the dev credentials: core signs in with the same S3_ACCESS_KEY / S3_SECRET_KEY.
+  # Replaces the dev credentials: core signs in with the same S3_ACCESS_KEY / S3_SECRET_KEY. No published ports
+  # and no web console in production (`!reset` needs Compose v2.24+).
   rustfs:
+    ports: !reset []
     environment:
+      RUSTFS_CONSOLE_ENABLE: 'false'
       RUSTFS_ACCESS_KEY: ${S3_ACCESS_KEY:?S3_ACCESS_KEY is required}
       RUSTFS_SECRET_KEY: ${S3_SECRET_KEY:?S3_SECRET_KEY is required}
     restart: unless-stopped
 
-  # Production credentials replace the dev ones (the base file's healthcheck hard-codes the dev user).
+  # Production credentials replace the dev ones (the base file's healthcheck hard-codes the dev user). No
+  # published port, and only the data volume: the base file's dev init.sql (a test database) is not mounted.
   postgres:
+    ports: !reset []
+    volumes: !override
+      - pgdata:/var/lib/postgresql/data
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-yoda}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
@@ -112,12 +123,12 @@ services:
     build:
       context: .
       dockerfile: apps/portal/Dockerfile
-    image: ${YODA_IMAGE_PREFIX:-yoda}/portal:${YODA_VERSION:-latest}
+    image: ${YODA_IMAGE_PREFIX:-yoda}/portal:${YODA_VERSION:?YODA_VERSION is required (see release.env)}
     depends_on:
       core:
         condition: service_healthy
     ports:
-      - '${PORTAL_PORT:-3000}:3000'
+      - '${PORTAL_BIND:-127.0.0.1}:${PORTAL_PORT:-3000}:3000'
     environment:
       NUXT_CORE_URL: http://core:4000
       NUXT_PUBLIC_KEYCLOAK_URL: ${NUXT_PUBLIC_KEYCLOAK_URL:?NUXT_PUBLIC_KEYCLOAK_URL is required}
@@ -139,7 +150,7 @@ services:
   backup:
     build:
       context: ops/backup
-    image: ${YODA_IMAGE_PREFIX:-yoda}/backup:${YODA_VERSION:-latest}
+    image: ${YODA_IMAGE_PREFIX:-yoda}/backup:${YODA_VERSION:?YODA_VERSION is required (see release.env)}
     depends_on:
       postgres:
         condition: service_healthy
@@ -166,7 +177,7 @@ services:
     build:
       context: .
       dockerfile: apps/runner/Dockerfile
-    image: ${YODA_IMAGE_PREFIX:-yoda}/runner:${YODA_VERSION:-latest}
+    image: ${YODA_IMAGE_PREFIX:-yoda}/runner:${YODA_VERSION:?YODA_VERSION is required (see release.env)}
     depends_on:
       - core
     environment:

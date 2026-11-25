@@ -66,3 +66,55 @@ describe('.env.example', () => {
     for (const k of ['YODA_IMAGE_PREFIX', 'YODA_VERSION']) expect(envExample).toMatch(new RegExp(`^#? ?${k}=`, 'm'))
   })
 })
+
+describe('docs/operations.md commands', () => {
+  const DC = 'docker compose --env-file .env --env-file release.env -f docker-compose.yml -f docker-compose.prod.yml'
+
+  it('defines dc with the host .env and the pinned release.env', () => {
+    expect(runbook).toContain(`alias dc='${DC}'`)
+  })
+
+  it('runs every host compose command through dc (only the local try-out names the files)', () => {
+    const raw = [...runbook.matchAll(/^.*docker compose -f docker-compose\.yml.*$/gm)].map((m) => m[0])
+    expect(raw.length).toBe(1)
+    expect(raw[0]).toContain('YODA_VERSION=latest docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d')
+    expect(runbook).not.toMatch(/docker compose \.\.\./)
+  })
+
+  it('never builds on the host: every `dc up` has --no-build', () => {
+    const ups = [...runbook.matchAll(/\bdc (?:--profile \w+ )?up -d\b[^`]*/g)].map((m) => m[0])
+    expect(ups.length).toBeGreaterThan(5)
+    expect(ups.filter((u) => !u.includes('--no-build'))).toEqual([])
+    expect(runbook).toContain('dc run --rm backup --now')
+    expect(runbook).toContain('dc run --rm -e RESTORE_CONFIRM=yes --entrypoint restore.sh backup')
+  })
+
+  it('does not copy the dev init.sql to the host', () => {
+    expect(runbook).not.toContain('init.sql')
+  })
+})
+
+describe('docs consistency', () => {
+  it('shows 8-character link codes everywhere', () => {
+    for (const [name, text] of [['runbook', runbook], ['.env.example', envExample], ['README', read('README.md')]] as const) {
+      const codes = [...text.matchAll(/LINK-(X+)\b/g)].map((m) => m[1]!.length)
+      expect(codes.filter((n) => n !== 8), name).toEqual([])
+    }
+    expect(runbook).toContain('LINK-XXXXXXXX')
+  })
+
+  it('.env.example points the webhooks at the same URLs as the runbook', () => {
+    for (const path of ['/api/webhooks/line', '/api/webhooks/telegram']) {
+      const url = `https://portal.example.org${path}`
+      expect(runbook).toContain(url)
+      expect(envExample).toContain(url)
+    }
+    expect(envExample).not.toMatch(/<core>\/webhooks/)
+  })
+
+  it('.env.example says secrets live in the host .env, as the runbook does', () => {
+    expect(envExample).not.toMatch(/secrets come from the deploy environment/i)
+    expect(envExample).toMatch(/Secrets live only in that \.env and in CI\/CD variables, never in the repository/)
+    expect(runbook).toMatch(/Secrets live only in the deploy host's `\.env`/)
+  })
+})

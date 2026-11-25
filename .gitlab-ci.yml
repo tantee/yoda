@@ -86,7 +86,7 @@ build-backup:
 # Manual, tags only. CI/CD variables (protected, for protected tags): DEPLOY_HOST, DEPLOY_USER, DEPLOY_PATH,
 # DEPLOY_SSH_KEY (type File) and DEPLOY_KNOWN_HOSTS (the host's `ssh-keyscan` lines, checked by hand once).
 # Copies the tag's compose files and deploy script to $DEPLOY_PATH, then runs ops/deploy/deploy.sh there:
-# pull, migrate once, up -d, wait for /ready. Roll back by running this job on the previous tag's pipeline.
+# pull, pin the tag in release.env, migrate once, up -d, wait for /ready. Roll back by running this job on the previous tag's pipeline.
 deploy:
   stage: deploy
   image: alpine:3.20
@@ -107,7 +107,7 @@ deploy:
   script:
     # A failed tar must fail the job, not ship a partial archive.
     - set -o pipefail
-    - tar -cf - docker-compose.yml docker-compose.prod.yml infra/postgres/init.sql ops/deploy/deploy.sh
+    - tar -cf - docker-compose.yml docker-compose.prod.yml ops/deploy/deploy.sh
       | ssh -i "$DEPLOY_SSH_KEY" -o StrictHostKeyChecking=yes -o BatchMode=yes "$DEPLOY_USER@$DEPLOY_HOST"
       "mkdir -p '$DEPLOY_PATH' && tar -xf - -C '$DEPLOY_PATH'"
     - ssh -i "$DEPLOY_SSH_KEY" -o StrictHostKeyChecking=yes -o BatchMode=yes "$DEPLOY_USER@$DEPLOY_HOST"

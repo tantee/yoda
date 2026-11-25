@@ -22,7 +22,7 @@ Contents:
 ## 1. Prerequisites
 
 - **Host.** One Linux server (4 CPU, 8 GB RAM and enough disk for the database, the files bucket and 14 days of
-  backups is a reasonable start) with Docker Engine 24+ and the Compose plugin v2.20+. A deploy user that may
+  backups is a reasonable start) with Docker Engine 24+ and the Compose plugin v2.24+. A deploy user that may
   run `docker` (member of the `docker` group), and an SSH key pair for the GitLab deploy job (section 5).
 - **Registry access.** The host pulls images from the GitLab project's container registry. Create a GitLab
   **deploy token** on the project with the `read_registry` scope only, and log in once on the host as the deploy
@@ -30,9 +30,14 @@ Contents:
   out of shell history).
 - **DNS and TLS.** A reverse proxy (nginx, Traefik, the organisation's load balancer) terminates HTTPS for
   `https://portal.example.org` and forwards to the portal on `PORTAL_PORT` (3000). Only the portal is public:
-  - Core (`CORE_PORT`, 4000) is not exposed to users. When the reverse proxy runs on the same host, bind both
-    ports to loopback: `CORE_PORT=127.0.0.1:4000` and `PORTAL_PORT=127.0.0.1:3000`. Otherwise firewall them to
-    the proxy.
+  - The prod overlay publishes the portal (`PORTAL_PORT`, 3000) and core (`CORE_PORT`, 4000) on `127.0.0.1`
+    only, for a reverse proxy on the same host. Core is not exposed to users. When the proxy runs on another
+    machine, set `PORTAL_BIND` (and `CORE_BIND` only if that proxy also serves core's `/mcp`, section 8) to the
+    host's internal address and firewall the ports to the proxy.
+  - Postgres and RustFS publish no ports in production. Reach them through compose (`dc`, section 4): the
+    database with `dc exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'`, the bucket with
+    `dc run --rm --no-deps --entrypoint bash backup -c 'source /opt/backup/lib.sh && setup_store && rclone lsf "store:$S3_BUCKET"'`
+    (the backup image has `rclone` and the storage credentials). The RustFS web console is off in production.
   - Readiness (`/ready` on core, `/api/ready` through the portal) reports which dependency is down. Let the
     load balancer's health check use it, but **do not expose it beyond the load balancer**: deny
     `/api/ready` at the reverse proxy for outside clients.
@@ -69,7 +74,8 @@ Owner checklist (realm `yoda` here; an existing organisation realm works the sam
 ## 3. Environment variables
 
 All configuration is environment variables, set in the deploy host's `.env` next to the compose files (compose
-reads it for interpolation). Every name below is read by core (`apps/core/src/config.ts`), by the portal
+reads it for interpolation), except `YODA_VERSION`, which `deploy.sh` writes to `release.env` beside it. Every
+name below is read by core (`apps/core/src/config.ts`), by the portal
 (`NUXT_*`, read at runtime) or by `docker-compose.prod.yml`; a test keeps this table in sync with them.
 "Fixed" means the prod overlay sets the value itself and ignores `.env`.
 
@@ -78,9 +84,11 @@ Release and host:
 | Variable | Purpose | Required | Example |
 | --- | --- | --- | --- |
 | `YODA_IMAGE_PREFIX` | Registry path of the images; compose uses `<prefix>/<name>:<version>` | yes on a deploy host | `registry.example.org/group/yoda` |
-| `YODA_VERSION` | Release tag to run; set by the deploy job, not in `.env` | set by deploy | `1.0.0` |
-| `CORE_PORT` | Host port (optionally `ip:port`) for core | optional (`4000`) | `127.0.0.1:4000` |
-| `PORTAL_PORT` | Host port (optionally `ip:port`) for the portal | optional (`3000`) | `127.0.0.1:3000` |
+| `YODA_VERSION` | Release tag to run; `deploy.sh` pins it in `release.env`, never in `.env` (compose refuses to start without it) | yes, in `release.env` | `1.0.0` |
+| `CORE_PORT` | Host port for core | optional (`4000`) | `4000` |
+| `CORE_BIND` | Host address core is published on | optional (`127.0.0.1`) | `127.0.0.1` |
+| `PORTAL_PORT` | Host port for the portal | optional (`3000`) | `3000` |
+| `PORTAL_BIND` | Host address the portal is published on; another address only for a proxy on another machine | optional (`127.0.0.1`) | `10.0.0.5` |
 | `PORT` | Port core listens on inside its container | fixed (`4000`) | `4000` |
 
 Database and storage:
@@ -120,7 +128,7 @@ Portal:
 | `NUXT_PUBLIC_KEYCLOAK_CLIENT_ID` | Public client | optional (`yoda-portal`) | `yoda-portal` |
 | `NUXT_PUBLIC_RUNNER_DOCS_URL` | Setup docs linked from the Runners page | optional (README "Runners") | `https://portal.example.org/docs/runners` |
 | `NUXT_PUBLIC_LINE_ADD_FRIEND_URL` | The LINE Official Account's add-friend link, shown when linking LINE | optional | `https://line.me/R/ti/p/@example` |
-| `PORTAL_URL` | The portal's public base URL, used in links in emails, chats and GitLab issues | yes | `https://portal.example.org` |
+| `PORTAL_URL` | The portal's public base URL, used in links in emails, chats and GitLab issues (compose refuses to start without it) | yes | `https://portal.example.org` |
 
 AI:
 
@@ -183,16 +191,29 @@ secret). Only the server runner variables are passed to the `runner` container; 
 
 On the deploy host, as the deploy user:
 
+**Commands.** In this runbook `dc` stands for this alias, run in `DEPLOY_PATH` (define it once in the deploy
+user's shell):
+
+```bash
+alias dc='docker compose --env-file .env --env-file release.env -f docker-compose.yml -f docker-compose.prod.yml'
+```
+
+`release.env` holds `YODA_VERSION=<tag>`, written by `deploy.sh` once it has pulled that release, so every `dc`
+command runs the deployed images; without it compose stops with "YODA_VERSION is required". Never build on the
+host: `dc up` always gets `--no-build`. A `YODA_VERSION` exported in your shell overrides `release.env`, so
+leave it unset.
+
 1. Create the deploy directory (this is `DEPLOY_PATH`, e.g. `/srv/yoda`) and copy into it, from the release
-   tag: `docker-compose.yml`, `docker-compose.prod.yml`, `infra/postgres/init.sql` and `ops/deploy/deploy.sh`
-   (keep the paths). The deploy job refreshes these files on every deploy.
+   tag: `docker-compose.yml`, `docker-compose.prod.yml` and `ops/deploy/deploy.sh` (keep the paths). The
+   deploy job refreshes these files on every deploy.
 2. Create `.env` there (`chmod 600 .env`) with every required variable from section 3. Start from
    `.env.example` and replace each dev value; in particular `DATABASE_URL` must use host `postgres` and the
    same password as `POSTGRES_PASSWORD`. To run the server runner too, add `COMPOSE_PROFILES=runner` (and
    create `runner-config.json`, section 8).
 3. Log in to the registry (section 1), then deploy the first release:
-   `cd /srv/yoda && YODA_VERSION=1.0.0 sh ops/deploy/deploy.sh`. It pulls the images, runs the migrations,
-   starts everything and waits until `/api/ready` answers. Later releases go through the deploy job (section 5).
+   `cd /srv/yoda && YODA_VERSION=1.0.0 sh ops/deploy/deploy.sh`. It pulls the images, writes `release.env`,
+   runs the migrations, starts everything and waits until `/api/ready` answers. Later releases go through the
+   deploy job (section 5).
 4. Point the reverse proxy at the portal, open `https://portal.example.org` and sign in as one of
    `BOOTSTRAP_ADMINS`.
 5. Finish setup in the portal and in the services around it:
@@ -242,29 +263,33 @@ Settings → Repository → Protected tags so only maintainers can create them):
 **Upgrade.**
 
 1. Read `CHANGELOG.md` for the release, especially new required variables; add them to the host's `.env`
-   yourself. **The deploy never reads or changes `.env`**: it only replaces the compose files and
-   `ops/deploy/deploy.sh`.
-2. **Take a backup** on the host, every time:
-   `cd /srv/yoda && docker compose -f docker-compose.yml -f docker-compose.prod.yml run --rm backup --now`
+   yourself. **The deploy never changes `.env`**: it only replaces the compose files and
+   `ops/deploy/deploy.sh`, and rewrites `release.env`.
+2. **Take a backup** on the host, every time: `cd /srv/yoda && dc run --rm backup --now`
    (wait for it to finish; it is the restore point if the upgrade or a later rollback goes wrong).
 3. Tag the release on the default branch (`git tag 1.1.0 && git push origin 1.1.0`) and wait for the tag
    pipeline's build jobs.
 4. Run the manual **deploy** job in that tag pipeline. It copies the tag's compose files and
    `ops/deploy/deploy.sh` to `DEPLOY_PATH` and runs it there with `YODA_VERSION=<tag>`:
-   `docker compose pull`, then `docker compose run --rm migrate` (a failed migration stops the deploy before
-   any running container is replaced), then `docker compose up -d`, then it polls the portal's `/api/ready`
+   `docker compose pull`, then it pins the tag in `release.env` (only once every image is on the host), then
+   `docker compose run --rm migrate` (a failed migration stops the deploy before any running container is
+   replaced), then `docker compose up -d --no-build`, then it polls the portal's `/api/ready`
    for up to 2 minutes and fails the job if it never answers 200. Only one deploy runs at a time.
 5. Check the portal, and the job log's last line, `deploy: <tag> ready`.
 
 **Rollback.** Run the deploy job again in the **previous tag's** pipeline (CI/CD → Pipelines, filter by tag), or
-on the host: `cd /srv/yoda && YODA_VERSION=<previous tag> sh ops/deploy/deploy.sh`. Migrations only move
+on the host: `cd /srv/yoda && YODA_VERSION=<previous tag> sh ops/deploy/deploy.sh` (it pins that tag in
+`release.env` again). Migrations only move
 forward: an older release usually runs on a newer schema, but if the changelog says a release changed data in a
 way the older one cannot read, restore the backup taken in step 2 of the upgrade instead (section 6).
 
+**Try a release locally.** The overlay needs `YODA_VERSION`; for a prod-like stack built from your checkout
+(images `yoda/<name>:latest`), with a local `.env` holding the overlay's required variables:
+`YODA_VERSION=latest docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d`.
+
 ## 6. Backups and restore
 
-In this section `dc` stands for `docker compose -f docker-compose.yml -f docker-compose.prod.yml`, run in
-`DEPLOY_PATH`.
+`dc` as in section 4.
 
 The `backup` service writes, every day at `BACKUP_AT` (Asia/Bangkok), `pg-<YYYYMMDD-HHMM>.dump` (`pg_dump -Fc`)
 and `storage-<YYYYMMDD-HHMM>/` (a full mirror of the bucket) to the `backups` volume, updates a `latest`
@@ -301,7 +326,8 @@ tables created by a newer release in place.
    the `latest` marker back into the `backups` volume.
 4. Restore the database and the bucket:
    `dc run --rm -e RESTORE_CONFIRM=yes --entrypoint restore.sh backup <YYYYMMDD-HHMM|latest>`.
-5. Bring the schema up to the running release and start again: `dc run --rm migrate`, then `dc up -d`.
+5. Bring the schema up to the running release and start again: `dc run --rm migrate`, then
+   `dc up -d --no-build`.
 6. Check `/api/ready` (section 11) and a few recent items in the portal.
 
 `ops/backup/restore-check.sh` (dev only) runs the whole round trip against the dev stack and prints
@@ -346,8 +372,11 @@ Runners work the AI tasks that need a repository; see the README, "Runners", for
 The portal feed always works. Each outside channel is on only when its variables are set **and** an admin
 enables it in Admin → Notification channels; then each person chooses channels per notification kind in
 their settings. Messages carry only the notification's title, body and a portal link. Delivery is at least
-once: after a crash during sending a person may rarely get the same message twice. A channel error is retried
-and then given up; the portal feed is never affected. Credentials are read only from `.env`; they are never
+once from the moment it is queued: after a crash during sending a person may rarely get the same message twice.
+A channel error is retried 6 times with exponential backoff (about 30 seconds, doubling up to about 16
+minutes; roughly half an hour in all) and then given up: an SMTP, LINE or Telegram outage longer than that
+window drops the outside messages queued during it (they are not sent later). The portal feed is never
+affected. Credentials are read only from `.env`; they are never
 logged, stored or returned by the API.
 
 ### 9.1 Email (SMTP)
@@ -371,7 +400,7 @@ logged, stored or returned by the API.
 - [ ] Copy the account's add-friend link (`https://line.me/R/ti/p/@<id>`) into
       `NUXT_PUBLIC_LINE_ADD_FRIEND_URL`.
 - [ ] Enable LINE in Admin → Notification channels. A person links from Settings: add the account, then send
-      the `LINK-XXXXXX` code shown in the portal (valid 15 minutes). Blocking the account unlinks them.
+      the `LINK-XXXXXXXX` code shown in the portal (valid 15 minutes). Blocking the account unlinks them.
 
 ### 9.3 Telegram
 
@@ -399,33 +428,34 @@ logged, stored or returned by the API.
 
 ## 10. Rotating secrets
 
-Change the value in `.env`, then apply it with `dc up -d` (compose recreates the containers whose environment
-changed). Rotate on a schedule, when a person with access leaves, and at once after a suspected leak.
+Change the value in `.env`, then apply it with `dc up -d --no-build` (`dc` as in section 4; compose recreates
+the containers whose environment changed). Rotate on a schedule, when a person with access leaves, and at once
+after a suspected leak.
 
 | Secret | How |
 | --- | --- |
-| Postgres password | `dc exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'`, then `\password yoda` (prompts, so the password stays out of history); update `POSTGRES_PASSWORD` and `DATABASE_URL` together and `dc up -d`. |
-| Storage keys | RustFS takes its credentials from the same variables: change both keys and `dc up -d` (restarts `rustfs`, `core`, `backup`). |
-| AI provider keys | Create the new key in the provider console, update `.env`, `dc up -d`, then delete the old key. |
-| GitLab bot token | Create a new token (`api`), update `GITLAB_TOKEN`, `dc up -d`, revoke the old one. Admin → GitLab should show the bot. |
-| GitLab webhook secret | Update `GITLAB_WEBHOOK_SECRET`, `dc up -d`, then the secret in every webhook right away; deliveries in between are refused (resend them). |
-| SMTP password | Change it with the mail team, update `SMTP_PASSWORD`, `dc up -d`. |
-| LINE token / secret | Issue a new long-lived token (or reissue the channel secret) in LINE Developers, update `.env`, `dc up -d`. |
-| Telegram token | BotFather `/revoke`, update `TELEGRAM_BOT_TOKEN`, `dc up -d`, run `setWebhook` again (section 9.3). |
-| Telegram webhook secret | Update `TELEGRAM_WEBHOOK_SECRET`, `dc up -d`, run `setWebhook` again. |
+| Postgres password | `dc exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'`, then `\password yoda` (prompts, so the password stays out of history); update `POSTGRES_PASSWORD` and `DATABASE_URL` together and `dc up -d --no-build`. |
+| Storage keys | RustFS takes its credentials from the same variables: change both keys and `dc up -d --no-build` (restarts `rustfs`, `core`, `backup`). |
+| AI provider keys | Create the new key in the provider console, update `.env`, `dc up -d --no-build`, then delete the old key. |
+| GitLab bot token | Create a new token (`api`), update `GITLAB_TOKEN`, `dc up -d --no-build`, revoke the old one. Admin → GitLab should show the bot. |
+| GitLab webhook secret | Update `GITLAB_WEBHOOK_SECRET`, `dc up -d --no-build`, then the secret in every webhook right away; deliveries in between are refused (resend them). |
+| SMTP password | Change it with the mail team, update `SMTP_PASSWORD`, `dc up -d --no-build`. |
+| LINE token / secret | Issue a new long-lived token (or reissue the channel secret) in LINE Developers, update `.env`, `dc up -d --no-build`. |
+| Telegram token | BotFather `/revoke`, update `TELEGRAM_BOT_TOKEN`, `dc up -d --no-build`, run `setWebhook` again (section 9.3). |
+| Telegram webhook secret | Update `TELEGRAM_WEBHOOK_SECRET`, `dc up -d --no-build`, run `setWebhook` again. |
 | Runner tokens | Revoke and re-create in the Runners page; update the runner's config or `YODA_RUNNER_TOKEN`. |
 | Deploy SSH key | New key pair, add the public key to `authorized_keys`, update `DEPLOY_SSH_KEY`, remove the old public key. |
 | Registry deploy token | Create a new `read_registry` token, `docker login registry.example.org` on the host, revoke the old one. |
 
 **Rotate LINE and Telegram carefully.** While core still holds a revoked token (between revoking it and
-`dc up -d`), deliveries fail with 401, which counts as a **permanent** failure: those messages are not retried
-for that channel, although the portal feed has them. Put the new value in `.env` and restart first, and revoke
-the old token afterwards (LINE keeps the old long-lived token valid until you revoke it; Telegram's `/revoke`
-is immediate, so run `dc up -d` straight after it).
+`dc up -d --no-build`), deliveries fail with 401, which counts as a **permanent** failure: those messages are
+not retried for that channel, although the portal feed has them. Put the new value in `.env` and restart first,
+and revoke the old token afterwards (LINE keeps the old long-lived token valid until you revoke it; Telegram's `/revoke`
+is immediate, so run `dc up -d --no-build` straight after it).
 
 ## 11. Troubleshooting
 
-`dc` as in section 6.
+`dc` as in section 4.
 
 - **Is it up?** `dc ps` shows each container's health. Core: `dc exec core node -e "fetch('http://127.0.0.1:4000/ready').then(async (r) => console.log(r.status, await r.text()))"`
   prints `200 {"status":"ok","checks":{...}}`, or `503 {"status":"unavailable",...}` with the failing check (`database`, `storage` or

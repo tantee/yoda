@@ -3,7 +3,9 @@
 # and the production .env (YODA_IMAGE_PREFIX and every secret). The GitLab `deploy` job copies this file there
 # and runs it; by hand (also to roll back): cd <deploy path> && YODA_VERSION=<tag> sh ops/deploy/deploy.sh
 #
-# 1. pull the release's images (nothing is built on the host);
+# 1. pull the release's images (nothing is built on the host), then pin the release in release.env
+#    (YODA_VERSION=<tag>), so every later `docker compose --env-file .env --env-file release.env ...` on the host
+#    (backups, restores, restarts) runs the same images;
 # 2. run the database migrations once, in the one-shot `migrate` container; a failed migration stops here,
 #    before any running container is replaced;
 # 3. start or replace the services;
@@ -18,11 +20,15 @@ case "$YODA_VERSION" in
     exit 2
     ;;
 esac
-export YODA_VERSION
 READY_TIMEOUT="${READY_TIMEOUT:-120}"
+[ -f .env ] || { echo "deploy: no .env in $(pwd)" >&2; exit 2; }
+
+# The release under way; it replaces release.env only once its images are on the host.
+release=release.env.next
+printf 'YODA_VERSION=%s\n' "$YODA_VERSION" > "$release"
 
 dc() {
-  docker compose -f docker-compose.yml -f docker-compose.prod.yml "$@"
+  docker compose --env-file .env --env-file "$release" -f docker-compose.yml -f docker-compose.prod.yml "$@"
 }
 
 echo "deploy: $YODA_VERSION"
@@ -34,6 +40,8 @@ for image in $(dc config --images); do
     exit 1
   fi
 done
+mv "$release" release.env
+release=release.env
 
 dc run --rm migrate
 dc up -d --no-build --remove-orphans

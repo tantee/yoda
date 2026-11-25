@@ -33,7 +33,7 @@
      - Requesters get email for `request_update`.
      - LINE and Telegram stay off until the person links an account.
    - **Linking.**
-     - **LINE:** the person adds the official account and sends the one-time link code shown in the portal (`LINK-XXXXXX`, valid 15 minutes). The signed webhook binds their LINE user id.
+     - **LINE:** the person adds the official account and sends the one-time link code shown in the portal (`LINK-XXXXXXXX`, valid 15 minutes). The signed webhook binds their LINE user id.
      - **Telegram:** the person opens `t.me/<bot>?start=<code>`. The webhook (secret token header) binds their chat id.
      - **Unlinking:** possible from the portal at any time. A LINE unfollow or a Telegram "blocked" error unlinks automatically.
 4. **Weekly summary.** Every Monday at 08:00 Asia/Bangkok, the fast model writes a draft summary of the past 7 days for each active project. It is stored as a `draft` knowledge document titled with the ISO week, and PMs can regenerate it. No-AI projects and projects over budget are skipped.
@@ -237,7 +237,7 @@
 
 **Interfaces:**
 - `createLinkCode(deps, me, channel: 'line'|'telegram'): Promise<{ code, expiresAt, instructions: { addFriendUrl?: string, deepLink?: string } }>`.
-  - Codes are `LINK-` plus 6 base32 characters (no 0/O/1/I), valid 15 minutes, one active code per person and channel (a new code replaces the old).
+  - Codes are `LINK-` plus 8 base32 characters (no 0/O/1/I), valid 15 minutes, one active code per person and channel (a new code replaces the old).
   - Telegram's `deepLink` is `https://t.me/<TELEGRAM_BOT_USERNAME>?start=<code without LINK->`.
 - `consumeLinkCode(tx, channel, code, externalId): Promise<'linked'|'invalid'>`.
   - The code must be unused, unexpired and for that channel.

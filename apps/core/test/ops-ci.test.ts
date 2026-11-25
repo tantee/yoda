@@ -84,6 +84,12 @@ describe('.gitlab-ci.yml', () => {
     expect(script).toContain('ops/deploy/deploy.sh')
   })
 
+  it('copies the compose files and the deploy script, not the dev init.sql', () => {
+    const copy = (ci.deploy!.script ?? []).find((l) => /\btar -cf\b/.test(l)) ?? ''
+    for (const f of ['docker-compose.yml', 'docker-compose.prod.yml', 'ops/deploy/deploy.sh']) expect(copy).toContain(f)
+    expect(copy).not.toContain('init.sql')
+  })
+
   it('fails the deploy when any part of the copy pipeline fails', () => {
     const script = ci.deploy!.script ?? []
     const pipefail = script.indexOf('set -o pipefail')
@@ -135,20 +141,70 @@ describe('ops/deploy/deploy.sh', () => {
     expect(sh).toMatch(/^set -eu$/m)
   })
 
+  it('pins the release in release.env once its images are on the host, and runs compose with it', () => {
+    expect(code).toMatch(/^\s*docker compose --env-file \.env --env-file "\$release" -f docker-compose\.yml -f docker-compose\.prod\.yml "\$@"$/m)
+    expect(code).toContain(`printf 'YODA_VERSION=%s\\n' "$YODA_VERSION" > "$release"`)
+    const next = order('release=release.env.next')
+    const pull = order(' pull')
+    const check = order('docker image inspect')
+    const pin = order('mv "$release" release.env')
+    const migrate = order(' run --rm migrate')
+    expect(next).toBeLessThan(pull)
+    expect(check).toBeLessThan(pin)
+    expect(pin).toBeLessThan(migrate)
+    // Never builds on the host.
+    expect(code).not.toMatch(/(?<!no-)\bbuild\b/)
+  })
+
   it('refuses an unsafe version string', () => {
     expect(sh).toContain('YODA_VERSION')
     expect(sh).toMatch(/case "\$YODA_VERSION" in/)
   })
 })
 
+type Service = {
+  image?: string
+  build?: unknown
+  ports?: string[]
+  volumes?: string[]
+  environment?: Record<string, string>
+}
+// `!reset` / `!override` are compose merge tags; the yaml parser keeps the value and only warns about them.
+const prod = parse(read('docker-compose.prod.yml'), { logLevel: 'error' }) as { services: Record<string, Service> }
+
 describe('docker-compose.prod.yml images', () => {
-  const compose = parse(read('docker-compose.prod.yml')) as { services: Record<string, { image?: string; build?: unknown }> }
   const want: Record<string, string> = { migrate: 'core', core: 'core', portal: 'portal', backup: 'backup', runner: 'runner' }
 
-  it.each(Object.entries(want))('%s uses the published %s image and still builds locally', (service, name) => {
-    const s = compose.services[service]!
-    expect(s.image).toBe(`\${YODA_IMAGE_PREFIX:-yoda}/${name}:\${YODA_VERSION:-latest}`)
+  it.each(Object.entries(want))('%s uses the published %s image at a required version and still builds locally', (service, name) => {
+    const s = prod.services[service]!
+    expect(s.image).toBe(`\${YODA_IMAGE_PREFIX:-yoda}/${name}:\${YODA_VERSION:?YODA_VERSION is required (see release.env)}`)
     expect(s.build).toBeTruthy()
+  })
+})
+
+describe('docker-compose.prod.yml exposure', () => {
+  const text = read('docker-compose.prod.yml')
+
+  it('publishes core and the portal on loopback by default', () => {
+    expect(prod.services.core!.ports).toEqual(['${CORE_BIND:-127.0.0.1}:${CORE_PORT:-4000}:4000'])
+    expect(prod.services.portal!.ports).toEqual(['${PORTAL_BIND:-127.0.0.1}:${PORTAL_PORT:-3000}:3000'])
+  })
+
+  it('publishes nothing from postgres and rustfs, and turns the RustFS console off', () => {
+    expect(text).toMatch(/^ {2}postgres:\n(?: {4}#.*\n)*(?: {4}.*\n)*? {4}ports: !reset \[\]$/m)
+    expect(text).toMatch(/^ {2}rustfs:\n(?: {4}#.*\n)*(?: {4}.*\n)*? {4}ports: !reset \[\]$/m)
+    expect(prod.services.postgres!.ports).toEqual([])
+    expect(prod.services.rustfs!.ports).toEqual([])
+    expect(prod.services.rustfs!.environment?.RUSTFS_CONSOLE_ENABLE).toBe('false')
+  })
+
+  it('mounts only the database volume into postgres (no dev init.sql)', () => {
+    expect(text).toMatch(/^ {4}volumes: !override$/m)
+    expect(prod.services.postgres!.volumes).toEqual(['pgdata:/var/lib/postgresql/data'])
+  })
+
+  it('requires PORTAL_URL', () => {
+    expect(prod.services.core!.environment?.PORTAL_URL).toBe('${PORTAL_URL:?PORTAL_URL is required}')
   })
 })
 

@@ -56,12 +56,13 @@ pnpm test            # uses TEST_DATABASE_URL, default postgres://yoda:yoda@loca
 ## Containers and production
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
+YODA_VERSION=latest docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
 ```
 
 Images: `core` (`node dist/server.js`), `portal` (`node .output/server/index.mjs`), `runner` and `backup`,
-named `${YODA_IMAGE_PREFIX:-yoda}/<name>:${YODA_VERSION:-latest}` by the overlay (locally `yoda/core:latest` and
-so on; a deploy host pulls them from the registry, see the runbook).
+named `${YODA_IMAGE_PREFIX:-yoda}/<name>:${YODA_VERSION}` by the overlay. `YODA_VERSION` is required (locally
+`latest`, giving `yoda/core:latest` and so on); a deploy host pulls the release from the registry and pins it in
+`release.env` (see the runbook, `docs/operations.md`).
 The core server runs the migrations itself when `MIGRATE_ON_START=true` (the default, so a plain
 `docker run` works). The prod overlay sets it to `false` and runs a one-shot `migrate` service
 (`node dist/migrate.js`, same image) first; core starts only after it completes, so only one
@@ -85,7 +86,8 @@ container ever migrates. Configuration is environment-only:
   refused for projects with a budget.
 - portal: `NUXT_CORE_URL`, `NUXT_PUBLIC_KEYCLOAK_URL`, `NUXT_PUBLIC_KEYCLOAK_REALM`,
   `NUXT_PUBLIC_KEYCLOAK_CLIENT_ID` (read at runtime, not baked into the image)
-- ports: `CORE_PORT` (4000), `PORTAL_PORT` (3000)
+- ports: `CORE_PORT` (4000), `PORTAL_PORT` (3000), published on `127.0.0.1` (`CORE_BIND`, `PORTAL_BIND`)
+  for a reverse proxy in front; Postgres and RustFS publish no ports in the overlay (use `docker compose exec`)
 
 Inside containers:
 
@@ -276,7 +278,8 @@ verified). `yoda-runner start` refuses Codex unless the config sets `"allowExper
 
 **Server runner container.** `apps/runner/Dockerfile` (node:22-slim, git, a pinned
 `@anthropic-ai/claude-code`, non-root `node` user, no secrets in the image) runs `yoda-runner start`.
-With the prod overlay: `docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile runner up -d runner`.
+With the prod overlay on a deploy host: `dc --profile runner up -d --no-build runner` (`dc` as in
+`docs/operations.md`, section 4).
 Environment (from the deploy environment only):
 
 - `YODA_RUNNER_TOKEN`: the server runner's token (required); `YODA_RUNNER_CORE_URL` (default
