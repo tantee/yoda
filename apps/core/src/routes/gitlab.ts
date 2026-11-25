@@ -6,6 +6,7 @@ import { forbidden, gitlabNotConnected, HttpError, invalidState, notFound, repoN
 import { gitlabSettings, projectRepos, workItemRepos, workItems } from '../db/schema.js'
 import { GitLabError } from '../gitlab/client.js'
 import { devStarted, listProjectRepos, repoHasIssues, toRepo, workItemCode } from '../gitlab/repos.js'
+import { handleWebhook, needsBotUser, tokenMatches } from '../gitlab/webhook.js'
 import { canSeeProject } from '../work/queries.js'
 import { isPmOrAdmin, lockItem } from '../work/engine.js'
 import { canManageProject } from '../projects/access.js'
@@ -14,9 +15,51 @@ import { lockProject } from '../projects/access.js'
 const IdParams = z.object({ id: z.string().uuid() })
 const RepoParams = z.object({ id: z.string().uuid(), repoId: z.string().uuid() })
 const STATUS_TIMEOUT_MS = 5_000
+const WEBHOOK_BODY_LIMIT = 1024 * 1024
+const EventUuid = z.string().trim().min(1).max(200)
 
 export function gitlabRoutes(app: FastifyInstance): void {
   const db = () => app.deps.db
+
+  // The bot's GitLab user id, fetched once (outside any transaction) to ignore the portal's own notes.
+  let botUser: Promise<number> | null = null
+  const botUserId = (): Promise<number> | null => {
+    const gitlab = app.deps.gitlab
+    if (!gitlab) return null
+    botUser ??= gitlab.currentUser().then(
+      (u) => u.id,
+      (err) => {
+        botUser = null
+        throw err
+      },
+    )
+    return botUser
+  }
+
+  app.post(
+    '/gitlab/webhook',
+    {
+      config: { public: true },
+      bodyLimit: WEBHOOK_BODY_LIMIT,
+      // Checked before the body is read; neither the secret nor the request headers are ever logged or echoed.
+      onRequest: async (request) => {
+        if (!tokenMatches(app.deps.config.gitlabWebhookSecret, request.headers['x-gitlab-token'])) throw new HttpError(401, { error: 'unauthorized' })
+      },
+    },
+    async (request) => {
+      const eventUuid = EventUuid.parse(request.headers['x-gitlab-event-uuid'])
+      let bot: number | null = null
+      if (needsBotUser(request.body)) {
+        try {
+          bot = (await botUserId()) ?? null
+        } catch {
+          // Not marked as seen: GitLab retries the delivery.
+          throw new HttpError(503, { error: 'gitlab_unavailable' })
+        }
+      }
+      return handleWebhook(app.deps, eventUuid, request.body, bot)
+    },
+  )
 
   app.get('/projects/:id/repos', async (request) => {
     requireStaff(request)

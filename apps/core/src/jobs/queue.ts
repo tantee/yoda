@@ -1,6 +1,6 @@
 import { PgBoss } from 'pg-boss'
 
-export type JobName = 'embed-entry' | 'draft-task' | 'secretary-chat' | 'secretary-event' | 'secretary-sweep' | 'discussion-brief' | 'gitlab-issue-sync'
+export type JobName = 'embed-entry' | 'draft-task' | 'secretary-chat' | 'secretary-event' | 'secretary-sweep' | 'discussion-brief' | 'gitlab-issue-sync' | 'gitlab-mr-effect'
 export const JOB_NAMES: readonly JobName[] = [
   'embed-entry',
   'draft-task',
@@ -9,6 +9,7 @@ export const JOB_NAMES: readonly JobName[] = [
   'secretary-sweep',
   'discussion-brief',
   'gitlab-issue-sync',
+  'gitlab-mr-effect',
 ]
 
 /** Recurring jobs (cron, Asia/Bangkok): pg-boss sends them; tests run them with `InlineJobQueue.runScheduled`. */

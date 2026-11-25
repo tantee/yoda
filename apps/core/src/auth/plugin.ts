@@ -7,7 +7,7 @@ import { isStaff, TokenClaims, upsertPersonFromClaims } from './people.js'
 /** Thrown by guards / auth; mapped to `{ error }` bodies by the app error handler. */
 export class HttpError extends Error {
   constructor(
-    readonly statusCode: 401 | 403 | 404 | 409 | 413 | 415 | 422 | 502,
+    readonly statusCode: 401 | 403 | 404 | 409 | 413 | 415 | 422 | 502 | 503,
     readonly body: {
       error:
         | 'unauthorized'
