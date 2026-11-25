@@ -87,6 +87,10 @@ export async function runCommand(argv: string[], io: CommandIo = defaultIo): Pro
   if (cmd === 'start') {
     const cfg = loadConfig(io.env)
     warnConfigOnce(cfg, io.stderr)
+    if (cfg.executor === 'codex' && !cfg.allowExperimentalCodex) {
+      log('yoda-runner: the codex executor is experimental and is not run unattended; set "allowExperimentalCodex": true in the runner config to allow it, or use `yoda-runner work <taskId>`')
+      return 1
+    }
     const stop = new AbortController()
     const dispose = stopOnSignals(stop)
     try {

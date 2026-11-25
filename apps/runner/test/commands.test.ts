@@ -41,6 +41,14 @@ describe('runCommand', () => {
     expect(out).not.toContain(TOKEN)
   })
 
+  it('start refuses the experimental codex executor unless allowExperimentalCodex is set', async () => {
+    const path = join(tmp.dir, 'codex.json')
+    writeFileSync(path, JSON.stringify({ coreUrl: 'https://core.example.invalid', token: TOKEN, executor: 'codex' }))
+    env = { YODA_RUNNER_CONFIG: path }
+    expect(await runCommand(['start'], io())).toBe(1)
+    expect(err).toContain('allowExperimentalCodex')
+  })
+
   it('prints usage for an unknown command or a missing task id', async () => {
     expect(await runCommand(['bogus'], io())).toBe(1)
     expect(err).toContain('work <taskId>')

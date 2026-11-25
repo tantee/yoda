@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { RunUsage } from '@yoda/shared'
-import { mcpUrl, type RunnerConfig } from '../config.js'
+import { agentYodaTools, mcpUrl, type RunnerConfig } from '../config.js'
 import { runProcess } from './process.js'
 import { childEnv, notStarted, readMarker, tail, type Executor, type ExecutorOptions } from './types.js'
 
@@ -56,10 +56,10 @@ function readEvents(stdout: string): { inputTokens: number; outputTokens: number
 /**
  * OpenAI Codex CLI, headless (best effort, untested against a real codex): `codex exec --json --cd <dir>
  * --sandbox workspace-write --output-last-message <file> -c mcp_servers.yoda.url=… -c
- * mcp_servers.yoda.bearer_token_env_var=YODA_RUNNER_TOKEN ...extraArgs -`, prompt on stdin. Needs a codex
+ * mcp_servers.yoda.bearer_token_env_var=YODA_RUNNER_TOKEN -c mcp_servers.yoda.enabled_tools=[…] ...extraArgs -`, prompt on stdin. Needs a codex
  * that supports streamable HTTP MCP servers with `bearer_token_env_var`.
  */
-export function codexExecutor(cfg: Pick<RunnerConfig, 'coreUrl' | 'token' | 'extraArgs'>, opts: ExecutorOptions = {}): Executor {
+export function codexExecutor(cfg: Pick<RunnerConfig, 'coreUrl' | 'token' | 'extraArgs' | 'disallowedTools'>, opts: ExecutorOptions = {}): Executor {
   return {
     name: 'codex',
     async run(input) {
@@ -80,6 +80,10 @@ export function codexExecutor(cfg: Pick<RunnerConfig, 'coreUrl' | 'token' | 'ext
           `mcp_servers.yoda.url=${toml(mcpUrl(cfg))}`,
           '-c',
           `mcp_servers.yoda.bearer_token_env_var=${toml(TOKEN_ENV)}`,
+          // Same as Claude's defaults: the agent gets context, search, knowledge, progress and ask_human; the
+          // runner calls the lifecycle tools itself (key from the Codex config reference: an allow list).
+          '-c',
+          `mcp_servers.yoda.enabled_tools=[${agentYodaTools(cfg).map(toml).join(', ')}]`,
           ...(common ? ['-c', `sandbox_workspace_write.writable_roots=[${toml(common)}]`] : []),
           ...cfg.extraArgs,
           '-',

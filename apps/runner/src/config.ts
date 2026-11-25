@@ -17,6 +17,25 @@ export type RepoSource = z.infer<typeof RepoSource>
 /** Claude Code's `--permission-mode` choices (checked against `claude --help`, 2.1.x). */
 export const PermissionMode = z.enum(['acceptEdits', 'auto', 'bypassPermissions', 'manual', 'dontAsk', 'plan'])
 
+/** Core's MCP tools (core: mcp/server.ts). */
+export const YODA_TOOLS = [
+  'list_available_tasks',
+  'claim_task',
+  'heartbeat',
+  'get_context_pack',
+  'search_knowledge',
+  'write_knowledge',
+  'post_progress',
+  'open_merge_request',
+  'submit_result',
+  'ask_human',
+  'release_task',
+] as const
+
+/** The yoda tools an agent may call: those `disallowedTools` does not deny as `mcp__yoda__<tool>` (or `mcp__yoda`). */
+export const agentYodaTools = (cfg: Pick<RunnerConfig, 'disallowedTools'>): string[] =>
+  cfg.disallowedTools.includes('mcp__yoda') ? [] : YODA_TOOLS.filter((t) => !cfg.disallowedTools.includes(`mcp__yoda__${t}`))
+
 /** The yoda MCP tools and the git commands an agent needs to commit its work. */
 export const DEFAULT_ALLOWED_TOOLS = [
   'mcp__yoda',
@@ -67,6 +86,11 @@ export const RunnerConfig = z.object({
   allowedTools: z.array(z.string().min(1)).default(DEFAULT_ALLOWED_TOOLS),
   /** Claude Code `--disallowedTools`: denied even when another rule would allow them. */
   disallowedTools: z.array(z.string().min(1)).default(DEFAULT_DISALLOWED_TOOLS),
+  /**
+   * Codex is experimental (untested against a real codex): `start` (unattended) refuses `executor: "codex"`
+   * unless this is true. `work <id>` runs it either way.
+   */
+  allowExperimentalCodex: z.boolean().default(false),
   /** Appended to the executor's command line (e.g. `["--model", "sonnet"]`). */
   extraArgs: z.array(z.string()).default([]),
 })

@@ -212,6 +212,17 @@ wait`,
   })
 })
 
+describe('codex enabled_tools', () => {
+  it('follows disallowedTools from the config', async () => {
+    stub('codex', `printf '%s\\n' "$@" > "$STUB_OUT/codex-args2"`)
+    await codexExecutor(cfg({ disallowedTools: ['mcp__yoda__write_knowledge'] }), { env: env() }).run({ dir: clone, prompt: 'p', mcpConfigPath: '/unused', timeoutMs: 10_000 })
+    const args = readFileSync(join(out, 'codex-args2'), 'utf8').trim().split('\n')
+    const enabled = args.find((a) => a.startsWith('mcp_servers.yoda.enabled_tools='))!
+    expect(enabled).not.toContain('write_knowledge')
+    expect(enabled).toContain('claim_task')
+  })
+})
+
 describe('missing executor binary', () => {
   it('claude and codex report notStarted when the command is not on PATH', async () => {
     const noPath = { ...process.env, PATH: join(tmp.dir, 'empty-bin') }
@@ -247,6 +258,9 @@ echo '{"type":"turn.completed","usage":{"input_tokens":5,"cached_input_tokens":0
     expect(args[0]).toBe('exec')
     expect(args).toContain('mcp_servers.yoda.url="http://core.invalid/base/mcp"')
     expect(args).toContain('mcp_servers.yoda.bearer_token_env_var="YODA_RUNNER_TOKEN"')
+    expect(args).toContain(
+      'mcp_servers.yoda.enabled_tools=["get_context_pack", "search_knowledge", "write_knowledge", "post_progress", "ask_human"]',
+    )
     expect(args.at(-1)).toBe('-')
     expect(args.join(' ')).not.toContain(TOKEN)
     expect(readFileSync(join(out, 'codex-stdin'), 'utf8')).toBe('do it')
