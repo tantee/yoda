@@ -67,3 +67,11 @@ export const GitLabStatus = z.object({
   lastWebhookAt: z.string().nullable(),
 })
 export type GitLabStatus = z.infer<typeof GitLabStatus>
+
+/** Creates a work item from an existing GitLab issue in one of the project's linked repos. */
+export const IssueImport = z.object({
+  repoId: uuid,
+  issueIid: z.number().int().positive(),
+  templateKey: z.string().min(1).optional(),
+})
+export type IssueImport = z.infer<typeof IssueImport>

@@ -1,15 +1,18 @@
-import { GitLabStatus, RepoLink, WorkItemReposPut } from '@yoda/shared'
+import { GitLabStatus, IssueImport, RepoLink, WorkItemCreate, WorkItemReposPut } from '@yoda/shared'
 import { and, eq, inArray, isNotNull, notInArray } from 'drizzle-orm'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
-import { forbidden, gitlabNotConnected, HttpError, invalidState, notFound, repoNotFound, requireAdmin, requireStaff } from '../auth/plugin.js'
+import { forbidden, gitlabNotConnected, HttpError, invalidState, issueNotFound, notFound, repoNotFound, requireAdmin, requireStaff } from '../auth/plugin.js'
 import { gitlabSettings, projectRepos, workItemRepos, workItems } from '../db/schema.js'
 import { GitLabError } from '../gitlab/client.js'
 import { latestMergedMrs } from '../gitlab/effects.js'
+import { importedText } from '../gitlab/import.js'
 import { devStarted, listProjectRepos, repoHasIssues, toRepo, workItemCode } from '../gitlab/repos.js'
+import { queueIssueSync } from '../gitlab/sync.js'
 import { handleWebhook, needsBotUser, tokenMatches } from '../gitlab/webhook.js'
-import { canSeeProject } from '../work/queries.js'
-import { isPmOrAdmin, lockItem } from '../work/engine.js'
+import { runWork } from '../work/context.js'
+import { canSeeProject, getWorkItemDetail } from '../work/queries.js'
+import { createWorkItem, isPmOrAdmin, lockItem } from '../work/engine.js'
 import { canManageProject } from '../projects/access.js'
 import { lockProject } from '../projects/access.js'
 
@@ -133,6 +136,49 @@ export function gitlabRoutes(app: FastifyInstance): void {
     })
     await queueMrEffects(effects)
     return reply.status(204).send()
+  })
+
+  /**
+   * A project member makes a work item from an existing issue in one of the project's repos. The issue is
+   * fetched before the transaction; under the project lock the issue must not be linked to a work item yet.
+   * Only that repo is linked (issue known), so the next sync appends the portal's section below the original body.
+   */
+  app.post('/projects/:id/import-issue', async (request, reply) => {
+    requireStaff(request)
+    const { id } = IdParams.parse(request.params)
+    const { repoId, issueIid, templateKey } = IssueImport.parse(request.body)
+    const me = request.me
+    if (!(await canSeeProject(db(), me, id))) throw notFound()
+    const gitlab = app.deps.gitlab
+    if (!gitlab) throw gitlabNotConnected()
+    const [repo] = await db().select().from(projectRepos).where(and(eq(projectRepos.id, repoId), eq(projectRepos.projectId, id)))
+    if (!repo) throw repoNotFound()
+    let found
+    try {
+      found = await gitlab.importIssue(repo.gitlabProjectId, issueIid)
+    } catch (err) {
+      if (err instanceof GitLabError && (err.code === 'not_found' || err.code === 'forbidden')) throw issueNotFound()
+      throw new HttpError(502, { error: 'gitlab_unavailable' })
+    }
+    const issue = found
+    const text = importedText(issue, repo.pathWithNamespace)
+    const input = WorkItemCreate.parse({ ...text, templateKey: templateKey ?? 'bug-fix' })
+    const workItemId = await runWork(app.deps, { id: me.id, kind: 'person' }, async (ctx) => {
+      // Exclusive: two imports of the same issue serialize here, so the second sees the first's link.
+      await lockProject(ctx.tx, id)
+      const [still] = await ctx.tx.select({ id: projectRepos.id }).from(projectRepos).where(and(eq(projectRepos.id, repoId), eq(projectRepos.projectId, id)))
+      if (!still) throw repoNotFound()
+      const [linked] = await ctx.tx
+        .select({ w: workItemRepos.workItemId })
+        .from(workItemRepos)
+        .where(and(eq(workItemRepos.repoId, repoId), eq(workItemRepos.issueIid, issue.iid)))
+        .limit(1)
+      if (linked) throw invalidState()
+      const created = await createWorkItem(ctx, me, id, input, { repos: [{ repoId, issueIid: issue.iid, issueUrl: issue.web_url }] })
+      await queueIssueSync(ctx, created, { withIssues: true })
+      return created
+    })
+    return reply.status(201).send(await getWorkItemDetail(db(), me, workItemId))
   })
 
   app.get('/work-items/:id/code', async (request) => {

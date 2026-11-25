@@ -75,6 +75,10 @@ describe('mergeSection', () => {
     expect(mergeSection('', section)).toBe(section)
     // A stray begin marker without an end: the developer's text stays and the section is appended.
     expect(mergeSection(`a ${ISSUE_BEGIN} b`, section)).toBe(`a ${ISSUE_BEGIN} b\n\n${section}`)
+    // A stray end marker in the developer's text: appended once, then replaced in place (never appended again).
+    const once = mergeSection(`a ${ISSUE_END} b`, section)
+    expect(once).toBe(`a ${ISSUE_END} b\n\n${section}`)
+    expect(mergeSection(once, section)).toBe(once)
   })
 })
 

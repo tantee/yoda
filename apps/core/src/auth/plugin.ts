@@ -25,6 +25,7 @@ export class HttpError extends Error {
         | 'project_required'
         | 'gitlab_not_connected'
         | 'repo_not_found'
+        | 'issue_not_found'
         | 'gitlab_unavailable'
     },
   ) {
@@ -47,6 +48,7 @@ export const unsupportedType = () => new HttpError(415, { error: 'unsupported_ty
 export const projectRequired = () => new HttpError(422, { error: 'project_required' })
 export const gitlabNotConnected = () => new HttpError(422, { error: 'gitlab_not_connected' })
 export const repoNotFound = () => new HttpError(422, { error: 'repo_not_found' })
+export const issueNotFound = () => new HttpError(422, { error: 'issue_not_found' })
 export const commentRequired = () => new HttpError(422, { error: 'comment_required' })
 
 /**

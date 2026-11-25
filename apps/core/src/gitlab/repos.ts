@@ -76,3 +76,47 @@ export async function workItemCode(db: Conn, item: typeof workItems.$inferSelect
     connected,
   }
 }
+
+/** The secretary's view of a work item's code: repo paths, issue refs and MR states (no URLs). Null if none. */
+export async function codeSummary(db: Conn, workItemId: string) {
+  const links = await db
+    .select({ path: projectRepos.pathWithNamespace, iid: workItemRepos.issueIid, status: workItemRepos.syncStatus })
+    .from(workItemRepos)
+    .innerJoin(projectRepos, eq(projectRepos.id, workItemRepos.repoId))
+    .where(eq(workItemRepos.workItemId, workItemId))
+    .orderBy(asc(projectRepos.pathWithNamespace), asc(projectRepos.id))
+  const mrs = await db
+    .select({ path: projectRepos.pathWithNamespace, iid: mergeRequests.mrIid, title: mergeRequests.title, state: mergeRequests.state, pipeline: mergeRequests.pipeline })
+    .from(mergeRequests)
+    .innerJoin(projectRepos, eq(projectRepos.id, mergeRequests.repoId))
+    .where(eq(mergeRequests.workItemId, workItemId))
+    .orderBy(asc(mergeRequests.createdAt), asc(mergeRequests.id))
+  if (!links.length && !mrs.length) return null
+  return {
+    repos: links.map((l) => l.path),
+    issues: links.map((l) => ({ issue: l.iid === null ? `${l.path} (not created yet)` : `${l.path}#${l.iid}`, status: l.status })),
+    mergeRequests: mrs.map((m) => ({ mergeRequest: `${m.path}!${m.iid}`, title: m.title.slice(0, 200), state: m.state, pipeline: m.pipeline })),
+  }
+}
+
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+/**
+ * `text` without links into the GitLab hosts of the project's repos (e.g. an imported issue's URL), for content
+ * a requester may read.
+ */
+export async function withoutGitLabLinks(db: Conn, projectId: string, text: string): Promise<string> {
+  if (!text) return text
+  const rows = await db.select({ url: projectRepos.webUrl }).from(projectRepos).where(eq(projectRepos.projectId, projectId))
+  const origins = new Set<string>()
+  for (const r of rows) {
+    try {
+      origins.add(new URL(r.url).origin)
+    } catch {
+      // Stored URLs come from GitLab; an unparsable one has nothing to match.
+    }
+  }
+  let out = text
+  for (const o of origins) out = out.replace(new RegExp(`${escapeRe(o)}[^\\s)\\]>"'<]*`, 'gi'), '')
+  return out === text ? text : out.replace(/^[ \t]*\n+/, '').trim()
+}

@@ -6,6 +6,7 @@ import { errorSummary, type AiGateway } from '../ai/gateway.js'
 import { HttpError, notFound } from '../auth/plugin.js'
 import type { Db, Tx } from '../db/client.js'
 import { attachments, conversations, knowledgeEntries, people, projects, workItems } from '../db/schema.js'
+import { codeSummary, withoutGitLabLinks } from '../gitlab/repos.js'
 import { createEntry } from '../knowledge/service.js'
 import { searchKnowledge } from '../knowledge/search.js'
 import { createProposal, supersedePending } from '../proposals/service.js'
@@ -216,7 +217,7 @@ function staffTools(deps: ToolDeps, me: Me, pending: PendingAction[], scope: Too
     }),
 
     work_item: tool({
-      description: 'Details of one work item: description, steps, open tasks and recent progress notes.',
+      description: 'Details of one work item: description, steps, open tasks, recent progress notes and (where shown) its code status in GitLab.',
       inputSchema: z.object({ workItemId: uuid }),
       execute: guarded(async ({ workItemId }) => {
         const { item } = await aiVisibleWorkItem(db, me, workItemId)
@@ -224,9 +225,12 @@ function staffTools(deps: ToolDeps, me: Me, pending: PendingAction[], scope: Too
         // A requester-visible thread only ever shows its own work item.
         if (scope.requesterVisible && workItemId !== scope.workItemId) throw new ToolRefusal(OUT_OF_SCOPE)
         const d = await getWorkItemDetail(db, me, workItemId)
+        // A requester reads (or may later read) work_item threads: no GitLab links, issues or merge requests there.
+        const readable = scope.hideStaffNames || scope.requesterVisible
+        const code = readable ? null : await codeSummary(db, workItemId)
         return {
           title: d.title,
-          description: clip(d.description, 2000),
+          description: clip(readable ? await withoutGitLabLinks(db, d.projectId, d.description) : d.description, 2000),
           priority: d.priority,
           state: d.state,
           steps: d.steps.map((s) => ({ name: s.name.th, status: s.status })),
@@ -240,6 +244,7 @@ function staffTools(deps: ToolDeps, me: Me, pending: PendingAction[], scope: Too
               ...(scope.hideStaffNames ? {} : { assignee: t.assigneeName }),
             })),
           ...(scope.hideStaffNames ? {} : { recentProgress: await progressNotes(db, workItemId, 5) }),
+          ...(code ? { code } : {}),
         }
       }),
     }),
