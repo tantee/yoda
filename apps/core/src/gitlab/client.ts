@@ -147,14 +147,21 @@ export class GitLabClient {
     await this.request('POST', `/projects/${this.proj(projectId)}/issues/${iid}/notes`, { body })
   }
 
-  /** Finds an issue whose description contains `marker` (GitLab search is fuzzy, so the match is confirmed). */
-  async findIssueByMarker(projectId: number, marker: string): Promise<{ iid: number; web_url: string; description: string } | null> {
-    const list = await this.request<{ iid: number; web_url: string; description: string | null }[]>(
-      'GET',
-      `/projects/${this.proj(projectId)}/issues?search=${encodeURIComponent(marker)}&in=description&per_page=20`,
-    )
-    const hit = list.find((i) => (i.description ?? '').includes(marker))
-    return hit ? { iid: hit.iid, web_url: hit.web_url, description: hit.description ?? '' } : null
+  /**
+   * Finds an issue whose description contains `q.contains`: GitLab's word search for `q.search` (a single
+   * alphanumeric word, see `markerQuery`), then the bot's 50 most recent issues in the project (older markers
+   * have no searchable word, and search indexes may lag). Matches are always confirmed in the body.
+   */
+  async findIssueByMarker(projectId: number, q: { search: string; contains: string }): Promise<{ iid: number; web_url: string; description: string } | null> {
+    type Hit = { iid: number; web_url: string; description: string | null }
+    const pick = (list: Hit[]) => {
+      const hit = list.find((i) => (i.description ?? '').includes(q.contains))
+      return hit ? { iid: hit.iid, web_url: hit.web_url, description: hit.description ?? '' } : null
+    }
+    const issues = `/projects/${this.proj(projectId)}/issues`
+    const found = pick(await this.request<Hit[]>('GET', `${issues}?search=${encodeURIComponent(q.search)}&in=description&per_page=20`))
+    if (found) return found
+    return pick(await this.request<Hit[]>('GET', `${issues}?scope=created_by_me&order_by=created_at&sort=desc&per_page=50`))
   }
 
   /** Merge requests GitLab relates to the issue (closing or mentioning it), from any project the bot can see. */

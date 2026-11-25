@@ -6,7 +6,7 @@ import type { JobRun } from '../jobs/queue.js'
 import { recordEvent, runWork, type WorkCtx, type WorkDeps } from '../work/context.js'
 import { templateById } from '../workflow/seed.js'
 import { GitLabError, type GitLabClient } from './client.js'
-import { changedSections, mergeSection, PORTAL_NOTE_MARKER, renderIssueSection, sectionHash, workItemMarker, type IssueSectionInput } from './issue-section.js'
+import { changedSections, markerQuery, mergeSection, PORTAL_NOTE_MARKER, renderIssueSection, sectionHash, type IssueSectionInput } from './issue-section.js'
 
 export type SyncDeps = WorkDeps & { config: WorkDeps['config'] & { portalUrl: string }; gitlab: GitLabClient | null }
 
@@ -149,10 +149,9 @@ async function syncOnce(deps: SyncDeps, run: JobRun): Promise<void> {
   for (const l of links) {
     if (l.link.issueIid !== null) continue
     try {
-      const marker = workItemMarker(item.id)
       const section = render(l)
       const issue =
-        (await gitlab.findIssueByMarker(l.repo.gitlabProjectId, marker)) ??
+        (await gitlab.findIssueByMarker(l.repo.gitlabProjectId, markerQuery(item.id))) ??
         (await gitlab.createIssue(l.repo.gitlabProjectId, { title: item.title, description: section }))
       known.set(l.repo.id, { iid: issue.iid, url: issue.web_url })
       created.add(l.repo.id)

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { GitLabClient, GitLabError } from '../src/gitlab/client.js'
+import { markerQuery, workItemMarker } from '../src/gitlab/issue-section.js'
 import { startFakeGitLab, type FakeGitLab } from './fake-gitlab.js'
 
 const TOKEN = 'glpat-SECRET-token-123'
@@ -61,12 +62,24 @@ describe('GitLabClient', () => {
     expect(fake.requests.filter((r) => r.method === 'POST')).toHaveLength(3)
   })
 
-  it('finds an issue by marker and ignores near-misses', async () => {
-    fake.seedIssue(42, { title: 'a', description: 'x <!-- yoda:work-item:aaa-111 --> y' })
-    fake.seedIssue(42, { title: 'b', description: '<!-- yoda:work-item:aaa-112 -->' })
-    expect(await client.findIssueByMarker(42, '<!-- yoda:work-item:aaa-111 -->')).toMatchObject({ iid: 1 })
-    expect(await client.findIssueByMarker(42, '<!-- yoda:work-item:aaa-11 -->')).toBeNull()
-    expect(await client.findIssueByMarker(42, '<!-- yoda:work-item:zzz -->')).toBeNull()
+  it('finds an issue by its marker token (GitLab-style word search) and ignores near-misses', async () => {
+    const a = '0a1b2c3d-1111-4222-8333-444455556666'
+    const b = '0a1b2c3d-1111-4222-8333-444455556667'
+    fake.seedIssue(42, { title: 'a', description: `x ${workItemMarker(a)} y` })
+    fake.seedIssue(42, { title: 'b', description: workItemMarker(b) })
+    const hit = await client.findIssueByMarker(42, markerQuery(a))
+    expect(hit).toMatchObject({ iid: 1 })
+    expect(fake.requests.at(-1)!.path).toBe('/api/v4/projects/42/issues')
+    expect(await client.findIssueByMarker(42, markerQuery('0a1b2c3d-1111-4222-8333-444455556668'))).toBeNull()
+  })
+
+  it('falls back to the bot\'s recent issues (old marker format, or search returning nothing)', async () => {
+    const id = '0a1b2c3d-1111-4222-8333-444455556666'
+    // The pre-token marker has no searchable word; only an issue the bot created counts.
+    fake.seedIssue(42, { title: 'by someone else', description: `<!-- yoda:work-item:${id} -->` })
+    expect(await client.findIssueByMarker(42, markerQuery(id))).toBeNull()
+    fake.seedIssue(42, { title: 'by the bot', description: `<!-- yoda:work-item:${id} -->`, byBot: true })
+    expect(await client.findIssueByMarker(42, markerQuery(id))).toMatchObject({ iid: 2 })
   })
 
   it('gives up after 3 attempts as unavailable', async () => {

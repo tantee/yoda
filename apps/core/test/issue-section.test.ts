@@ -105,6 +105,13 @@ describe('mergeSection', () => {
     expect(mergeSection(body, section)).toBe(`${section}\n\n${other}`)
   })
 
+  it('still recognises its own pair when the issue holds the older marker (no search word)', () => {
+    const legacy = `${ISSUE_BEGIN}\n<!-- yoda:work-item:${ID} -->\nold\n${ISSUE_END}`
+    const other = `${ISSUE_BEGIN}\nquoted, no marker\n${ISSUE_END}`
+    expect(workItemMarker(ID)).toMatch(/^<!-- yoda:work-item:[0-9a-f-]{36} yodawi[0-9a-f]{32} -->$/)
+    expect(mergeSection(`${legacy}\n\n${other}`, section)).toBe(`${section}\n\n${other}`)
+  })
+
   it('a missing end marker: appended once, then no growth on repeated syncs', () => {
     const body = `dev\n\n${ISSUE_BEGIN}\n${workItemMarker(ID)}\nold, end deleted`
     const once = mergeSection(body, section)

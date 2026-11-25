@@ -3,10 +3,19 @@ import { createHash } from 'node:crypto'
 /** The portal owns only the text between these markers in an issue body. */
 export const ISSUE_BEGIN = '<!-- yoda:begin -->'
 export const ISSUE_END = '<!-- yoda:end -->'
-/** Hidden marker that finds the issue again if its creation response was lost (createIssue is not retried). */
 /** Hidden marker on every note the portal posts, so the webhook can skip its own notes without asking GitLab. */
 export const PORTAL_NOTE_MARKER = '<!-- yoda:portal-note -->'
-export const workItemMarker = (workItemId: string) => `<!-- yoda:work-item:${workItemId} -->`
+/**
+ * Hidden marker that finds the issue again if its creation response was lost (createIssue is not retried).
+ * GitLab's issue search splits text into words, so the marker carries one searchable word (`yodawi` + the id's
+ * hex digits). Issues created before the word was added hold `<!-- yoda:work-item:<id> -->`; both forms start
+ * with `markerPrefix`, which is what identifies the work item.
+ */
+export const workItemMarker = (workItemId: string) => `<!-- yoda:work-item:${workItemId} ${markerWord(workItemId)} -->`
+const markerWord = (workItemId: string) => `yodawi${workItemId.replace(/-/g, '').toLowerCase()}`
+const markerPrefix = (workItemId: string) => `<!-- yoda:work-item:${workItemId}`
+/** What `GitLabClient.findIssueByMarker` searches for and then confirms in the issue body. */
+export const markerQuery = (workItemId: string) => ({ search: markerWord(workItemId), contains: markerPrefix(workItemId) })
 
 export const MAX_DOC_CHARS = 6000
 
@@ -91,7 +100,7 @@ export function stripCommentMarkers(text: string): string {
   return s
 }
 
-const WORK_ITEM_MARKER = /<!-- yoda:work-item:[0-9a-f-]{36} -->/
+const WORK_ITEM_MARKER = /<!-- yoda:work-item:([0-9a-f-]{36})(?: yodawi[0-9a-f]{32})? -->/
 
 /**
  * Start/end offsets of the owned section (end exclusive), or null when there is no well-formed pair. A pair is an
@@ -115,7 +124,11 @@ function findSection(body: string, marker: string | null): [number, number] | nu
   return own.at(-1) ?? pairs.at(-1)!
 }
 
-const markerOf = (section: string) => section.match(WORK_ITEM_MARKER)?.[0] ?? null
+/** The marker prefix of the section's work item, which also matches the older marker form in issue bodies. */
+const markerOf = (section: string) => {
+  const id = section.match(WORK_ITEM_MARKER)?.[1]
+  return id ? markerPrefix(id) : null
+}
 
 /** Replaces the owned section; without markers, appends it after the developer's text. */
 export function mergeSection(body: string, section: string): string {
