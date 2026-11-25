@@ -6,6 +6,7 @@ import { loadConfig } from '../src/config.js'
 import { channelLinkAttempts, channelLinkCodes, channelLinks, notificationChannelSettings, notificationDeliveries, notificationPrefs, notifications } from '../src/db/schema.js'
 import { InlineJobQueue } from '../src/jobs/queue.js'
 import { deliver } from '../src/notifications/deliver.js'
+import { linkWithCode } from '../src/notifications/linking.js'
 import { channelsFor } from '../src/notifications/prefs.js'
 import { notify, notifyTaskAssigned } from '../src/notifications/service.js'
 import { runWork } from '../src/work/context.js'
@@ -239,6 +240,14 @@ describe('LINE webhook', () => {
     await db().update(channelLinkAttempts).set({ at: new Date(Date.now() - 16 * 60_000) })
     await lineWebhook([lineText((await newCode(boss, 'line')).code)])
     expect(await linkOf(boss.id, 'line')).toMatchObject({ externalId: LINE_USER })
+  })
+
+  it('a parallel burst of invalid codes from one account records at most 5 attempts', async () => {
+    const results = await Promise.all(Array.from({ length: 20 }, () => linkWithCode(deps, 'line', WRONG_CODE, LINE_USER)))
+    expect(results.filter((r) => r === 'invalid')).toHaveLength(5)
+    expect(results.filter((r) => r === 'throttled')).toHaveLength(15)
+    const rows = await db().select().from(channelLinkAttempts).where(eq(channelLinkAttempts.externalId, LINE_USER))
+    expect(rows).toHaveLength(5)
   })
 
   it('200 invalid attempts on a channel in 10 minutes refuse every code for a while, with a warning', async () => {

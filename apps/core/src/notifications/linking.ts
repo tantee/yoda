@@ -108,7 +108,7 @@ export async function consumeLinkCode(
 const lastFloodWarning: Partial<Record<LinkableChannel, number>> = {}
 
 /** Why a chat account may not try a code now: too many invalid codes from it, or from everyone on the channel. */
-async function throttled(db: Db, channel: LinkableChannel, externalId: string, now: Date): Promise<'account' | 'channel' | null> {
+async function throttled(db: Db | Tx, channel: LinkableChannel, externalId: string, now: Date): Promise<'account' | 'channel' | null> {
   const since = (ms: number) => new Date(now.getTime() - ms)
   const [mine] = await db
     .select({ n: count() })
@@ -142,13 +142,19 @@ export async function linkWithCode(
   externalId: string,
   now: Date = new Date(),
 ): Promise<'linked' | 'invalid' | 'throttled'> {
-  if (await throttled(deps.db, channel, externalId, now)) return 'throttled'
-  const result = await runWork(deps, { id: null, kind: 'system' }, (ctx) => consumeLinkCode(ctx, channel, code, externalId, now))
-  if (result === 'invalid') {
-    await deps.db.insert(channelLinkAttempts).values({ channel, externalId, at: now })
-    await deps.db.delete(channelLinkAttempts).where(lt(channelLinkAttempts.at, new Date(now.getTime() - ATTEMPT_RETENTION_MS)))
-  }
-  return result
+  return runWork(deps, { id: null, kind: 'system' }, async (ctx) => {
+    const { tx } = ctx
+    // One account's codes are checked one at a time, so a parallel burst cannot slip past the account limit
+    // (the check and the attempt insert share this transaction and lock).
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`link-attempt:${channel}:${externalId}`}))`)
+    if (await throttled(tx, channel, externalId, now)) return 'throttled'
+    const result = await consumeLinkCode(ctx, channel, code, externalId, now)
+    if (result === 'invalid') {
+      await tx.insert(channelLinkAttempts).values({ channel, externalId, at: now })
+      await tx.delete(channelLinkAttempts).where(lt(channelLinkAttempts.at, new Date(now.getTime() - ATTEMPT_RETENTION_MS)))
+    }
+    return result
+  })
 }
 
 export async function unlinkPerson(db: Db | Tx, personId: string, channel: LinkableChannel): Promise<void> {
