@@ -2,6 +2,7 @@
 import type { Todo } from '@yoda/shared'
 import { localized } from '~/utils/localized'
 import { proposalFallbackKey } from '~/utils/requests'
+import { guardOf } from '~/utils/guards'
 
 const { t, locale } = useI18n()
 const api = useApi()
@@ -122,7 +123,8 @@ const isEmpty = computed(
         >
           <v-card-text>
             <div class="font-weight-medium" data-testid="proposal-summary">{{ p.summary || (proposalFallbackKey(p) ? t(proposalFallbackKey(p)!) : '') }}</div>
-            <div v-if="p.reason" class="text-caption text-medium-emphasis">{{ p.reason }}</div>
+            <GuardNote v-if="guardOf(p.payload)" :guard="guardOf(p.payload)!" />
+            <div v-else-if="p.reason" class="text-caption text-medium-emphasis">{{ p.reason }}</div>
             <div v-if="p.workItemId" class="text-caption">
               <NuxtLink :to="`/work-items/${p.workItemId}`">{{ t('todo.workItem') }}</NuxtLink>
             </div>

@@ -148,12 +148,14 @@ export async function notifyProposalPending(
     workItemId: string | null
     kind: ProposalKind
     summary: string
+    /** Plain-language reason a guard rail asked the PM (empty otherwise). */
+    reason?: string
     onBehalfOf: string | null
   },
 ): Promise<void> {
   // Step advances and priority changes carry no summary of their own: the work item title says what it is about.
   const itemTitle = p.workItemId ? await workItemTitle(ctx, p.workItemId) : ''
-  const body = [itemTitle, p.summary].filter(Boolean).join(' - ')
+  const body = [itemTitle, p.summary, p.reason ? `เหตุผล: ${p.reason}` : ''].filter(Boolean).join(' - ')
   let recipients: string[]
   if (p.projectId) {
     recipients = await projectPms(ctx, p.projectId)

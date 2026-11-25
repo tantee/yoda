@@ -225,6 +225,14 @@ describe('workflow engine', () => {
     const review2 = (await latest(wi, 'review-code'))!
     expect(review2).toMatchObject({ attempt: 2, state: 'open', assigneeId: s.dev.id })
     await submit(s.dev, review2.id, approve)
+    // A step with rework is not advanced automatically (guard G1): the PM confirms the advance.
+    expect((await item(wi)).currentStepKey).toBe('dev')
+    const [pending] = await db
+      .select()
+      .from(proposals)
+      .where(and(eq(proposals.workItemId, wi), eq(proposals.kind, 'step_advance'), eq(proposals.state, 'pending')))
+    expect(pending!.payload).toMatchObject({ guard: 'rework' })
+    await run(s.pm, (ctx) => decideProposal(ctx, s.pm, pending!.id, { decision: 'accept' }))
     expect((await item(wi)).currentStepKey).toBe('qc')
   })
 

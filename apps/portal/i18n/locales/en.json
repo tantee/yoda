@@ -185,6 +185,12 @@
       "accepted": "Task accepted",
       "rejected": "Task rejected"
     },
+    "proposal": {
+      "created": "Proposal awaiting confirmation",
+      "accepted": "Proposal confirmed",
+      "rejected": "Proposal dismissed",
+      "superseded": "Proposal no longer applies"
+    },
     "reason": {
       "work_item_cancelled": "Work item cancelled",
       "member_removed": "Member removed from project",
@@ -344,6 +350,20 @@
       "waiting_for_you": "We need an answer from you to continue.",
       "done": "This request is complete.",
       "cancelled": "This request was cancelled."
+    }
+  },
+  "guards": {
+    "rework": "Changes were requested in this step",
+    "repeated_rework": "This work was sent back for changes 2 or more times",
+    "ai_low_confidence": "The AI was not confident in its draft",
+    "high_priority": "High or urgent priority",
+    "ai_budget": "80% or more of the project's AI budget is used this month",
+    "daily_cap": "Everyone who can take this task has reached today's task limit",
+    "no_assignee": "No project member holds a role the next step needs",
+    "requester_changes": "The requester asked for changes on the delivery",
+    "detail": {
+      "ai_low_confidence": "Missing: {detail}",
+      "no_assignee": "Roles: {detail}"
     }
   }
 }

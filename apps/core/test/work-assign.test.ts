@@ -198,7 +198,7 @@ describe('createTaskAttempt', () => {
     expect((await taskEvents(db, id)).map((e) => e.type)).toEqual(['task.created'])
   })
 
-  it('auto-assign marks the event auto and stops at the configured cap with reason daily_cap', async () => {
+  it('auto-assign marks the event auto and, at the configured cap, proposes instead with reason daily_cap', async () => {
     const db = await testDb()
     const s = await setup(db, 'auto-assign')
     const dev = await person(db, 'Dev')
@@ -211,10 +211,11 @@ describe('createTaskAttempt', () => {
     const [a, b, c] = await Promise.all(ids.map((id) => taskEvents(db, id)))
     expect(a!.find((e) => e.type === 'task.assigned')!.payload).toEqual({ assigneeId: dev, auto: true })
     expect(b!.map((e) => e.type)).toEqual(['task.created', 'task.assigned'])
-    expect(c!.map((e) => e.type)).toEqual(['task.created'])
-    expect(c![0]!.reason).toBe('daily_cap')
+    // Guard G6: everyone eligible is at the cap, so the least-loaded one is proposed to the PM.
+    expect(c!.map((e) => e.type)).toEqual(['task.created', 'task.proposed'])
+    expect(c!.map((e) => e.reason)).toEqual(['daily_cap', 'daily_cap'])
     const [t] = await db.select().from(tasks).where(eq(tasks.id, ids[2]!))
-    expect(t).toMatchObject({ state: 'open', assigneeId: null, proposedAssigneeId: null })
+    expect(t).toMatchObject({ state: 'proposed', assigneeId: null, proposedAssigneeId: dev })
   })
 
   it('propose projects are not capped (a proposal is not an assignment)', async () => {

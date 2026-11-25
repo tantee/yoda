@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { ActionCard, Proposal } from '@yoda/shared'
 import { proposalFallbackKey } from '~/utils/requests'
+import { guardOf } from '~/utils/guards'
 
 const props = defineProps<{ card: ActionCard; proposal?: Proposal; canDecide?: boolean }>()
 const emit = defineEmits<{ decided: [] }>()
@@ -41,7 +42,8 @@ const workItemLink = computed(() => {
         </div>
         <template v-if="proposal">
           <div data-testid="proposal-summary">{{ proposal.summary || (proposalFallbackKey(proposal) ? t(proposalFallbackKey(proposal)!) : '') }}</div>
-          <div v-if="proposal.reason" class="text-caption text-medium-emphasis">{{ proposal.reason }}</div>
+          <GuardNote v-if="guardOf(proposal.payload)" :guard="guardOf(proposal.payload)!" />
+          <div v-else-if="proposal.reason" class="text-caption text-medium-emphasis">{{ proposal.reason }}</div>
           <div v-if="proposal.state !== 'pending' || !canDecide" class="mt-1">
             <v-chip size="small" :color="proposal.state === 'accepted' ? 'success' : undefined" data-testid="proposal-state">
               {{ t(`chat.card.state.${proposal.state}`) }}

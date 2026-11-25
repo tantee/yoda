@@ -107,6 +107,9 @@ export const TaskResult = z.object({
   decision: z.enum(['approve', 'changes']).optional(),
   /** Attachments of the task's project, linked to the task on submit. */
   attachmentIds: z.array(uuid).max(20).default([]),
+  /** AI drafts: the drafter's own confidence note (missing note = high, nothing missing). */
+  confidence: z.enum(['high', 'low']).optional(),
+  missing: z.array(z.string()).optional(),
 })
 export type TaskResult = z.infer<typeof TaskResult>
 
