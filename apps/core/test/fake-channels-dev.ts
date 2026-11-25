@@ -9,7 +9,7 @@
 // Link a Telegram chat by posting what Telegram would to the core's webhook (DEV ONLY placeholder values):
 //   curl -X POST http://localhost:4000/webhooks/telegram -H 'content-type: application/json' \
 //     -H "x-telegram-bot-api-secret-token: $TELEGRAM_WEBHOOK_SECRET" \
-//     -d '{"update_id":1,"message":{"message_id":1,"chat":{"id":1001,"type":"private"},"text":"/start XXXXXX"}}'
+//     -d '{"update_id":1,"message":{"message_id":1,"chat":{"id":1001,"type":"private"},"text":"/start XXXXXXXX"}}'
 import { FakeLine } from './fake-line.js'
 import { FakeTelegram } from './fake-telegram.js'
 

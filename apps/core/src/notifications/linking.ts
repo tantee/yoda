@@ -1,15 +1,22 @@
 import { randomInt } from 'node:crypto'
 import type { ChannelLinkCode, LinkableChannel } from '@yoda/shared'
-import { and, eq, ne, sql } from 'drizzle-orm'
+import { and, count, eq, gte, lt, ne, sql } from 'drizzle-orm'
 import type { Config } from '../config.js'
 import type { Db, Tx } from '../db/client.js'
-import { channelLinkCodes, channelLinks } from '../db/schema.js'
+import { channelLinkAttempts, channelLinkCodes, channelLinks } from '../db/schema.js'
+import { runWork, type WorkCtx, type WorkDeps } from '../work/context.js'
+import { notify } from './service.js'
 
-/** Base32 without the look-alikes 0, O, 1 and I: 32 symbols, so 6 of them give 2^30 codes. */
+/** Base32 without the look-alikes 0, O, 1 and I: 32 symbols, so 8 of them give 2^40 codes. */
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
-const CODE_LENGTH = 6
+const CODE_LENGTH = 8
 export const LINK_CODE_TTL_MS = 15 * 60_000
-/** `LINK-XXXXXX`, case and the `LINK-` prefix optional (Telegram's start parameter carries the bare code). */
+/** One chat account may send this many invalid codes per window; then its codes are ignored until it passes. */
+export const ACCOUNT_ATTEMPTS = { max: 5, windowMs: 15 * 60_000 }
+/** A channel-wide ceiling on invalid codes (a flood from many accounts): past it, no code is accepted for a while. */
+export const CHANNEL_ATTEMPTS = { max: 200, windowMs: 10 * 60_000 }
+const ATTEMPT_RETENTION_MS = 24 * 60 * 60_000
+/** `LINK-XXXXXXXX`, case and the `LINK-` prefix optional (Telegram's start parameter carries the bare code). */
 const CODE_RE = new RegExp(`^(?:LINK-)?([${ALPHABET}]{${CODE_LENGTH}})$`)
 
 export type LinkDeps = { db: Db; config: Config; now?: () => Date }
@@ -20,7 +27,7 @@ function randomCode(): string {
   return `LINK-${s}`
 }
 
-/** The canonical `LINK-XXXXXX` for what a person typed, or null when it cannot be a code. */
+/** The canonical `LINK-XXXXXXXX` for what a person typed, or null when it cannot be a code. */
 export function normalizeCode(text: string): string | null {
   const m = text.trim().toUpperCase().match(CODE_RE)
   return m ? `LINK-${m[1]}` : null
@@ -52,18 +59,21 @@ export async function createLinkCode(deps: LinkDeps, me: { id: string }, channel
   return { code, expiresAt: expiresAt.toISOString(), instructions }
 }
 
+const CHANNEL_NAMES: Record<LinkableChannel, string> = { line: 'LINE', telegram: 'Telegram' }
+
 /**
  * Binds `externalId` (a LINE user id, a Telegram chat id) to the person who requested `code`. The code must be
  * unused, unexpired and for this channel; it is used up either way. An account linked to someone else moves:
- * whoever sends the code holds the account.
+ * whoever sends the code holds the account. The person it moved away from is told in the portal (and logged).
  */
 export async function consumeLinkCode(
-  tx: Tx,
+  ctx: WorkCtx,
   channel: LinkableChannel,
   code: string,
   externalId: string,
   now: Date = new Date(),
 ): Promise<'linked' | 'invalid'> {
+  const { tx } = ctx
   const canonical = normalizeCode(code)
   if (!canonical) return 'invalid'
   const [row] = await tx
@@ -77,12 +87,68 @@ export async function consumeLinkCode(
     .delete(channelLinks)
     .where(and(eq(channelLinks.channel, channel), eq(channelLinks.externalId, externalId), ne(channelLinks.personId, row.personId)))
     .returning({ personId: channelLinks.personId })
-  for (const m of moved) console.info(`channel-links: a ${channel} account moved from person ${m.personId} to ${row.personId}`)
+  for (const m of moved) {
+    console.info(`channel-links: a ${channel} account moved from person ${m.personId} to ${row.personId}`)
+    await notify(ctx, {
+      personId: m.personId,
+      kind: 'secretary_message',
+      title: `บัญชี ${CHANNEL_NAMES[channel]} ที่คุณเชื่อมไว้ถูกเชื่อมกับผู้ใช้อื่นแล้ว`,
+      body: `คุณจะไม่ได้รับการแจ้งเตือนทาง ${CHANNEL_NAMES[channel]} อีก หากคุณไม่ได้ทำเอง โปรดแจ้งผู้ดูแลระบบ และเชื่อมบัญชีใหม่ได้ที่หน้าตั้งค่าการแจ้งเตือน`,
+      link: '/settings/notifications',
+      dedupeKey: `channel-link-moved:${channel}:${now.toISOString()}`,
+    })
+  }
   await tx
     .insert(channelLinks)
     .values({ personId: row.personId, channel, externalId })
     .onConflictDoUpdate({ target: [channelLinks.personId, channelLinks.channel], set: { externalId, linkedAt: now } })
   return 'linked'
+}
+
+const lastFloodWarning: Partial<Record<LinkableChannel, number>> = {}
+
+/** Why a chat account may not try a code now: too many invalid codes from it, or from everyone on the channel. */
+async function throttled(db: Db, channel: LinkableChannel, externalId: string, now: Date): Promise<'account' | 'channel' | null> {
+  const since = (ms: number) => new Date(now.getTime() - ms)
+  const [mine] = await db
+    .select({ n: count() })
+    .from(channelLinkAttempts)
+    .where(and(eq(channelLinkAttempts.channel, channel), eq(channelLinkAttempts.externalId, externalId), gte(channelLinkAttempts.at, since(ACCOUNT_ATTEMPTS.windowMs))))
+  if (mine!.n >= ACCOUNT_ATTEMPTS.max) return 'account'
+  const [all] = await db
+    .select({ n: count() })
+    .from(channelLinkAttempts)
+    .where(and(eq(channelLinkAttempts.channel, channel), gte(channelLinkAttempts.at, since(CHANNEL_ATTEMPTS.windowMs))))
+  if (all!.n >= CHANNEL_ATTEMPTS.max) {
+    // Once a minute per channel and process, so a flood does not flood the log too.
+    if ((lastFloodWarning[channel] ?? 0) < now.getTime() - 60_000) {
+      lastFloodWarning[channel] = now.getTime()
+      console.warn(`channel-links: ${channel} link codes refused: ${all!.n} invalid attempts in ${CHANNEL_ATTEMPTS.windowMs / 60_000} minutes`)
+    }
+    return 'channel'
+  }
+  return null
+}
+
+/**
+ * A code sent from a chat account, as the webhooks see it. Throttled accounts (and the whole channel during a
+ * flood) are ignored: the code is not looked at or used up, and no reply is sent (`'throttled'`). Each invalid
+ * code counts against the account and the channel.
+ */
+export async function linkWithCode(
+  deps: WorkDeps,
+  channel: LinkableChannel,
+  code: string,
+  externalId: string,
+  now: Date = new Date(),
+): Promise<'linked' | 'invalid' | 'throttled'> {
+  if (await throttled(deps.db, channel, externalId, now)) return 'throttled'
+  const result = await runWork(deps, { id: null, kind: 'system' }, (ctx) => consumeLinkCode(ctx, channel, code, externalId, now))
+  if (result === 'invalid') {
+    await deps.db.insert(channelLinkAttempts).values({ channel, externalId, at: now })
+    await deps.db.delete(channelLinkAttempts).where(lt(channelLinkAttempts.at, new Date(now.getTime() - ATTEMPT_RETENTION_MS)))
+  }
+  return result
 }
 
 export async function unlinkPerson(db: Db | Tx, personId: string, channel: LinkableChannel): Promise<void> {

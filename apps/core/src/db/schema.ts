@@ -727,7 +727,7 @@ export const channelLinks = pgTable(
   ],
 )
 
-/** One-time codes (`LINK-XXXXXX`) a person sends to the LINE account or Telegram bot to link it. */
+/** One-time codes (`LINK-XXXXXXXX`) a person sends to the LINE account or Telegram bot to link it. */
 export const channelLinkCodes = pgTable(
   'channel_link_codes',
   {
@@ -742,6 +742,25 @@ export const channelLinkCodes = pgTable(
   (t) => [
     check('channel_link_codes_channel_check', sql`${t.channel} in ('line', 'telegram')`),
     index('channel_link_codes_person_idx').on(t.personId, t.channel),
+  ],
+)
+
+/**
+ * Invalid link-code attempts per chat account, for throttling guesses (rows older than a day are pruned).
+ * Kept in the database so the limit holds across restarts and core instances.
+ */
+export const channelLinkAttempts = pgTable(
+  'channel_link_attempts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    channel: text('channel').notNull(),
+    externalId: text('external_id').notNull(),
+    at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    check('channel_link_attempts_channel_check', sql`${t.channel} in ('line', 'telegram')`),
+    index('channel_link_attempts_channel_at_idx').on(t.channel, t.at),
+    index('channel_link_attempts_external_idx').on(t.channel, t.externalId, t.at),
   ],
 )
 

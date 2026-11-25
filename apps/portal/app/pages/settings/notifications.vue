@@ -191,8 +191,8 @@ onBeforeUnmount(stopTimer)
           <template v-if="linking.channel === 'line'">
             <p class="mb-2">1. {{ t('notifications.settings.linking.lineStepAdd') }}</p>
             <v-btn
-              v-if="linking.code.instructions.addFriendUrl || lineAddFriendUrl"
-              :href="linking.code.instructions.addFriendUrl || lineAddFriendUrl"
+              v-if="lineAddFriendUrl"
+              :href="lineAddFriendUrl"
               target="_blank"
               rel="noopener"
               color="success"

@@ -5,7 +5,9 @@ import { tokenMatches } from '../gitlab/webhook.js'
 import { ChannelError } from '../notifications/channels/index.js'
 import { lineConfigured, lineSend } from '../notifications/channels/line.js'
 import { telegramConfigured, telegramSend } from '../notifications/channels/telegram.js'
-import { consumeLinkCode, normalizeCode, unlinkExternal } from '../notifications/linking.js'
+import { and, eq, gte, lte } from 'drizzle-orm'
+import { channelLinks } from '../db/schema.js'
+import { linkWithCode, normalizeCode, unlinkExternal } from '../notifications/linking.js'
 
 const WEBHOOK_BODY_LIMIT = 1024 * 1024
 const unauthorized = () => new HttpError(401, { error: 'unauthorized' })
@@ -18,7 +20,7 @@ const replies = (portalUrl: string) => {
   return {
     linked: 'เชื่อมบัญชีกับ Yoda แล้ว คุณจะได้รับการแจ้งเตือนที่นี่\nLinked to Yoda. You will get your notifications here.',
     invalid: `รหัสไม่ถูกต้องหรือหมดอายุ ขอรหัสใหม่ได้ที่ ${settings}\nThe code is invalid or expired. Get a new one at ${settings}`,
-    instructions: `ขอรหัสเชื่อมบัญชี (LINK-XXXXXX) ได้ที่ ${settings} แล้วส่งรหัสมาในแชตนี้\nTo get notifications here, get a link code (LINK-XXXXXX) at ${settings} and send it in this chat.`,
+    instructions: `ขอรหัสเชื่อมบัญชี (LINK-XXXXXXXX) ได้ที่ ${settings} แล้วส่งรหัสมาในแชตนี้\nTo get notifications here, get a link code (LINK-XXXXXXXX) at ${settings} and send it in this chat.`,
   }
 }
 
@@ -30,13 +32,16 @@ export function lineSignatureMatches(secret: string, raw: Buffer, given: unknown
   return got.length === expected.length && timingSafeEqual(got, expected)
 }
 
-/** The code in a chat message: the whole text, or a `LINK-XXXXXX` inside it. */
+/** The code in a chat message: the whole text, or a `LINK-XXXXXXXX` inside it. */
 function codeIn(text: string): string | null {
-  return normalizeCode(text) ?? normalizeCode(text.match(/LINK-[A-Z0-9]{6}/i)?.[0] ?? '')
+  return normalizeCode(text) ?? normalizeCode(text.match(/LINK-[A-Z0-9]{8}/i)?.[0] ?? '')
 }
 
 type LineEvent = {
   type?: unknown
+  /** When the event happened (ms); a redelivery keeps the original time. */
+  timestamp?: unknown
+  deliveryContext?: { isRedelivery?: unknown }
   replyToken?: unknown
   source?: { type?: unknown; userId?: unknown }
   message?: { type?: unknown; text?: unknown }
@@ -60,6 +65,14 @@ export function channelWebhookRoutes(app: FastifyInstance): void {
       console.warn(`channel-webhooks: ${channel} reply failed (${code})`)
     })
   }
+
+  const linkedSince = async (userId: string, at: Date) =>
+    (
+      await db
+        .select({ personId: channelLinks.personId })
+        .from(channelLinks)
+        .where(and(eq(channelLinks.channel, 'line'), eq(channelLinks.externalId, userId), gte(channelLinks.linkedAt, at)))
+    ).length > 0
 
   // Scoped so the raw-body JSON parser applies to this route only.
   void app.register(async (scope) => {
@@ -90,15 +103,20 @@ export function channelWebhookRoutes(app: FastifyInstance): void {
           if (!userId) continue
           const replyToken = typeof ev.replyToken === 'string' ? ev.replyToken : null
           const reply = (msg: string) => replyToken && background('line', () => lineSend(app.deps, '/v2/bot/message/reply', { replyToken }, msg))
+          const at = typeof ev.timestamp === 'number' ? new Date(ev.timestamp) : null
           if (ev.type === 'unfollow') {
-            await unlinkExternal(db, 'line', userId)
+            // Only links made before the unfollow: a late redelivery must not undo a newer link.
+            if (at) await db.delete(channelLinks).where(and(eq(channelLinks.channel, 'line'), eq(channelLinks.externalId, userId), lte(channelLinks.linkedAt, at)))
+            else await unlinkExternal(db, 'line', userId)
           } else if (ev.type === 'follow') {
             reply(text.instructions)
           } else if (ev.type === 'message' && ev.message?.type === 'text' && typeof ev.message.text === 'string') {
             const code = codeIn(ev.message.text)
             if (!code) continue
-            const result = await db.transaction((tx) => consumeLinkCode(tx, 'line', code, userId))
-            reply(result === 'linked' ? text.linked : text.invalid)
+            // A redelivered code message whose link already happened (we answered, LINE did not hear it).
+            if (ev.deliveryContext?.isRedelivery === true && at && (await linkedSince(userId, at))) continue
+            const result = await linkWithCode(app.deps, 'line', code, userId)
+            if (result !== 'throttled') reply(result === 'linked' ? text.linked : text.invalid)
           }
         }
         return {}
@@ -140,8 +158,8 @@ export function channelWebhookRoutes(app: FastifyInstance): void {
         if (start) background('telegram', () => telegramSend(app.deps, chatId, text.invalid))
         return {}
       }
-      const result = await db.transaction((tx) => consumeLinkCode(tx, 'telegram', code, chatId))
-      background('telegram', () => telegramSend(app.deps, chatId, result === 'linked' ? text.linked : text.invalid))
+      const result = await linkWithCode(app.deps, 'telegram', code, chatId)
+      if (result !== 'throttled') background('telegram', () => telegramSend(app.deps, chatId, result === 'linked' ? text.linked : text.invalid))
       return {}
     },
   )

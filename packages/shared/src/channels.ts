@@ -48,12 +48,13 @@ export const LinkableChannel = z.enum(['line', 'telegram'])
 export type LinkableChannel = z.infer<typeof LinkableChannel>
 
 /**
- * `POST /me/channel-links/:channel/code`: a one-time code (`LINK-XXXXXX`, 15 minutes). LINE: send it to the
- * official account; Telegram: open `deepLink` (`t.me/<bot>?start=…`) or send `/start <code>` to the bot.
+ * `POST /me/channel-links/:channel/code`: a one-time code (`LINK-XXXXXXXX`, 15 minutes). LINE: send it to the
+ * official account (the portal shows its add-friend link from its own config); Telegram: open `deepLink`
+ * (`t.me/<bot>?start=…`) or send the code to the bot.
  */
 export const ChannelLinkCode = z.object({
   code: z.string(),
   expiresAt: z.string(),
-  instructions: z.object({ addFriendUrl: z.string().optional(), deepLink: z.string().optional(), botUsername: z.string().optional() }),
+  instructions: z.object({ deepLink: z.string().optional(), botUsername: z.string().optional() }),
 })
 export type ChannelLinkCode = z.infer<typeof ChannelLinkCode>

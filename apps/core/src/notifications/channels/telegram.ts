@@ -26,9 +26,14 @@ export async function telegramSend(deps: Pick<ChannelDeps, 'config' | 'fetch'>, 
   })
   if (res.status >= 200 && res.status < 300) return
   const description = (res.body as { description?: unknown } | null)?.description
-  if (res.status === 403 && typeof description === 'string' && /blocked/i.test(description)) throw new ChannelError('telegram_blocked', true)
+  const says = (re: RegExp) => typeof description === 'string' && re.test(description)
+  // The chat is gone for good: the person blocked or removed the bot, deleted their account, or the chat no longer exists.
+  if (res.status === 403 && says(/blocked|kicked|deactivated/i)) throw new ChannelError('telegram_blocked', true)
+  if (res.status === 400 && says(/chat not found/i)) throw new ChannelError('telegram_chat_not_found', true)
   throw statusError('telegram', res.status)
 }
+
+const GONE = new Set(['telegram_blocked', 'telegram_chat_not_found'])
 
 export function telegramChannel(deps: ChannelDeps): Channel {
   return {
@@ -39,8 +44,8 @@ export function telegramChannel(deps: ChannelDeps): Channel {
       try {
         await telegramSend(deps, target.externalId, renderFitted(msg, deps.config.portalUrl, TELEGRAM_MAX_TEXT))
       } catch (err) {
-        // The person blocked the bot: the chat is gone for good, so unlink it (they can link again later).
-        if (err instanceof ChannelError && err.code === 'telegram_blocked' && deps.db) {
+        // The chat is gone for good, so unlink it (they can link again later).
+        if (err instanceof ChannelError && GONE.has(err.code) && deps.db) {
           await deps.db
             .delete(channelLinks)
             .where(and(eq(channelLinks.personId, target.personId), eq(channelLinks.channel, 'telegram'), eq(channelLinks.externalId, target.externalId)))
