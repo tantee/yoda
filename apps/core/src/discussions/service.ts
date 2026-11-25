@@ -24,7 +24,7 @@ import { canSeeProject } from '../work/queries.js'
 import { requireDiscussionVisible, toResponse, type DiscussionRow } from './queries.js'
 
 /** A request that is well-formed but does not fit the data (unknown option, mismatched project). */
-const unprocessable = () => new HttpError(422, { error: 'invalid_state' })
+export const unprocessable = () => new HttpError(422, { error: 'invalid_state' })
 
 export const isUndecided = (state: string) => state === 'open' || state === 'scheduled'
 

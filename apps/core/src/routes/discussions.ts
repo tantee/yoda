@@ -1,4 +1,6 @@
 import {
+  AgendaCreate,
+  AgendaItemsPut,
   DiscussionBriefEdit,
   DiscussionCreate,
   DiscussionDecide,
@@ -9,6 +11,7 @@ import {
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { requireStaff } from '../auth/plugin.js'
+import { createAgenda, deleteAgenda, getAgenda, listAgendas, putAgendaItems } from '../discussions/agendas.js'
 import { getDiscussion, listDiscussions, listResponses } from '../discussions/queries.js'
 import { createDiscussion, decideDiscussion, editBrief, respond, retryBrief, withdrawDiscussion } from '../discussions/service.js'
 import { runWork } from '../work/context.js'
@@ -24,6 +27,43 @@ const ListQuery = z.object({
 export function discussionRoutes(app: FastifyInstance): void {
   const db = () => app.deps.db
   const asPerson = (id: string) => ({ id, kind: 'person' as const })
+
+  app.get('/agendas', async (request) => {
+    requireStaff(request)
+    const q = z.object({ upcoming: z.enum(['true', 'false']).optional() }).parse(request.query)
+    return listAgendas(db(), request.me, q.upcoming === 'true')
+  })
+
+  app.post('/agendas', async (request, reply) => {
+    requireStaff(request)
+    const body = AgendaCreate.parse(request.body)
+    const me = request.me
+    const id = await runWork(app.deps, asPerson(me.id), (ctx) => createAgenda(ctx.tx, me, body))
+    return reply.status(201).send(await getAgenda(db(), me, id))
+  })
+
+  app.get('/agendas/:id', async (request) => {
+    requireStaff(request)
+    const { id } = IdParams.parse(request.params)
+    return getAgenda(db(), request.me, id)
+  })
+
+  app.put('/agendas/:id/items', async (request) => {
+    requireStaff(request)
+    const { id } = IdParams.parse(request.params)
+    const body = AgendaItemsPut.parse(request.body)
+    const me = request.me
+    await runWork(app.deps, asPerson(me.id), (ctx) => putAgendaItems(ctx, me, id, body))
+    return getAgenda(db(), me, id)
+  })
+
+  app.delete('/agendas/:id', async (request, reply) => {
+    requireStaff(request)
+    const { id } = IdParams.parse(request.params)
+    const me = request.me
+    await runWork(app.deps, asPerson(me.id), (ctx) => deleteAgenda(ctx.tx, me, id))
+    return reply.status(204).send()
+  })
 
   app.get('/discussions', async (request) => {
     requireStaff(request)
