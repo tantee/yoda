@@ -127,10 +127,10 @@ describe('discussions', () => {
     expect(d.workItemId).toBeNull()
     expect(d.brief).toMatchObject({ source: 'person', status: 'ready', options: OPTIONS, failReason: null })
 
-    // A no-AI project never gets an AI brief.
+    // A no-AI project never gets an AI brief: the request fails at once with a visible reason.
     expect((await call(admin, 'PATCH', `/projects/${p}`, { noAi: true })).statusCode).toBe(200)
     const d2 = await raise(dev, { projectId: p, question: 'อีกเรื่อง', options: OPTIONS })
-    expect(d2.brief).toMatchObject({ source: 'person', status: 'ready' })
+    expect(d2.brief).toMatchObject({ source: 'ai', status: 'failed', failReason: 'no_ai', options: OPTIONS })
   })
 
   it('validates the project / work item / task links and the work item state', async () => {
