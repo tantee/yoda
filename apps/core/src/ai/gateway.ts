@@ -177,7 +177,8 @@ export class AiGateway {
   /**
    * Structured output: the model answers with JSON for `schema` (its refinements are checked too, though they
    * are not sent to the provider). Output that does not parse or validate is billed and logged as
-   * `invalid_output` (AiFailed('invalid_output'): retrying may help). Same guard, abort and logging as
+   * `invalid_output` (AiFailed('invalid_output'): retrying may help); output cut off at `maxOutputTokens` as
+ * `truncated` (AiFailed('truncated'): retrying would not help). Same guard, abort and logging as
    * generateText.
    */
   async generateObject<T>(input: {
@@ -201,6 +202,7 @@ export class AiGateway {
     let result
     let inTok: number
     let outTok: number
+    let finishReason: string
     let streamError: unknown
     try {
       result = streamText({
@@ -217,6 +219,7 @@ export class AiGateway {
       })
       await result.text
       const usage = await result.totalUsage
+      finishReason = await result.finishReason
       if (streamError) throw streamError
       inTok = usage.inputTokens ?? 0
       outTok = usage.outputTokens ?? 0
@@ -228,6 +231,11 @@ export class AiGateway {
       throw new AiFailed('provider_error', message)
     }
     if (input.signal?.aborted) return this.abort(logInput, provider, model, inTok, outTok)
+    if (finishReason === 'length') {
+      // Hit maxOutputTokens: asking again with the same limit would cost as much and end the same way.
+      await this.log(logInput, provider, model, inTok, outTok, false, 'truncated')
+      throw new AiFailed('truncated')
+    }
     let object: T
     try {
       object = await result.output

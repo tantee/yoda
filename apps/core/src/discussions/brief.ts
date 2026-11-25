@@ -172,11 +172,13 @@ export async function buildBriefPrompt(
 
 /** Clips the model's answer to the shared DiscussionBrief limits. */
 function toBrief(o: BriefOutput): DiscussionBrief {
+  // Keys are re-assigned a, b, c, … in order (the model may skip or shuffle them); the recommendation follows.
+  const rekey = new Map(o.options.map((x, i) => [x.key, KEYS[i]!]))
   return {
     context: clip(o.context, 20000),
-    options: o.options.map((x) => ({ key: x.key, title: clip(x.title.trim(), 200), pros: clip(x.pros, 4000), cons: clip(x.cons, 4000) })),
+    options: o.options.map((x, i) => ({ key: KEYS[i]!, title: clip(x.title.trim(), 200), pros: clip(x.pros, 4000), cons: clip(x.cons, 4000) })),
     recommendation: clip(o.recommendation, 4000),
-    recommendedKey: o.recommendedKey,
+    recommendedKey: o.recommendedKey === null ? null : (rekey.get(o.recommendedKey) ?? null),
     source: 'ai',
     status: 'ready',
     failReason: null,
@@ -187,6 +189,8 @@ function toBrief(o: BriefOutput): DiscussionBrief {
 function permanentReason(err: unknown): string | null {
   if (err instanceof AiRefused) return err.reason === 'unpriced_model' ? 'ai_unavailable' : err.reason
   if (err instanceof AiFailed && err.reason === 'not_configured') return 'ai_unavailable'
+  // Cut off at the output limit: a retry would cost as much and end the same way.
+  if (err instanceof AiFailed && err.reason === 'truncated') return 'ai_failed'
   return null
 }
 
