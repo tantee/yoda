@@ -3,6 +3,7 @@ import type { Conversation, SearchResult, Todo, WorkItemDetail } from '@yoda/sha
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { resetDb, testDb } from './helpers.js'
 import { auth, login, makeApp, type Who } from './support.js'
+import { containsPattern, prefixPattern } from '../src/shell/search.js'
 
 let app: FastifyInstance
 let admin: Who
@@ -108,7 +109,7 @@ describe('GET /me/counts', () => {
 })
 
 describe('GET /search', () => {
-  it('staff find projects, work items and staff people they may see; at most 10', async () => {
+  it('staff find projects and work items they may see, admins also staff people; at most 10', async () => {
     const p = await project('ระบบนัดหมายผู้ป่วยนอก')
     const hidden = await project('ระบบนัดหมายลับ', [[outsider, ['PM']]])
     const wi = await createItem(p, 'นัดหมายผ่าน LINE')
@@ -124,14 +125,21 @@ describe('GET /search', () => {
     // Admins see every project.
     expect((await search(admin, 'นัดหมาย')).map((h) => h.id)).toContain(hidden)
 
-    // Staff people by name or username; requesters are never listed.
-    const people = await search(dev, 'สม')
-    expect(people.filter((h) => h.type === 'person').map((h) => h.id).sort()).toEqual([pm.id, dev.id].sort())
-    expect((await search(dev, 'พยาบาล')).filter((h) => h.type === 'person')).toEqual([])
-    expect((await search(dev, 'nurse')).filter((h) => h.type === 'person')).toEqual([])
+    // People: admins only (there is no person page for other staff yet); staff people only, never requesters.
+    expect((await search(dev, 'สม')).filter((h) => h.type === 'person')).toEqual([])
+    const people = (await search(admin, 'สม')).filter((h) => h.type === 'person')
+    expect(people.map((h) => h.id).sort()).toEqual([pm.id, dev.id].sort())
+    expect(people.find((h) => h.id === dev.id)).toMatchObject({ title: 'สมชาย นักพัฒนา', subtitle: 'dev', route: `/admin/people?highlight=${dev.id}` })
+    expect((await search(admin, 'พยาบาล')).filter((h) => h.type === 'person')).toEqual([])
+    expect((await search(admin, 'nurse')).filter((h) => h.type === 'person')).toEqual([])
 
     for (let i = 0; i < 12; i++) await createItem(p, `นัดหมายงานที่ ${i}`)
     expect((await search(dev, 'นัดหมาย')).length).toBe(10)
+  })
+
+  it('escapes LIKE patterns', () => {
+    expect(containsPattern('50%_x\\')).toBe('%50\\%\\_x\\\\%')
+    expect(prefixPattern('50%')).toBe('50\\%%')
   })
 
   it('treats LIKE wildcards literally', async () => {

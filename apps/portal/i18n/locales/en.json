@@ -1075,6 +1075,7 @@
       "generic": "You do not have access to this page",
       "text": "If you think you should have access, contact an administrator"
     },
-    "close": "Close"
+    "close": "Close",
+    "skipToContent": "Skip to main content"
   }
 }

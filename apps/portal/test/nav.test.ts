@@ -13,6 +13,7 @@ import {
   navGroupsFor,
   navItemsFor,
   roleLineKeys,
+  workItemIdOf,
 } from '../app/utils/nav'
 
 const base = { id: crypto.randomUUID(), username: 'u', displayName: 'U', email: null }
@@ -130,6 +131,16 @@ describe('forbiddenFor', () => {
     expect(forbiddenFor(staff, '/admin/ai')).toBe('admin')
     expect(forbiddenFor(staff, '/projects')).toBeNull()
     expect(forbiddenFor(admin, '/admin/ai')).toBeNull()
+  })
+})
+
+describe('workItemIdOf', () => {
+  it('reads the id of a work item deep link only', () => {
+    expect(workItemIdOf('/work-items/abc')).toBe('abc')
+    expect(workItemIdOf('/work-items/abc/')).toBe('abc')
+    expect(workItemIdOf('/work-items/abc/x')).toBeNull()
+    expect(workItemIdOf('/work-items')).toBeNull()
+    expect(workItemIdOf('/projects/abc')).toBeNull()
   })
 })
 

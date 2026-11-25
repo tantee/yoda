@@ -116,3 +116,8 @@ export function initials(name: string): string {
 export function bottomLabelKey(i: NavItem): string {
   return i.key === 'nav.status' ? 'nav.short.status' : i.key === 'nav.assistant' ? 'nav.short.assistant' : i.key
 }
+
+/** The id in a work item deep link (`/work-items/<id>`, not its sub-pages), else null. */
+export function workItemIdOf(path: string): string | null {
+  return /^\/work-items\/([^/]+)\/?$/.exec(path)?.[1] ?? null
+}

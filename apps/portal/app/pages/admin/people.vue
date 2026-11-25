@@ -9,6 +9,14 @@ const actionError = ref('')
 // bumped on every reload so controls reset to server state after a rejected change
 const version = ref(0)
 const skillDrafts = reactive<Record<string, string[]>>({})
+// From the jump box: `?highlight=<person id>` marks that row and scrolls it into view.
+const route = useRoute()
+const highlight = computed(() => (typeof route.query.highlight === 'string' ? route.query.highlight : null))
+watch([highlight, () => people.value.length], async ([id]) => {
+  if (!id) return
+  await nextTick()
+  document.querySelector(`[data-person-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: 'center' })
+})
 
 // null = follow Keycloak group, true = force staff, false = force requester
 const overrideItems = computed(() => [
@@ -64,7 +72,7 @@ onMounted(load)
         </tr>
       </thead>
       <tbody>
-        <tr v-for="p in people" :key="p.id">
+        <tr v-for="p in people" :key="p.id" :data-person-id="p.id" :class="{ 'person-row--highlight': p.id === highlight }">
           <td>{{ p.displayName }}<div class="text-caption text-medium-emphasis">{{ p.username }}</div></td>
           <td style="min-width: 260px">
             <v-combobox
@@ -102,3 +110,7 @@ onMounted(load)
     </v-table>
   </div>
 </template>
+
+<style scoped>
+.person-row--highlight > td { background: rgb(var(--v-theme-primary-soft)); }
+</style>

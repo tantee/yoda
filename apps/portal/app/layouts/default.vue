@@ -4,7 +4,7 @@ import { buildCrumbs, type MetaCrumb } from '~/utils/breadcrumbs'
 import { bottomLabelKey, bottomNavFor, isNavActive, navCount, navGroupsFor } from '~/utils/nav'
 
 const { me } = useMe()
-const { counts, refresh: refreshCounts } = useCounts()
+const { counts, refreshIfStale: refreshCounts } = useCounts()
 const { t } = useI18n()
 const route = useRoute()
 const orgLine = useRuntimeConfig().public.orgLine as string
@@ -55,7 +55,7 @@ useHead({
   titleTemplate: (title?: string) => (title ? `${title} · ${t('app.name')}` : t('app.title')),
 })
 
-// Badges: on sign-in, on every navigation and every minute (no extra live stream).
+// Badges: on sign-in, on navigation and every minute (no extra live stream); at most every 20 s.
 let timer: ReturnType<typeof setInterval> | null = null
 watch([me, () => route.path], () => {
   if (me.value) void refreshCounts()
@@ -71,6 +71,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
+  <a href="#main" class="skip-link" data-testid="skip-link">{{ t('shell.skipToContent') }}</a>
   <v-navigation-drawer
     v-model="drawer"
     :rail="collapsed && !mobile"
@@ -101,7 +102,7 @@ onBeforeUnmount(() => {
       </template>
     </div>
   </v-app-bar>
-  <v-main>
+  <v-main id="main" tabindex="-1">
     <v-container fluid class="app-content">
       <v-alert v-if="meError" type="error" data-testid="me-error">{{ t(meError) }}</v-alert>
       <div v-else-if="!me" class="app-loading" role="status" data-testid="shell-loading">
@@ -130,6 +131,13 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.skip-link {
+  position: fixed; top: 8px; left: 8px; z-index: 3000; padding: 8px 16px; border-radius: 6px;
+  background: rgb(var(--v-theme-primary)); color: #fff; font-weight: 500; text-decoration: none;
+  transform: translateY(-200%);
+}
+.skip-link:focus { transform: none; }
+#main:focus { outline: none; }
 .top-bar { display: flex; align-items: center; gap: 16px; width: 100%; height: 100%; padding: 0 24px; min-width: 0; }
 .app-content { padding: 24px; }
 .app-loading { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; min-height: 50vh; }
