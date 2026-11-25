@@ -13,9 +13,10 @@ const picked = ref<string[]>([])
 const error = ref('')
 const busy = ref(false)
 
-/** Once an issue or MR exists development has started; the server refuses changes then (409). */
-const started = computed(() => !!code.value && (code.value.issues.some(i => i.issueIid !== null) || code.value.mergeRequests.length > 0))
-const canPick = computed(() => props.canManage && props.active && !started.value)
+/** Repos can be added at any time; a repo whose issue exists can't be removed (the server answers 409). */
+const canPick = computed(() => props.canManage && props.active)
+const withIssue = computed(() => new Set(code.value?.issues.filter(i => i.issueIid !== null).map(i => i.repoId) ?? []))
+const repoItemProps = (r: Repo) => (withIssue.value.has(r.id) ? { disabled: true, subtitle: t('gitlab.code.hasIssue') } : {})
 const repoPath = (repoId: string) => code.value?.repos.find(r => r.id === repoId)?.pathWithNamespace ?? ''
 const reasonText = (r: string | null) => (r && te(`events.reason.${r}`) ? t(`events.reason.${r}`) : (r ?? ''))
 const syncColor = (s: IssueSync['status']) => (s === 'synced' ? 'success' : s === 'failed' ? 'error' : 'warning')
@@ -54,7 +55,8 @@ async function save() {
   busy.value = true
   try {
     seq++
-    code.value = await api<WorkItemCode>(`/work-items/${props.workItemId}/repos`, { method: 'PUT', body: { repoIds: picked.value } })
+    const repoIds = [...new Set([...picked.value, ...withIssue.value])]
+    code.value = await api<WorkItemCode>(`/work-items/${props.workItemId}/repos`, { method: 'PUT', body: { repoIds } })
     picked.value = code.value.repos.map(r => r.id)
   } catch (e) {
     const c = (e as { data?: { error?: string } })?.data?.error
@@ -84,6 +86,7 @@ onMounted(load)
             :items="projectRepos"
             item-title="pathWithNamespace"
             item-value="id"
+            :item-props="repoItemProps"
             multiple
             chips
             density="compact"
