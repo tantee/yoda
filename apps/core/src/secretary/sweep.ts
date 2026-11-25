@@ -1,12 +1,14 @@
-import { and, eq, isNull, like, lt, sql } from 'drizzle-orm'
+import { ACTIVE_TASK_STATES } from '@yoda/shared'
+import { and, eq, inArray, isNull, like, lt, sql } from 'drizzle-orm'
 import { errorSummary } from '../ai/gateway.js'
 import type { AppDeps } from '../app.js'
-import { events, projects, tasks, workItems } from '../db/schema.js'
+import { events, projects, tasks, workItemRepos, workItems } from '../db/schema.js'
 import { notify, projectPms } from '../notifications/service.js'
 import { runWork } from '../work/context.js'
 import { definitionOf } from '../work/engine.js'
+import { templateById } from '../workflow/seed.js'
 
-export type SweepDeps = Pick<AppDeps, 'db' | 'bus' | 'jobs' | 'config'>
+export type SweepDeps = Pick<AppDeps, 'db' | 'bus' | 'jobs' | 'config'> & Partial<Pick<AppDeps, 'gitlab'>>
 
 /** An active work item with no event for this long is flagged as stuck. */
 export const STUCK_AFTER_DAYS = 3
@@ -79,8 +81,45 @@ async function requeueOrphans(deps: SweepDeps): Promise<void> {
   }
 }
 
-/** `secretary-sweep` job (every 15 minutes): stuck work and orphaned AI drafts. */
+/**
+ * Queues `gitlab-mr-reconcile` (once per item and run) for active items whose GitLab issues exist and whose
+ * current step has an active code-change task or an active review of one: a lost webhook delivery is caught up.
+ */
+async function reconcileCode(deps: SweepDeps): Promise<void> {
+  if (!deps.gitlab) return
+  const rows = await deps.db
+    .selectDistinct({ workItemId: tasks.workItemId, templateId: workItems.templateId, stepKey: tasks.stepKey, key: tasks.templateTaskKey })
+    .from(tasks)
+    .innerJoin(workItems, eq(workItems.id, tasks.workItemId))
+    .where(
+      and(
+        eq(workItems.state, 'active'),
+        eq(tasks.stepKey, workItems.currentStepKey),
+        isNull(tasks.supersededAt),
+        inArray(tasks.state, [...ACTIVE_TASK_STATES]),
+        sql`exists (select 1 from ${workItemRepos} r where r.work_item_id = ${workItems.id} and r.issue_iid is not null)`,
+      ),
+    )
+  const queued = new Set<string>()
+  for (const r of rows) {
+    if (queued.has(r.workItemId)) continue
+    try {
+      const step = (await templateById(deps.db, r.templateId))?.steps.find((s) => s.key === r.stepKey)
+      const codeKeys = step?.tasks.filter((t) => t.capability === 'code-change').map((t) => t.key) ?? []
+      const t = step?.tasks.find((x) => x.key === r.key)
+      if (!t || !(codeKeys.includes(t.key) || (t.type === 'review' && t.dependsOn.some((k) => codeKeys.includes(k))))) continue
+      queued.add(r.workItemId)
+      // One reconcile per work item is queued or running at a time (stately, singletonKey = work item id).
+      await deps.jobs.send('gitlab-mr-reconcile', { id: r.workItemId })
+    } catch (err) {
+      console.error(`secretary-sweep: code reconcile failed for work item ${r.workItemId}: ${errorSummary(err)}`)
+    }
+  }
+}
+
+/** `secretary-sweep` job (every 15 minutes): stuck work, orphaned AI drafts and lost GitLab MR updates. */
 export async function secretarySweep(deps: SweepDeps): Promise<void> {
   await flagStuck(deps)
   await requeueOrphans(deps)
+  await reconcileCode(deps)
 }
