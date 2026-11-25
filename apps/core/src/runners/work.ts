@@ -6,6 +6,8 @@ import type {
   ProgressInput,
   SearchInput,
   SubmitInput,
+  TemplateTask,
+  WorkflowTemplateDef,
   WriteKnowledgeInput,
 } from '@yoda/shared'
 import { and, asc, eq, gt, sql } from 'drizzle-orm'
@@ -22,6 +24,7 @@ import { notify } from '../notifications/service.js'
 import { runWork, recordEvent, type WorkCtx } from '../work/context.js'
 import { lockItem, submitRunnerResult, submitTask, type WorkItemRow } from '../work/engine.js'
 import { canSeeProject } from '../work/queries.js'
+import { templateById } from '../workflow/seed.js'
 import { asOwner, leaseFrom, lockRunTask, nowOf, requireLiveRun, type RunnerCtx, type RunnerDeps } from './claims.js'
 import { endRun } from './records.js'
 
@@ -70,26 +73,32 @@ async function runCode(db: RunnerDeps['db'], item: Pick<WorkItemRow, 'id' | 'tit
 
 /**
  * The context pack of a live run's task, as the owner sees it (404 when the owner no longer sees the project;
- * 409 `no_ai` for a no-AI project), with the work item's repos, issues and branch, also rendered as `# Code`.
+ * 409 `no_ai` for a no-AI project), with the work item's repos, issues and branch, also rendered as `# Code`,
+ * and the template task's capability.
  */
 export async function getContextPack(
   deps: RunnerWorkDeps,
   rc: RunnerCtx,
   runId: string,
-): Promise<{ text: string; pack: ContextPack; code: RunCode }> {
+): Promise<{ text: string; pack: ContextPack; code: RunCode; capability: TemplateTask['capability'] | null }> {
   const run = await requireLiveRun(deps.db, rc, runId, nowOf(deps))
   const [row] = await deps.db
-    .select({ projectId: tasks.projectId, item: workItems })
+    .select({ projectId: tasks.projectId, stepKey: tasks.stepKey, templateTaskKey: tasks.templateTaskKey, item: workItems })
     .from(tasks)
     .innerJoin(workItems, eq(workItems.id, tasks.workItemId))
     .where(eq(tasks.id, run.taskId))
   if (!row || !(await canSeeProject(deps.db, rc.owner, row.projectId))) throw notFound()
   const code = await runCode(deps.db, row.item)
+  // The template task's capability (null for a task without one, e.g. an ad hoc task), so the runner knows
+  // whether its result is a merge request.
+  const def = (await templateById(deps.db, row.item.templateId)) as WorkflowTemplateDef | null
+  const capability =
+    def?.steps.find((s) => s.key === row.stepKey)?.tasks.find((t) => t.key === row.templateTaskKey)?.capability ?? null
   // The code section counts toward the prompt budget.
   const maxChars = PACK_MAX_CHARS - renderCode(code).length - 1
   try {
     const { pack } = await buildContextPack(deps, run.taskId, { me: rc.owner, maxChars })
-    return { text: renderContextPack(pack, code), pack, code }
+    return { text: renderContextPack(pack, code), pack, code, capability }
   } catch (err) {
     if (err instanceof AiRefused && err.reason === 'no_ai') throw invalidState('no_ai')
     throw err

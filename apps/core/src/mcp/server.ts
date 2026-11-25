@@ -57,11 +57,11 @@ function runnerTools(deps: AppDeps, rc: RunnerCtx): Record<string, ToolDef<z.Any
     }),
     get_context_pack: tool({
       description:
-        'Get everything known about the run\'s task: the task, the work item, knowledge and the code (repos, issues, the branch to push). Returns { text, code }. Read text first. When done, report with post_progress and finish with submit_result (or ask_human / release_task).',
+        'Get everything known about the run\'s task: the task, the work item, knowledge and the code (repos, issues, the branch to push). Returns { text, code, capability }. Read text first. When done, report with post_progress and finish with submit_result (or ask_human / release_task).',
       input: RunRef,
       run: async (i) => {
-        const { text, code } = await getContextPack(deps, rc, i.runId)
-        return { text, code }
+        const { text, code, capability } = await getContextPack(deps, rc, i.runId)
+        return { text, code, capability }
       },
     }),
     search_knowledge: tool({

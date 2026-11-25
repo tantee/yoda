@@ -87,11 +87,19 @@ describe('workTask', () => {
     expect(fake.named('submit_result')[0]!.args.text).toContain('Nothing to change.')
   })
 
-  it('skips push and MR for a non-code capability, even with commits', async () => {
-    const res = await workTask({ cfg: cfg(), core, executor: fakeExecutor(commitFile) }, { taskId: TASK_ID, capability: 'analyze-repo' })
+  it('skips push and MR for a non-code capability from the context pack, even with commits', async () => {
+    fake.capability = 'analyze-repo'
+    const res = await workTask({ cfg: cfg(), core, executor: fakeExecutor(commitFile) }, { taskId: TASK_ID })
     expect(res.status).toBe('submitted')
     expect(fake.named('open_merge_request')).toHaveLength(0)
     expect(originBranches()).not.toContain(`refs/heads/${BRANCH}`)
+  })
+
+  it('falls back to the listed capability when the pack has none', async () => {
+    fake.capability = null
+    const res = await workTask({ cfg: cfg(), core, executor: fakeExecutor(commitFile) }, { taskId: TASK_ID, capability: 'run-tests' })
+    expect(res.status).toBe('submitted')
+    expect(fake.named('open_merge_request')).toHaveLength(0)
   })
 
   it('stops after ask_human: no push, no submit, no release', async () => {
@@ -187,6 +195,36 @@ describe('workTask', () => {
     )
     expect(res.status).toBe('failed')
     expect(String(fake.named('release_task')[0]!.args.reason)).toContain('group/demo')
+  })
+
+  it('continues the branch a previous run pushed: the next run builds on origin/<branch>', async () => {
+    let failMr = true
+    fake.override.open_merge_request = () => (failMr ? { error: { code: 'gitlab_unavailable' } } : undefined)
+    const first = await workTask({ cfg: cfg(), core, executor: fakeExecutor(commitFile) }, { taskId: TASK_ID })
+    expect(first.status).toBe('failed')
+    expect(fake.named('release_task')[0]!.args).toMatchObject({ failed: true })
+    const pushed = git(origin, 'rev-parse', BRANCH)
+
+    failMr = false
+    const second = await workTask(
+      {
+        cfg: cfg(),
+        core,
+        executor: fakeExecutor(({ dir }) => {
+          expect(git(dir, 'show', 'HEAD:change.txt')).toBe('hello')
+          writeFileSync(join(dir, 'more.txt'), 'more\n')
+          git(dir, 'add', 'more.txt')
+          git(dir, 'commit', '-q', '-m', 'feat: more')
+          return { ok: true, summary: 'Added more.txt.', needsHuman: false }
+        }),
+      },
+      { taskId: TASK_ID },
+    )
+    expect(second.status).toBe('submitted')
+    expect(git(origin, 'rev-parse', `${BRANCH}~1`)).toBe(pushed)
+    expect(git(origin, 'show', `${BRANCH}:more.txt`)).toBe('more')
+    expect(fake.named('open_merge_request')).toHaveLength(2)
+    expect(fake.named('submit_result')[0]!.args.text).toContain('merge_requests/7')
   })
 
   it('works the first repo and says so when several are linked', async () => {

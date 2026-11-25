@@ -73,7 +73,7 @@ export type Workspace = { dir: string; cleanup(): Promise<void> }
 
 /**
  * Fetches origin in the repo's clone and adds a worktree at `<workRoot>/<runId>/<repo-slug>` on `branch`, reset
- * to `origin/<defaultBranch>`. `cleanup` removes the worktree, its dir and the local branch; it never throws.
+ * to `origin/<branch>` when origin already has it (an earlier run pushed it), else to `origin/<defaultBranch>`. `cleanup` removes the worktree, its dir and the local branch; it never throws.
  */
 export async function prepareWorkspace(
   cfg: RunnerConfig,
@@ -88,10 +88,18 @@ export async function prepareWorkspace(
   const clone = await ensureClone(cfg, repo.path)
   await git(clone, ['fetch', '--quiet', '--prune', 'origin'])
   await git(clone, ['worktree', 'prune'])
-  const base = `refs/remotes/origin/${repo.defaultBranch}`
-  await git(clone, ['rev-parse', '--verify', '--quiet', `${base}^{commit}`]).catch(() => {
+  const defaultBase = `refs/remotes/origin/${repo.defaultBranch}`
+  await git(clone, ['rev-parse', '--verify', '--quiet', `${defaultBase}^{commit}`]).catch(() => {
     throw new Error(`origin/${repo.defaultBranch} not found in ${repo.path}`)
   })
+  // A previous run of this work item may have pushed the branch (then failed before its MR, or was parked):
+  // continue from it, so new commits fast-forward and the push succeeds.
+  const remoteBranch = `refs/remotes/origin/${branch}`
+  const continued = await git(clone, ['rev-parse', '--verify', '--quiet', `${remoteBranch}^{commit}`]).then(
+    () => true,
+    () => false,
+  )
+  const base = continued ? remoteBranch : defaultBase
 
   const runDir = join(cfg.workRoot, runId)
   const dir = join(runDir, repoSlug(repo.path))

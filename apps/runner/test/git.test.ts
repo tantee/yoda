@@ -125,7 +125,8 @@ describe('pushBranch', () => {
 
 describe('commitLeftovers', () => {
   it('commits uncommitted changes (new and changed files) and reports whether it did', async () => {
-    const ws = await prepareWorkspace(cfgWith({ 'group/demo': { clonePath: clone } }), repo(), BRANCH)
+    const branch = 'yoda/abcd1234-leftovers'
+    const ws = await prepareWorkspace(cfgWith({ 'group/demo': { clonePath: clone } }), repo(), branch)
     try {
       expect(await commitLeftovers(ws.dir, 'yoda: uncommitted changes from agent run')).toBe(false)
       expect(await hasNewCommits(ws.dir, 'origin/main')).toBe(false)
@@ -135,9 +136,35 @@ describe('commitLeftovers', () => {
       expect(git(ws.dir, 'status', '--porcelain')).toBe('')
       expect(git(ws.dir, 'log', '-1', '--format=%s')).toBe('yoda: uncommitted changes from agent run')
       expect(git(ws.dir, 'show', '--name-only', '--format=', 'HEAD').split('\n').sort()).toEqual(['README.md', 'new.txt'])
-      expect(git(ws.dir, 'symbolic-ref', '--short', 'HEAD')).toBe(BRANCH)
+      expect(git(ws.dir, 'symbolic-ref', '--short', 'HEAD')).toBe(branch)
     } finally {
       await ws.cleanup()
+    }
+  })
+})
+
+describe('continuing a pushed branch', () => {
+  it('bases the worktree on origin/<branch> when origin has it, so the next push fast-forwards', async () => {
+    const branch = 'yoda/abcd1234-continue'
+    const c = cfgWith({ 'group/demo': { clonePath: clone } })
+    const first = await prepareWorkspace(c, repo(), branch)
+    try {
+      writeFileSync(join(first.dir, 'one.txt'), '1\n')
+      await commitLeftovers(first.dir, 'one')
+      await pushBranch(first.dir, branch, 'main')
+    } finally {
+      await first.cleanup()
+    }
+    const pushed = git(origin, 'rev-parse', branch)
+    const second = await prepareWorkspace(c, repo(), branch)
+    try {
+      expect(git(second.dir, 'rev-parse', 'HEAD')).toBe(pushed)
+      writeFileSync(join(second.dir, 'two.txt'), '2\n')
+      await commitLeftovers(second.dir, 'two')
+      await pushBranch(second.dir, branch, 'main')
+      expect(git(origin, 'rev-parse', `${branch}~1`)).toBe(pushed)
+    } finally {
+      await second.cleanup()
     }
   })
 })

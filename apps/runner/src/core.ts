@@ -4,6 +4,7 @@ import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js'
 import {
   AvailableTask,
   KnowledgeSearchHit,
+  RunnerCapability,
   type AskHumanInput,
   type ClaimInput,
   type ListTasksInput,
@@ -42,7 +43,12 @@ const Outputs = {
   list_available_tasks: z.object({ tasks: z.array(AvailableTask) }),
   claim_task: Lease.extend({ runId: z.string() }),
   heartbeat: Lease,
-  get_context_pack: z.object({ text: z.string(), code: RunCode }),
+  // `capability` is the template task's (null without one); optional for a core that does not send it yet.
+  get_context_pack: z.object({
+    text: z.string(),
+    code: RunCode,
+    capability: z.union([RunnerCapability, z.literal('draft-text')]).nullable().optional(),
+  }),
   search_knowledge: z.object({ hits: z.array(KnowledgeSearchHit) }),
   write_knowledge: Entry,
   post_progress: Entry,

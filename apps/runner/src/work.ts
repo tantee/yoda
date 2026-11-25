@@ -16,7 +16,7 @@ export type WorkDeps = {
   signal?: AbortSignal
 }
 
-/** A task to claim, or a run the loop already claimed. `capability` is the template's, when known. */
+/** A task to claim, or a run the loop already claimed. `capability` (from the task list) is a fallback for the pack's. */
 export type WorkTarget =
   | { taskId: string; capability?: RunnerCapability }
   | { runId: string; alreadyClaimed: true; capability?: RunnerCapability }
@@ -132,7 +132,9 @@ export async function workTask(deps: WorkDeps, target: WorkTarget): Promise<Work
   try {
     const pack = await onRun(() => core.getContextPack({ runId }))
     const { repo, note } = pickRepo(pack.code)
-    const code = target.capability ? CODE_CAPABILITIES.includes(target.capability) : !!repo
+    // The pack's capability is core's word for it; without one (an older core), a run with a repo is code.
+    const capability = pack.capability ?? target.capability
+    const code = capability ? (CODE_CAPABILITIES as string[]).includes(capability) : !!repo
     let dir: string
     if (repo) {
       lockKey = repo.path

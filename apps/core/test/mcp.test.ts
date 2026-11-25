@@ -134,7 +134,8 @@ describe('MCP server', () => {
     const runId = claimed.runId as string
     expect(await ok(client, 'heartbeat', { runId })).toEqual({ leaseExpiresAt: expect.any(String) })
     const pack = await ok(client, 'get_context_pack', { runId })
-    expect(Object.keys(pack).sort()).toEqual(['code', 'text'])
+    expect(Object.keys(pack).sort()).toEqual(['capability', 'code', 'text'])
+    expect(pack.capability).toBe('code-change')
     expect(pack.code).toMatchObject({ repos: [], branch: expect.stringMatching(/^yoda\/[0-9a-f]{8}-fix-lab-report$/) })
     expect(pack.text).toContain('Fix lab report')
     expect(await ok(client, 'search_knowledge', { query: 'lab' })).toEqual({ hits: expect.any(Array) })

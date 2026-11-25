@@ -1,4 +1,3 @@
-import type { RunnerCapability } from '@yoda/shared'
 import { loadConfig, maskedConfig, mcpConfig, warnConfigOnce, type RunnerConfig } from './config.js'
 import { connectCore, McpToolError, type CoreClient } from './core.js'
 import { createExecutor } from './executors/index.js'
@@ -24,16 +23,6 @@ const defaultIo: CommandIo = {
   env: process.env,
   stdout: (s) => void process.stdout.write(s),
   stderr: (s) => void process.stderr.write(s),
-}
-
-/** The task's capability when core lists it as available (an owner's own assigned task is not listed). */
-async function capabilityOf(core: CoreClient, taskId: string): Promise<RunnerCapability | undefined> {
-  try {
-    const { tasks } = await core.listAvailableTasks({})
-    return tasks.find((t) => t.taskId === taskId)?.capability
-  } catch {
-    return undefined
-  }
 }
 
 async function withCore<T>(cfg: RunnerConfig, fn: (core: CoreClient) => Promise<T>): Promise<T> {
@@ -74,8 +63,8 @@ export async function runCommand(argv: string[], io: CommandIo = defaultIo): Pro
     const dispose = stopOnSignals(stop)
     try {
       return await withCore(cfg, async (core) => {
-        const capability = await capabilityOf(core, taskId)
-        const result = await workTask({ cfg, core, executor: createExecutor(cfg), log, signal: stop.signal }, { taskId, capability })
+        // The capability comes from the context pack (an owner's own assigned task is not in the available list).
+        const result = await workTask({ cfg, core, executor: createExecutor(cfg), log, signal: stop.signal }, { taskId })
         if (result.status === 'submitted') log(`yoda-runner: submitted (${result.outcome})${result.mrUrl ? `, merge request ${result.mrUrl}` : ''}`)
         if (result.status === 'parked') log('yoda-runner: the run is waiting for a person (or was ended in core)')
         if (result.status === 'failed') log(`yoda-runner: failed: ${result.error}`)

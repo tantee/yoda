@@ -33,6 +33,8 @@ export class FakeCore {
   runs = new Map<string, Run>()
   /** Per-tool override: return an error or a body instead of the default behaviour. */
   override: Record<string, (args: Args) => Body | undefined> = {}
+  /** The template task's capability, as get_context_pack returns it. */
+  capability: string | null = 'code-change'
   code: RunCode = {
     repos: [
       {
@@ -80,10 +82,12 @@ export class FakeCore {
       case 'get_context_pack': {
         const run = this.live(args)
         if (!run) return inactive
-        // Core's branch is per work item; give later runs their own so parallel runs in one clone don't collide.
-        const n = Number(run.runId.slice(-12))
+        // Core's branch is per work item; here per task (in claim order), so parallel runs don't collide and a
+        // later run of the same task gets the same branch.
+        const taskIds = [...new Set([...this.runs.values()].map((r) => r.taskId))]
+        const n = taskIds.indexOf(run.taskId) + 1
         const code = { ...this.code, branch: n === 1 ? this.code.branch : `${this.code.branch}-${n}` }
-        return { body: { text: '# Task\n\n**Test task**\n\n# Work item\n\n**Demo item** (priority: normal)', code } }
+        return { body: { text: '# Task\n\n**Test task**\n\n# Work item\n\n**Demo item** (priority: normal)', code, capability: this.capability } }
       }
       case 'search_knowledge':
         return { body: { hits: [] } }

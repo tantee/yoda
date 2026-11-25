@@ -219,7 +219,10 @@ Environment (from the deploy environment only):
 - `YODA_RUNNER_ANTHROPIC_API_KEY`: passed to Claude Code as `ANTHROPIC_API_KEY`
 - git credentials for clone and push: `YODA_GIT_USERNAME` (default `oauth2`) / `YODA_GIT_PASSWORD`
   (e.g. a GitLab project or group access token with `write_repository`), answered through the image's
-  `GIT_ASKPASS` helper and removed from the agent's environment; or mount your own credential helper
+  `GIT_ASKPASS` helper and removed from the agent's environment; or mount your own credential helper.
+  Like the MCP token, the push credential is still readable by the agent (same OS user, e.g. via
+  `/proc`), so give each runner its own scoped credential: a deploy or project/group access token
+  limited to the repos it works, with `write_repository` only, never a personal token.
 - `YODA_RUNNER_GIT_NAME` / `YODA_RUNNER_GIT_EMAIL`: the commit identity
 - `YODA_RUNNER_CONFIG_FILE` (default `./runner-config.json`): mounted read-only as the config file. It
   holds `repos` with `cloneUrl` entries and executor settings, and no token (that comes from env).
