@@ -102,7 +102,10 @@ Inside containers:
 - Backups: the overlay's `backup` service (image `yoda-backup`, `ops/backup`) writes
   `pg-<YYYYMMDD-HHMM>.dump` (`pg_dump -Fc`) and `storage-<YYYYMMDD-HHMM>/` (a mirror of the bucket) to
   the `backups` volume every day at `BACKUP_AT` (`02:00`, Asia/Bangkok), updates a `latest` marker and
-  deletes backups older than `BACKUP_KEEP_DAYS` (14). The volume lives on the same host: copy it off
+  deletes backups older than `BACKUP_KEEP_DAYS` (14). A failed run is retried 3 times, 15 minutes
+  apart; the container turns unhealthy when the last backup is older than 26 hours (a new container
+  gets 26 hours for its first one). Only one backup or restore runs at a time (a lock on the volume).
+  The volume lives on the same host: copy it off
   the server as well. Back up now with `docker compose ... run --rm backup --now`. To restore, stop
   `core` and `portal`, run `docker compose ... run --rm -e RESTORE_CONFIRM=yes --entrypoint restore.sh
   backup <stamp|latest>` (`pg_restore --clean --if-exists` plus a sync of the bucket), then run

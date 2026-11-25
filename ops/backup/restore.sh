@@ -30,6 +30,7 @@ storage=$dir/storage-$stamp
 
 setup_pg
 setup_store
+take_lock "$dir"
 
 log "restoring database $PGDATABASE from pg-$stamp.dump"
 pg_restore --clean --if-exists --no-owner --single-transaction --exit-on-error --no-password \

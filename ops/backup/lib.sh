@@ -6,6 +6,10 @@
 # shellcheck disable=SC2034 # used by restore.sh
 STAMP_RE='^[0-9]{8}-[0-9]{4}$'
 
+# Written by the backup daemon when it starts: the healthcheck's grace period before the first backup.
+# shellcheck disable=SC2034 # used by backup.sh and healthcheck.sh
+STARTED_FILE=${BACKUP_STARTED_FILE:-/tmp/backup-started}
+
 log() {
   printf '%s %s: %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "${LOG_NAME:-backup}" "$*"
 }
@@ -43,6 +47,63 @@ select_expired() {
       printf '%s\n' "$name"
     fi
   done
+}
+
+# Picks the next run: today's BACKUP_AT if it is still ahead and more than 60 s after the last run's start
+# (a clock that steps back must not run the same backup twice), else tomorrow's. All arguments are epochs.
+pick_target() {
+  local now=$1 today=$2 tomorrow=$3 last=${4:-0}
+  if ((today > now && today > last + 60)); then echo "$today"; else echo "$tomorrow"; fi
+}
+
+# Runs `cmd...`; when it fails, retries up to <retries> times, sleeping <delay> seconds before each retry.
+# The command never runs as a condition (`until cmd`, `cmd ||`), where bash would ignore errexit inside it.
+with_retries() {
+  local retries=$1 delay=$2 attempt=0 status errexit=
+  shift 2
+  [[ $- == *e* ]] && errexit=1
+  while true; do
+    set +e
+    "$@"
+    status=$?
+    [[ -z $errexit ]] || set -e
+    ((status == 0)) && return 0
+    attempt=$((attempt + 1))
+    ((attempt <= retries)) || return "$status"
+    log "retrying in ${delay}s (retry $attempt of $retries)"
+    sleep "$delay" &
+    wait $!
+  done
+}
+
+# Health of the backups: ok when `latest` is at most <max_age> seconds old, or, before the first backup,
+# when the daemon started at most <max_age> seconds ago. Arguments are epochs ('' when missing).
+backup_health() {
+  local now=$1 latest=${2:-} started=${3:-} max=$4
+  if [[ -n $latest ]]; then
+    if ((now - latest <= max)); then
+      echo "ok: last backup $(((now - latest) / 3600))h ago"
+      return 0
+    fi
+    echo "stale: last backup $(((now - latest) / 3600))h ago"
+    return 1
+  fi
+  if [[ -n $started ]] && ((now - started <= max)); then
+    echo 'ok: no backup yet'
+    return 0
+  fi
+  echo 'unhealthy: no backup'
+  return 1
+}
+
+# Holds an exclusive lock on <dir>/.lock on fd 9 until the shell exits; fails at once when it is taken.
+take_lock() {
+  command -v flock >/dev/null || die 'flock is required'
+  exec 9>"$1/.lock"
+  flock -n 9 || {
+    printf '%s: another backup or restore is running (%s/.lock is held)\n' "${LOG_NAME:-backup}" "$1" >&2
+    exit 75
+  }
 }
 
 # Decodes %XX escapes (a literal backslash stays a backslash).

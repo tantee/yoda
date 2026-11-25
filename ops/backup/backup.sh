@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
 # Daily backups: a pg_dump -Fc of the database and an S3 mirror of the storage bucket, kept for
 # BACKUP_KEEP_DAYS days in BACKUP_DIR.
-#   backup.sh         loop: sleep until the next BACKUP_AT (HH:MM in TZ), back up, repeat
-#   backup.sh --now   one backup, then exit
+#   backup.sh         loop: sleep until the next BACKUP_AT (HH:MM in TZ), back up, repeat; a failed run is
+#                     retried BACKUP_RETRIES (3) times, BACKUP_RETRY_DELAY (900) seconds apart, before it
+#                     waits for the next day
+#   backup.sh --now   one backup, then exit (non-zero on failure)
 # Env: DATABASE_URL (or PG*), S3_ENDPOINT, S3_BUCKET, S3_ACCESS_KEY, S3_SECRET_KEY, S3_REGION,
 #      BACKUP_DIR (/backups), BACKUP_KEEP_DAYS (14), BACKUP_AT (02:00), TZ (Asia/Bangkok).
 # Writes pg-<YYYYMMDD-HHMM>.dump, storage-<YYYYMMDD-HHMM>/ and a `latest` marker holding the stamp.
-# Exits non-zero when a backup fails (the container's restart policy brings the loop back).
+# Only one backup or restore runs at a time (flock on BACKUP_DIR/.lock); a second one exits non-zero.
+# healthcheck.sh turns unhealthy when `latest` is older than BACKUP_MAX_AGE_HOURS (26).
 set -euo pipefail
 LOG_NAME=backup
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -16,6 +19,8 @@ source "$here/lib.sh"
 dir=${BACKUP_DIR:-/backups}
 keep=${BACKUP_KEEP_DAYS:-14}
 at=${BACKUP_AT:-02:00}
+retries=${BACKUP_RETRIES:-3}
+retry_delay=${BACKUP_RETRY_DELAY:-900}
 
 remove_partials() {
   find "$dir" -mindepth 1 -maxdepth 1 -name '*.partial' -exec rm -rf {} +
@@ -54,35 +59,61 @@ backup_once() {
   log "removed $n backup files older than $keep days"
 }
 
-# One backup in a subshell that stops at the first failed step; half-written files are removed.
+# One backup in a subshell holding the lock, stopping at the first failed step; its half-written files are
+# removed on the way out. A second run finds the lock taken and leaves the first one's files alone.
 # (errexit is ignored inside `if`/`&&` conditions, so the status is taken with errexit off instead.)
 run_backup() {
-  local status
+  local status errexit=
+  [[ $- == *e* ]] && errexit=1
   set +e
   (
     set -e
+    take_lock "$dir"
+    trap remove_partials EXIT
     backup_once
   )
   status=$?
-  set -e
+  [[ -z $errexit ]] || set -e
   ((status == 0)) && return 0
-  remove_partials || true
   log 'backup failed'
-  return 1
+  return "$status"
 }
 
-# Seconds until the next BACKUP_AT in the local time zone (GNU date).
-seconds_until_next() {
-  local now target
+# The scheduled run: the backup, retried with a delay before giving up until the next BACKUP_AT.
+# Never call it (or run_backup) as a condition: bash would ignore errexit inside the backup.
+scheduled_run() {
+  local status errexit=
+  [[ $- == *e* ]] && errexit=1
+  set +e
+  with_retries "$retries" "$retry_delay" run_backup
+  status=$?
+  [[ -z $errexit ]] || set -e
+  ((status == 0)) && return 0
+  log "backup failed $((retries + 1)) times; next try at the next BACKUP_AT"
+  return "$status"
+}
+
+# Epoch of the next BACKUP_AT in the local time zone (GNU date), never within 60 s of the last run's start.
+next_target() {
+  pick_target "$(date +%s)" "$(date -d "today $at" +%s)" "$(date -d "tomorrow $at" +%s)" "$1"
+}
+
+# Sleeps until <epoch>; sleeps again if woken early.
+sleep_until() {
+  local now
   now=$(date +%s)
-  target=$(date -d "today $at" +%s)
-  if ((target <= now)); then target=$(date -d "tomorrow $at" +%s); fi
-  echo $((target - now))
+  while ((now < $1)); do
+    sleep $(($1 - now)) &
+    wait $!
+    now=$(date +%s)
+  done
 }
 
 main() {
   [[ $at =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]] || die 'BACKUP_AT must be HH:MM'
   [[ $keep =~ ^[1-9][0-9]*$ ]] || die 'BACKUP_KEEP_DAYS must be a positive integer'
+  [[ $retries =~ ^[0-9]+$ ]] || die 'BACKUP_RETRIES must be a whole number'
+  [[ $retry_delay =~ ^[0-9]+$ ]] || die 'BACKUP_RETRY_DELAY must be a whole number of seconds'
   [[ -d $dir && -w $dir ]] || die "$dir is not a writable directory"
   setup_pg
   setup_store
@@ -93,13 +124,17 @@ main() {
       ;;
     '')
       trap 'log "stopping"; exit 0' TERM INT
+      # The healthcheck's grace period before the first backup starts here.
+      [[ -e $STARTED_FILE ]] || date +%s >"$STARTED_FILE"
+      local last=0 target
       while true; do
-        local secs
-        secs=$(seconds_until_next)
-        log "next backup at $(date -d "@$(($(date +%s) + secs))" '+%Y-%m-%d %H:%M %Z') (keeping $keep days)"
-        sleep "$secs" &
-        wait $!
-        run_backup
+        target=$(next_target "$last")
+        log "next backup at $(date -d "@$target" '+%Y-%m-%d %H:%M %Z') (keeping $keep days)"
+        sleep_until "$target"
+        last=$(date +%s)
+        set +e
+        scheduled_run
+        set -e
       done
       ;;
     *)
@@ -108,4 +143,7 @@ main() {
   esac
 }
 
-main "$@"
+# Sourcing (the tests) only defines the functions.
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+  main "$@"
+fi
