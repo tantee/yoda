@@ -43,6 +43,18 @@ describe('loadConfig', () => {
     expect(c.dailyTaskCap).toBe(8)
     expect(loadConfig({ ...baseEnv, DAILY_TASK_CAP: '3' }).dailyTaskCap).toBe(3)
   })
+  it('configures GitLab', () => {
+    const c = loadConfig(baseEnv)
+    expect(c.gitlabUrl).toBeUndefined()
+    expect(c.gitlabToken).toBeUndefined()
+    expect(c.gitlabWebhookSecret).toBeUndefined()
+    expect(c.portalUrl).toBe('http://localhost:3000')
+    const g = loadConfig({ ...baseEnv, GITLAB_URL: 'http://gl.test/', GITLAB_TOKEN: 't', GITLAB_WEBHOOK_SECRET: 'x'.repeat(16), PORTAL_URL: 'http://p.test/' })
+    expect(g.gitlabUrl).toBe('http://gl.test')
+    expect(g.portalUrl).toBe('http://p.test')
+    expect(loadConfig({ ...baseEnv, GITLAB_URL: '', GITLAB_WEBHOOK_SECRET: '' }).gitlabUrl).toBeUndefined()
+    expect(() => loadConfig({ ...baseEnv, GITLAB_WEBHOOK_SECRET: 'x'.repeat(10) })).toThrow(/GITLAB_WEBHOOK_SECRET/)
+  })
   it('requires S3 credentials', () => {
     const { S3_ACCESS_KEY: _a, S3_SECRET_KEY: _s, ...rest } = baseEnv
     expect(() => loadConfig(rest)).toThrow(/S3_ACCESS_KEY/)

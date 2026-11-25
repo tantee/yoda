@@ -33,6 +33,10 @@ services:
       AI_EMBEDDING_MODEL: ${AI_EMBEDDING_MODEL:-}
       AI_WORKERS: ${AI_WORKERS:-2}
       DAILY_TASK_CAP: ${DAILY_TASK_CAP:-8}
+      GITLAB_URL: ${GITLAB_URL:-}
+      GITLAB_TOKEN: ${GITLAB_TOKEN:-}
+      GITLAB_WEBHOOK_SECRET: ${GITLAB_WEBHOOK_SECRET:-}
+      PORTAL_URL: ${PORTAL_URL:-http://localhost:3000}
     restart: unless-stopped
 
   # Replaces the dev credentials: core signs in with the same S3_ACCESS_KEY / S3_SECRET_KEY.
