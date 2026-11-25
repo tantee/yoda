@@ -129,6 +129,13 @@ describe('listAvailableTasks', () => {
     expect(await listed(rc)).toEqual([])
   })
 
+  it('refuses an on-demand runner polling the queue (a personal subscription); a direct claim still works', async () => {
+    const rc = await runner(owner, { accountType: 'personal-subscription', mode: 'on-demand' })
+    await refused(listAvailableTasks(deps, rc, {}), 'on_demand_runner')
+    const { run } = await claimTask(deps, rc, implement.id)
+    expect(run.state).toBe('running')
+  })
+
   it('admins see every project', async () => {
     const admin = await person('boss', { admin: true })
     expect(await listed(await runner(admin))).toEqual([implement.id])

@@ -92,6 +92,14 @@ describe('startLoop', () => {
     expect(fake.named('claim_task')).toHaveLength(1)
   })
 
+  it('exits with code 2 when core says the runner is on demand, without claiming', async () => {
+    fake.override.list_available_tasks = () => ({ error: { code: 'invalid_state', reason: 'on_demand_runner' } })
+    expect(await startLoop(deps(1), {})).toBe(2)
+    expect(lines.filter((l) => l.includes('on demand'))).toHaveLength(1)
+    expect(fake.named('list_available_tasks')).toHaveLength(1)
+    expect(fake.named('claim_task')).toHaveLength(0)
+  })
+
   it('polls again after pollSeconds until stopped', async () => {
     fake.tasks = []
     const stop = new AbortController()

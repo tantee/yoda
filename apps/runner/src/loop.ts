@@ -14,6 +14,12 @@ const WAIT = new Set(['outside_hours', 'runner_paused', 'all_runners_paused', 'a
 const FATAL = new Set(['runner_revoked'])
 
 export const EXIT_PERSONAL_UNATTENDED = 2
+/** The runner is on demand in the portal: it may not poll the queue. */
+export const EXIT_ON_DEMAND = 2
+
+const ON_DEMAND_MESSAGE =
+  'this runner is set to on demand in the portal, so it may not poll for tasks. Use `yoda-runner work <taskId>`, ' +
+  'or set the runner to unattended in the portal.'
 
 const PERSONAL_MESSAGE =
   'this runner uses a personal subscription, which may not work tasks unattended. Use `yoda-runner work <taskId>` ' +
@@ -48,7 +54,8 @@ export function stopOnSignals(
 /**
  * Unattended mode. Each poll lists available tasks and claims and works up to `cfg.maxConcurrent` at once; core's
  * `at_capacity` refusal is the source of truth for the runner's real limit. Returns the exit code: 0 when stopped
- * (or after one poll with `once`, once its work is done), 2 for `personal_unattended_not_allowed`, 1 for a revoked
+ * (or after one poll with `once`, once its work is done), 2 for `personal_unattended_not_allowed` or an on-demand
+ * runner (`on_demand_runner`), 1 for a revoked
  * runner or a rejected token.
  */
 export async function startLoop(deps: LoopDeps, opts: { once?: boolean } = {}): Promise<number> {
@@ -102,7 +109,10 @@ export async function startLoop(deps: LoopDeps, opts: { once?: boolean } = {}): 
     try {
       code = await poll()
     } catch (err) {
-      if (err instanceof McpToolError && err.code === 'unauthorized') {
+      if (err instanceof McpToolError && err.reason === 'on_demand_runner') {
+        log(`yoda-runner: ${ON_DEMAND_MESSAGE}`)
+        code = EXIT_ON_DEMAND
+      } else if (err instanceof McpToolError && err.code === 'unauthorized') {
         log('yoda-runner: core rejected the runner token (revoked or wrong)')
         code = 1
       } else {

@@ -65,9 +65,11 @@ function offered(rc: RunnerCtx, input: ListTasksInput): RunnerCapability[] {
 /**
  * Tasks the runner may claim unattended, urgent first then oldest (at most 20): open, unassigned AI tasks of
  * the current step of an active work item, not superseded or parked, whose capability the runner has, in
- * projects the owner sees that are not no-AI.
+ * projects the owner sees that are not no-AI. An on-demand runner never polls the queue: 409 `invalid_state`
+ * (`on_demand_runner`); it claims a task by id (`yoda-runner work <id>`).
  */
 export async function listAvailableTasks(deps: RunnerDeps, rc: RunnerCtx, input: ListTasksInput): Promise<AvailableTask[]> {
+  if (rc.runner.mode === 'on-demand') throw invalidState('on_demand_runner')
   const caps = offered(rc, input)
   if (caps.length === 0) return []
   const capList = sql.join(caps.map((c) => sql`${c}`), sql`, `)
