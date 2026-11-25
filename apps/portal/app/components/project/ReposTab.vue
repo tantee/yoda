@@ -85,7 +85,7 @@ onMounted(load)
       <tbody>
         <tr v-for="r in repos" :key="r.id" data-testid="repo-row">
           <td><a :href="r.webUrl" target="_blank" rel="noopener noreferrer" :title="t('gitlab.repos.open')">{{ r.pathWithNamespace }}</a></td>
-          <td class="text-medium-emphasis">{{ t('gitlab.repos.defaultBranch') }}: {{ r.defaultBranch }}</td>
+          <td class="text-medium-emphasis">{{ t('gitlab.repos.defaultBranch') }}: {{ r.defaultBranch ?? '—' }}</td>
           <td v-if="canManage" class="text-right">
             <v-btn icon="mdi-link-off" variant="text" :title="t('gitlab.repos.unlink')" data-testid="repo-unlink" @click="unlink(r)" />
           </td>
