@@ -23,6 +23,7 @@ import { workRoutes } from './routes/work.js'
 import { requestRoutes } from './routes/requests.js'
 import { chatRoutes } from './routes/chat.js'
 import { proposalRoutes } from './routes/proposals.js'
+import { discussionRoutes } from './routes/discussions.js'
 import { notificationRoutes } from './routes/notifications.js'
 import { adminRoutes } from './routes/admin.js'
 
@@ -74,6 +75,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   requestRoutes(app)
   chatRoutes(app)
   proposalRoutes(app)
+  discussionRoutes(app)
   notificationRoutes(app)
   adminRoutes(app)
   streamRoutes(app)
