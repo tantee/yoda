@@ -10,6 +10,7 @@ const docsUrl = useRuntimeConfig().public.runnerDocsUrl as string
 const isAdmin = computed(() => !!me.value?.isAdmin)
 const view = ref<'mine' | 'all'>('mine')
 const runners = ref<Runner[]>([])
+const loaded = ref(false)
 const settings = ref<RunnerSettings | null>(null)
 const error = ref('')
 const settingsError = ref('')
@@ -28,6 +29,8 @@ async function load() {
     error.value = ''
   } catch (e) {
     error.value = t(errorKey(e))
+  } finally {
+    loaded.value = true
   }
 }
 
@@ -122,7 +125,8 @@ useLiveEvents((e) => {
     </v-btn-toggle>
 
     <v-alert v-if="error" type="error" class="mb-4" data-testid="runners-error">{{ error }}</v-alert>
-    <p v-if="!runners.length && !error" class="text-medium-emphasis" data-testid="runners-empty">{{ t('runners.empty') }}</p>
+    <v-progress-linear v-if="!loaded" indeterminate class="mb-4" data-testid="runners-loading" />
+    <p v-else-if="!runners.length && !error" class="text-medium-emphasis" data-testid="runners-empty">{{ t('runners.empty') }}</p>
     <v-table v-else-if="runners.length" density="compact" class="text-no-wrap" data-testid="runners-table">
       <thead>
         <tr>

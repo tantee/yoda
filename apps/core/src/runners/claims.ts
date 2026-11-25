@@ -251,7 +251,24 @@ export async function heartbeat(deps: RunnerDeps, rc: RunnerCtx, runId: string):
     )
     .returning()
   if (!run) throw invalidState('run_not_active')
+  await publishHeartbeat(deps, run.id, run.taskId, now)
   return { leaseExpiresAt: run.leaseExpiresAt.toISOString() }
+}
+
+const HEARTBEAT_LIVE_MS = 60_000
+/** When each run last told the live stream about a heartbeat (in-process; at most once a minute per run). */
+const heartbeatPublished = new Map<string, number>()
+
+/** A live-only `run.heartbeat`, addressed to the project, so staff pages showing the run refresh its age. */
+async function publishHeartbeat(deps: RunnerDeps, runId: string, taskId: string, now: Date): Promise<void> {
+  const last = heartbeatPublished.get(runId)
+  if (last !== undefined && now.getTime() - last < HEARTBEAT_LIVE_MS) return
+  for (const [id, at] of heartbeatPublished) if (now.getTime() - at > 10 * HEARTBEAT_LIVE_MS) heartbeatPublished.delete(id)
+  heartbeatPublished.set(runId, now.getTime())
+  const [t] = await deps.db.select({ projectId: tasks.projectId, workItemId: tasks.workItemId }).from(tasks).where(eq(tasks.id, taskId))
+  if (!t) return
+  // Project-addressed: only staff who can see the project receive it (see `deliverable`); never requesters.
+  deps.bus.publish({ type: 'run.heartbeat', projectId: t.projectId, workItemId: t.workItemId, taskId, conversationId: null, personId: null })
 }
 
 /** Locks the task's project (share), work item and task, in the global order. */

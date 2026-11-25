@@ -233,6 +233,8 @@ export const EventType = z.enum([
   'discussion.raised', 'discussion.brief_ready', 'discussion.brief_failed', 'discussion.scheduled', 'discussion.decided', 'discussion.withdrawn',
   /** Live-only (never stored in `events`): someone gave an opinion or voted on a discussion. */
   'discussion.responded',
+  /** Live-only (never stored in `events`): a runner's heartbeat on a task (throttled), so open pages refresh the run. */
+  'run.heartbeat',
   /** Live-only (never stored in `events`): a message was posted in `conversationId`. */
   'message.created',
   /** Live-only (never stored in `events`): a notification was created for `personId`. */

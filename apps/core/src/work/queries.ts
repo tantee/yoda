@@ -270,6 +270,8 @@ export async function tasksWithContext(
     return TaskWithContext.parse({
       ...task,
       result: requesterView && task.result ? forRequesterResult(task.result) : task.result,
+      // Requesters see no template internals (which tasks run on AI runners).
+      capability: requesterView ? null : task.capability,
       workItemTitle: r.workItemTitle,
       workItemPriority: r.workItemPriority,
       projectName: r.projectName,

@@ -1,4 +1,4 @@
-import type { Me, WorkingHours } from '@yoda/shared'
+import type { LiveEvent, Me, WorkingHours } from '@yoda/shared'
 import { and, eq } from 'drizzle-orm'
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { AppDeps } from '../src/app.js'
@@ -6,6 +6,7 @@ import { agentRuns, aiCalls, discussions, events, people, projectMembers, projec
 import { claimTask, expireLeases, heartbeat, listAvailableTasks, releaseRun, requireLiveRun, type RunnerCtx } from '../src/runners/claims.js'
 import { meFromPerson, revokeRunner } from '../src/runners/records.js'
 import { newRunnerToken } from '../src/runners/tokens.js'
+import { deliverable } from '../src/routes/stream.js'
 import { runWork } from '../src/work/context.js'
 import { retryAiTask } from '../src/work/engine.js'
 import { getTask, getTodo, getWorkItemDetail, tasksWithContext } from '../src/work/queries.js'
@@ -306,6 +307,30 @@ describe('leases', () => {
     expect((await runsOf(own.id))[0]!.state).toBe('expired')
     expect(await taskRow(own.id)).toMatchObject({ state: 'in_progress', assigneeId: owner.id })
     await refused(requireLiveRun((await testDb()) as never, rc, run.id), 'run_not_active')
+  })
+
+  it('heartbeats tell the staff live stream at most once a minute per run; requesters never get it', async () => {
+    const rc = await runner(owner)
+    const { run } = await claimTask(deps, rc, implement.id)
+    const seen: LiveEvent[] = []
+    const off = deps.bus.subscribe((e) => { if (e.type === 'run.heartbeat') seen.push(e) })
+    try {
+      const at = async (s: number) => {
+        clock = new Date(WED_10.getTime() + s * 1000)
+        await heartbeat(deps, rc, run.id)
+      }
+      await at(30)
+      await at(60) // 30 s after the last one: throttled
+      await at(95)
+      expect(seen).toHaveLength(2)
+      expect(seen[0]).toEqual({ type: 'run.heartbeat', projectId, workItemId: itemId, taskId: implement.id, conversationId: null, personId: null })
+      const db = await testDb()
+      const [p] = await db.insert(people).values({ keycloakSub: 'sub-req', username: 'req', displayName: 'req', lastSeenStaff: false }).returning()
+      expect(await deliverable(db, meFromPerson(p!), seen[0]!)).toBe(false)
+      expect(await deliverable(db, owner, seen[0]!)).toBe(true)
+    } finally {
+      off()
+    }
   })
 
   it('a heartbeat from another runner is refused', async () => {
