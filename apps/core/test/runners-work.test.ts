@@ -219,11 +219,19 @@ describe('knowledge', () => {
     expect(ev).toMatchObject({ actorId: owner.id, actorKind: 'ai', payload: expect.objectContaining({ onBehalfOf: owner.id }) })
   })
 
-  it('searchForRunner searches as the owner, for the AI', async () => {
+  it('searchForRunner searches as the owner, for the AI, in the run\'s project and department knowledge only', async () => {
+    const db = await testDb()
+    const [elsewhere] = await db.insert(projects).values({ name: 'Elsewhere' }).returning()
+    await db.insert(projectMembers).values({ projectId: elsewhere!.id, personId: owner.id, roles: ['DEV'] })
     await entry({ scope: 'project', workItemId: null, type: 'fact', title: 'lab report format', body: 'lab report columns' })
     await entry({ scope: 'project', workItemId: null, type: 'fact', title: 'lab report noai', body: 'lab report hidden', noAi: true })
-    const hits = await searchForRunner(deps, rc, { query: 'lab report' })
-    expect(hits.map((h) => h.title)).toEqual(['lab report format'])
+    await entry({ scope: 'department', projectId: null, workItemId: null, type: 'fact', title: 'lab report policy', body: 'lab report rules' })
+    await entry({ scope: 'project', projectId: elsewhere!.id, workItemId: null, type: 'fact', title: 'lab report other', body: 'lab report elsewhere' })
+    const runId = await claim()
+    const hits = await searchForRunner(deps, rc, { runId, query: 'lab report' })
+    expect(hits.map((h) => h.title).sort()).toEqual(['lab report format', 'lab report policy'])
+    clock = new Date(WED_10.getTime() + 11 * 60_000)
+    await refused(searchForRunner(deps, rc, { runId, query: 'lab report' }), 'run_not_active')
   })
 
   it('postProgress writes a progress draft, records run.progress and extends the lease; requesters never see it', async () => {

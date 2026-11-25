@@ -105,9 +105,16 @@ export async function getContextPack(
   }
 }
 
-/** Knowledge search as the owner, without anything flagged "do not send to AI". */
+/**
+ * Knowledge search for a live run, as the owner, without anything flagged "do not send to AI": the run's project
+ * and department-wide knowledge only (a `workItemId` outside that project finds nothing).
+ */
 export async function searchForRunner(deps: RunnerWorkDeps, rc: RunnerCtx, input: SearchInput): Promise<KnowledgeSearchHit[]> {
-  return searchKnowledge(deps.db, rc.owner, { ...input, forAi: true }, deps.ai)
+  const run = await requireLiveRun(deps.db, rc, input.runId, nowOf(deps))
+  const [task] = await deps.db.select({ projectId: tasks.projectId }).from(tasks).where(eq(tasks.id, run.taskId))
+  if (!task) throw notFound()
+  const { query, workItemId, limit } = input
+  return searchKnowledge(deps.db, rc.owner, { query, workItemId, limit, projectId: task.projectId, forAi: true }, deps.ai)
 }
 
 /** A draft entry on the run's work item, written by `{ owner, ai }` (so attributed to the owner, on their behalf). */

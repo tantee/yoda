@@ -156,7 +156,8 @@ export type ClaimInput = z.infer<typeof ClaimInput>
 export const RunRef = z.object({ runId: uuid })
 export type RunRef = z.infer<typeof RunRef>
 
-export const SearchInput = z.object({
+/** Knowledge search for a run: scoped to the run's project (and department-wide knowledge). */
+export const SearchInput = RunRef.extend({
   query: z.string().min(1).max(500),
   workItemId: uuid.optional(),
   limit: z.number().int().min(1).max(20).optional(),

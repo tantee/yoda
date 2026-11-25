@@ -65,7 +65,8 @@ function runnerTools(deps: AppDeps, rc: RunnerCtx): Record<string, ToolDef<z.Any
       },
     }),
     search_knowledge: tool({
-      description: 'Search the knowledge base (facts, documents, decisions) your owner can see. Returns { hits }.',
+      description:
+        'Search the knowledge base (facts, documents, decisions) for your run: the run\'s project and department-wide knowledge your owner can see. Takes the runId. Returns { hits }.',
       input: SearchInput,
       run: async (i) => ({ hits: await searchForRunner(deps, rc, i) }),
     }),
