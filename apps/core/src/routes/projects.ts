@@ -1,6 +1,6 @@
 import type { Me } from '@yoda/shared'
 import { MemberRolesPut, Project, ProjectCreate, ProjectDetail, ProjectPatch } from '@yoda/shared'
-import { and, asc, eq } from 'drizzle-orm'
+import { and, asc, eq, sql } from 'drizzle-orm'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { forbidden, lastPm, notStaff, notFound, requireAdmin, requireStaff } from '../auth/plugin.js'
@@ -38,6 +38,27 @@ async function loadDetail(db: Db | Tx, id: string): Promise<ProjectDetail | null
     .where(eq(projectMembers.projectId, id))
     .orderBy(asc(people.displayName), asc(people.id))
   return ProjectDetail.parse({ ...toProject(row), members })
+}
+
+/**
+ * Outstanding staff tasks per person across all projects, in one grouped query: assigned and open or in
+ * progress, plus proposed to them. People without any are absent.
+ */
+async function openTaskCounts(db: Db, personIds: string[]): Promise<Map<string, number>> {
+  if (!personIds.length) return new Map()
+  const ids = sql.join(personIds.map((id) => sql`${id}::uuid`), sql`, `)
+  const rows = await db.execute<{ person_id: string; n: number }>(sql`
+    SELECT person_id, count(*)::int AS n FROM (
+      SELECT t.assignee_id AS person_id FROM tasks t
+        WHERE t.role <> 'REQUESTER' AND t.superseded_at IS NULL AND t.state IN ('open', 'in_progress')
+          AND t.assignee_id IN (${ids})
+      UNION ALL
+      SELECT t.proposed_assignee_id FROM tasks t
+        WHERE t.role <> 'REQUESTER' AND t.superseded_at IS NULL AND t.state = 'proposed'
+          AND t.proposed_assignee_id IN (${ids})
+    ) x GROUP BY person_id
+  `)
+  return new Map(rows.map((r) => [r.person_id, r.n]))
 }
 
 const ProjectParams = z.object({ id: z.string().uuid() })
@@ -89,7 +110,8 @@ export function projectRoutes(app: FastifyInstance): void {
     if (!detail) throw notFound()
     const me = request.me
     if (!me.isAdmin && !detail.members.some((m) => m.personId === me.id)) throw notFound()
-    return detail
+    const load = await openTaskCounts(db(), detail.members.map((m) => m.personId))
+    return { ...detail, members: detail.members.map((m) => ({ ...m, openTasks: load.get(m.personId) ?? 0 })) }
   })
 
   app.put('/projects/:id/members/:personId', async (request) => {

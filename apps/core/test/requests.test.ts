@@ -186,6 +186,47 @@ describe('requesters in the workflow', () => {
     expect((await requests(nurse))[0]).toMatchObject({ status: 'done', currentStepName: null })
   })
 
+  it('review and approval tasks are decided straight from open (no start), by staff and the requester', async () => {
+    const p = await project([[pm, ['PM']], [dev, ['DEV', 'SA']], [qc, ['QC']]])
+    const wi = await createItem(p, { requesterId: nurse.id, templateKey: 'bug-fix' })
+    await drive(wi.id, 'accept-bug', pm, approve)
+    await drive(wi.id, 'implement', dev, { text: 'fix' })
+    await drive(wi.id, 'draft-tests', qc, { text: 'tests' })
+
+    // Staff reviewer: request changes from open (a comment is required), then approve the rework from open.
+    let review = (await active(wi.id, 'review-code'))!
+    if (review.assigneeId !== dev.id) {
+      expect((await call(pm, 'POST', `/tasks/${review.id}/assign`, { personId: dev.id })).statusCode).toBe(200)
+    }
+    expect((await active(wi.id, 'review-code'))!.state).toBe('open')
+    const noComment = await call(dev, 'POST', `/tasks/${review.id}/submit`, { text: ' ', decision: 'changes' })
+    expect(noComment.statusCode).toBe(422)
+    expect(noComment.json()).toEqual({ error: 'comment_required' })
+    const changes = await call(dev, 'POST', `/tasks/${review.id}/submit`, { text: 'แก้ timezone', decision: 'changes' })
+    expect(changes.statusCode).toBe(200)
+    expect(changes.json()).toMatchObject({ state: 'rejected', result: { decision: 'changes', text: 'แก้ timezone' } })
+    await drive(wi.id, 'implement', dev, { text: 'fixed again' })
+    review = (await active(wi.id, 'review-code'))!
+    expect(review.attempt).toBe(2)
+    if (review.assigneeId !== dev.id) {
+      expect((await call(pm, 'POST', `/tasks/${review.id}/assign`, { personId: dev.id })).statusCode).toBe(200)
+    }
+    expect((await active(wi.id, 'review-code'))!.state).toBe('open')
+    const approved = await call(dev, 'POST', `/tasks/${review.id}/submit`, { text: '', decision: 'approve' })
+    expect(approved.statusCode).toBe(200)
+    expect(approved.json()).toMatchObject({ state: 'accepted', result: { decision: 'approve' } })
+    await acceptStepAdvance(app, pm, wi.id)
+    await drive(wi.id, 'verify', qc, { text: 'ok' })
+    await drive(wi.id, 'approve-release', qc, approve)
+
+    // Requester acceptance: changes from open, then (after the rework) approve from open.
+    const accept = (await active(wi.id, 'accept-delivery'))!
+    expect(accept).toMatchObject({ role: 'REQUESTER', type: 'approval', state: 'open', assigneeId: nurse.id })
+    const back = await call(nurse, 'POST', `/tasks/${accept.id}/submit`, { text: 'ยังแสดงผลซ้ำ', decision: 'changes' })
+    expect(back.statusCode).toBe(200)
+    expect(back.json()).toMatchObject({ state: 'rejected', result: { decision: 'changes' } })
+  })
+
   it('without a requester, requester tasks go to the owner', async () => {
     const p = await project([[pm, ['PM']], [dev, ['DEV']], [qc, ['QC']]])
     const wi = await createItem(p, { templateKey: 'bug-fix', ownerId: dev.id })

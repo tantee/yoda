@@ -141,7 +141,11 @@ async function sendChanges() {
   text.value = changesReason.value
   const ok = await act('submit', { text: changesReason.value, decision: 'changes', attachmentIds: attachmentIds() })
   if (ok) changesOpen.value = false
-  else changesError.value = error.value
+  else {
+    // Shown once, in the dialog the person is looking at.
+    changesError.value = error.value
+    error.value = ''
+  }
 }
 
 function onAssigned(updated: TaskWithContext) {
@@ -383,9 +387,9 @@ useLiveEvents((e) => {
 
       <TaskAssignDialog v-if="canManage && project" v-model="assignOpen" :task="task" :members="project.members" @assigned="onAssigned" />
 
-      <v-dialog v-model="changesOpen" max-width="560" :persistent="busy || !!changesReason.trim()" :fullscreen="xs">
+      <v-dialog v-model="changesOpen" aria-labelledby="changes-dialog-title" max-width="560" :persistent="busy || !!changesReason.trim()" :fullscreen="xs">
         <v-card data-testid="changes-dialog">
-          <v-card-title class="text-wrap">{{ t('task.changesTitle', { title }) }}</v-card-title>
+          <v-card-title id="changes-dialog-title" class="text-wrap">{{ t('task.changesTitle', { title }) }}</v-card-title>
           <v-card-text>
             <p class="text-body-2 text-medium-emphasis mb-3">{{ t('task.changesHint') }}</p>
             <v-textarea

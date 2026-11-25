@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { LocalizedText, ProjectDetail, ProjectMember, ProjectStatus, TaskWithContext } from '@yoda/shared'
+import type { LocalizedText, ProjectDetail, ProjectMember, TaskWithContext } from '@yoda/shared'
 import { useDisplay } from 'vuetify'
 import { localized } from '~/utils/localized'
 
@@ -19,34 +19,40 @@ const emit = defineEmits<{ 'update:modelValue': [boolean]; assigned: [TaskWithCo
 const { t, locale } = useI18n()
 const api = useApi()
 const { xs } = useDisplay()
+const titleId = `assign-title-${useId()}`
 const chosen = ref<string | null>(null)
 const loaded = ref<ProjectMember[]>([])
-const load = ref<Map<string, number>>(new Map())
+const loading = ref(false)
 const busy = ref(false)
 const error = ref('')
 
+// The members' load (`openTasks`) comes with the project detail (`GET /projects/:id`).
 const people = computed(() => props.members ?? loaded.value)
 const items = computed(() =>
-  people.value.map(m => ({ value: m.personId, title: m.displayName, roles: m.roles, open: load.value.get(m.personId) })),
+  people.value.map(m => ({ value: m.personId, title: m.displayName, roles: m.roles, open: m.openTasks })),
 )
 
+let seq = 0
 watch(
   () => props.modelValue,
   async (open) => {
     if (!open) return
+    // Fresh state each time it opens; responses from an earlier opening are dropped.
+    const mine = ++seq
     error.value = ''
+    busy.value = false
     chosen.value = props.task.proposedAssigneeId ?? props.task.assigneeId ?? null
-    if (!props.members) {
-      try {
-        loaded.value = (await api<ProjectDetail>(`/projects/${props.task.projectId}`)).members
-      } catch (e) {
-        error.value = t(errorKey(e))
-      }
+    if (props.members) return
+    loaded.value = []
+    loading.value = true
+    try {
+      const detail = await api<ProjectDetail>(`/projects/${props.task.projectId}`)
+      if (mine === seq) loaded.value = detail.members
+    } catch (e) {
+      if (mine === seq) error.value = t(errorKey(e))
+    } finally {
+      if (mine === seq) loading.value = false
     }
-    // Load is a hint only: the picker works without it.
-    api<ProjectStatus>(`/projects/${props.task.projectId}/status`)
-      .then((s) => { load.value = new Map(s.people.map(p => [p.personId, p.openTasks])) })
-      .catch(() => { load.value = new Map() })
   },
   { immediate: true },
 )
@@ -55,24 +61,25 @@ const close = () => emit('update:modelValue', false)
 
 async function assign() {
   if (!chosen.value) return
+  const mine = seq
   error.value = ''
   busy.value = true
   try {
     const updated = await api<TaskWithContext>(`/tasks/${props.task.id}/assign`, { method: 'POST', body: { personId: chosen.value } })
     emit('assigned', updated)
-    close()
+    if (mine === seq) close()
   } catch (e) {
-    error.value = t(errorKey(e))
+    if (mine === seq) error.value = t(errorKey(e))
   } finally {
-    busy.value = false
+    if (mine === seq) busy.value = false
   }
 }
 </script>
 
 <template>
-  <v-dialog :model-value="modelValue" max-width="480" :fullscreen="xs" :persistent="busy" @update:model-value="v => emit('update:modelValue', v)">
+  <v-dialog :model-value="modelValue" :aria-labelledby="titleId" max-width="480" :fullscreen="xs" :persistent="busy" @update:model-value="v => emit('update:modelValue', v)">
     <v-card data-testid="assign-dialog">
-      <v-card-title class="text-wrap">{{ t('task.assignTitle', { title: localized(task.title, locale) }) }}</v-card-title>
+      <v-card-title :id="titleId" class="text-wrap">{{ t('task.assignTitle', { title: localized(task.title, locale) }) }}</v-card-title>
       <v-card-text>
         <v-autocomplete
           v-model="chosen"
@@ -80,6 +87,7 @@ async function assign() {
           :label="t('task.assignee')"
           prepend-inner-icon="mdi-account-search-outline"
           auto-select-first
+          :loading="loading"
           data-testid="assignee-select"
         >
           <template #item="{ props: itemProps, item }">

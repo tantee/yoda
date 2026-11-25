@@ -25,6 +25,11 @@ export const ProjectMember = z.object({
   personId: z.string().uuid(),
   displayName: z.string(),
   roles: z.array(ProjectRole).min(1),
+  /**
+   * `GET /projects/:id` only: the member's outstanding staff tasks across all projects (assigned open or in
+   * progress, plus proposed to them), for the assign picker. Absent in other responses.
+   */
+  openTasks: z.number().int().optional(),
 })
 export type ProjectMember = z.infer<typeof ProjectMember>
 

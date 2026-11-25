@@ -19,9 +19,11 @@ const { date } = useDateFormat()
 
 const itemOf = (task: TaskWithContext) => props.items[task.workItemId]
 const confirmable = (task: TaskWithContext) => task.state === 'proposed' && !!task.proposedAssigneeId
+/** Without work item context (tasks in the requester view) there is nothing to say. */
 const due = (task: TaskWithContext) => {
-  const d = itemOf(task)?.targetDate
-  return d ? t('todo.due', { date: date(d) }) : t('todo.noDue')
+  const item = itemOf(task)
+  if (!item) return ''
+  return item.targetDate ? t('todo.due', { date: date(item.targetDate) }) : t('todo.noDue')
 }
 </script>
 
@@ -49,7 +51,6 @@ const due = (task: TaskWithContext) => {
           <td class="task-rows__project text-body-2 text-medium-emphasis">{{ task.projectName }}</td>
           <td class="task-rows__step">
             <StepTrack v-if="itemOf(task)?.steps.length" :steps="itemOf(task)!.steps" compact class="task-rows__track" />
-            <span v-else class="text-medium-emphasis">—</span>
           </td>
           <td v-if="mode === 'confirmations'"><TodoWaiting :task="task" @retried="emit('retried')" /></td>
           <td v-else><StatusChip kind="task" :value="task.state" /></td>
@@ -76,7 +77,7 @@ const due = (task: TaskWithContext) => {
           <TodoWaiting v-if="mode === 'confirmations'" :task="task" @retried="emit('retried')" />
           <template v-else>
             <StatusChip kind="task" :value="task.state" />
-            <span class="tabular-nums">{{ due(task) }}</span>
+            <span v-if="due(task)" class="tabular-nums">{{ due(task) }}</span>
           </template>
         </div>
         <div v-if="mode === 'confirmations'" class="task-rows__stack-actions">

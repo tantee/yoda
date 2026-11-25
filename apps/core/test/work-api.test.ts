@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify'
-import type { Task, TaskWithContext, Todo, WorkItemDetail } from '@yoda/shared'
+import type { ProjectDetail, Task, TaskWithContext, Todo, WorkItemDetail } from '@yoda/shared'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { attachments } from '../src/db/schema.js'
@@ -212,6 +212,10 @@ describe('work API', () => {
     expect(ok.json()).toMatchObject({ assigneeId: dev.id, assigneeName: 'สมชาย', state: 'open' })
     expect((await todo(pm)).confirmations.map((c) => c.id)).not.toContain(verify.id)
     expect((await todo(dev)).tasks.map((x) => x.id)).toContain(verify.id)
+    // The assign picker's load: outstanding staff tasks per member, on the project detail only.
+    const members = ((await call(pm, 'GET', `/projects/${p}`)).json() as ProjectDetail).members
+    expect(members.find((m) => m.personId === dev.id)?.openTasks).toBe(1)
+    expect(members.every((m) => typeof m.openTasks === 'number')).toBe(true)
 
     const d = await detail(pm, wi.id)
     expect(d.steps.map((s) => s.status)).toEqual(['done', 'done', 'current', 'pending'])
@@ -222,6 +226,13 @@ describe('work API', () => {
     const seqTypes = d.events.map((e) => e.type)
     expect(seqTypes[0]).toBe('work_item.created')
     expect(seqTypes.at(-1)).toBe('task.assigned')
+
+    // In progress still counts; requesters and non-members never get the project.
+    expect((await call(dev, 'POST', `/tasks/${verify.id}/start`)).statusCode).toBe(200)
+    const again = ((await call(pm, 'GET', `/projects/${p}`)).json() as ProjectDetail).members
+    expect(again.find((m) => m.personId === dev.id)?.openTasks).toBe(1)
+    expect((await call(outsider, 'GET', `/projects/${p}`)).statusCode).toBe(404)
+    expect((await call(nurse, 'GET', `/projects/${p}`)).statusCode).toBe(403)
   })
 
   it('projects without a PM surface unassigned tasks to admins only', async () => {
