@@ -233,11 +233,21 @@
     "gitlab": {
       "issue_synced": "ซิงก์ issue ใน GitLab แล้ว",
       "issue_sync_failed": "ซิงก์ issue ใน GitLab ไม่สำเร็จ",
+      "mr_requested": "AI ขอเปิด merge request",
       "mr_opened": "เปิด merge request แล้ว",
       "mr_merged": "merge แล้ว",
       "mr_closed": "ปิด merge request โดยไม่ merge",
       "pipeline": "สถานะไปป์ไลน์เปลี่ยน",
       "note": "มีความเห็นใหม่ใน GitLab"
+    },
+    "run": {
+      "claimed": "AI runner เริ่มทำงานนี้",
+      "progress": "AI runner รายงานความคืบหน้า",
+      "succeeded": "AI runner ทำงานนี้เสร็จแล้ว",
+      "failed": "AI runner ทำงานนี้ไม่สำเร็จ",
+      "expired": "AI runner ขาดการติดต่อ งานกลับเข้าคิว",
+      "parked": "AI runner รอคำตอบ",
+      "released": "AI runner คืนงานนี้"
     },
     "discussion": {
       "raised": "เปิดประเด็นสนทนา",

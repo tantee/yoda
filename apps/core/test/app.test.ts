@@ -55,6 +55,14 @@ describe('loadConfig', () => {
     expect(loadConfig({ ...baseEnv, GITLAB_URL: '', GITLAB_WEBHOOK_SECRET: '' }).gitlabUrl).toBeUndefined()
     expect(() => loadConfig({ ...baseEnv, GITLAB_WEBHOOK_SECRET: 'x'.repeat(10) })).toThrow(/GITLAB_WEBHOOK_SECRET/)
   })
+  it('configures runners', () => {
+    const c = loadConfig(baseEnv)
+    expect(c.runnerLeaseSeconds).toBe(600)
+    expect(c.mcpEnabled).toBe(true)
+    expect(loadConfig({ ...baseEnv, RUNNER_LEASE_SECONDS: '120', MCP_ENABLED: 'false' })).toMatchObject({ runnerLeaseSeconds: 120, mcpEnabled: false })
+    expect(() => loadConfig({ ...baseEnv, RUNNER_LEASE_SECONDS: '30' })).toThrow(/RUNNER_LEASE_SECONDS/)
+    expect(() => loadConfig({ ...baseEnv, MCP_ENABLED: 'yes' })).toThrow(/MCP_ENABLED/)
+  })
   it('requires S3 credentials', () => {
     const { S3_ACCESS_KEY: _a, S3_SECRET_KEY: _s, ...rest } = baseEnv
     expect(() => loadConfig(rest)).toThrow(/S3_ACCESS_KEY/)

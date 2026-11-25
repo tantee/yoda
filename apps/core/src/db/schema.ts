@@ -19,7 +19,9 @@ import {
   type AnyPgColumn,
 } from 'drizzle-orm/pg-core'
 import {
+  AccountType,
   ActorKind,
+  AgentRunState,
   AuthorKind,
   ConversationKind,
   DiscussionResponseKind,
@@ -34,13 +36,18 @@ import {
   Priority,
   ProposalKind,
   ProposalState,
+  RunnerCapability,
+  RunnerKind,
+  RunnerMode,
   SourceKind,
   TaskExecutor,
   TaskState,
   TaskType,
   TemplateRole,
   WorkItemState,
+  type RunUsage,
   type TaskResult,
+  type WorkingHours,
 } from '@yoda/shared'
 
 const list = (values: readonly string[]) => sql.raw(values.map((v) => `'${v}'`).join(', '))
@@ -165,6 +172,8 @@ export const tasks = pgTable(
      * no longer counts toward its step (an accepted one must be done again).
      */
     supersededAt: timestamp('superseded_at', { withTimezone: true }),
+    /** Set while a runner's question to people is open; the task is not offered to runners meanwhile. */
+    parkedDiscussionId: uuid('parked_discussion_id').references((): AnyPgColumn => discussions.id, { onDelete: 'set null' }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -588,5 +597,86 @@ export const discussionResponses = pgTable(
     uniqueIndex('discussion_responses_one_vote')
       .on(t.discussionId, t.authorId)
       .where(sql`${t.kind} = 'vote'`),
+  ],
+)
+
+/** A machine that works AI tasks for its owner over MCP. Only the SHA-256 of its token is stored. */
+export const runners = pgTable(
+  'runners',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    name: text('name').notNull(),
+    kind: text('kind').notNull(),
+    ownerId: uuid('owner_id')
+      .notNull()
+      .references(() => people.id),
+    accountType: text('account_type').notNull(),
+    capabilities: text('capabilities').array().notNull(),
+    mode: text('mode').notNull(),
+    maxConcurrent: integer('max_concurrent').notNull().default(1),
+    workingHours: jsonb('working_hours').$type<WorkingHours>(),
+    paused: boolean('paused').notNull().default(false),
+    tokenHash: text('token_hash').notNull().unique(),
+    tokenPrefix: text('token_prefix').notNull(),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    lastSeenAt: timestamp('last_seen_at', { withTimezone: true }),
+    createdBy: uuid('created_by')
+      .notNull()
+      .references(() => people.id),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    check('runners_kind_check', sql`${t.kind} in (${list(RunnerKind.options)})`),
+    check('runners_account_type_check', sql`${t.accountType} in (${list(AccountType.options)})`),
+    check('runners_mode_check', sql`${t.mode} in (${list(RunnerMode.options)})`),
+    check(
+      'runners_capabilities_check',
+      sql`cardinality(${t.capabilities}) > 0 and ${t.capabilities} <@ array[${list(RunnerCapability.options)}]::text[]`,
+    ),
+    check('runners_max_concurrent_check', sql`${t.maxConcurrent} between 1 and 4`),
+    index('runners_owner_idx').on(t.ownerId),
+  ],
+)
+
+/** Runner settings: a single row (id 1), seeded by its migration. */
+export const runnerSettings = pgTable(
+  'runner_settings',
+  {
+    id: integer('id').primaryKey().default(1),
+    paused: boolean('paused').notNull().default(false),
+    allowPersonalUnattended: boolean('allow_personal_unattended').notNull().default(false),
+  },
+  (t) => [check('runner_settings_single_row', sql`${t.id} = 1`)],
+)
+
+/** One runner's attempt at one task, held by a lease that heartbeats extend. */
+export const agentRuns = pgTable(
+  'agent_runs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    taskId: uuid('task_id')
+      .notNull()
+      .references(() => tasks.id, { onDelete: 'cascade' }),
+    runnerId: uuid('runner_id')
+      .notNull()
+      .references(() => runners.id),
+    ownerId: uuid('owner_id')
+      .notNull()
+      .references(() => people.id),
+    state: text('state').notNull().default('running'),
+    startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
+    heartbeatAt: timestamp('heartbeat_at', { withTimezone: true }).notNull().defaultNow(),
+    leaseExpiresAt: timestamp('lease_expires_at', { withTimezone: true }).notNull(),
+    endedAt: timestamp('ended_at', { withTimezone: true }),
+    branch: text('branch'),
+    error: text('error'),
+    usage: jsonb('usage').$type<RunUsage>(),
+  },
+  (t) => [
+    check('agent_runs_state_check', sql`${t.state} in (${list(AgentRunState.options)})`),
+    uniqueIndex('agent_runs_one_running')
+      .on(t.taskId)
+      .where(sql`${t.state} = 'running'`),
+    index('agent_runs_runner_state_idx').on(t.runnerId, t.state),
   ],
 )

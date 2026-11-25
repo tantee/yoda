@@ -29,10 +29,11 @@ export function testDb(): Promise<Db> {
 }
 
 export async function resetDb(db: Db): Promise<void> {
-  await db.execute(sql`TRUNCATE gitlab_settings, gitlab_deliveries, merge_requests, work_item_repos, project_repos, department_settings, discussion_responses, discussions, agendas, notifications, proposals, conversation_reads, messages, conversations, ai_calls, knowledge_chunks, knowledge_entries, attachments, people, projects, project_members, events, tasks, work_items, workflow_templates CASCADE`)
+  await db.execute(sql`TRUNCATE runner_settings, agent_runs, runners, gitlab_settings, gitlab_deliveries, merge_requests, work_item_repos, project_repos, department_settings, discussion_responses, discussions, agendas, notifications, proposals, conversation_reads, messages, conversations, ai_calls, knowledge_chunks, knowledge_entries, attachments, people, projects, project_members, events, tasks, work_items, workflow_templates CASCADE`)
   // The migration seeds the single department_settings row; TRUNCATE (cascading from people) removes it.
   await db.execute(sql`INSERT INTO department_settings (id) VALUES (1) ON CONFLICT DO NOTHING`)
   await db.execute(sql`INSERT INTO gitlab_settings (id) VALUES (1) ON CONFLICT DO NOTHING`)
+  await db.execute(sql`INSERT INTO runner_settings (id) VALUES (1) ON CONFLICT DO NOTHING`)
   await seedTemplates(db)
 }
 
@@ -80,6 +81,8 @@ export async function testDeps(overrides: Partial<AppDeps> = {}): Promise<AppDep
       aiWorkers: 2,
       dailyTaskCap: 8,
       portalUrl: 'http://localhost:3000',
+      runnerLeaseSeconds: 600,
+      mcpEnabled: true,
   }
   const db = await testDb()
   const bus = new LiveBus()

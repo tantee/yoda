@@ -233,11 +233,21 @@
     "gitlab": {
       "issue_synced": "GitLab issue synced",
       "issue_sync_failed": "GitLab issue sync failed",
+      "mr_requested": "Merge request requested by AI",
       "mr_opened": "Merge request opened",
       "mr_merged": "Merge request merged",
       "mr_closed": "Merge request closed without merging",
       "pipeline": "Pipeline status changed",
       "note": "New comment in GitLab"
+    },
+    "run": {
+      "claimed": "AI runner started the task",
+      "progress": "AI runner reported progress",
+      "succeeded": "AI runner finished the task",
+      "failed": "AI runner couldn't finish the task",
+      "expired": "AI runner stopped responding; task returned to the queue",
+      "parked": "AI runner is waiting for an answer",
+      "released": "AI runner gave the task back"
     },
     "discussion": {
       "raised": "Discussion raised",

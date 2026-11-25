@@ -28,6 +28,10 @@ export type Config = {
   gitlabWebhookSecret?: string
   /** Base URL of the portal, used for links from GitLab issues back to it. */
   portalUrl: string
+  /** How long a runner's claim lasts without a heartbeat. */
+  runnerLeaseSeconds: number
+  /** Serves the runner MCP endpoint at `/mcp`. */
+  mcpEnabled: boolean
 }
 
 const modelId = z.string().regex(/^(anthropic|openai):.+$/, 'must be provider:model with provider anthropic or openai')
@@ -58,6 +62,8 @@ const envSchema = z.object({
   GITLAB_TOKEN: optional(z.string()),
   GITLAB_WEBHOOK_SECRET: optional(z.string().min(16)),
   PORTAL_URL: z.string().url().default('http://localhost:3000'),
+  RUNNER_LEASE_SECONDS: z.coerce.number().int().min(60).max(86400).default(600),
+  MCP_ENABLED: z.preprocess((v) => (v === '' ? undefined : v), z.enum(['true', 'false']).default('true')),
 })
 
 export function loadConfig(env: NodeJS.ProcessEnv): Config {
@@ -95,5 +101,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     gitlabToken: e.GITLAB_TOKEN,
     gitlabWebhookSecret: e.GITLAB_WEBHOOK_SECRET,
     portalUrl: e.PORTAL_URL.replace(/\/+$/, ''),
+    runnerLeaseSeconds: e.RUNNER_LEASE_SECONDS,
+    mcpEnabled: e.MCP_ENABLED === 'true',
   }
 }
