@@ -10,7 +10,7 @@ import { aiCalls, discussions, events, knowledgeEntries, people, projectMembers,
 import { InlineJobQueue, type JobName } from '../src/jobs/queue.js'
 import { LiveBus } from '../src/live/bus.js'
 import { createEntry } from '../src/knowledge/service.js'
-import { isoWeek, runWeeklySummary, weeklyMaterial } from '../src/status/weekly.js'
+import { isoWeek, queueWeeklyRegenerate, runWeeklySummary, summaryWeek, weekStart, weeklyMaterial } from '../src/status/weekly.js'
 import { runWork } from '../src/work/context.js'
 import { createWorkItem } from '../src/work/engine.js'
 import { textStream } from './ai-mocks.js'
@@ -112,6 +112,16 @@ describe('isoWeek', () => {
     expect(isoWeek(new Date(at))).toBe(week)
   })
 
+  it.each([
+    ['2026-W48', '2026-11-22T17:00:00.000Z'],
+    ['2026-W53', '2026-12-27T17:00:00.000Z'],
+    ['2027-W01', '2027-01-03T17:00:00.000Z'],
+    ['2025-W01', '2024-12-29T17:00:00.000Z'],
+  ])('weekStart(%s) is Monday 00:00 Bangkok, %s', (week, at) => {
+    expect(weekStart(week).toISOString()).toBe(at)
+    expect(isoWeek(weekStart(week))).toBe(week)
+  })
+
   it('uses the Asia/Bangkok date, not UTC', () => {
     // Sunday 17:30 UTC is already Monday 00:30 in Bangkok.
     expect(isoWeek(new Date('2027-01-03T17:30:00Z'))).toBe('2027-W01')
@@ -163,6 +173,23 @@ describe('weeklyMaterial', () => {
     expect(m.length).toBeLessThanOrEqual(40_000)
   })
 
+  it('redacts Latin requester names on word boundaries only, from 3 letters', async () => {
+    const s = await setup()
+    const ann = await person('Ann', false)
+    const jo = await person('Jo', false)
+    for (const r of [ann, jo]) {
+      const id = await runWork(deps, { id: s.pm.id, kind: 'person' }, (ctx) =>
+        createWorkItem(ctx, s.pm, s.projectId, { title: `item ${r.displayName}x`, description: '', templateKey: 'bug-fix', priority: 'normal' }),
+      )
+      await db.update(workItems).set({ requesterId: r.id }).where(eq(workItems.id, id))
+    }
+    await runWork(deps, { id: null, kind: 'system' }, (c) =>
+      createEntry(c, null, { scope: 'project', projectId: s.projectId, type: 'document', title: 'notes', body: 'Joint review with Ann; Annual plan', status: 'confirmed', noAi: false }),
+    )
+    const m = await weeklyMaterial(db, s.projectId, sinceWeek())
+    expect(m).toContain('Joint review with [ผู้ขอ / requester]; Annual plan')
+  })
+
   it('is empty for a quiet week', async () => {
     const s = await setup()
     await db.update(events).set({ createdAt: daysAgo(9) }).where(eq(events.projectId, s.projectId))
@@ -182,7 +209,7 @@ describe('weeklyMaterial', () => {
 })
 
 describe('runWeeklySummary', () => {
-  const week = '2026-W48'
+  const week = isoWeek(new Date())
 
   it('writes one draft entry per project-week; a second run is a no-op with no AI call', async () => {
     const s = await setup()
@@ -253,9 +280,47 @@ describe('runWeeklySummary', () => {
     await runWeeklySummary(deps, { projectId: s.projectId, week, force: false })
     expect(prompts).toHaveLength(0)
     expect(await weeklyEntries(s.projectId)).toHaveLength(0)
+    // A rerun (restart, regenerate) records the skip once per project-week.
+    await runWeeklySummary(deps, { projectId: s.projectId, week, force: true })
     const skipped = await typedEvents(s.projectId, 'status.weekly_summary_skipped')
     expect(skipped).toHaveLength(1)
     expect(skipped[0]).toMatchObject({ reason: 'budget_exceeded', actorKind: 'system', payload: { week } })
+  })
+})
+
+describe('summary window', () => {
+  const lastWeek = () => summaryWeek(new Date())
+
+  it('the scheduled week reads only that week, not the current one', async () => {
+    const s = await setup()
+    await db.update(events).set({ createdAt: daysAgo(30) }).where(eq(events.projectId, s.projectId))
+    const inLastWeek = new Date(weekStart(lastWeek()).getTime() + 86_400_000)
+    await db.insert(events).values({ projectId: s.projectId, workItemId: s.workItemId, type: 'task.started', createdAt: inLastWeek })
+    await event(s, 'gitlab.mr_merged', 0)
+    await runWeeklySummary(deps, { projectId: s.projectId, week: lastWeek(), force: false })
+    expect(prompts).toHaveLength(1)
+    expect(prompts[0]).toContain('task.started')
+    expect(prompts[0]).not.toContain('gitlab.mr_merged')
+  })
+
+  it('a regenerate writes the current week and leaves last week untouched', async () => {
+    const s = await setup()
+    const inLastWeek = new Date(weekStart(lastWeek()).getTime() + 86_400_000)
+    await db.insert(events).values({ projectId: s.projectId, workItemId: s.workItemId, type: 'task.started', createdAt: inLastWeek })
+    await runWeeklySummary(deps, { projectId: s.projectId, week: lastWeek(), force: false })
+    jobs.runWeekly = true
+    await queueWeeklyRegenerate(deps, s.projectId)
+    await jobs.drain()
+    expect(jobs.ids('weekly-summary-project')).toEqual([`${s.projectId}:${isoWeek(new Date())}:force`])
+    const rows = await weeklyEntries(s.projectId)
+    const refs = rows.map((r) => [r.sourceRef, r.version, r.supersededAt === null]).sort((a, b) => String(a[0]).localeCompare(String(b[0])))
+    expect(refs).toEqual([
+      [`weekly:${s.projectId}:${lastWeek()}`, 1, true],
+      [`weekly:${s.projectId}:${isoWeek(new Date())}`, 1, true],
+    ])
+    expect(rows.find((r) => r.sourceRef!.endsWith(lastWeek()))!.body).toBe('## ความคืบหน้า\nสรุปรอบที่ 1')
+    // The current week's material starts on Monday: last week's event is not in it.
+    expect(prompts[1]).not.toContain('task.started')
   })
 })
 
@@ -316,7 +381,8 @@ describe('POST /projects/:id/weekly-summary', () => {
     const res = await call(pm, url)
     expect(res.statusCode).toBe(202)
     expect((await call(admin, url)).statusCode).toBe(202)
-    const week = isoWeek(sinceWeek())
+    // A regenerate is for the week in progress.
+    const week = isoWeek(new Date())
     expect(jobs.ids('weekly-summary-project')).toEqual([`${id}:${week}:force`, `${id}:${week}:force`])
   })
 })

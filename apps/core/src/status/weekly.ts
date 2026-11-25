@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, isNull, ne, sql, type SQL } from 'drizzle-orm'
+import { and, asc, desc, eq, gte, isNull, lt, ne, sql, type SQL } from 'drizzle-orm'
 import type { AppDeps } from '../app.js'
 import { AiFailed, AiRefused, errorSummary } from '../ai/gateway.js'
 import { WEEKLY_SUMMARY_SYSTEM } from '../ai/prompts.js'
@@ -39,7 +39,19 @@ export function isoWeek(date: Date, tz = 'Asia/Bangkok'): string {
   return `${year}-W${String(week).padStart(2, '0')}`
 }
 
-/** The week a summary written at `now` reports on: the one the past 7 days started in (Monday 08:00 → last week). */
+/** Bangkok is UTC+7 all year (no daylight saving). */
+const BANGKOK_OFFSET_MS = 7 * 3_600_000
+
+/** Monday 00:00 Asia/Bangkok that starts ISO week `week` (`YYYY-Www`). */
+export function weekStart(week: string): Date {
+  const [y, w] = week.split('-W').map(Number)
+  // 4 January is always in week 1; its Monday starts week 1.
+  const jan4 = Date.UTC(y!, 0, 4)
+  const monday1 = jan4 - ((new Date(jan4).getUTCDay() || 7) - 1) * 86_400_000
+  return new Date(monday1 + (w! - 1) * WINDOW_MS - BANGKOK_OFFSET_MS)
+}
+
+/** The week the scheduled run (Monday 08:00) reports on: the week that just finished. */
 export const summaryWeek = (now: Date): string => isoWeek(new Date(now.getTime() - WINDOW_MS))
 
 /** `sourceRef` of a project-week's summary entry (read back by the status queries). */
@@ -98,47 +110,65 @@ async function requesterNames(db: Db | Tx, projectId: string): Promise<string[]>
     .from(workItems)
     .innerJoin(people, eq(people.id, workItems.requesterId))
     .where(eq(workItems.projectId, projectId))
-  return rows
-    .map((r) => r.name.trim())
-    .filter((n) => n.length >= 2)
-    .sort((a, b) => b.length - a.length)
+  return rows.map((r) => r.name.trim()).sort((a, b) => b.length - a.length)
 }
 
+/** Latin-script names (spaces between words): matched as whole words, from 3 characters. */
+const LATIN_NAME = /^[\p{Script=Latin}\p{N}\s.'-]+$/u
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+/**
+ * Replaces requesters' names in text. Latin names only as whole words of 3+ characters ("Jo" never hits
+ * "Joint"); other scripts (Thai has no spaces between words) as substrings of 2+ characters.
+ */
 const redactor = (names: string[]) => {
-  if (!names.length) return (s: string) => s
-  const re = new RegExp(names.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'g')
+  const parts = names.flatMap((n) => {
+    if (LATIN_NAME.test(n)) return n.length >= 3 ? [`(?<![\\p{L}\\p{N}])${escapeRe(n)}(?![\\p{L}\\p{N}])`] : []
+    return n.length >= 2 ? [escapeRe(n)] : []
+  })
+  if (!parts.length) return (s: string) => s
+  const re = new RegExp(parts.join('|'), 'gu')
   return (s: string) => s.replace(re, REQUESTER)
 }
 
 /**
- * The project's last week (since `since`) as fenced material for the AI: events (type and work item title),
+ * The project's activity in [`since`, `until`) (no end: up to now) as fenced material for the AI: events (type and work item title),
  * accepted staff task results, decided discussions, confirmed knowledge and progress notes (drafts marked
  * [UNVERIFIED DRAFT]). No person is named: actors are left out and requesters' names are redacted from stored
  * text; requester tasks' results are left out. "Do not send to AI" content never appears. At most
  * `WEEKLY_MAX_CHARS`; empty when nothing happened.
  */
-export async function weeklyMaterial(db: Db, projectId: string, since: Date): Promise<string> {
-  const current = [eq(knowledgeEntries.projectId, projectId), isNull(knowledgeEntries.supersededAt), gte(knowledgeEntries.createdAt, since), ...sendable]
+export async function weeklyMaterial(db: Db, projectId: string, since: Date, until?: Date): Promise<string> {
+  if (until && until <= since) return ''
+  // No upper bound for a week in progress: the database clock, not ours, stamps the rows.
+  const before = (col: Parameters<typeof lt>[0]) => (until ? lt(col, until) : undefined)
+  const current = [
+    eq(knowledgeEntries.projectId, projectId),
+    isNull(knowledgeEntries.supersededAt),
+    gte(knowledgeEntries.createdAt, since),
+    before(knowledgeEntries.createdAt),
+    ...sendable,
+  ]
   const [eventRows, results, decided, confirmed, progress, names] = await Promise.all([
     db
       .select({ type: events.type, createdAt: events.createdAt, title: workItems.title })
       .from(events)
       .leftJoin(workItems, eq(workItems.id, events.workItemId))
-      .where(and(eq(events.projectId, projectId), gte(events.createdAt, since), notSummaryEvent))
+      .where(and(eq(events.projectId, projectId), gte(events.createdAt, since), before(events.createdAt), notSummaryEvent))
       .orderBy(desc(events.seq))
       .limit(EVENT_LIMIT),
     db
       .select({ title: workItems.title, key: tasks.templateTaskKey, result: tasks.result })
       .from(tasks)
       .innerJoin(workItems, eq(workItems.id, tasks.workItemId))
-      .where(and(eq(tasks.projectId, projectId), eq(tasks.state, 'accepted'), ne(tasks.role, 'REQUESTER'), gte(tasks.updatedAt, since)))
+      .where(and(eq(tasks.projectId, projectId), eq(tasks.state, 'accepted'), ne(tasks.role, 'REQUESTER'), gte(tasks.updatedAt, since), before(tasks.updatedAt)))
       .orderBy(asc(tasks.updatedAt), asc(tasks.id))
       .limit(ROW_LIMIT),
     db
       .select({ question: discussions.question, decision: discussions.decision, title: workItems.title })
       .from(discussions)
       .leftJoin(workItems, eq(workItems.id, discussions.workItemId))
-      .where(and(eq(discussions.projectId, projectId), eq(discussions.state, 'decided'), gte(discussions.decidedAt, since)))
+      .where(and(eq(discussions.projectId, projectId), eq(discussions.state, 'decided'), gte(discussions.decidedAt, since), before(discussions.decidedAt)))
       .orderBy(asc(discussions.decidedAt), asc(discussions.id))
       .limit(ROW_LIMIT),
     db
@@ -227,8 +257,12 @@ export async function runWeeklySummary(
     )[0] ?? null
   if (!force && (await existing(db))) return
 
+  // The labelled week's own days: a finished week in full, the week in progress up to now.
   const now = deps.now?.() ?? new Date()
-  const material = await weeklyMaterial(db, projectId, new Date(now.getTime() - WINDOW_MS))
+  const since = weekStart(week)
+  if (since >= now) return
+  const end = new Date(since.getTime() + WINDOW_MS)
+  const material = await weeklyMaterial(db, projectId, since, end <= now ? end : undefined)
   if (!material) return
 
   let body: string
@@ -244,9 +278,17 @@ export async function runWeeklySummary(
     body = out.text.trim()
   } catch (err) {
     if (err instanceof AiRefused && err.reason === 'budget_exceeded') {
-      await runWork(deps, SYSTEM, (ctx) =>
-        recordEvent(ctx, { type: 'status.weekly_summary_skipped', projectId, workItemId: null, taskId: null, reason: 'budget_exceeded', payload: { week } }),
-      )
+      await runWork(deps, SYSTEM, async (ctx) => {
+        // Once per project-week, whatever the reruns and regenerates.
+        await ctx.tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`skip:${ref}`}))`)
+        const [seen] = await ctx.tx
+          .select({ id: events.id })
+          .from(events)
+          .where(and(eq(events.projectId, projectId), eq(events.type, 'status.weekly_summary_skipped'), sql`${events.payload}->>'week' = ${week}`))
+          .limit(1)
+        if (seen) return
+        await recordEvent(ctx, { type: 'status.weekly_summary_skipped', projectId, workItemId: null, taskId: null, reason: 'budget_exceeded', payload: { week } })
+      })
       return
     }
     if (permanent(err) || !run || run.isFinalAttempt) {
@@ -306,7 +348,10 @@ export async function fanOutWeeklySummaries(deps: WeeklyDeps): Promise<void> {
   for (const p of rows) await deps.jobs.send('weekly-summary-project', { id: weeklyJobId(p.id, week) })
 }
 
-/** A PM's regenerate: the current summary week, replaced even if it exists. */
+/**
+ * A PM's regenerate: the week in progress (Monday 00:00 up to now), replaced even if it exists. Last week's
+ * finished summary is never touched.
+ */
 export async function queueWeeklyRegenerate(deps: WeeklyDeps, projectId: string): Promise<void> {
-  await deps.jobs.send('weekly-summary-project', { id: weeklyJobId(projectId, summaryWeek(deps.now?.() ?? new Date()), true) })
+  await deps.jobs.send('weekly-summary-project', { id: weeklyJobId(projectId, isoWeek(deps.now?.() ?? new Date()), true) })
 }
