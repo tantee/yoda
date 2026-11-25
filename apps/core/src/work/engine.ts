@@ -86,7 +86,7 @@ async function requireCanActOn(tx: Tx, me: Me, task: TaskRow): Promise<{ asReque
   throw forbidden()
 }
 
-async function definitionOf(tx: Tx, item: WorkItemRow): Promise<WorkflowTemplateDef> {
+export async function definitionOf(tx: Tx, item: WorkItemRow): Promise<WorkflowTemplateDef> {
   const def = await templateById(tx, item.templateId)
   if (!def) throw new Error(`workflow template ${item.templateId} missing`)
   return def
@@ -199,6 +199,8 @@ async function advanceStep(ctx: WorkCtx, item: WorkItemRow, status: StepStatus):
       .where(eq(workItems.id, item.id))
     await recordEvent(ctx, { type: 'work_item.done', ...base })
     await notifyRequestEnded(ctx, item, 'done')
+    // The secretary reacts in its own job, after this transaction (and its locks) are released.
+    ctx.jobs.push({ name: 'secretary-event', id: item.id })
     return
   }
   await tx.update(workItems).set({ currentStepKey: next.key, updatedAt: sql`now()` }).where(eq(workItems.id, item.id))

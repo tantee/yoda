@@ -106,6 +106,9 @@ describe('systemMarkerKey', () => {
       'chat.marker.secretaryNotReady',
     )
   })
+  it('maps the request-done marker', () => {
+    expect(systemMarkerKey(msg({ authorKind: 'system', text: '[[request.done]]', createdAt: at }))).toBe('chat.marker.requestDone')
+  })
   it('maps secretary failure markers by reason; an unknown reason falls back to the generic failure', () => {
     const key = (text: string) => systemMarkerKey(msg({ authorKind: 'system', text, createdAt: at }))
     expect(key('[[secretary.failed:budget_exceeded]]')).toBe('chat.marker.secretaryFailed.budget_exceeded')

@@ -90,7 +90,7 @@ export async function notifyRequestEnded(
   })
 }
 
-async function projectPms(ctx: WorkCtx, projectId: string): Promise<string[]> {
+export async function projectPms(ctx: WorkCtx, projectId: string): Promise<string[]> {
   const rows = await ctx.tx
     .select({ id: projectMembers.personId })
     .from(projectMembers)

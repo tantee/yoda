@@ -92,7 +92,7 @@ export async function testDeps(overrides: Partial<AppDeps> = {}): Promise<AppDep
     // chat and secretary tests that assert on them pass their own queue.
     jobs: new InlineJobQueue({
       onError: (err, name, id) => console.warn(`test job ${name} ${id} failed`, err),
-      ignore: ['draft-task', 'secretary-chat'],
+      ignore: ['draft-task', 'secretary-chat', 'secretary-event'],
     }),
     ...overrides,
   }
