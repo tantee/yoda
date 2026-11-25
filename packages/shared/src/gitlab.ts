@@ -8,7 +8,8 @@ export const Repo = z.object({
   gitlabProjectId: z.number().int(),
   pathWithNamespace: z.string(),
   webUrl: z.string().url(),
-  defaultBranch: z.string(),
+  /** Null for an empty GitLab project (no commits yet). */
+  defaultBranch: z.string().nullable(),
   createdAt: z.string(),
 })
 export type Repo = z.infer<typeof Repo>

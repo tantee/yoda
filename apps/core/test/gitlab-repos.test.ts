@@ -59,6 +59,14 @@ describe('repository links', () => {
     expect(unknown.json()).toEqual({ error: 'repo_not_found' })
   })
 
+  it('links an empty GitLab project (no default branch yet)', async () => {
+    fake.addProject('dept/empty', 99, null)
+    const res = await link('dept/empty')
+    expect(res.statusCode).toBe(201)
+    expect((res.json() as Repo).defaultBranch).toBeNull()
+    expect((await call(pm, 'GET', `/projects/${projectId}/repos`)).json()).toContainEqual(expect.objectContaining({ pathWithNamespace: 'dept/empty', defaultBranch: null }))
+  })
+
   it('refuses DEV-only, requesters and non-members', async () => {
     expect((await call(dev, 'POST', `/projects/${projectId}/repos`, { path: 'dept/lab-report' })).statusCode).toBe(403)
     expect((await call(nurse, 'GET', `/projects/${projectId}/repos`)).statusCode).toBe(403)

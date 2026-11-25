@@ -39,6 +39,18 @@ describe('gitlab tables', () => {
     await db.insert(workItemRepos).values({ workItemId: wi!.id, repoId: repo.id })
   })
 
+  it('links one GitLab issue to at most one work item; a repo without a default branch is fine', async () => {
+    const { db, repo, proj, p } = await seed()
+    const templateId = (await latestTemplate(db, 'software-change'))!.id
+    const [a] = await db.insert(workItems).values({ projectId: proj.id, title: 'a', templateId, ownerId: p.id }).returning()
+    const [b] = await db.insert(workItems).values({ projectId: proj.id, title: 'b', templateId, ownerId: p.id }).returning()
+    await db.insert(workItemRepos).values({ workItemId: a!.id, repoId: repo.id, issueIid: 3 })
+    await expect(db.insert(workItemRepos).values({ workItemId: b!.id, repoId: repo.id, issueIid: 3 })).rejects.toThrow()
+    // Many links without an issue yet.
+    await db.insert(workItemRepos).values({ workItemId: b!.id, repoId: repo.id })
+    await db.insert(projectRepos).values({ projectId: proj.id, gitlabProjectId: 8, pathWithNamespace: 'g/empty', webUrl: 'http://gl/g/empty', defaultBranch: null })
+  })
+
   it('keeps one gitlab_settings row and accepts gitlab knowledge', async () => {
     const { db } = await seed()
     const r = await db.execute(sql`SELECT count(*)::int AS n FROM gitlab_settings`)

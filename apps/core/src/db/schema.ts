@@ -451,7 +451,8 @@ export const projectRepos = pgTable(
     gitlabProjectId: integer('gitlab_project_id').notNull(),
     pathWithNamespace: text('path_with_namespace').notNull(),
     webUrl: text('web_url').notNull(),
-    defaultBranch: text('default_branch').notNull(),
+    /** Null for an empty GitLab project (no commits yet). */
+    defaultBranch: text('default_branch'),
     addedBy: uuid('added_by').references(() => people.id, { onDelete: 'set null' }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
@@ -478,6 +479,8 @@ export const workItemRepos = pgTable(
   (t) => [
     primaryKey({ columns: [t.workItemId, t.repoId] }),
     check('work_item_repos_sync_status_check', sql`${t.syncStatus} in (${list(IssueSyncStatus.options)})`),
+    // A GitLab issue belongs to at most one work item.
+    uniqueIndex('work_item_repos_repo_issue_unique').on(t.repoId, t.issueIid).where(sql`${t.issueIid} is not null`),
   ],
 )
 
@@ -500,6 +503,7 @@ export const mergeRequests = pgTable(
   },
   (t) => [
     unique('merge_requests_repo_iid_unique').on(t.repoId, t.mrIid),
+    index('merge_requests_work_item_idx').on(t.workItemId),
     check('merge_requests_state_check', sql`${t.state} in (${list(MergeRequestState.options)})`),
     check('merge_requests_pipeline_check', sql`${t.pipeline} in (${list(PipelineStatus.options)})`),
   ],

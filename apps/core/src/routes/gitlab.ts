@@ -75,7 +75,8 @@ export function gitlabRoutes(app: FastifyInstance): void {
           gitlabProjectId: found.id,
           pathWithNamespace: found.path_with_namespace,
           webUrl: found.web_url,
-          defaultBranch: found.default_branch,
+          // An empty project has no default branch yet.
+          defaultBranch: found.default_branch ?? null,
           addedBy: me.id,
         })
         .onConflictDoNothing()
