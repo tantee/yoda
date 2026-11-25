@@ -7,6 +7,7 @@ import { GitLabError, type GitLabClient } from '../gitlab/client.js'
 import { stripCommentMarkers } from '../gitlab/issue-section.js'
 import { upsertMergeRequest, workItemShortId } from '../gitlab/webhook.js'
 import { recordEvent, runWork } from '../work/context.js'
+import { definitionOf } from '../work/engine.js'
 import { asOwner, lockRunTask, nowOf, type RunnerCtx, type RunnerDeps } from './claims.js'
 import { lockLiveRun, workable } from './work.js'
 
@@ -48,7 +49,7 @@ async function alreadyOpened(tx: Tx, rc: RunnerCtx, input: OpenMrInput): Promise
 }
 
 /**
- * Opens the run's MR in GitLab, from the branch the runner pushed to the repo's default branch, with
+ * Opens the run's MR in GitLab (409 `not_code_change` unless the run's template task is a `code-change`), from the branch the runner pushed to the repo's default branch, with
  * `Closes #<issue>` added when the work item has an issue in that repo. Reads in one transaction, calls GitLab
  * outside any, then records the MR in a short one: the `merge_requests` row is upserted the way the MR webhook
  * does it (linked to the run's work item), `gitlab.mr_requested` is recorded once per run and MR, and the branch
@@ -70,6 +71,10 @@ export async function openMergeRequest(deps: MrDeps, rc: RunnerCtx, input: OpenM
     }
     const { run, task, item } = live
     if (!workable(rc, item, task)) throw invalidState('task_unavailable')
+    // Only a code change's result is a merge request.
+    const def = await definitionOf(ctx.tx, item)
+    const tt = def.steps.find((s) => s.key === task.stepKey)?.tasks.find((t) => t.key === task.templateTaskKey)
+    if (tt?.capability !== 'code-change') throw invalidState('not_code_change')
     if (!deps.gitlab) throw gitlabNotConnected()
     const [link] = await ctx.tx
       .select({ repo: projectRepos, issueIid: workItemRepos.issueIid })

@@ -253,6 +253,20 @@ describe('openMergeRequest', () => {
     expect((await runRow(runId)).branch).toBeNull()
   })
 
+  it('refuses a run whose task is not a code change (409 not_code_change), without calling GitLab', async () => {
+    const db = await testDb()
+    // The owner's own draft-tests task (draft-text), claimed on demand.
+    const [own] = await db
+      .update(tasks)
+      .set({ executor: 'human', assigneeId: owner.id })
+      .where(and(eq(tasks.workItemId, itemId), eq(tasks.templateTaskKey, 'draft-tests')))
+      .returning()
+    const { run } = await claimTask(deps, rc, own!.id)
+    await expect(open(run.id)).rejects.toMatchObject({ statusCode: 409, body: { error: 'invalid_state', reason: 'not_code_change' } })
+    expect(fake.requests.filter((r) => r.method === 'POST')).toEqual([])
+    expect(await mrRows()).toEqual([])
+  })
+
   it('refuses a run that is not live', async () => {
     const runId = await claim()
     deps.now = () => new Date(WED_10.getTime() + 11 * 60_000)
