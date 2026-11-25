@@ -213,6 +213,9 @@ describe('requesters in the workflow', () => {
     expect(todo.tasks.map((t) => t.id)).toEqual([answer.id])
     // Core tells the portal to show the requester view; project members and admins get the staff view.
     expect(todo.tasks[0]!.viewerIsRequester).toBe(true)
+    // No context for the requester view: the project stays hidden.
+    expect(todo.workItems).toEqual({})
+    expect(todo.projectNames).toEqual({})
     expect(((await call(outsider, 'GET', `/tasks/${answer.id}`)).json() as TaskWithContext).viewerIsRequester).toBe(true)
     expect((await answers(outsider))[0]!.viewerIsRequester).toBe(true)
     for (const staff of [pm, ba, admin]) {

@@ -5,6 +5,7 @@ import {
   Task,
   TaskWithContext,
   Todo,
+  TodoWorkItem,
   WorkflowTemplateDef,
   WorkflowTemplateSummary,
   WorkItem,
@@ -15,6 +16,7 @@ import {
   type TaskInput,
   type TaskRunSummary,
   type TemplateTask,
+  type WorkItemStep,
 } from '@yoda/shared'
 import { and, asc, desc, eq, inArray, isNull, or, sql, type SQL } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/pg-core'
@@ -439,23 +441,69 @@ function toWorkItem(r: WorkItemJoined, state: AdvanceState): WorkItem {
   })
 }
 
+/** The item's step track: steps before the current one (all of them once done) are done. */
+function stepsOf(def: WorkflowTemplateDef, w: { state: string; currentStepKey: string | null }): WorkItemStep[] {
+  const currentIndex = def.steps.findIndex((s) => s.key === w.currentStepKey)
+  return def.steps.map((s, i) => ({
+    key: s.key,
+    name: s.name,
+    status:
+      w.state === 'done' || (currentIndex >= 0 && i < currentIndex)
+        ? ('done' as const)
+        : i === currentIndex
+          ? ('current' as const)
+          : ('pending' as const),
+  }))
+}
+
+/**
+ * The To-do page's context: work items (title, project, priority, target date, step track) and project names
+ * for the given ids, limited to projects `me` sees as staff.
+ */
+async function todoContext(
+  db: Conn,
+  me: Me,
+  workItemIds: string[],
+  projectIds: string[],
+): Promise<{ workItems: Record<string, TodoWorkItem>; projectNames: Record<string, string> }> {
+  const ids = [...new Set(workItemIds)]
+  const rows = ids.length
+    ? await db
+        .select({ w: workItems, projectName: projects.name, definition: workflowTemplates.definition })
+        .from(workItems)
+        .innerJoin(projects, eq(projects.id, workItems.projectId))
+        .innerJoin(workflowTemplates, eq(workflowTemplates.id, workItems.templateId))
+        .where(inArray(workItems.id, ids))
+    : []
+  const allProjects = [...new Set([...projectIds, ...rows.map((r) => r.w.projectId)])]
+  const hidden = await projectsHiddenFrom(db, me, allProjects)
+  const items: Record<string, TodoWorkItem> = {}
+  for (const r of rows) {
+    if (hidden.has(r.w.projectId)) continue
+    items[r.w.id] = TodoWorkItem.parse({
+      id: r.w.id,
+      title: r.w.title,
+      projectId: r.w.projectId,
+      projectName: r.projectName,
+      priority: r.w.priority,
+      targetDate: r.w.targetDate,
+      steps: stepsOf(r.definition as WorkflowTemplateDef, r.w),
+    })
+  }
+  const visible = allProjects.filter((id) => !hidden.has(id))
+  const named = visible.length
+    ? await db.select({ id: projects.id, name: projects.name }).from(projects).where(inArray(projects.id, visible))
+    : []
+  return { workItems: items, projectNames: Object.fromEntries(named.map((p) => [p.id, p.name])) }
+}
+
 export async function getWorkItemDetail(db: Conn, me: Me, id: string): Promise<WorkItemDetail> {
   requireStaffMe(me)
   const [r] = await workItemQuery(db).where(eq(workItems.id, id))
   if (!r || !(await canSeeProject(db, me, r.w.projectId))) throw notFound()
   const def = r.definition as WorkflowTemplateDef
 
-  const currentIndex = def.steps.findIndex((s) => s.key === r.w.currentStepKey)
-  const steps = def.steps.map((s, i) => ({
-    key: s.key,
-    name: s.name,
-    status:
-      r.w.state === 'done' || (currentIndex >= 0 && i < currentIndex)
-        ? ('done' as const)
-        : i === currentIndex
-          ? ('current' as const)
-          : ('pending' as const),
-  }))
+  const steps = stepsOf(def, r.w)
 
   const taskRows = await db.select().from(tasks).where(eq(tasks.workItemId, id))
   const position = (t: TaskRow): [number, number, number] => {
@@ -567,11 +615,30 @@ export async function getTodo(db: Conn, me: Me): Promise<Todo> {
     .where(and(inScope(workItems.projectId), eq(workItems.state, 'active')))
     .orderBy(priorityRank, asc(workItems.updatedAt), asc(workItems.id))
   const state = await advanceState(db, items)
+  const proposalList = await pendingForDecider(db, me)
+  const awaitingAdvance = items.filter((r) => state.awaiting.has(r.w.id)).map((r) => toWorkItem(r, state))
+  // Tasks shown in the requester view get no context: their project stays hidden.
+  const staffTasks = [...mine.filter((t) => !t.viewerIsRequester), ...confirmations]
+  const context = await todoContext(
+    db,
+    me,
+    [
+      ...staffTasks.map((t) => t.workItemId),
+      ...proposalList.flatMap((p) => (p.workItemId ? [p.workItemId] : [])),
+      ...awaitingAdvance.map((w) => w.id),
+    ],
+    [
+      ...staffTasks.map((t) => t.projectId),
+      ...proposalList.flatMap((p) => (p.projectId ? [p.projectId] : [])),
+      ...awaitingAdvance.map((w) => w.projectId),
+    ],
+  )
   return Todo.parse({
     tasks: mine,
     confirmations,
-    proposals: await pendingForDecider(db, me),
-    awaitingAdvance: items.filter((r) => state.awaiting.has(r.w.id)).map((r) => toWorkItem(r, state)),
+    proposals: proposalList,
+    awaitingAdvance,
+    ...context,
   })
 }
 

@@ -233,12 +233,35 @@ export const WorkItemPatch = z
   .strict()
 export type WorkItemPatch = z.infer<typeof WorkItemPatch>
 
+/** A workflow step as shown on a work item: done, the current one, or still to come. */
+export const WorkItemStep = z.object({ key: z.string(), name: LocalizedText, status: z.enum(['done', 'current', 'pending']) })
+export type WorkItemStep = z.infer<typeof WorkItemStep>
+
+/** To-do context: a work item named by a task or decision on the page, with its step track. */
+export const TodoWorkItem = z.object({
+  id: uuid,
+  title: z.string(),
+  projectId: uuid,
+  projectName: z.string(),
+  priority: Priority,
+  targetDate: IsoDate.nullable(),
+  steps: z.array(WorkItemStep),
+})
+export type TodoWorkItem = z.infer<typeof TodoWorkItem>
+
 export const Todo = z.object({
   tasks: z.array(TaskWithContext),
   confirmations: z.array(TaskWithContext),
   proposals: z.array(Proposal),
   /** Work items (where the caller decides, as for confirmations) whose finished step waits to be advanced. */
   awaitingAdvance: z.array(WorkItem),
+  /**
+   * Context for the rows above, by work item id: only items of projects the caller sees as staff (never the
+   * items of tasks shown in the requester view).
+   */
+  workItems: z.record(z.string(), TodoWorkItem).default({}),
+  /** Names of the projects the rows above belong to (projects the caller sees), by id. */
+  projectNames: z.record(z.string(), z.string()).default({}),
 })
 export type Todo = z.infer<typeof Todo>
 
@@ -284,7 +307,7 @@ export const EventEntry = z.object({
 export type EventEntry = z.infer<typeof EventEntry>
 
 export const WorkItemDetail = WorkItem.extend({
-  steps: z.array(z.object({ key: z.string(), name: LocalizedText, status: z.enum(['done', 'current', 'pending']) })),
+  steps: z.array(WorkItemStep),
   tasks: z.array(Task),
   events: z.array(EventEntry),
 })

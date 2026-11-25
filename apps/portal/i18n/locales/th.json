@@ -99,7 +99,7 @@
   "todo": {
     "myTasks": "งานของฉัน",
     "confirmations": "รอการยืนยันจากคุณ",
-    "empty": "ยังไม่มีงานที่ต้องทำ",
+    "empty": "ไม่มีงานรอคุณ",
     "needsAssignee": "ต้องมอบหมายผู้รับผิดชอบ",
     "waitingForAi": "รอ AI — มอบหมายให้บุคคล",
     "confirm": "ยืนยัน",
@@ -109,7 +109,65 @@
     "proposals": "รอการตัดสินใจของคุณ",
     "stepAdvance": "ขั้นตอนปัจจุบันเสร็จแล้ว ต้องการไปขั้นตอนถัดไปหรือไม่",
     "awaitingAdvance": "รายการงานนี้ทำขั้นตอนปัจจุบันเสร็จแล้ว รอไปขั้นตอนถัดไป",
-    "waitingForRunner": "รอรันเนอร์ — หรือมอบหมายให้บุคคล"
+    "waitingForRunner": "รอรันเนอร์ — หรือมอบหมายให้บุคคล",
+    "emptyText": "งานใหม่จะมาที่นี่เมื่อมีคนมอบหมายหรือ AI ร่างเสร็จ",
+    "pending": "{n} รายการรอคุณ",
+    "updated": "อัปเดตอัตโนมัติ ล่าสุด {time}",
+    "allProjects": "ทุกโครงการ",
+    "createIn": "สร้างงานใหม่ในโครงการ",
+    "loadingProjects": "กำลังโหลดโครงการ…",
+    "noProjects": "ยังไม่มีโครงการ",
+    "tabs": {
+      "all": "ทั้งหมด",
+      "decisions": "ต้องตัดสินใจ",
+      "confirmations": "รอยืนยัน",
+      "mine": "งานของฉัน"
+    },
+    "filterEmpty": "ไม่มีรายการในตัวกรองนี้",
+    "filterEmptyText": "ลองเลือกแท็บอื่น หรือดูทุกโครงการ",
+    "sortHint": "เรียงตามความสำคัญ แล้วตามเวลาที่รอ",
+    "kind": {
+      "advance": "ไปขั้นตอนถัดไป",
+      "priority": "เปลี่ยนความสำคัญ",
+      "intake": "คำขอใหม่จากแชท",
+      "discussion": "ยกประเด็นหารือ"
+    },
+    "verb": {
+      "advance": "ไปขั้นตอนถัดไป",
+      "notYet": "ยังไม่ไป",
+      "reject": "ปฏิเสธ",
+      "accept": "รับเรื่อง",
+      "confirm": "ยืนยัน",
+      "raise": "ยกประเด็นหารือ"
+    },
+    "aiProposed": "AI เสนอ",
+    "allTasksDone": "งานย่อยครบทุกชิ้นแล้ว",
+    "heldByDiscussions": "มีประเด็นหารือค้างอยู่ {n} เรื่อง ต้องตัดสินก่อนจึงไปต่อได้",
+    "stepDone": "{name} เสร็จแล้ว",
+    "changeTo": "เปลี่ยนเป็น",
+    "requester": "ผู้ขอ {name}",
+    "aiRouted": "AI จัดเข้าโครงการให้แล้ว",
+    "chooseProjectFirst": "เลือกโครงการก่อน จึงจะรับเรื่องได้",
+    "dismissNoteRequired": "เหตุผล (จำเป็น)",
+    "cols": {
+      "priority": "ความสำคัญ",
+      "task": "งานย่อย / รายการงาน",
+      "project": "โครงการ",
+      "step": "ขั้นตอน",
+      "waiting": "สิ่งที่รออยู่",
+      "actions": "การดำเนินการ",
+      "state": "สถานะ",
+      "due": "กำหนดเสร็จ"
+    },
+    "proposedTo": "เสนอ: {name}",
+    "waitingAi": "รอ AI ร่าง",
+    "assignPerson": "มอบหมายให้คน",
+    "changePerson": "เปลี่ยนคน",
+    "due": "กำหนด {date}",
+    "noDue": "ไม่มีกำหนด",
+    "showing": "แสดง {n} จาก {total}",
+    "showAll": "แสดงทั้งหมด",
+    "showLess": "แสดงน้อยลง"
   },
   "task": {
     "state": {
@@ -146,7 +204,28 @@
     "copyIntoResult": "คัดลอกไปยังผลงานของฉัน",
     "attachments": "ไฟล์แนบ",
     "resultAttachments": "แนบไฟล์กับผลงานของคุณ",
-    "noPreviousText": "(ไม่มีข้อความ)"
+    "noPreviousText": "(ไม่มีข้อความ)",
+    "assignTitle": "มอบหมาย {title}",
+    "openLoad": "งานค้าง {n}",
+    "requestChangesEllipsis": "ขอให้แก้ไข…",
+    "changesTitle": "ขอให้แก้ไข {title}",
+    "changesHint": "บอกผู้ทำงานว่าต้องแก้อะไร งานจะถูกส่งกลับพร้อมความเห็นนี้",
+    "changesReason": "สิ่งที่ต้องแก้ไข (จำเป็น)",
+    "changesReasonRequired": "กรุณาระบุสิ่งที่ต้องแก้ไข",
+    "sendBack": "ส่งกลับให้แก้ไข",
+    "yourDecision": "การตัดสินใจของคุณ",
+    "yourWork": "ผลงานของคุณ",
+    "attachFile": "แนบไฟล์",
+    "updatedAgo": "อัปเดต {time}",
+    "side": {
+      "label": "ข้อมูลงาน",
+      "owner": "เจ้าของงาน",
+      "requester": "ผู้ขอ",
+      "target": "กำหนดเสร็จ",
+      "dates": "วันที่",
+      "created": "สร้างเมื่อ",
+      "updated": "อัปเดตล่าสุด"
+    }
   },
   "priority": {
     "low": "ต่ำ",

@@ -99,7 +99,7 @@
   "todo": {
     "myTasks": "My tasks",
     "confirmations": "Waiting for your confirmation",
-    "empty": "Nothing to do right now",
+    "empty": "Nothing waiting for you",
     "needsAssignee": "Needs an assignee",
     "waitingForAi": "Waiting for AI — assign to a person",
     "confirm": "Confirm",
@@ -109,7 +109,65 @@
     "proposals": "Waiting for your decision",
     "stepAdvance": "The current step is finished. Move this work item to the next step?",
     "awaitingAdvance": "This work item finished its current step and is waiting to move on",
-    "waitingForRunner": "Waiting for a runner — or assign to a person"
+    "waitingForRunner": "Waiting for a runner — or assign to a person",
+    "emptyText": "New work shows up here when someone assigns it to you or an AI draft is ready",
+    "pending": "{n} waiting for you",
+    "updated": "Updates automatically · last {time}",
+    "allProjects": "All projects",
+    "createIn": "New work item in project",
+    "loadingProjects": "Loading projects…",
+    "noProjects": "No projects yet",
+    "tabs": {
+      "all": "All",
+      "decisions": "Decisions",
+      "confirmations": "To confirm",
+      "mine": "My tasks"
+    },
+    "filterEmpty": "Nothing matches this filter",
+    "filterEmptyText": "Try another tab or all projects",
+    "sortHint": "By priority, then by waiting time",
+    "kind": {
+      "advance": "Move to the next step",
+      "priority": "Priority change",
+      "intake": "New request from chat",
+      "discussion": "Raise a discussion"
+    },
+    "verb": {
+      "advance": "Move to next step",
+      "notYet": "Not yet",
+      "reject": "Reject",
+      "accept": "Accept request",
+      "confirm": "Confirm",
+      "raise": "Raise discussion"
+    },
+    "aiProposed": "AI proposal",
+    "allTasksDone": "Every task of this step is done",
+    "heldByDiscussions": "{n} open discussion(s) must be decided before moving on",
+    "stepDone": "{name} done",
+    "changeTo": "changes to",
+    "requester": "Requested by {name}",
+    "aiRouted": "AI picked the project",
+    "chooseProjectFirst": "Choose a project first to accept the request",
+    "dismissNoteRequired": "Reason (required)",
+    "cols": {
+      "priority": "Priority",
+      "task": "Task / work item",
+      "project": "Project",
+      "step": "Step",
+      "waiting": "Waiting for",
+      "actions": "Actions",
+      "state": "State",
+      "due": "Due"
+    },
+    "proposedTo": "Proposed: {name}",
+    "waitingAi": "Waiting for AI",
+    "assignPerson": "Assign a person",
+    "changePerson": "Change person",
+    "due": "Due {date}",
+    "noDue": "No due date",
+    "showing": "Showing {n} of {total}",
+    "showAll": "Show all",
+    "showLess": "Show less"
   },
   "task": {
     "state": {
@@ -146,7 +204,28 @@
     "copyIntoResult": "Copy into my result",
     "attachments": "Attachments",
     "resultAttachments": "Attach files to your result",
-    "noPreviousText": "(no text)"
+    "noPreviousText": "(no text)",
+    "assignTitle": "Assign {title}",
+    "openLoad": "{n} open",
+    "requestChangesEllipsis": "Request changes…",
+    "changesTitle": "Request changes to {title}",
+    "changesHint": "Tell the assignee what to fix. The task goes back to them with this comment.",
+    "changesReason": "What needs to change (required)",
+    "changesReasonRequired": "Say what needs to change",
+    "sendBack": "Send back for changes",
+    "yourDecision": "Your decision",
+    "yourWork": "Your work",
+    "attachFile": "Attach a file",
+    "updatedAgo": "Updated {time}",
+    "side": {
+      "label": "Task details",
+      "owner": "Owner",
+      "requester": "Requester",
+      "target": "Due date",
+      "dates": "Dates",
+      "created": "Created",
+      "updated": "Last updated"
+    }
   },
   "priority": {
     "low": "Low",

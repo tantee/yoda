@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import type { Project, Proposal } from '@yoda/shared'
 
-/** Accept / reject controls for one pending proposal (shared by chat action cards and the to-do list). */
-const props = defineProps<{ proposal: Proposal }>()
+/**
+ * Accept / reject controls for one pending proposal (shared by chat action cards and the to-do list):
+ * right-aligned `[dismiss] [confirm]`, an optional hint on the left, and the reason when confirm is disabled.
+ */
+const props = defineProps<{ proposal: Proposal; confirmLabel?: string; dismissLabel?: string }>()
 const emit = defineEmits<{ decided: [] }>()
 const { t } = useI18n()
 const api = useApi()
@@ -56,50 +59,65 @@ async function decide(decision: 'accept' | 'reject') {
 
 <template>
   <div>
-    <v-select
-      v-if="needsProject"
-      v-model="chosenProject"
-      :items="projects"
-      item-title="name"
-      item-value="id"
-      :label="t('chat.card.chooseProject')"
-      density="compact"
-      hide-details
-      class="mt-2"
-      data-testid="proposal-project"
-    />
-    <div class="mt-2 d-flex ga-2">
-      <v-btn
-        size="small"
-        color="primary"
-        :loading="busy"
-        :disabled="needsProject && !chosenProject"
-        data-testid="proposal-confirm"
-        @click="decide('accept')"
-      >{{ t('chat.card.confirm') }}</v-btn>
-      <v-btn size="small" variant="outlined" :disabled="busy" data-testid="proposal-dismiss" @click="dismissOpen = true">
-        {{ t('chat.card.dismiss') }}
-      </v-btn>
+    <div class="proposal-decide">
+      <div v-if="$slots.hint" class="proposal-decide__hint text-caption text-medium-emphasis"><slot name="hint" /></div>
+      <v-select
+        v-if="needsProject"
+        v-model="chosenProject"
+        :items="projects"
+        item-title="name"
+        item-value="id"
+        :label="t('chat.card.chooseProject')"
+        prepend-inner-icon="mdi-folder-outline"
+        density="compact"
+        hide-details
+        class="proposal-decide__project"
+        data-testid="proposal-project"
+      />
+      <div class="proposal-decide__actions">
+        <v-btn size="small" variant="outlined" :disabled="busy" data-testid="proposal-dismiss" @click="dismissOpen = true">
+          {{ dismissLabel ?? t('chat.card.dismiss') }}
+        </v-btn>
+        <v-btn
+          size="small"
+          color="primary"
+          :loading="busy"
+          :disabled="needsProject && !chosenProject"
+          data-testid="proposal-confirm"
+          @click="decide('accept')"
+        >{{ confirmLabel ?? t('chat.card.confirm') }}</v-btn>
+      </div>
+    </div>
+    <div v-if="needsProject && !chosenProject" class="text-caption text-medium-emphasis mt-1" data-testid="proposal-project-hint">
+      {{ t('todo.chooseProjectFirst') }}
     </div>
     <v-alert v-if="error" type="error" density="compact" class="mt-2" data-testid="proposal-error">{{ error }}</v-alert>
     <v-dialog v-model="dismissOpen" max-width="420">
       <v-card>
-        <v-card-title>{{ t('chat.card.dismiss') }}</v-card-title>
+        <v-card-title>{{ dismissLabel ?? t('chat.card.dismiss') }}</v-card-title>
         <v-card-text>
-          <v-textarea v-model="note" :label="t('chat.card.dismissNote')" rows="2" auto-grow data-testid="dismiss-note" />
+          <v-textarea v-model="note" :label="noteRequired ? t('todo.dismissNoteRequired') : t('chat.card.dismissNote')" rows="2" auto-grow data-testid="dismiss-note" />
         </v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn @click="dismissOpen = false">{{ t('common.cancel') }}</v-btn>
+          <v-btn variant="text" @click="dismissOpen = false">{{ t('common.cancel') }}</v-btn>
           <v-btn
             color="primary"
+            variant="flat"
             :loading="busy"
             :disabled="noteRequired && !note.trim()"
             data-testid="dismiss-submit"
             @click="decide('reject')"
-          >{{ t('chat.card.dismiss') }}</v-btn>
+          >{{ dismissLabel ?? t('chat.card.dismiss') }}</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
   </div>
 </template>
+
+<style scoped>
+.proposal-decide { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+.proposal-decide__hint { flex: 1 1 auto; min-width: 0; }
+.proposal-decide__project { flex: 1 1 200px; max-width: 280px; }
+.proposal-decide__actions { display: flex; gap: 8px; margin-left: auto; }
+</style>

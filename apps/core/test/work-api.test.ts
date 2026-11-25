@@ -161,7 +161,12 @@ describe('work API', () => {
     expect(before.confirmations.map((c) => c.id)).toEqual([t.id])
     expect(before.confirmations[0]).toMatchObject({ workItemTitle: 'แก้รายงานแล็บ', projectName: 'ระบบรายงานแล็บ' })
     expect(before.tasks).toEqual([])
+    // Context for the page: the item's step track and project name.
+    expect(before.workItems[wi.id]).toMatchObject({ title: 'แก้รายงานแล็บ', projectId: p, projectName: 'ระบบรายงานแล็บ', priority: 'normal', targetDate: null })
+    expect(before.workItems[wi.id]!.steps.map((s) => s.status)).toEqual(['current', 'pending', 'pending', 'pending'])
+    expect(before.projectNames).toEqual({ [p]: 'ระบบรายงานแล็บ' })
     expect((await todo(dev)).confirmations).toEqual([])
+    expect((await todo(dev)).workItems).toEqual({})
 
     expect((await call(dev, 'POST', `/tasks/${t.id}/confirm`)).statusCode).toBe(403)
     const res = await call(pm, 'POST', `/tasks/${t.id}/confirm`)
@@ -179,7 +184,9 @@ describe('work API', () => {
     expect(submitted.json()).toMatchObject({ state: 'accepted', result: { decision: 'approve' } })
     // The finished step waits for the PM to confirm the advance.
     expect((await detail(pm, wi.id)).currentStepKey).toBe('intake')
-    expect((await todo(pm)).proposals.map((x) => x.kind)).toEqual(['step_advance'])
+    const decide = await todo(pm)
+    expect(decide.proposals.map((x) => x.kind)).toEqual(['step_advance'])
+    expect(decide.workItems[wi.id]!.steps.map((s) => s.status)).toEqual(['current', 'pending', 'pending', 'pending'])
     expect(await acceptStepAdvance(app, pm, wi.id)).toBe(true)
     expect((await detail(pm, wi.id)).currentStepKey).toBe('dev')
   })
