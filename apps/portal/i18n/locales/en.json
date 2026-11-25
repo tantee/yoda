@@ -47,7 +47,8 @@
       "items": "Work items",
       "knowledge": "Knowledge",
       "ai": "AI settings",
-      "repos": "Repositories"
+      "repos": "Repositories",
+      "status": "Status"
     }
   },
   "people": {
@@ -170,7 +171,12 @@
     "reopenConfirm": "Open tasks in the current and later steps will stop. The chosen step starts again, with the requester's latest change request as feedback, and the steps after it are done again.",
     "reopenStep": "Step to reopen",
     "raiseDiscussion": "Raise a discussion",
-    "waitingForRunner": "Waiting for a runner"
+    "waitingForRunner": "Waiting for a runner",
+    "targetDate": "Target date",
+    "targetDateHint": "Optional; overdue once this day has passed (Bangkok time)",
+    "clearTargetDate": "Clear",
+    "saveTargetDate": "Save date",
+    "noTargetDate": "No target date"
   },
   "steps": {
     "done": "Done",
@@ -739,6 +745,74 @@
       "allowPersonalUnattended": "Allow personal subscriptions unattended",
       "personalCaveat": "Unattended use must run under an account whose terms allow automated use (an API key, or an organization Team/Enterprise plan whose terms cover it). Whether a personal consumer subscription may be used unattended must be confirmed against the provider's current terms before turning this on.",
       "saved": "Saved"
+    }
+  },
+  "status": {
+    "title": "Status",
+    "subtitle": "Health of every project you can see",
+    "empty": "No projects to show",
+    "loadFailed": "Could not load the status",
+    "totals": {
+      "activeItems": "Active work items",
+      "overdueItems": "Overdue",
+      "openDiscussions": "Open discussions",
+      "aiSpend": "AI spend this month",
+      "departmentAiSpend": "Department AI (no project): {amount}"
+    },
+    "health": {
+      "on_track": "On track",
+      "at_risk": "At risk",
+      "blocked": "Blocked"
+    },
+    "reason": {
+      "stuck": "{n} work item has had no activity for 5 days or more | {n} work items have had no activity for 5 days or more",
+      "urgent_discussion": "{n} urgent discussion has been open for 3 days or more | {n} urgent discussions have been open for 3 days or more",
+      "sync_failed": "GitLab issue sync failed for {n} work item | GitLab issue sync failed for {n} work items",
+      "overdue": "{n} work item is overdue | {n} work items are overdue",
+      "high_discussion": "{n} high-priority discussion has been open for 7 days or more | {n} high-priority discussions have been open for 7 days or more",
+      "ai_budget": "{n}% of this month's AI budget used"
+    },
+    "card": {
+      "active": "Active",
+      "overdue": "Overdue",
+      "discussions": "Discussions",
+      "aiSpend": "AI this month",
+      "noBudget": "{amount} (no budget)",
+      "ofBudget": "{spend} of {budget}",
+      "open": "Open status"
+    },
+    "board": "Board",
+    "boardEmpty": "No active work items",
+    "people": "People load",
+    "peopleEmpty": "No members",
+    "peopleCols": {
+      "name": "Name",
+      "roles": "Roles",
+      "openTasks": "Open tasks",
+      "inProgress": "In progress",
+      "todayAssigned": "Assigned today"
+    },
+    "recentEvents": "Recent events",
+    "eventsEmpty": "No events yet",
+    "discussions": "Open discussions",
+    "discussionsEmpty": "No open discussions",
+    "repos": "GitLab repositories",
+    "reposEmpty": "No repositories linked",
+    "overdue": "Overdue",
+    "stuck": "No activity for {n} day | No activity for {n} days",
+    "due": "Due {date}",
+    "weekly": {
+      "title": "Weekly summary",
+      "week": "Week {week}",
+      "draft": "Draft",
+      "regenerate": "Regenerate",
+      "confirmTitle": "Regenerate the weekly summary?",
+      "confirm": "The AI rewrites this week's summary from the latest activity and replaces the current draft. This uses the project's AI budget.",
+      "generating": "Generating the summary…",
+      "noAi": "This project does not use AI, so there is no weekly summary.",
+      "empty": "No weekly summary yet. A draft is written every Monday morning when AI is configured and the project had activity.",
+      "notWritten": "No summary was written. AI may not be configured, the budget may be used up, or there was no activity this week.",
+      "skipped": "The summary was skipped: this month's AI budget is used up."
     }
   }
 }

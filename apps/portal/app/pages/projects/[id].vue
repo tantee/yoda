@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { Person, ProjectDetail, ProjectRole, WorkItem, WorkflowTemplateSummary } from '@yoda/shared'
+import type { LiveEvent, Person, ProjectDetail, ProjectRole, WorkItem, WorkflowTemplateSummary } from '@yoda/shared'
 import { localized } from '~/utils/localized'
 
 const ROLES: ProjectRole[] = ['PM', 'BA', 'SA', 'DEV', 'QC']
@@ -21,8 +21,10 @@ const itemsError = ref('')
 const autonomyError = ref('')
 const createOpen = ref(false)
 const router = useRouter()
-const TABS = ['overview', 'items', 'repos', 'knowledge', 'ai'] as const
-const tab = ref<string>(TABS.includes(route.query.tab as never) ? (route.query.tab as string) : 'overview')
+const TABS = ['status', 'overview', 'items', 'repos', 'knowledge', 'ai'] as const
+// Only staff reach project pages (a staff path), so the status tab is the default.
+const tab = ref<string>(TABS.includes(route.query.tab as never) ? (route.query.tab as string) : 'status')
+const statusTab = ref<{ onLive: (e: LiveEvent) => void; reload: () => void } | null>(null)
 watch(tab, (v) => router.replace({ query: { ...route.query, tab: v } }))
 
 const isMember = computed(() => !!project.value?.members.some(m => m.personId === me.value?.id))
@@ -138,7 +140,11 @@ onMounted(() => {
 })
 useLiveEvents((e) => {
   if (e.projectId === id) loadItemsSoon()
-}, loadItemsSoon)
+  statusTab.value?.onLive(e)
+}, () => {
+  loadItemsSoon()
+  statusTab.value?.reload()
+})
 </script>
 
 <template>
@@ -151,6 +157,7 @@ useLiveEvents((e) => {
     <p class="text-medium-emphasis mb-4">{{ project.description }}</p>
     <v-alert v-if="error" type="error" class="mb-4">{{ error }}</v-alert>
     <v-tabs v-model="tab" class="mb-4" data-testid="project-tabs">
+      <v-tab value="status" data-testid="tab-status">{{ t('projects.tabs.status') }}</v-tab>
       <v-tab value="overview" data-testid="tab-overview">{{ t('projects.tabs.overview') }}</v-tab>
       <v-tab value="items" data-testid="tab-items">{{ t('projects.tabs.items') }}</v-tab>
       <v-tab value="repos" data-testid="tab-repos">{{ t('projects.tabs.repos') }}</v-tab>
@@ -158,6 +165,9 @@ useLiveEvents((e) => {
       <v-tab value="ai" data-testid="tab-ai">{{ t('projects.tabs.ai') }}</v-tab>
     </v-tabs>
     <v-window v-model="tab" :touch="false">
+      <v-window-item value="status">
+        <StatusProjectTab ref="statusTab" :project-id="id" :no-ai="project.noAi" :can-manage="canManage" />
+      </v-window-item>
       <v-window-item value="overview">
     <v-switch
       v-if="canManage"
