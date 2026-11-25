@@ -1,5 +1,5 @@
 import multipart from '@fastify/multipart'
-import Fastify, { type FastifyInstance } from 'fastify'
+import Fastify, { type FastifyInstance, type FastifyServerOptions } from 'fastify'
 import type { JWTVerifyGetKey } from 'jose'
 import { ZodError } from 'zod'
 import { HttpError, registerAuth } from './auth/plugin.js'
@@ -29,6 +29,7 @@ import { notificationRoutes } from './routes/notifications.js'
 import { adminRoutes } from './routes/admin.js'
 import { gitlabRoutes } from './routes/gitlab.js'
 import { runnerRoutes } from './routes/runners.js'
+import { mcpRoutes } from './routes/mcp.js'
 
 export type AppDeps = {
   config: Config
@@ -44,8 +45,19 @@ export type AppDeps = {
   onAttachmentStored?: AttachmentStoredHook
 }
 
+/**
+ * Pino options. Request logs carry no headers today; credentials are redacted anyway, should a serializer or a
+ * log call ever include them (Keycloak and runner bearer tokens, the GitLab webhook secret, cookies).
+ */
+export const LOGGER_OPTIONS = {
+  redact: {
+    paths: ['req.headers.authorization', 'req.headers["x-gitlab-token"]', 'req.headers.cookie', 'headers.authorization', 'headers["x-gitlab-token"]', 'headers.cookie'],
+    censor: '[redacted]',
+  },
+} satisfies Exclude<FastifyServerOptions['logger'], boolean | undefined>
+
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
-  const app = Fastify({ logger: process.env.VITEST ? false : true })
+  const app = Fastify({ logger: process.env.VITEST ? false : LOGGER_OPTIONS })
   app.decorate('deps', deps)
 
   app.setErrorHandler((err, _req, reply) => {
@@ -85,6 +97,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   adminRoutes(app)
   gitlabRoutes(app)
   runnerRoutes(app)
+  if (deps.config.mcpEnabled) mcpRoutes(app)
   streamRoutes(app)
   // Text-bearing uploads become `document` entries. The attachment is already committed, so a failure here
   // is logged rather than failing the upload (a retried upload would duplicate the file).
