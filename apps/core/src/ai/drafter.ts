@@ -10,7 +10,40 @@ import { SYSTEM_PROMPT } from './prompts.js'
 /** Upper bound for one draft: long documents fit, a runaway generation does not run up the bill. */
 export const DRAFT_MAX_OUTPUT_TOKENS = 16_000
 
-export type DrafterDeps = Pick<AppDeps, 'db' | 'ai' | 'bus' | 'jobs'>
+export type DrafterDeps = Pick<AppDeps, 'db' | 'ai' | 'bus' | 'jobs' | 'config'>
+
+export type DraftMeta = { confidence: 'high' | 'low'; missing: string[] }
+
+/** Matched against the tail from the last `<!--`: only a note that ends the draft is the meta note. */
+const META_NOTE = /^<!--\s*meta\b([\s\S]*?)-->\s*$/
+const MAX_MISSING = 10
+const MAX_MISSING_LENGTH = 200
+
+/**
+ * Splits the drafter's final `<!--meta {...}-->` note (see SYSTEM_PROMPT) from the draft. The note is always
+ * stripped; a missing or unreadable one counts as high confidence with nothing missing.
+ */
+export function parseDraftMeta(raw: string): { text: string; meta: DraftMeta } {
+  const fallback: DraftMeta = { confidence: 'high', missing: [] }
+  const start = raw.lastIndexOf('<!--')
+  const m = start >= 0 ? META_NOTE.exec(raw.slice(start)) : null
+  if (!m) return { text: raw, meta: fallback }
+  const text = raw.slice(0, start).trimEnd()
+  try {
+    const v = JSON.parse(m[1]!.trim()) as { confidence?: unknown; missing?: unknown }
+    if (v === null || typeof v !== 'object') return { text, meta: fallback }
+    const missing = Array.isArray(v.missing)
+      ? v.missing
+          .filter((x): x is string => typeof x === 'string')
+          .map((x) => x.trim().slice(0, MAX_MISSING_LENGTH))
+          .filter(Boolean)
+          .slice(0, MAX_MISSING)
+      : []
+    return { text, meta: { confidence: v.confidence === 'low' ? 'low' : 'high', missing } }
+  } catch {
+    return { text, meta: fallback }
+  }
+}
 
 /** Failures that retrying cannot fix: the task goes back to people at once with this reason. */
 function permanentReason(err: unknown): string | null {
@@ -39,7 +72,7 @@ export async function runDraft(
   if (!task || task.state !== 'open' || task.executor !== 'ai' || task.assigneeId !== null) return
   try {
     const { pack, overBudget } = await buildContextPack(deps, taskId)
-    const { text, model } = await deps.ai.generateText({
+    const { text: raw, model } = await deps.ai.generateText({
       job: 'draft',
       projectId: task.projectId,
       taskId,
@@ -48,7 +81,10 @@ export async function runDraft(
       maxOutputTokens: DRAFT_MAX_OUTPUT_TOKENS,
       signal: run.signal,
     })
-    await runWork(deps, { id: null, kind: 'ai' }, (ctx) => submitAiResult(ctx, taskId, text, { model, overBudget }))
+    const { text, meta } = parseDraftMeta(raw)
+    // Only the note came back: nothing usable to show (same as an empty answer).
+    if (!text.trim()) throw new AiFailed('empty_output', 'draft was empty after its meta note')
+    await runWork(deps, { id: null, kind: 'ai' }, (ctx) => submitAiResult(ctx, taskId, text, { model, overBudget, ...meta }))
   } catch (err) {
     const reason = permanentReason(err)
     if (reason) return fail(deps, taskId, reason)

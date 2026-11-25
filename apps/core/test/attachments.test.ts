@@ -270,4 +270,22 @@ describe('attachments API', () => {
     expect((await call(nurse, 'PATCH', url, { noAi: true })).statusCode).toBe(403)
     expect((await call(member, 'PATCH', url, { noAi: 'yes' })).statusCode).toBe(400)
   })
+  it('conversation uploads: stored under the conversation, project thread files carry the project, no knowledge hook', async () => {
+    const p = await newProject()
+    const seen: string[] = []
+    onStored = async (row) => {
+      seen.push(row.fileName)
+    }
+    const thread = (await app.inject({ method: 'POST', url: '/conversations', headers: auth(pm), payload: { kind: 'project', projectId: p } })).json() as { id: string }
+    const m = multipart({ name: 'chat.txt', type: 'text/plain', data: Buffer.from('hello') })
+    const res = await app.inject({ method: 'POST', url: `/conversations/${thread.id}/attachments`, headers: { ...auth(member), ...m.headers }, payload: m.payload })
+    expect(res.statusCode).toBe(201)
+    expect(res.json()).toMatchObject({ projectId: p, conversationId: thread.id, hasText: true })
+    expect(puts.at(-1)).toMatch(new RegExp(`^conversations/${thread.id}/[0-9a-f-]{36}/chat\\.txt$`))
+    expect(seen).toEqual([])
+    const big = multipart({ name: 'big.txt', type: 'text/plain', data: Buffer.alloc(26 * 1024 * 1024, 97) })
+    const tooBig = await app.inject({ method: 'POST', url: `/conversations/${thread.id}/attachments`, headers: { ...auth(member), ...big.headers }, payload: big.payload })
+    expect(tooBig.statusCode).toBe(413)
+    expect((await call(outsider, 'GET', `/conversations/${thread.id}/attachments/${res.json().id}/download`)).statusCode).toBe(404)
+  })
 })

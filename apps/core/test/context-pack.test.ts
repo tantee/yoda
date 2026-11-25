@@ -4,7 +4,8 @@ import type { Me, TaskResult } from '@yoda/shared'
 import type { AppDeps } from '../src/app.js'
 import type { Db } from '../src/db/client.js'
 import { AiRefused } from '../src/ai/gateway.js'
-import { attachments, knowledgeEntries, people, projectMembers, projects, tasks } from '../src/db/schema.js'
+import { attachments, knowledgeEntries, people, projectMembers, projects, proposals, tasks } from '../src/db/schema.js'
+import { decideProposal } from '../src/proposals/service.js'
 import { buildContextPack, renderContextPack } from '../src/knowledge/context-pack.js'
 import { InlineJobQueue } from '../src/jobs/queue.js'
 import { assignTask, createWorkItem, submitTask } from '../src/work/engine.js'
@@ -56,6 +57,12 @@ async function complete(s: S, key: string, me: Me, result: Partial<TaskResult> =
   const t = await latest(s.wi, key)
   if (t.assigneeId !== me.id) await run(s.pm, (ctx) => assignTask(ctx, s.pm, t.id, me.id))
   await run(me, (ctx) => submitTask(ctx, me, t.id, { text: '', attachmentIds: [], ...result }))
+  // The item is high priority: the auto-assign guard rail (G4) asks the PM to confirm each step advance.
+  const [pending] = await db
+    .select({ id: proposals.id })
+    .from(proposals)
+    .where(and(eq(proposals.workItemId, s.wi), eq(proposals.kind, 'step_advance'), eq(proposals.state, 'pending')))
+  if (pending) await run(s.pm, (ctx) => decideProposal(ctx, s.pm, pending.id, { decision: 'accept' }))
   return t.id
 }
 

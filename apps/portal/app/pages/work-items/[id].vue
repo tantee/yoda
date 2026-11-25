@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { ProjectDetail, Task, WorkItemDetail, WorkflowTemplateSummary } from '@yoda/shared'
 import { localized } from '~/utils/localized'
+import { reopenTargets } from '~/utils/workItems'
 
 const { t, locale } = useI18n()
 const { me } = useMe()
@@ -15,12 +16,17 @@ const loadError = ref('')
 const error = ref('')
 const busy = ref(false)
 const cancelOpen = ref(false)
+const reopenOpen = ref(false)
+const reopenStep = ref<string | null>(null)
 const assigningId = ref<string | null>(null)
 const assignee = ref<string | null>(null)
 
 const isPm = computed(() => !!project.value?.members.some(m => m.personId === me.value?.id && m.roles.includes('PM')))
 const canManage = computed(() => !!me.value?.isAdmin || isPm.value)
 const isActive = computed(() => item.value?.state === 'active')
+/** PM/admin may send an active item back to an earlier step (e.g. the requester asked for changes). */
+const reopenSteps = computed(() => (canManage.value && isActive.value && item.value ? reopenTargets(item.value.steps) : []))
+const reopenItems = computed(() => reopenSteps.value.map(s => ({ value: s.key, title: localized(s.name, locale.value) })))
 const canCancel = computed(() => isActive.value && (canManage.value || item.value?.ownerId === me.value?.id))
 const templateName = computed(() => {
   const tpl = templates.value.find(x => x.key === item.value?.templateKey)
@@ -97,6 +103,19 @@ async function assign(taskId: string) {
   assigningId.value = null
   assignee.value = null
 }
+async function advance() {
+  await act(() => api(`/work-items/${id}/advance`, { method: 'POST' }))
+}
+function openReopen() {
+  reopenStep.value = null
+  reopenOpen.value = true
+}
+async function reopen() {
+  const stepKey = reopenStep.value
+  if (!stepKey) return
+  const ok = await act(() => api(`/work-items/${id}/reopen`, { method: 'POST', body: { stepKey } }))
+  if (ok) reopenOpen.value = false
+}
 async function cancelItem() {
   cancelOpen.value = false
   await act(() => api(`/work-items/${id}/cancel`, { method: 'POST' }))
@@ -125,6 +144,22 @@ useLiveEvents((e) => {
       <div class="d-flex align-center mb-2">
         <h1 class="text-h5">{{ item.title }}</h1>
         <v-spacer />
+        <v-btn
+          v-if="canManage && item.awaitingAdvance"
+          color="primary"
+          class="mr-2"
+          :loading="busy"
+          data-testid="advance-btn"
+          @click="advance"
+        >{{ t('workItems.advance') }}</v-btn>
+        <v-btn
+          v-if="reopenSteps.length"
+          variant="outlined"
+          class="mr-2"
+          prepend-icon="mdi-undo-variant"
+          data-testid="reopen-btn"
+          @click="openReopen"
+        >{{ t('workItems.reopen') }}</v-btn>
         <v-btn v-if="canCancel" color="error" variant="outlined" data-testid="cancel-btn" @click="cancelOpen = true">{{ t('workItems.cancel') }}</v-btn>
       </div>
       <div class="d-flex flex-wrap ga-2 mb-2">
@@ -132,6 +167,9 @@ useLiveEvents((e) => {
         <v-chip size="small" variant="outlined" data-testid="priority-chip">{{ t(`priority.${item.priority}`) }}</v-chip>
         <v-chip size="small" variant="outlined" data-testid="template-chip">{{ templateName }}</v-chip>
         <v-chip size="small" variant="outlined" data-testid="owner-chip" prepend-icon="mdi-account-outline">{{ item.ownerName }}</v-chip>
+        <v-chip v-if="item.requesterName" size="small" variant="outlined" data-testid="requester-chip" prepend-icon="mdi-account-voice">
+          {{ t('workItems.requester') }}: {{ item.requesterName }}
+        </v-chip>
       </div>
       <p v-if="item.description" class="mb-4" style="white-space: pre-wrap">{{ item.description }}</p>
       <v-alert v-if="error" type="error" class="mb-4" data-testid="action-error">{{ error }}</v-alert>
@@ -199,6 +237,27 @@ useLiveEvents((e) => {
 
       <h2 class="text-h6 mt-6 mb-2">{{ t('workItems.timeline') }}</h2>
       <EventTimeline :events="item.events" />
+
+      <v-dialog v-model="reopenOpen" max-width="480">
+        <v-card :title="t('workItems.reopenTitle')" data-testid="reopen-dialog">
+          <v-card-text>
+            <p class="mb-4">{{ t('workItems.reopenConfirm') }}</p>
+            <v-select
+              v-model="reopenStep"
+              :items="reopenItems"
+              :label="t('workItems.reopenStep')"
+              hide-details
+              data-testid="reopen-step-select"
+            />
+            <v-alert v-if="error" type="error" class="mt-4" density="compact">{{ error }}</v-alert>
+          </v-card-text>
+          <v-card-actions>
+            <v-spacer />
+            <v-btn @click="reopenOpen = false">{{ t('workItems.keep') }}</v-btn>
+            <v-btn color="primary" :disabled="!reopenStep" :loading="busy" data-testid="reopen-confirm" @click="reopen">{{ t('workItems.reopen') }}</v-btn>
+          </v-card-actions>
+        </v-card>
+      </v-dialog>
 
       <v-dialog v-model="cancelOpen" max-width="420">
         <v-card :title="t('workItems.cancelTitle')" :text="t('workItems.cancelConfirm')">

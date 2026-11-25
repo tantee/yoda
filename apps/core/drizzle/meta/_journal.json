@@ -43,6 +43,48 @@
       "when": 1795531117096,
       "tag": "0005_classy_valkyrie",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1795538430895,
+      "tag": "0006_right_firebrand",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1795541821472,
+      "tag": "0007_clammy_sway",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1795543913161,
+      "tag": "0008_task_superseded",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1795562773453,
+      "tag": "0009_department_settings",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1795564204913,
+      "tag": "0010_message_reply_to",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1795573449725,
+      "tag": "0011_notification_budget_alert",
+      "breakpoints": true
     }
   ]
 }

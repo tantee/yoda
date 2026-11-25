@@ -31,6 +31,7 @@ function logout() {
         {{ typeof l === 'string' ? l : l.code.toUpperCase() }}
       </v-btn>
     </v-btn-toggle>
+    <NotificationBell v-if="me" />
     <span v-if="me" class="mr-2" data-testid="display-name">{{ me.displayName }}</span>
     <v-btn icon="mdi-logout" :title="t('app.logout')" @click="logout" />
   </v-app-bar>

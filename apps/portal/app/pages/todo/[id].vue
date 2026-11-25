@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import type { Attachment, ProjectDetail, TaskInput, TaskWithContext } from '@yoda/shared'
+import type { Attachment, Conversation, ProjectDetail, TaskInput, TaskWithContext } from '@yoda/shared'
 import { localized } from '~/utils/localized'
+import { taskViewFor } from '~/utils/requests'
 
 const { t, locale } = useI18n()
 const { me } = useMe()
@@ -16,10 +17,18 @@ const busy = ref(false)
 const text = ref('')
 const newAssignee = ref<string | null>(null)
 const attached = ref<Attachment[]>([])
+const intakeId = ref<string | null>(null)
+
+/**
+ * Requesters, and staff who see this task only as its requester (outside the project), get a trimmed view:
+ * no project, work item or staff controls; uploads go to their own conversation.
+ */
+const view = computed(() => taskViewFor(me.value, task.value))
+const staff = computed(() => !view.value.requesterView)
 
 const isAssignee = computed(() => !!task.value?.assigneeId && task.value.assigneeId === me.value?.id)
 const isPm = computed(() => !!project.value?.members.some(m => m.personId === me.value?.id && m.roles.includes('PM')))
-const canManage = computed(() => !!me.value?.isAdmin || isPm.value)
+const canManage = computed(() => staff.value && (!!me.value?.isAdmin || isPm.value))
 const active = computed(() => ['proposed', 'open', 'in_progress', 'submitted'].includes(task.value?.state ?? ''))
 const workable = computed(() => task.value?.state === 'open' || task.value?.state === 'in_progress')
 const isDecision = computed(() => task.value?.type === 'review' || task.value?.type === 'approval')
@@ -33,7 +42,8 @@ async function load() {
     if (mine !== seq) return
     task.value = loaded
     loadError.value = ''
-    if (!project.value) {
+    if (!staff.value) void loadIntake()
+    else if (!project.value) {
       try {
         project.value = await api<ProjectDetail>(`/projects/${loaded.projectId}`)
       } catch {
@@ -61,9 +71,12 @@ async function act(path: string, body?: Record<string, unknown>) {
     const updated = await api<TaskWithContext>(`/tasks/${id}/${path}`, { method: 'POST', body })
     seq++ // drop any in-flight older load
     task.value = updated
-    text.value = ''
-    attached.value = []
     newAssignee.value = null
+    if (path !== 'start') {
+      // Starting keeps the draft text and uploads; only a submit consumes them.
+      text.value = ''
+      attached.value = []
+    }
   } catch (e) {
     error.value = t(errorKey(e))
     await load() // drop stale action buttons
@@ -82,6 +95,15 @@ const copyInput = (input: TaskInput) => {
 const confirmTask = () => act('confirm')
 const assign = () => newAssignee.value && act('assign', { personId: newAssignee.value })
 
+async function loadIntake() {
+  if (intakeId.value) return
+  try {
+    intakeId.value = (await api<Conversation>('/conversations/personal')).id
+  } catch {
+    intakeId.value = null // upload is hidden; the answer can still be sent as text
+  }
+}
+
 onMounted(load)
 useLiveEvents((e) => {
   if (e.taskId === id || e.workItemId === task.value?.workItemId) loadSoon()
@@ -90,7 +112,7 @@ useLiveEvents((e) => {
 
 <template>
   <div>
-    <v-btn variant="text" prepend-icon="mdi-arrow-left" to="/todo" class="mb-2">{{ t('todo.back') }}</v-btn>
+    <v-btn variant="text" prepend-icon="mdi-arrow-left" :to="view.back" class="mb-2">{{ view.back === '/todo' ? t('todo.back') : t('answers.back') }}</v-btn>
     <v-alert v-if="loadError" type="error" class="mb-4" data-testid="load-error">{{ loadError }}</v-alert>
     <template v-if="task">
       <h1 class="text-h5 mb-2">{{ localized(task.title, locale) }}</h1>
@@ -99,7 +121,8 @@ useLiveEvents((e) => {
         <v-chip size="small" variant="outlined">{{ t(`task.type.${task.type}`) }}</v-chip>
         <v-chip size="small" variant="outlined" data-testid="priority-chip">{{ t(`priority.${task.workItemPriority}`) }}</v-chip>
       </div>
-      <p class="text-medium-emphasis mb-4">
+      <p v-if="!staff" class="text-medium-emphasis mb-4" data-testid="requester-context">{{ task.workItemTitle }}</p>
+      <p v-else class="text-medium-emphasis mb-4">
         {{ t('todo.workItem') }}:
         <NuxtLink :to="`/work-items/${task.workItemId}`">{{ task.workItemTitle }}</NuxtLink>
         · {{ t('todo.project') }}: <NuxtLink :to="`/projects/${task.projectId}`">{{ task.projectName }}</NuxtLink>
@@ -115,7 +138,7 @@ useLiveEvents((e) => {
 
       <v-alert v-if="error" type="error" class="mb-4" data-testid="action-error">{{ error }}</v-alert>
 
-      <div v-if="task.aiStatus" class="mb-4" data-testid="ai-status">
+      <div v-if="task.aiStatus && staff" class="mb-4" data-testid="ai-status">
         <AiStatus :task="task" :can-retry="canManage" @retried="load" />
       </div>
 
@@ -156,7 +179,8 @@ useLiveEvents((e) => {
         <v-textarea v-model="text" :label="t('task.comment')" rows="3" auto-grow data-testid="result-input" />
         <h3 class="text-subtitle-2 mb-1">{{ t('task.resultAttachments') }}</h3>
         <AttachmentList :attachments="attached" class="mb-2" />
-        <AttachmentUpload class="mb-4" :project-id="task.projectId" :work-item-id="task.workItemId" :task-id="task.id" @uploaded="a => attached.push(a)" />
+        <AttachmentUpload v-if="staff" class="mb-4" :project-id="task.projectId" :work-item-id="task.workItemId" :task-id="task.id" @uploaded="a => attached.push(a)" />
+        <AttachmentUpload v-else-if="intakeId" class="mb-4" :conversation-id="intakeId" @uploaded="a => attached.push(a)" />
         <div class="d-flex ga-2 mb-4">
           <v-btn v-if="task.state === 'open'" color="primary" :loading="busy" data-testid="start-btn" @click="start">{{ t('task.start') }}</v-btn>
           <template v-if="isDecision">

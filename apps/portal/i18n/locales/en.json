@@ -18,7 +18,8 @@
     "requests": "My requests",
     "answers": "Things to answer",
     "admin": {
-      "people": "People admin"
+      "people": "People admin",
+      "ai": "AI budget"
     }
   },
   "projects": {
@@ -65,7 +66,8 @@
     "decisionRequired": "Choose approve or request changes",
     "commentRequired": "Please add a comment when requesting changes",
     "tooLarge": "File is larger than 25 MB",
-    "unsupportedType": "This file type is not supported"
+    "unsupportedType": "This file type is not supported",
+    "projectRequired": "Choose a project first"
   },
   "todo": {
     "myTasks": "My tasks",
@@ -76,7 +78,10 @@
     "confirm": "Confirm",
     "project": "Project",
     "workItem": "Work item",
-    "back": "Back to to-do"
+    "back": "Back to to-do",
+    "proposals": "Waiting for your decision",
+    "stepAdvance": "The current step is finished. Move this work item to the next step?",
+    "awaitingAdvance": "This work item finished its current step and is waiting to move on"
   },
   "task": {
     "state": {
@@ -148,7 +153,14 @@
       "active": "Active",
       "done": "Done",
       "cancelled": "Cancelled"
-    }
+    },
+    "requester": "Requester",
+    "requesterHint": "Optional: the person this is for",
+    "advance": "Advance to next step",
+    "reopen": "Reopen step",
+    "reopenTitle": "Send this work item back to an earlier step?",
+    "reopenConfirm": "Open tasks in the current and later steps will stop. The chosen step starts again, with the requester's latest change request as feedback, and the steps after it are done again.",
+    "reopenStep": "Step to reopen"
   },
   "steps": {
     "done": "Done",
@@ -161,7 +173,8 @@
       "created": "Work item created",
       "step_advanced": "Moved to next step",
       "done": "Work item completed",
-      "cancelled": "Work item cancelled"
+      "cancelled": "Work item cancelled",
+      "reopened": "Sent back to an earlier step"
     },
     "task": {
       "created": "Task created",
@@ -172,6 +185,12 @@
       "accepted": "Task accepted",
       "rejected": "Task rejected"
     },
+    "proposal": {
+      "created": "Proposal awaiting confirmation",
+      "accepted": "Proposal confirmed",
+      "rejected": "Proposal dismissed",
+      "superseded": "Proposal no longer applies"
+    },
     "reason": {
       "work_item_cancelled": "Work item cancelled",
       "member_removed": "Member removed from project",
@@ -179,7 +198,8 @@
       "budget_exceeded": "Monthly AI budget reached",
       "ai_failed": "The AI could not produce a draft",
       "ai_unavailable": "AI is not configured",
-      "no_ai": "This project does not use AI"
+      "no_ai": "This project does not use AI",
+      "reopened": "Work item reopened to an earlier step"
     },
     "ai": {
       "drafted": "AI drafted a result",
@@ -249,9 +269,102 @@
     "spend": "Spend",
     "calls": "Calls",
     "noLimit": "No limit",
-    "readOnly": "Only a PM or admin can change these settings",
+    "readOnly": "Only an administrator can change these settings",
     "drafting": "AI is drafting…",
     "failed": "AI couldn't draft this ({reason})",
-    "retry": "Retry AI"
+    "retry": "Retry AI",
+    "deptTitle": "Department AI budget",
+    "deptHint": "Monthly limit for all AI use in the department. Empty = no limit.",
+    "saved": "Saved"
+  },
+  "chat": {
+    "threads": "Conversations",
+    "personal": "My assistant",
+    "intake": "My assistant",
+    "empty": "No messages yet",
+    "select": "Select a conversation",
+    "placeholder": "Type a message (Enter to send, Shift+Enter for a new line)",
+    "send": "Send",
+    "attach": "Attach a file",
+    "typing": "The secretary is typing…",
+    "loadOlder": "Load older messages",
+    "visibleToRequester": "This thread is visible to the requester. Do not post internal notes here.",
+    "sendFailed": "Could not send the message",
+    "ai": "Secretary",
+    "system": "System",
+    "card": {
+      "workItemCreated": "Request created",
+      "knowledgeSaved": "Knowledge saved",
+      "proposal": "Proposal",
+      "open": "Open",
+      "confirm": "Confirm",
+      "dismiss": "Dismiss",
+      "dismissNote": "Reason for dismissing",
+      "state": {
+        "pending": "Waiting for a decision",
+        "accepted": "Confirmed",
+        "rejected": "Dismissed",
+        "superseded": "No longer applies"
+      },
+      "project": "Project",
+      "chooseProject": "Choose a project",
+      "requester": "Requester"
+    },
+    "textRequired": "Add a message to send the attached files",
+    "marker": {
+      "secretaryNotReady": "The assistant is not available yet",
+      "requestDone": "Your request is complete",
+      "secretaryFailed": {
+        "budget_exceeded": "The assistant can't answer right now: this month's AI budget has been used up. Please ask an administrator.",
+        "no_ai": "The assistant can't answer here: this project is marked \"do not send to AI\".",
+        "ai_unavailable": "The assistant isn't available right now: AI is not set up. Please ask an administrator.",
+        "ai_failed": "The assistant couldn't answer this time. Please try again in a moment."
+      }
+    }
+  },
+  "notifications": {
+    "title": "Notifications",
+    "empty": "No notifications",
+    "markAllRead": "Mark all as read"
+  },
+  "answers": {
+    "empty": "Nothing needs your answer right now",
+    "back": "Back to questions"
+  },
+  "requests": {
+    "empty": "You have no requests yet. Tell the assistant what you need.",
+    "startChat": "Talk to the assistant",
+    "back": "Back to my requests",
+    "updated": "Last updated",
+    "yourAnswers": "Questions for you",
+    "openChat": "Open chat",
+    "status": {
+      "submitted": "Received",
+      "in_progress": "In progress",
+      "waiting_for_you": "Waiting for you",
+      "done": "Done",
+      "cancelled": "Cancelled"
+    },
+    "hint": {
+      "submitted": "We received your request.",
+      "in_progress": "The team is working on it.",
+      "waiting_for_you": "We need an answer from you to continue.",
+      "done": "This request is complete.",
+      "cancelled": "This request was cancelled."
+    }
+  },
+  "guards": {
+    "rework": "Changes were requested in this step",
+    "repeated_rework": "This work was sent back for changes 2 or more times",
+    "ai_low_confidence": "The AI was not confident in its draft",
+    "high_priority": "High or urgent priority",
+    "ai_budget": "80% or more of the project's AI budget is used this month",
+    "daily_cap": "Everyone who can take this task has reached today's task limit",
+    "no_assignee": "No project member holds a role the next step needs",
+    "requester_changes": "The requester asked for changes on the delivery",
+    "detail": {
+      "ai_low_confidence": "Missing: {detail}",
+      "no_assignee": "Roles: {detail}"
+    }
   }
 }

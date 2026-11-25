@@ -29,11 +29,13 @@ export function testDb(): Promise<Db> {
 }
 
 export async function resetDb(db: Db): Promise<void> {
-  await db.execute(sql`TRUNCATE ai_calls, knowledge_chunks, knowledge_entries, attachments, people, projects, project_members, events, tasks, work_items, workflow_templates CASCADE`)
+  await db.execute(sql`TRUNCATE department_settings, notifications, proposals, conversation_reads, messages, conversations, ai_calls, knowledge_chunks, knowledge_entries, attachments, people, projects, project_members, events, tasks, work_items, workflow_templates CASCADE`)
+  // The migration seeds the single department_settings row; TRUNCATE (cascading from people) removes it.
+  await db.execute(sql`INSERT INTO department_settings (id) VALUES (1) ON CONFLICT DO NOTHING`)
   await seedTemplates(db)
 }
 
-// Unique key prefix per test process so runs never collide on the shared dev MinIO.
+// Unique key prefix per test process so runs never collide on the shared dev RustFS.
 const TEST_PREFIX = `test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}/`
 let storagePromise: Promise<Storage> | undefined
 function testStorage(config: AppDeps['config']): Promise<Storage> {
@@ -72,9 +74,10 @@ export async function testDeps(overrides: Partial<AppDeps> = {}): Promise<AppDep
       s3Endpoint: process.env.S3_ENDPOINT ?? 'http://localhost:9000',
       s3Region: 'us-east-1',
       s3Bucket: 'yoda',
-      s3AccessKey: process.env.S3_ACCESS_KEY ?? 'yoda', // DEV ONLY (docker-compose MinIO)
-      s3SecretKey: process.env.S3_SECRET_KEY ?? 'yoda-dev-minio', // DEV ONLY
+      s3AccessKey: process.env.S3_ACCESS_KEY ?? 'yoda', // DEV ONLY (docker-compose RustFS)
+      s3SecretKey: process.env.S3_SECRET_KEY ?? 'yoda-dev-rustfs', // DEV ONLY
       aiWorkers: 2,
+      dailyTaskCap: 8,
   }
   const db = await testDb()
   const bus = new LiveBus()
@@ -83,12 +86,13 @@ export async function testDeps(overrides: Partial<AppDeps> = {}): Promise<AppDep
     db,
     jwks: localJwks,
     bus,
-    ai: new AiGateway({ db, bus, models: mockModels() }),
+    ai: new AiGateway({ db, bus, models: mockModels(), config }),
     storage: await testStorage(config),
-    // Most tests drive AI tasks by hand, so drafting jobs are dropped by default; drafter tests pass their own queue.
+    // Most tests drive AI tasks by hand, so drafting and secretary jobs are dropped by default; drafter,
+    // chat and secretary tests that assert on them pass their own queue.
     jobs: new InlineJobQueue({
       onError: (err, name, id) => console.warn(`test job ${name} ${id} failed`, err),
-      ignore: ['draft-task'],
+      ignore: ['draft-task', 'secretary-chat', 'secretary-event'],
     }),
     ...overrides,
   }

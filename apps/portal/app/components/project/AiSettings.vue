@@ -10,13 +10,8 @@ const usage = ref<AiUsage | null>(null)
 const budget = ref('')
 const error = ref('')
 
-const percent = computed(() => {
-  const u = usage.value
-  if (!u || u.budgetUsd == null) return 0
-  if (u.budgetUsd <= 0) return u.costUsd > 0 ? 100 : 0
-  return Math.min(100, (u.costUsd / u.budgetUsd) * 100)
-})
-const barColor = computed(() => (percent.value >= 100 ? 'error' : percent.value >= 80 ? 'warning' : 'primary'))
+const percent = computed(() => usagePercent(usage.value))
+const barColor = computed(() => usageColor(percent.value))
 
 let seq = 0
 async function loadUsage() {
@@ -45,10 +40,8 @@ async function patch(body: { noAi?: boolean; aiBudgetUsd?: number | null }) {
 }
 
 function saveBudget() {
-  const raw = budget.value.trim()
-  if (!raw) return patch({ aiBudgetUsd: null })
-  const n = Number(raw)
-  if (!Number.isFinite(n) || n < 0) {
+  const n = parseBudgetInput(budget.value)
+  if (n === undefined) {
     error.value = t('ai.invalidBudget')
     return
   }

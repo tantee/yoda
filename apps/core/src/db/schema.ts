@@ -16,18 +16,24 @@ import {
   uniqueIndex,
   uuid,
   vector,
+  type AnyPgColumn,
 } from 'drizzle-orm/pg-core'
 import {
   ActorKind,
+  AuthorKind,
+  ConversationKind,
   KnowledgeScope,
   KnowledgeStatus,
   KnowledgeType,
+  NotificationKind,
   Priority,
-  ProjectRole,
+  ProposalKind,
+  ProposalState,
   SourceKind,
   TaskExecutor,
   TaskState,
   TaskType,
+  TemplateRole,
   WorkItemState,
   type TaskResult,
 } from '@yoda/shared'
@@ -115,6 +121,7 @@ export const workItems = pgTable(
     ownerId: uuid('owner_id')
       .notNull()
       .references(() => people.id),
+    requesterId: uuid('requester_id').references(() => people.id),
     currentStepKey: text('current_step_key'),
     state: text('state').notNull().default('active'),
     createdBy: uuid('created_by').references(() => people.id),
@@ -148,12 +155,17 @@ export const tasks = pgTable(
     assigneeId: uuid('assignee_id').references(() => people.id),
     proposedAssigneeId: uuid('proposed_assignee_id').references(() => people.id),
     result: jsonb('result').$type<TaskResult>(),
+    /**
+     * Set when a PM reopened the work item to this task's step or an earlier one: the attempt is history and
+     * no longer counts toward its step (an accepted one must be done again).
+     */
+    supersededAt: timestamp('superseded_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     check('tasks_type_check', sql`${t.type} in (${list(TaskType.options)})`),
-    check('tasks_role_check', sql`${t.role} in (${list(ProjectRole.options)})`),
+    check('tasks_role_check', sql`${t.role} in (${list(TemplateRole.options)})`),
     check('tasks_executor_check', sql`${t.executor} in (${list(TaskExecutor.options)})`),
     check('tasks_state_check', sql`${t.state} in (${list(TaskState.options)})`),
     unique('tasks_attempt_unique').on(t.workItemId, t.templateTaskKey, t.attempt),
@@ -184,28 +196,153 @@ export const events = pgTable(
   },
   (t) => [
     index('events_work_item_seq_idx').on(t.workItemId, t.seq),
+    // The daily task cap counts today's automatic assignments (work/assign.ts).
+    index('events_auto_assigned_idx')
+      .on(t.createdAt)
+      .where(sql`${t.type} = 'task.assigned' and ${t.payload}->>'auto' = 'true'`),
     check('events_actor_kind_check', sql`${t.actorKind} in (${list(ActorKind.options)})`),
   ],
 )
 
-export const attachments = pgTable('attachments', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  projectId: uuid('project_id')
-    .notNull()
-    .references(() => projects.id, { onDelete: 'cascade' }),
-  workItemId: uuid('work_item_id').references(() => workItems.id, { onDelete: 'cascade' }),
-  taskId: uuid('task_id').references(() => tasks.id, { onDelete: 'cascade' }),
-  storageKey: text('storage_key').notNull().unique(),
-  fileName: text('file_name').notNull(),
-  contentType: text('content_type').notNull(),
-  sizeBytes: bigint('size_bytes', { mode: 'number' }).notNull(),
-  noAi: boolean('no_ai').notNull().default(false),
-  extractedText: text('extracted_text'),
-  uploadedBy: uuid('uploaded_by')
-    .notNull()
-    .references(() => people.id),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-})
+export const conversations = pgTable(
+  'conversations',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    kind: text('kind').notNull(),
+    ownerId: uuid('owner_id')
+      .notNull()
+      .references(() => people.id),
+    projectId: uuid('project_id').references(() => projects.id, { onDelete: 'cascade' }),
+    workItemId: uuid('work_item_id').references(() => workItems.id, { onDelete: 'cascade' }),
+    title: text('title').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    lastMessageAt: timestamp('last_message_at', { withTimezone: true }),
+  },
+  (t) => [
+    check('conversations_kind_check', sql`${t.kind} in (${list(ConversationKind.options)})`),
+    check(
+      'conversations_scope_ids_check',
+      sql`(${t.kind} in ('personal', 'intake'))
+        OR (${t.kind} = 'project' AND ${t.projectId} IS NOT NULL AND ${t.workItemId} IS NULL)
+        OR (${t.kind} = 'work_item' AND ${t.projectId} IS NOT NULL AND ${t.workItemId} IS NOT NULL)`,
+    ),
+    uniqueIndex('conversations_one_personal')
+      .on(t.ownerId)
+      .where(sql`${t.kind} = 'personal'`),
+  ],
+)
+
+export const messages = pgTable(
+  'messages',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    conversationId: uuid('conversation_id')
+      .notNull()
+      .references(() => conversations.id, { onDelete: 'cascade' }),
+    seq: bigserial('seq', { mode: 'number' }).notNull(),
+    authorKind: text('author_kind').notNull(),
+    authorId: uuid('author_id').references(() => people.id),
+    text: text('text').notNull(),
+    attachmentIds: uuid('attachment_ids').array().notNull().default(sql`'{}'::uuid[]`),
+    actions: jsonb('actions').notNull().default(sql`'[]'::jsonb`),
+    /** For secretary replies (`ai` / `system`): the person message being answered. */
+    replyToId: uuid('reply_to_id').references((): AnyPgColumn => messages.id, { onDelete: 'set null' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().default(sql`clock_timestamp()`),
+  },
+  (t) => [
+    index('messages_conversation_seq_idx').on(t.conversationId, t.seq),
+    index('messages_reply_to_idx').on(t.replyToId),
+    check('messages_author_kind_check', sql`${t.authorKind} in (${list(AuthorKind.options)})`),
+  ],
+)
+
+export const conversationReads = pgTable(
+  'conversation_reads',
+  {
+    conversationId: uuid('conversation_id')
+      .notNull()
+      .references(() => conversations.id, { onDelete: 'cascade' }),
+    personId: uuid('person_id')
+      .notNull()
+      .references(() => people.id, { onDelete: 'cascade' }),
+    lastReadSeq: bigint('last_read_seq', { mode: 'number' }).notNull().default(0),
+  },
+  (t) => [primaryKey({ columns: [t.conversationId, t.personId] })],
+)
+
+export const proposals = pgTable(
+  'proposals',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    projectId: uuid('project_id').references(() => projects.id, { onDelete: 'cascade' }),
+    workItemId: uuid('work_item_id').references(() => workItems.id, { onDelete: 'cascade' }),
+    kind: text('kind').notNull(),
+    summary: text('summary').notNull().default(''),
+    reason: text('reason').notNull().default(''),
+    payload: jsonb('payload').notNull().default(sql`'{}'::jsonb`),
+    state: text('state').notNull().default('pending'),
+    createdByKind: text('created_by_kind').notNull(),
+    onBehalfOf: uuid('on_behalf_of').references(() => people.id),
+    decidedBy: uuid('decided_by').references(() => people.id),
+    decisionNote: text('decision_note'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    decidedAt: timestamp('decided_at', { withTimezone: true }),
+  },
+  (t) => [
+    check('proposals_kind_check', sql`${t.kind} in (${list(ProposalKind.options)})`),
+    check('proposals_state_check', sql`${t.state} in (${list(ProposalState.options)})`),
+    check('proposals_created_by_kind_check', sql`${t.createdByKind} in (${list(ActorKind.options)})`),
+    uniqueIndex('proposals_one_pending_step_advance')
+      .on(t.workItemId, t.kind)
+      .where(sql`${t.state} = 'pending' and ${t.kind} = 'step_advance'`),
+  ],
+)
+
+export const notifications = pgTable(
+  'notifications',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    personId: uuid('person_id')
+      .notNull()
+      .references(() => people.id, { onDelete: 'cascade' }),
+    kind: text('kind').notNull(),
+    title: text('title').notNull(),
+    body: text('body').notNull().default(''),
+    link: text('link'),
+    dedupeKey: text('dedupe_key'),
+    readAt: timestamp('read_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    check('notifications_kind_check', sql`${t.kind} in (${list(NotificationKind.options)})`),
+    uniqueIndex('notifications_dedupe_unique')
+      .on(t.personId, t.dedupeKey)
+      .where(sql`${t.dedupeKey} is not null`),
+    index('notifications_person_read_idx').on(t.personId, t.readAt, t.createdAt),
+  ],
+)
+
+export const attachments = pgTable(
+  'attachments',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    projectId: uuid('project_id').references(() => projects.id, { onDelete: 'cascade' }),
+    conversationId: uuid('conversation_id').references(() => conversations.id, { onDelete: 'cascade' }),
+    workItemId: uuid('work_item_id').references(() => workItems.id, { onDelete: 'cascade' }),
+    taskId: uuid('task_id').references(() => tasks.id, { onDelete: 'cascade' }),
+    storageKey: text('storage_key').notNull().unique(),
+    fileName: text('file_name').notNull(),
+    contentType: text('content_type').notNull(),
+    sizeBytes: bigint('size_bytes', { mode: 'number' }).notNull(),
+    noAi: boolean('no_ai').notNull().default(false),
+    extractedText: text('extracted_text'),
+    uploadedBy: uuid('uploaded_by')
+      .notNull()
+      .references(() => people.id),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [check('attachments_owner_check', sql`${t.projectId} is not null or ${t.conversationId} is not null`)],
+)
 
 export const knowledgeEntries = pgTable(
   'knowledge_entries',
@@ -284,4 +421,17 @@ export const aiCalls = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index('ai_calls_project_created_idx').on(t.projectId, t.createdAt)],
+)
+
+/** Department-wide settings: a single row (id 1), seeded by its migration. */
+export const departmentSettings = pgTable(
+  'department_settings',
+  {
+    id: integer('id').primaryKey().default(1),
+    /** Monthly budget for project-less AI calls (null = no limit). */
+    aiBudgetUsd: numeric('ai_budget_usd', { precision: 12, scale: 2 }),
+    updatedBy: uuid('updated_by').references(() => people.id, { onDelete: 'set null' }),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [check('department_settings_single_row', sql`${t.id} = 1`)],
 )

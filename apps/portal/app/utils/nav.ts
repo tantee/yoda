@@ -19,16 +19,21 @@ export function navItemsFor(me: Me): NavItem[] {
     item('status', '/status', 'mdi-chart-timeline-variant'),
     item('projects', '/projects', 'mdi-folder-multiple-outline'),
   ]
-  if (me.isAdmin) items.push(item('admin.people', '/admin/people', 'mdi-account-cog-outline'))
+  if (me.isAdmin) {
+    items.push(item('admin.people', '/admin/people', 'mdi-account-cog-outline'))
+    items.push(item('admin.ai', '/admin/ai', 'mdi-robot-outline'))
+  }
   return items
 }
 
 const STAFF_PREFIXES = ['/todo', '/discussions', '/status', '/projects', '/work-items', '/admin']
 
 export function isStaffPath(path: string): boolean {
+  // A single task page (/todo/<id>) is also reached by requesters, from notifications and "answers".
+  if (/^\/todo\/[^/]+\/?$/.test(path)) return false
   return STAFF_PREFIXES.some(p => path === p || path.startsWith(p + '/'))
 }
 
 export function homeFor(me: Me): string {
-  return me.isStaff ? '/chat' : '/requests'
+  return me.isStaff ? '/todo' : '/requests'
 }

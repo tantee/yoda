@@ -130,6 +130,20 @@
       },
       "tasks": [
         {
+          "key": "accept-delivery",
+          "type": "approval",
+          "role": "REQUESTER",
+          "title": {
+            "th": "ตรวจรับงาน",
+            "en": "Accept the delivery"
+          },
+          "instructions": {
+            "th": "ตรวจสอบว่างานที่ส่งมอบตรงกับที่ขอ แล้วยืนยันรับงานหรือขอให้แก้ไข",
+            "en": "Check that the delivered work matches your request, then accept it or ask for changes"
+          },
+          "dependsOn": []
+        },
+        {
           "key": "close-bug",
           "type": "approval",
           "role": "PM",
@@ -141,7 +155,9 @@
             "th": "ตรวจว่าแก้ไขครบถ้วนแล้วปิดงาน",
             "en": "Confirm the fix is complete and close the work item"
           },
-          "dependsOn": []
+          "dependsOn": [
+            "accept-delivery"
+          ]
         }
       ]
     }

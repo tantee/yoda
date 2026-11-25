@@ -11,7 +11,7 @@ import { InlineJobQueue, type JobName } from '../src/jobs/queue.js'
 import { LiveBus } from '../src/live/bus.js'
 import { textStream } from './ai-mocks.js'
 import { mockModels, resetDb, testDb } from './helpers.js'
-import { auth, login, makeApp, type Who } from './support.js'
+import { acceptStepAdvance, auth, login, makeApp, type Who } from './support.js'
 
 const DRAFT = '# ข้อกำหนด\n\n- DRAFT-REQUIREMENTS-TEXT'
 
@@ -56,7 +56,7 @@ class HeldQueue extends InlineJobQueue {
 async function boot(models: ModelSet, jobs: InlineJobQueue = new InlineJobQueue()) {
   const db = await testDb()
   queue = jobs
-  app = await makeApp({ ai: new AiGateway({ db, bus: new LiveBus(), models }), jobs })
+  app = await makeApp({ ai: new AiGateway({ db, bus: new LiveBus(), models, config: { dailyTaskCap: 8 } }), jobs })
   admin = await login(app, 'boss', { staff: true })
   pm = await login(app, 'pm', { staff: true })
   ba = await login(app, 'ba', { staff: true })
@@ -81,6 +81,7 @@ async function createItem(projectId: string): Promise<WorkItemDetail> {
     title: 'เพิ่มรายงาน HbA1c',
     description: 'ต้องการรายงานใหม่',
     templateKey: 'software-change',
+    requesterId: requester.id,
   })
   expect(res.statusCode).toBe(201)
   return res.json()
@@ -95,6 +96,8 @@ async function approveIntake(itemId: string) {
   const t = await active(itemId, 'accept-intake')
   if (t.assigneeId !== pm.id) expect((await call(pm, 'POST', `/tasks/${t.id}/assign`, { personId: pm.id })).statusCode).toBe(200)
   expect((await call(pm, 'POST', `/tasks/${t.id}/submit`, { decision: 'approve', text: '' })).statusCode).toBe(200)
+  // The finished intake step waits for the PM to confirm the advance (propose projects).
+  expect(await acceptStepAdvance(app, pm, itemId)).toBe(true)
 }
 
 /** Hands the latest attempt of `key` to `who` (as the PM) when needed, then submits it. */
@@ -102,6 +105,7 @@ async function drive(itemId: string, key: string, who: Who, result: Record<strin
   const t = await active(itemId, key)
   if (t.assigneeId !== who.id) expect((await call(pm, 'POST', `/tasks/${t.id}/assign`, { personId: who.id })).statusCode).toBe(200)
   expect((await call(who, 'POST', `/tasks/${t.id}/submit`, result)).statusCode).toBe(200)
+  await acceptStepAdvance(app, pm, itemId)
 }
 
 async function taskEvents(taskId: string) {
@@ -127,7 +131,7 @@ describe('AI drafter', () => {
     await app.close()
   })
 
-  it('drafts draft-requirements after intake approval and opens clarify-requirements with the draft', async () => {
+  it('drafts draft-requirements after intake approval and asks the requester with the draft', async () => {
     const m = draftModel()
     await boot(mockModels({ draft: m.model }))
     const p = await project()
@@ -145,10 +149,17 @@ describe('AI drafter', () => {
     expect(accepted).toMatchObject({ actorKind: 'ai', actorId: null })
     expect(drafted!.seq).toBeLessThan(accepted!.seq)
 
-    const clarify = await active(wi.id, 'clarify-requirements')
-    expect(clarify).toBeTruthy()
-    const detail = (await call(ba, 'GET', `/tasks/${clarify.id}`)).json() as TaskWithContext
+    const answer = await active(wi.id, 'answer-questions')
+    expect(answer).toMatchObject({ state: 'open', assigneeId: requester.id })
+    const detail = (await call(requester, 'GET', `/tasks/${answer.id}`)).json() as TaskWithContext
     expect(detail.inputs.map((i) => i.result.text)).toContain(DRAFT)
+    await drive(wi.id, 'answer-questions', requester, { text: 'คำตอบของผู้ขอ' })
+    const clarify = await active(wi.id, 'clarify-requirements')
+    const forBa = (await call(ba, 'GET', `/tasks/${clarify.id}`)).json() as TaskWithContext
+    expect(forBa.inputs.map((i) => [i.templateTaskKey, i.result.text])).toEqual([
+      ['draft-requirements', DRAFT],
+      ['answer-questions', 'คำตอบของผู้ขอ'],
+    ])
 
     const db = await testDb()
     const progress = await db
@@ -322,7 +333,7 @@ describe('AI drafter', () => {
     expect(res.statusCode).toBe(200)
     await queue.drain()
     expect(await active(wi.id, 'draft-requirements')).toMatchObject({ id: draft.id, state: 'accepted', result: { text: DRAFT } })
-    expect(await active(wi.id, 'clarify-requirements')).toBeTruthy()
+    expect(await active(wi.id, 'answer-questions')).toBeTruthy()
 
     const again = await call(pm, 'POST', `/tasks/${draft.id}/retry-ai`)
     expect(again.statusCode).toBe(409)
@@ -371,15 +382,15 @@ describe('AI drafter', () => {
     expect(held.held).toHaveLength(0)
 
     // Unchanged / true → true never queues.
-    expect((await call(pm, 'PATCH', `/projects/${p}`, { noAi: true })).statusCode).toBe(200)
+    expect((await call(admin, 'PATCH', `/projects/${p}`, { noAi: true })).statusCode).toBe(200)
     expect(held.held).toHaveLength(0)
-    expect((await call(pm, 'PATCH', `/projects/${p}`, { noAi: false })).statusCode).toBe(200)
+    expect((await call(admin, 'PATCH', `/projects/${p}`, { noAi: false })).statusCode).toBe(200)
     expect(held.held.map((j) => j.id).sort()).toEqual([draftA.id, draftB.id].sort())
     expect(await active(a.id, 'draft-requirements')).toMatchObject({ aiStatus: 'drafting' })
     expect((await taskEvents(draftA.id)).at(-1)).toMatchObject({ type: 'ai.retried' })
     expect((await taskEvents(draftB.id)).map((e) => e.type)).not.toContain('ai.retried')
     // false → false does not queue again.
-    expect((await call(pm, 'PATCH', `/projects/${p}`, { noAi: false })).statusCode).toBe(200)
+    expect((await call(admin, 'PATCH', `/projects/${p}`, { noAi: false })).statusCode).toBe(200)
     expect(held.held).toHaveLength(2)
 
     await held.release()
@@ -449,6 +460,7 @@ describe('AI drafter', () => {
     const wi = await createItem(p)
     await approveIntake(wi.id)
     await queue.drain()
+    await drive(wi.id, 'answer-questions', requester, { text: 'คำตอบ' })
     await drive(wi.id, 'clarify-requirements', ba, { text: 'ข้อกำหนดฉบับสมบูรณ์' })
     await drive(wi.id, 'approve-requirements', ba, { decision: 'approve', text: '' })
     await queue.drain()

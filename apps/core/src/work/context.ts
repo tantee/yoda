@@ -12,11 +12,18 @@ export type WorkCtx = {
   emitted: LiveEvent[]
   /** Jobs to send once the transaction has committed. */
   jobs: { name: JobName; id: string }[]
+  /** Daily cap on automatic task assignments per person (config `dailyTaskCap`). */
+  dailyTaskCap: number
 }
 
 export type Actor = { id: string | null; kind: ActorKind }
 
-export type WorkDeps = { db: Db; bus: LiveBus; jobs: Pick<JobQueue, 'send'> }
+export type WorkDeps = {
+  db: Db
+  bus: LiveBus
+  jobs: Pick<JobQueue, 'send'>
+  config: { dailyTaskCap: number }
+}
 
 export async function runWork<T>(
   deps: WorkDeps,
@@ -25,7 +32,15 @@ export async function runWork<T>(
 ): Promise<T> {
   const emitted: LiveEvent[] = []
   const jobs: WorkCtx['jobs'] = []
-  const result = await deps.db.transaction((tx) => fn({ tx, actorId: actor.id, actorKind: actor.kind, emitted, jobs }))
+  const result = await deps.db.transaction((tx) => fn({
+      tx,
+      actorId: actor.id,
+      actorKind: actor.kind,
+      emitted,
+      jobs,
+      dailyTaskCap: deps.config.dailyTaskCap,
+    }),
+  )
   for (const e of emitted) deps.bus.publish(e)
   for (const j of jobs) {
     // Committed work stays committed: a queue outage loses the job (it is logged), not the request.
@@ -59,7 +74,19 @@ export async function recordEvent(
     actorId: ctx.actorId,
     actorKind: e.actorKind ?? ctx.actorKind,
     reason: e.reason ?? null,
-    payload: e.payload ?? {},
+    payload: onBehalfOf(ctx, e.actorKind ?? ctx.actorKind, e.payload ?? {}),
   })
-  ctx.emitted.push({ type: e.type, projectId: e.projectId, workItemId: e.workItemId, taskId: e.taskId })
+  ctx.emitted.push({
+    type: e.type,
+    projectId: e.projectId,
+    workItemId: e.workItemId,
+    taskId: e.taskId,
+    conversationId: null,
+    personId: null,
+  })
+}
+
+/** The AI acting for a person (actor kind `ai` with that person's id) records `onBehalfOf` in event payloads. */
+function onBehalfOf(ctx: WorkCtx, kind: ActorKind, payload: Record<string, unknown>): Record<string, unknown> {
+  return kind === 'ai' && ctx.actorId ? { ...payload, onBehalfOf: ctx.actorId } : payload
 }

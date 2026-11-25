@@ -43,3 +43,11 @@ it('defaults TaskResult text and attachment ids; caps attachments at 20', () => 
   expect(TaskResult.safeParse({ attachmentIds: Array(21).fill(id) }).success).toBe(false)
   expect(TaskResult.safeParse({ attachmentIds: ['x'] }).success).toBe(false)
 })
+it('allows REQUESTER only on human and approval tasks', () => {
+  const ok = tpl([{ key: 's1', tasks: [task('a', { role: 'REQUESTER' }), task('b', { type: 'approval', role: 'REQUESTER', dependsOn: ['a'] })] }])
+  expect(validateTemplate(ok)).toEqual([])
+  const review = validateTemplate(tpl([{ key: 's1', tasks: [task('rv', { type: 'review', role: 'REQUESTER' })] }]))
+  expect(review.join(' ')).toContain('rv')
+  const ai = validateTemplate(tpl([{ key: 's1', tasks: [task('ai1', { type: 'ai', role: 'REQUESTER', capability: 'draft-text' })] }]))
+  expect(ai.join(' ')).toContain('ai1')
+})

@@ -1,13 +1,15 @@
-import { TaskAssign, TaskResult, WorkItemCreate, type Me } from '@yoda/shared'
+import { TaskAssign, TaskResult, WorkItemCreate, WorkItemReopen, type Me } from '@yoda/shared'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
-import { requireStaff } from '../auth/plugin.js'
+import { notFound, requireSignedIn, requireStaff } from '../auth/plugin.js'
 import { runWork, type WorkCtx } from '../work/context.js'
 import {
+  advanceWorkItem,
   assignTask,
   cancelWorkItem,
   confirmTask,
   createWorkItem,
+  reopenWorkItem,
   retryAiTask,
   startTask,
   submitTask,
@@ -49,7 +51,8 @@ export function workRoutes(app: FastifyInstance): void {
   })
 
   app.get('/work-items/:id', async (request) => {
-    requireStaff(request)
+    // Requesters follow their requests through /me/requests; here they get the same 404 as an unknown id.
+    if (!request.me.isStaff) throw notFound()
     const { id } = IdParams.parse(request.params)
     return getWorkItemDetail(db(), request.me, id)
   })
@@ -65,13 +68,39 @@ export function workRoutes(app: FastifyInstance): void {
     return getWorkItemDetail(db(), me, id)
   })
 
+  /** PM/admin: advance a finished step directly (e.g. after rejecting its step_advance proposal). */
+  app.post('/work-items/:id/advance', async (request) => {
+    requireStaff(request)
+    const { id } = IdParams.parse(request.params)
+    const me = request.me
+    await runWork(app.deps, { id: me.id, kind: 'person' }, async (ctx) => {
+      await requireWorkItemVisible(ctx.tx, me, id)
+      await advanceWorkItem(ctx, me, id)
+    })
+    return getWorkItemDetail(db(), me, id)
+  })
+
+  /** PM/admin: send the item back to an earlier step (e.g. the requester asked for changes on the delivery). */
+  app.post('/work-items/:id/reopen', async (request) => {
+    requireStaff(request)
+    const { id } = IdParams.parse(request.params)
+    const { stepKey } = WorkItemReopen.parse(request.body ?? {})
+    const me = request.me
+    await runWork(app.deps, { id: me.id, kind: 'person' }, async (ctx) => {
+      await requireWorkItemVisible(ctx.tx, me, id)
+      await reopenWorkItem(ctx, me, id, stepKey)
+    })
+    return getWorkItemDetail(db(), me, id)
+  })
+
   app.get('/me/todo', async (request) => {
     requireStaff(request)
     return getTodo(db(), request.me)
   })
 
+  // Staff, or anyone for a REQUESTER task assigned to them (getTask applies the same rule, 404 otherwise).
   app.get('/tasks/:id', async (request) => {
-    requireStaff(request)
+    requireSignedIn(request)
     const { id } = IdParams.parse(request.params)
     return getTask(db(), request.me, id)
   })
@@ -79,28 +108,32 @@ export function workRoutes(app: FastifyInstance): void {
   /**
    * Task mutations. The body is validated first; then, inside the transaction, non-members get 404
    * (not 403) so task ids are never confirmed to exist. Returns the fresh task.
+   * `requesterTask` routes also accept a REQUESTER task assigned to the caller (requesters included);
+   * the rest are staff-only and refuse requesters before any lookup.
    */
   const taskAction = <B>(
     path: string,
+    access: 'staff' | 'requesterTask',
     parse: (body: unknown) => B,
     act: (ctx: WorkCtx, me: Me, id: string, body: B) => Promise<void>,
   ) =>
     app.post(`/tasks/:id/${path}`, async (request) => {
-      requireStaff(request)
+      if (access === 'staff') requireStaff(request)
+      else requireSignedIn(request)
       const { id } = IdParams.parse(request.params)
       const body = parse(request.body)
       const me = request.me
       await runWork(app.deps, { id: me.id, kind: 'person' }, async (ctx) => {
-        await requireTaskVisible(ctx.tx, me, id)
+        await requireTaskVisible(ctx.tx, me, id, { requesterTask: access === 'requesterTask' })
         await act(ctx, me, id, body)
       })
       return getTask(db(), me, id)
     })
 
   const none = () => undefined
-  taskAction('start', none, (ctx, me, id) => startTask(ctx, me, id))
-  taskAction('submit', (b) => TaskResult.parse(b ?? {}), (ctx, me, id, result) => submitTask(ctx, me, id, result))
-  taskAction('confirm', none, (ctx, me, id) => confirmTask(ctx, me, id))
-  taskAction('assign', (b) => TaskAssign.parse(b), (ctx, me, id, { personId }) => assignTask(ctx, me, id, personId))
-  taskAction('retry-ai', none, (ctx, me, id) => retryAiTask(ctx, me, id))
+  taskAction('start', 'requesterTask', none, (ctx, me, id) => startTask(ctx, me, id))
+  taskAction('submit', 'requesterTask', (b) => TaskResult.parse(b ?? {}), (ctx, me, id, result) => submitTask(ctx, me, id, result))
+  taskAction('confirm', 'staff', none, (ctx, me, id) => confirmTask(ctx, me, id))
+  taskAction('assign', 'staff', (b) => TaskAssign.parse(b), (ctx, me, id, { personId }) => assignTask(ctx, me, id, personId))
+  taskAction('retry-ai', 'staff', none, (ctx, me, id) => retryAiTask(ctx, me, id))
 }
