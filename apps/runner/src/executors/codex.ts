@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { RunUsage } from '@yoda/shared'
 import { mcpUrl, type RunnerConfig } from '../config.js'
 import { runProcess } from './process.js'
-import { childEnv, readMarker, tail, type Executor, type ExecutorOptions } from './types.js'
+import { childEnv, notStarted, readMarker, tail, type Executor, type ExecutorOptions } from './types.js'
 
 /** The env var codex reads the bearer token from (`bearer_token_env_var`), so it never appears in argv. */
 const TOKEN_ENV = 'YODA_RUNNER_TOKEN'
@@ -92,6 +92,7 @@ export function codexExecutor(cfg: Pick<RunnerConfig, 'coreUrl' | 'token' | 'ext
           signal: input.signal,
           killGraceMs: opts.killGraceMs,
         })
+        if (p.spawnError) return notStarted('codex', p.spawnError)
         if (p.timedOut) return { ok: false, summary: `codex timed out after ${Math.round(input.timeoutMs / 60_000)} min`, needsHuman: false }
         if (p.aborted) return { ok: false, summary: 'codex was stopped', needsHuman: false }
         const events = readEvents(p.stdout)

@@ -48,7 +48,10 @@ export class FakeCore {
     ],
     branch: BRANCH,
   }
+  /** Lease length the fake grants on claim and heartbeat. */
+  leaseMs = 10 * 60_000
   private seq = 0
+  private lease = () => new Date(Date.now() + this.leaseMs).toISOString()
 
   named = (name: string) => this.calls.filter((c) => c.name === name)
 
@@ -67,7 +70,7 @@ export class FakeCore {
     const inactive = { error: { code: 'invalid_state', reason: 'run_not_active' } }
     switch (name) {
       case 'list_available_tasks':
-        return { body: { tasks: this.tasks.filter((t) => ![...this.runs.values()].some((r) => r.taskId === t.taskId)) } }
+        return { body: { tasks: this.tasks.filter((t) => ![...this.runs.values()].some((r) => r.taskId === t.taskId && r.state !== 'released' && r.state !== 'failed')) } }
       case 'claim_task': {
         const taskId = String(args.taskId)
         if ([...this.runs.values()].some((r) => r.taskId === taskId && r.state === 'running')) {
@@ -75,10 +78,10 @@ export class FakeCore {
         }
         const runId = `00000000-0000-4000-8000-${String(++this.seq).padStart(12, '0')}`
         this.runs.set(runId, { runId, taskId, state: 'running' })
-        return { body: { runId, leaseExpiresAt: '2026-11-25T00:10:00.000Z' } }
+        return { body: { runId, leaseExpiresAt: this.lease() } }
       }
       case 'heartbeat':
-        return this.live(args) ? { body: { leaseExpiresAt: '2026-11-25T00:10:00.000Z' } } : inactive
+        return this.live(args) ? { body: { leaseExpiresAt: this.lease() } } : inactive
       case 'get_context_pack': {
         const run = this.live(args)
         if (!run) return inactive

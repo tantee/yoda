@@ -7,6 +7,8 @@ export type ProcessResult = {
   stderr: string
   timedOut: boolean
   aborted: boolean
+  /** The command could not be started (e.g. `ENOENT`: not installed or not on PATH); null when it ran. */
+  spawnError: string | null
 }
 
 const MAX_OUTPUT = 16 * 1024 * 1024
@@ -37,6 +39,7 @@ export function runProcess(
     let aborted = false
     let killTimer: NodeJS.Timeout | undefined
     let settled = false
+    let spawnError: string | null = null
 
     const child = spawn(cmd, args, { cwd: opts.cwd, env: opts.env, detached: true, stdio: ['pipe', 'pipe', 'pipe'] })
     const pid = child.pid
@@ -64,7 +67,7 @@ export function runProcess(
       clearTimeout(timer)
       if (killTimer) clearTimeout(killTimer)
       opts.signal?.removeEventListener('abort', onAbort)
-      resolve({ code, signal, stdout, stderr, timedOut, aborted })
+      resolve({ code, signal, stdout, stderr, timedOut, aborted, spawnError })
     }
 
     child.stdout.setEncoding('utf8').on('data', (d: string) => {
@@ -75,8 +78,9 @@ export function runProcess(
     })
     child.stdin.on('error', () => undefined) // the child may exit without reading
     child.stdin.end(opts.stdin)
-    child.on('error', (err) => {
+    child.on('error', (err: NodeJS.ErrnoException) => {
       stderr += String(err.message)
+      if (!pid) spawnError = err.code ?? 'spawn_failed'
       finish(null, null)
     })
     // The leader exiting does not end its group: stop whatever it left running, so 'close' can follow.

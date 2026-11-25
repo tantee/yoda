@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { RunnerConfig } from '../src/config.js'
 import { McpToolError, type CoreClient } from '../src/core.js'
 import { fakeExecutor, type FakeRun } from '../src/executors/index.js'
-import { workTask } from '../src/work.js'
+import { heartbeatInterval, workTask } from '../src/work.js'
 import { BRANCH, FakeCore, REPO_ID } from './fake-core.js'
 import { git, isolateGit, makeOrigin, tempDir, TOKEN } from './helpers.js'
 
@@ -188,13 +188,98 @@ describe('workTask', () => {
     expect(fake.named('release_task')[0]!.args.failed).toBe(true)
   })
 
-  it('releases as failed when the repo has no local clone configured', async () => {
+  it('releases without a strike (runner_environment) when the repo has no local clone configured', async () => {
+    let ran = false
     const res = await workTask(
-      { cfg: RunnerConfig.parse({ coreUrl: 'https://core.example.invalid', token: TOKEN, workRoot }), core, executor: fakeExecutor(commitFile) },
+      {
+        cfg: RunnerConfig.parse({ coreUrl: 'https://core.example.invalid', token: TOKEN, workRoot }),
+        core,
+        executor: fakeExecutor((input) => ((ran = true), commitFile(input))),
+      },
       { taskId: TASK_ID },
     )
-    expect(res.status).toBe('failed')
-    expect(String(fake.named('release_task')[0]!.args.reason)).toContain('group/demo')
+    expect(res).toMatchObject({ status: 'environment', fatal: false })
+    const release = fake.named('release_task')[0]!.args
+    expect(release.failed).toBe(false)
+    expect(String(release.reason)).toMatch(/^runner_environment: .*group\/demo/)
+    expect(ran).toBe(false)
+  })
+
+  it('releases without a strike when the clone path is gone or origin/main is missing', async () => {
+    const gone = await workTask(
+      {
+        cfg: RunnerConfig.parse({ coreUrl: 'https://core.example.invalid', token: TOKEN, workRoot, repos: { 'group/demo': { clonePath: join(tmp.dir, 'nope') } } }),
+        core,
+        executor: fakeExecutor(commitFile),
+      },
+      { taskId: TASK_ID },
+    )
+    expect(gone.status).toBe('environment')
+    fake.code = { ...fake.code, repos: [{ ...fake.code.repos[0]!, defaultBranch: 'trunk' }] }
+    const missing = await workTask({ cfg: cfg(), core, executor: fakeExecutor(commitFile) }, { taskId: TASK_ID })
+    expect(missing.status).toBe('environment')
+    expect(fake.named('release_task').map((c) => c.args.failed)).toEqual([false, false])
+    expect(String(fake.named('release_task')[1]!.args.reason)).toContain('origin/trunk not found')
+  })
+
+  it('a missing executor binary is a fatal environment error: released without a strike', async () => {
+    const res = await workTask(
+      { cfg: cfg(), core, executor: fakeExecutor(() => ({ ok: false, summary: 'claude could not be started (ENOENT)', needsHuman: false, notStarted: true })) },
+      { taskId: TASK_ID },
+    )
+    expect(res).toMatchObject({ status: 'environment', fatal: true })
+    expect(fake.named('release_task')[0]!.args).toMatchObject({ failed: false })
+    expect(runDirs()).toEqual([])
+  })
+
+  it('removes a worktree a killed run left on the branch, then works the run', async () => {
+    const stale = join(workRoot, '00000000-0000-4000-8000-00000000dead', 'group-demo')
+    git(clone, 'fetch', '-q', 'origin')
+    git(clone, 'worktree', 'add', '-q', '-B', BRANCH, stale, 'origin/main')
+    writeFileSync(join(stale, 'junk.txt'), 'left behind\n')
+    const res = await workTask({ cfg: cfg(), core, executor: fakeExecutor(commitFile) }, { taskId: TASK_ID })
+    expect(res.status).toBe('submitted')
+    expect(existsSync(stale)).toBe(false)
+    expect(git(clone, 'worktree', 'list', '--porcelain')).not.toContain(BRANCH)
+    expect(runDirs()).toEqual([])
+  })
+
+  it('refuses (no strike) when the branch is checked out outside workRoot, and leaves that checkout alone', async () => {
+    git(clone, 'checkout', '-q', '-b', BRANCH)
+    const res = await workTask({ cfg: cfg(), core, executor: fakeExecutor(commitFile) }, { taskId: TASK_ID })
+    expect(res.status).toBe('environment')
+    const release = fake.named('release_task')[0]!.args
+    expect(release.failed).toBe(false)
+    expect(String(release.reason)).toContain('outside the runner')
+    expect(git(clone, 'symbolic-ref', 'HEAD')).toBe(`refs/heads/${BRANCH}`)
+  })
+
+  it('works a non-code capability on a detached worktree, even while the branch is checked out elsewhere', async () => {
+    fake.capability = 'analyze-repo'
+    git(clone, 'checkout', '-q', '-b', BRANCH)
+    let head = ''
+    const res = await workTask(
+      { cfg: cfg(), core, executor: fakeExecutor(({ dir }) => ((head = git(dir, 'rev-parse', 'HEAD')), { ok: true, summary: 'Read it.', needsHuman: false })) },
+      { taskId: TASK_ID },
+    )
+    expect(res.status).toBe('submitted')
+    expect(head).toBe(git(clone, 'rev-parse', 'origin/main'))
+    expect(git(clone, 'symbolic-ref', 'HEAD')).toBe(`refs/heads/${BRANCH}`)
+  })
+
+  it('task_unavailable from open_merge_request releases without a strike and stops', async () => {
+    fake.override.open_merge_request = () => ({ error: { code: 'invalid_state', reason: 'task_unavailable' } })
+    const res = await workTask({ cfg: cfg(), core, executor: fakeExecutor(commitFile) }, { taskId: TASK_ID })
+    expect(res.status).toBe('unavailable')
+    expect(fake.named('release_task')[0]!.args).toMatchObject({ failed: false, reason: 'task_unavailable' })
+    expect(fake.named('submit_result')).toHaveLength(0)
+  })
+
+  it('treats run_not_active from open_merge_request as ended, without a release', async () => {
+    fake.override.open_merge_request = () => ({ error: { code: 'invalid_state', reason: 'run_not_active' } })
+    const res = await workTask({ cfg: cfg(), core, executor: fakeExecutor(commitFile) }, { taskId: TASK_ID })
+    expect(res.status).toBe('parked')
+    expect(fake.named('release_task')).toHaveLength(0)
   })
 
   it('continues the branch a previous run pushed: the next run builds on origin/<branch>', async () => {
@@ -273,6 +358,25 @@ describe('workTask', () => {
     expect(fake.calls.length).toBe(n)
   })
 
+  it('heartbeats every third of the lease when the lease is short', async () => {
+    fake.leaseMs = 90_000
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    const res = await workTask(
+      {
+        cfg: cfg(),
+        core,
+        executor: fakeExecutor(async (input) => {
+          await vi.advanceTimersByTimeAsync(60_000 + 1000)
+          return commitFile(input)
+        }),
+      },
+      { taskId: TASK_ID },
+    )
+    expect(res.status).toBe('submitted')
+    // Two from the 30 s timer, one right after the executor.
+    expect(fake.named('heartbeat').length).toBe(3)
+  })
+
   it('aborts the executor when a heartbeat finds the run gone, and ends without push or release', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
     const res = await workTask(
@@ -314,5 +418,19 @@ describe('workTask', () => {
     expect(res.status).toBe('stopped')
     expect(fake.named('release_task')[0]!.args).toMatchObject({ failed: false, reason: 'runner_stopped' })
     expect(runDirs()).toEqual([])
+  })
+})
+
+describe('heartbeatInterval', () => {
+  const now = Date.parse('2026-11-25T00:00:00Z')
+  const at = (ms: number) => new Date(now + ms).toISOString()
+  it('is 60 s for a long lease, a third of a short one, at least 5 s, and 60 s without a usable lease', () => {
+    expect(heartbeatInterval(at(600_000), now)).toBe(60_000)
+    expect(heartbeatInterval(at(180_000), now)).toBe(60_000)
+    expect(heartbeatInterval(at(90_000), now)).toBe(30_000)
+    expect(heartbeatInterval(at(6_000), now)).toBe(5_000)
+    expect(heartbeatInterval(at(-1000), now)).toBe(60_000)
+    expect(heartbeatInterval(undefined, now)).toBe(60_000)
+    expect(heartbeatInterval('not a date', now)).toBe(60_000)
   })
 })

@@ -17,6 +17,8 @@ export type ExecutorResult = {
   /** The agent asked a person (`ask_human`) and stopped: no push, no submit. */
   needsHuman: boolean
   usage?: RunUsage
+  /** The executor could not be started (binary missing): nothing ran, and no run on this machine can. */
+  notStarted?: boolean
 }
 
 export type Executor = { name: string; run(input: ExecutorInput): Promise<ExecutorResult> }
@@ -52,6 +54,14 @@ export function childEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   delete out.YODA_GIT_PASSWORD
   return out
 }
+
+/** The result when the executor's command could not be started (`spawnError` from `runProcess`). */
+export const notStarted = (cmd: string, code: string): ExecutorResult => ({
+  ok: false,
+  summary: `${cmd} could not be started (${code}): is it installed and on the runner's PATH?`,
+  needsHuman: false,
+  notStarted: true,
+})
 
 /** The tail of a process's stderr for an error summary. */
 export const tail = (s: string, n = 500) => (s.length > n ? `…${s.slice(-n)}` : s).trim()

@@ -68,8 +68,10 @@ export async function runCommand(argv: string[], io: CommandIo = defaultIo): Pro
         if (result.status === 'submitted') log(`yoda-runner: submitted (${result.outcome})${result.mrUrl ? `, merge request ${result.mrUrl}` : ''}`)
         if (result.status === 'parked') log('yoda-runner: the run is waiting for a person (or was ended in core)')
         if (result.status === 'failed') log(`yoda-runner: failed: ${result.error}`)
+        if (result.status === 'environment') log(`yoda-runner: this runner cannot work the task (released, no strike): ${result.error}`)
+        if (result.status === 'unavailable') log('yoda-runner: the task is no longer available (cancelled, reassigned or done); released')
         if (result.status === 'stopped') log('yoda-runner: stopped; the task was released')
-        return result.status === 'failed' ? 1 : 0
+        return result.status === 'failed' || result.status === 'environment' ? 1 : 0
       })
     } catch (err) {
       if (err instanceof McpToolError) {

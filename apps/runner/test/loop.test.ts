@@ -100,6 +100,56 @@ describe('startLoop', () => {
     expect(fake.named('claim_task')).toHaveLength(0)
   })
 
+  it('skips a task it gave back for 10 minutes, then tries it again', async () => {
+    fake.tasks = [availableTask(taskId(1))]
+    let clock = 0
+    const stop = new AbortController()
+    let polls = 0
+    const noClone = RunnerConfig.parse({ coreUrl: 'https://core.example.invalid', token: TOKEN, executor: 'fake', workRoot: join(tmp.dir, 'work') })
+    const code = await startLoop(
+      {
+        ...deps(1),
+        cfg: noClone,
+        now: () => clock,
+        signal: stop.signal,
+        sleep: async () => {
+          // Let the run finish before the next poll.
+          for (let i = 0; i < 500 && [...fake.runs.values()].some((r) => r.state === 'running'); i++) await new Promise((r) => setTimeout(r, 10))
+          polls++
+          if (polls === 2) clock += 10 * 60_000
+          if (polls === 3) stop.abort()
+        },
+      },
+      {},
+    )
+    expect(code).toBe(0)
+    expect(fake.named('list_available_tasks')).toHaveLength(3)
+    // Poll 1 claims (and releases without a strike), poll 2 skips, poll 3 (10 min later) claims again.
+    expect(fake.named('claim_task')).toHaveLength(2)
+    expect(fake.named('release_task').map((c) => c.args.failed)).toEqual([false, false])
+  })
+
+  it('exits with code 3 when the executor cannot be started, without claiming more', async () => {
+    const stop = new AbortController()
+    const code = await startLoop(
+      {
+        ...deps(1, () => ({ ok: false, summary: 'claude could not be started (ENOENT)', needsHuman: false, notStarted: true })),
+        signal: stop.signal,
+        sleep: (ms, signal) =>
+          new Promise<void>((resolve) => {
+            if (signal?.aborted) return resolve()
+            signal?.addEventListener('abort', () => resolve(), { once: true })
+            setTimeout(() => (stop.abort(), resolve()), 5000)
+          }),
+      },
+      {},
+    )
+    expect(code).toBe(3)
+    expect(fake.named('claim_task')).toHaveLength(1)
+    expect(fake.named('release_task')[0]!.args).toMatchObject({ failed: false })
+    expect(lines.some((l) => l.includes('cannot work tasks until fixed'))).toBe(true)
+  })
+
   it('polls again after pollSeconds until stopped', async () => {
     fake.tasks = []
     const stop = new AbortController()

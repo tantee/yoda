@@ -212,6 +212,17 @@ wait`,
   })
 })
 
+describe('missing executor binary', () => {
+  it('claude and codex report notStarted when the command is not on PATH', async () => {
+    const noPath = { ...process.env, PATH: join(tmp.dir, 'empty-bin') }
+    const input = { dir: clone, prompt: 'p', mcpConfigPath: '/unused', timeoutMs: 10_000 }
+    const c = await claudeExecutor(cfg(), { env: noPath }).run(input)
+    expect(c).toMatchObject({ ok: false, notStarted: true })
+    expect(c.summary).toContain('ENOENT')
+    expect(await codexExecutor(cfg(), { env: noPath }).run(input)).toMatchObject({ ok: false, notStarted: true })
+  })
+})
+
 describe('codex executor', () => {
   it('configures the MCP server with -c overrides, keeps the token out of argv and reads the last message', async () => {
     stub(

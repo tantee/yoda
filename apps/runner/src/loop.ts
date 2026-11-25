@@ -1,3 +1,4 @@
+import type { AvailableTask } from '@yoda/shared'
 import { McpToolError } from './core.js'
 import { shortError, workTask, type WorkDeps, type WorkResult } from './work.js'
 
@@ -6,6 +7,8 @@ export type LoopDeps = Omit<WorkDeps, 'signal'> & {
   signal?: AbortSignal
   /** Waits between polls (tests replace it); resolves early when `signal` aborts. */
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>
+  /** Clock for the skip list (tests replace it). */
+  now?: () => number
 }
 
 /** Claim refusals that pass with time or an admin's action: wait for the next poll. */
@@ -14,6 +17,10 @@ const WAIT = new Set(['outside_hours', 'runner_paused', 'all_runners_paused', 'a
 const FATAL = new Set(['runner_revoked'])
 
 export const EXIT_PERSONAL_UNATTENDED = 2
+/** This machine cannot work any task until fixed (e.g. the executor is not installed). */
+export const EXIT_ENVIRONMENT = 3
+/** A task this runner gave back (failed, or this machine could not work it) is not claimed again for this long. */
+export const SKIP_MS = 10 * 60_000
 /** The runner is on demand in the portal: it may not poll the queue. */
 export const EXIT_ON_DEMAND = 2
 
@@ -53,21 +60,37 @@ export function stopOnSignals(
 
 /**
  * Unattended mode. Each poll lists available tasks and claims and works up to `cfg.maxConcurrent` at once; core's
- * `at_capacity` refusal is the source of truth for the runner's real limit. Returns the exit code: 0 when stopped
- * (or after one poll with `once`, once its work is done), 2 for `personal_unattended_not_allowed` or an on-demand
- * runner (`on_demand_runner`), 1 for a revoked
- * runner or a rejected token.
+ * `at_capacity` refusal is the source of truth for the runner's real limit. A task whose run failed or that this
+ * machine could not work is skipped for `SKIP_MS`. Returns the exit code: 0 when stopped (or after one poll with
+ * `once`, once its work is done), 2 for `personal_unattended_not_allowed` or an on-demand runner
+ * (`on_demand_runner`), 3 when this machine cannot work tasks (a fatal `EnvironmentError`, e.g. the executor is
+ * not installed), 1 for a revoked runner or a rejected token.
  */
 export async function startLoop(deps: LoopDeps, opts: { once?: boolean } = {}): Promise<number> {
   const log = deps.log ?? ((l: string) => void process.stderr.write(`${l}\n`))
   const sleep = deps.sleep ?? defaultSleep
   const signal = deps.signal
+  const now = deps.now ?? Date.now
   const active = new Set<Promise<WorkResult | void>>()
   const max = deps.cfg.maxConcurrent
+  /** Task id → when it may be claimed again (in-process only). */
+  const skipUntil = new Map<string, number>()
+  /** Set when a run hit a fatal environment error: no more claims, and the loop exits with code 3. */
+  const fatal = new AbortController()
+  const sleepSignal = signal ? AbortSignal.any([signal, fatal.signal]) : fatal.signal
   let exit = 0
 
-  const startWork = (runId: string, capability: Parameters<typeof workTask>[1]['capability']) => {
-    const p = workTask({ ...deps, log, signal }, { runId, alreadyClaimed: true, capability })
+  const startWork = (task: AvailableTask, claim: { runId: string; leaseExpiresAt: string }) => {
+    const { runId } = claim
+    const p = workTask({ ...deps, log, signal }, { runId, alreadyClaimed: true, capability: task.capability, leaseExpiresAt: claim.leaseExpiresAt })
+      .then((r) => {
+        if (r.status === 'failed' || r.status === 'environment') skipUntil.set(task.taskId, now() + SKIP_MS)
+        if (r.status === 'environment' && r.fatal && !fatal.signal.aborted) {
+          log(`yoda-runner: stopping: this machine cannot work tasks until fixed (${r.error})`)
+          fatal.abort()
+        }
+        return r
+      })
       .catch((err: unknown) => log(`run ${runId}: ${shortError(err)}`))
       .finally(() => active.delete(p))
     active.add(p)
@@ -77,11 +100,13 @@ export async function startLoop(deps: LoopDeps, opts: { once?: boolean } = {}): 
   const poll = async (): Promise<number | null> => {
     if (active.size >= max) return null
     const { tasks } = await deps.core.listAvailableTasks({})
+    for (const [id, until] of skipUntil) if (until <= now()) skipUntil.delete(id)
     for (const task of tasks) {
-      if (active.size >= max || signal?.aborted) break
+      if (active.size >= max || signal?.aborted || fatal.signal.aborted) break
+      if (skipUntil.has(task.taskId)) continue
       try {
-        const { runId } = await deps.core.claimTask({ taskId: task.taskId })
-        startWork(runId, task.capability)
+        const claim = await deps.core.claimTask({ taskId: task.taskId })
+        startWork(task, claim)
       } catch (err) {
         if (!(err instanceof McpToolError)) throw err
         const reason = err.reason ?? err.code
@@ -104,7 +129,7 @@ export async function startLoop(deps: LoopDeps, opts: { once?: boolean } = {}): 
     return null
   }
 
-  while (!signal?.aborted) {
+  while (!signal?.aborted && !fatal.signal.aborted) {
     let code: number | null = null
     try {
       code = await poll()
@@ -124,9 +149,9 @@ export async function startLoop(deps: LoopDeps, opts: { once?: boolean } = {}): 
       break
     }
     if (opts.once) break
-    await sleep(deps.cfg.pollSeconds * 1000, signal)
+    await sleep(deps.cfg.pollSeconds * 1000, sleepSignal)
   }
   // On a stop, each running workTask sees the aborted signal, aborts its executor and releases its run.
   await Promise.all([...active])
-  return exit
+  return fatal.signal.aborted && exit === 0 ? EXIT_ENVIRONMENT : exit
 }

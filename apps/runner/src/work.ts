@@ -4,7 +4,7 @@ import type { RunnerCapability, RunUsage } from '@yoda/shared'
 import { withMcpConfigFile, type RunnerConfig } from './config.js'
 import { McpToolError, type CoreClient, type RunCode } from './core.js'
 import type { Executor, ExecutorResult } from './executors/index.js'
-import { commitLeftovers, hasNewCommits, prepareWorkspace, pushBranch, scrub, type Workspace } from './git.js'
+import { commitLeftovers, EnvironmentError, hasNewCommits, prepareWorkspace, pushBranch, scrub, type Workspace } from './git.js'
 import { buildPrompt } from './prompt.js'
 
 export type WorkDeps = {
@@ -19,22 +19,40 @@ export type WorkDeps = {
 /** A task to claim, or a run the loop already claimed. `capability` (from the task list) is a fallback for the pack's. */
 export type WorkTarget =
   | { taskId: string; capability?: RunnerCapability }
-  | { runId: string; alreadyClaimed: true; capability?: RunnerCapability }
+  /** `leaseExpiresAt` (from the claim) sets the heartbeat interval. */
+  | { runId: string; alreadyClaimed: true; capability?: RunnerCapability; leaseExpiresAt?: string }
 
 export type WorkResult =
   | { status: 'submitted'; runId: string; outcome: string; mrUrl: string | null }
   /** The agent asked a person, or core ended the run meanwhile (`run_not_active`): nothing pushed or released. */
   | { status: 'parked'; runId: string }
   | { status: 'failed'; runId: string; error: string }
+  /**
+   * This machine could not work the run (see `EnvironmentError`): released with `failed: false` (reason
+   * `runner_environment: …`), so it is no strike. `fatal`: no run can succeed here until the runner is fixed.
+   */
+  | { status: 'environment'; runId: string; error: string; fatal: boolean }
+  /** The task was cancelled, reassigned, superseded or done meanwhile: released with `failed: false`. */
+  | { status: 'unavailable'; runId: string }
   /** The runner stopped: released with `failed: false`. */
   | { status: 'stopped'; runId: string }
 
+/** The longest time between heartbeats. */
 export const HEARTBEAT_MS = 60_000
+const HEARTBEAT_MIN_MS = 5_000
+
+/** Heartbeat every 60 s, or a third of the lease when that is shorter (never under 5 s). */
+export function heartbeatInterval(leaseExpiresAt: string | undefined, now = Date.now()): number {
+  const left = leaseExpiresAt ? Date.parse(leaseExpiresAt) - now : Number.NaN
+  if (!(left > 0)) return HEARTBEAT_MS
+  return Math.max(HEARTBEAT_MIN_MS, Math.min(HEARTBEAT_MS, Math.floor(left / 3)))
+}
 const LEFTOVERS_MESSAGE = 'yoda: uncommitted changes from agent run'
 /** Capabilities whose result is a merge request; the others submit their summary only. */
 const CODE_CAPABILITIES: RunnerCapability[] = ['code-change']
 
 const runNotActive = (err: unknown) => err instanceof McpToolError && err.code === 'invalid_state' && err.reason === 'run_not_active'
+const taskUnavailable = (err: unknown) => err instanceof McpToolError && err.code === 'invalid_state' && err.reason === 'task_unavailable'
 
 /** An error for `release_task`: one line, no clone credentials or runner token, at most 500 chars. */
 export function shortError(err: unknown): string {
@@ -84,15 +102,18 @@ class Stop extends Error {
 }
 
 /**
- * Works one task end to end: claim (unless already claimed), heartbeat every 60 s, context pack, a worktree for
- * the run's repo, the executor, then push + MR (code changes with new commits) and `submit_result`. A parked or
- * ended run stops with nothing pushed; a failure is released `failed: true`; a stop is released `failed: false`.
+ * Works one task end to end: claim (unless already claimed), heartbeats (see `heartbeatInterval`), context pack,
+ * a worktree for the run's repo, the executor, then push + MR (code changes with new commits) and
+ * `submit_result`. A parked or ended run stops with nothing pushed; a task no longer available, a stop and a
+ * failure of this machine (`EnvironmentError`, e.g. the executor is not installed) are released `failed: false`;
+ * a failure of the agent's work (executor not ok, push refused) is released `failed: true` (a strike).
  * The worktree is always removed and the heartbeat stopped. A claim refusal is thrown (`McpToolError`).
  */
 export async function workTask(deps: WorkDeps, target: WorkTarget): Promise<WorkResult> {
   const { cfg, core, executor } = deps
   const log = deps.log ?? (() => undefined)
-  const runId = 'runId' in target ? target.runId : (await core.claimTask({ taskId: target.taskId })).runId
+  const claimed = 'runId' in target ? { runId: target.runId, leaseExpiresAt: target.leaseExpiresAt } : await core.claimTask({ taskId: target.taskId })
+  const { runId } = claimed
   log(`run ${runId}: claimed`)
 
   const ended = new AbortController()
@@ -100,13 +121,13 @@ export async function workTask(deps: WorkDeps, target: WorkTarget): Promise<Work
   const heartbeat = setInterval(() => {
     core.heartbeat({ runId }).catch((err: unknown) => {
       if (runNotActive(err)) {
-        log(`run ${runId}: no longer active in core (parked or expired); stopping`)
+        log(`run ${runId}: no longer active in core (parked, expired or the task is no longer available); stopping`)
         ended.abort()
       } else {
         log(`run ${runId}: heartbeat failed: ${shortError(err)}`)
       }
     })
-  }, HEARTBEAT_MS)
+  }, heartbeatInterval(claimed.leaseExpiresAt))
 
   let workspace: Workspace | undefined
   let scratch: string | undefined
@@ -119,12 +140,19 @@ export async function workTask(deps: WorkDeps, target: WorkTarget): Promise<Work
     }
   }
   const stopped = (): WorkResult => ({ status: 'stopped', runId })
-  /** A core call on the run; `run_not_active` means the run was parked or ended: stop without a release. */
+  /**
+   * A core call on the run. `run_not_active`: the run was parked or ended, stop without a release.
+   * `task_unavailable`: the task was cancelled, reassigned or done meanwhile, give the run back without a strike.
+   */
   const onRun = async <T>(fn: () => Promise<T>): Promise<T> => {
     try {
       return await fn()
     } catch (err) {
       if (runNotActive(err)) throw new Stop({ status: 'parked', runId })
+      if (taskUnavailable(err)) {
+        await release(false, 'task_unavailable')
+        throw new Stop({ status: 'unavailable', runId })
+      }
       throw err
     }
   }
@@ -138,13 +166,16 @@ export async function workTask(deps: WorkDeps, target: WorkTarget): Promise<Work
     let dir: string
     if (repo) {
       lockKey = repo.path
-      workspace = await withRepoLock(lockKey, () => prepareWorkspace(cfg, repo, pack.code.branch, { runId }))
+      // Runs that push nothing work on a detached HEAD, so they never hold the work item's branch.
+      workspace = await withRepoLock(lockKey, () => prepareWorkspace(cfg, repo, pack.code.branch, { runId, detach: !code }))
       dir = workspace.dir
     } else if (code) {
       throw new Error('no repository is linked to this work item')
     } else {
       scratch = join(cfg.workRoot, runId, 'scratch')
-      await mkdir(scratch, { recursive: true })
+      await mkdir(scratch, { recursive: true }).catch((err: unknown) => {
+        throw new EnvironmentError(`cannot create ${scratch}: ${err instanceof Error ? err.message : String(err)}`)
+      })
       dir = scratch
     }
 
@@ -156,6 +187,7 @@ export async function workTask(deps: WorkDeps, target: WorkTarget): Promise<Work
     const result: ExecutorResult = await withMcpConfigFile(cfg, (mcpConfigPath) =>
       executor.run({ dir, prompt: buildPrompt(pack, runId), mcpConfigPath, timeoutMs: cfg.maxTurnsMinutes * 60_000, signal }),
     )
+    if (result.notStarted) throw new EnvironmentError(result.summary, true)
     if (ended.signal.aborted || result.needsHuman) {
       log(`run ${runId}: waiting for a person`)
       return { status: 'parked', runId }
@@ -208,6 +240,11 @@ export async function workTask(deps: WorkDeps, target: WorkTarget): Promise<Work
       return err.result
     }
     const error = shortError(err)
+    if (err instanceof EnvironmentError) {
+      log(`run ${runId}: this runner cannot work it: ${error}`)
+      await release(false, `runner_environment: ${error}`.slice(0, 500))
+      return { status: 'environment', runId, error, fatal: err.fatal }
+    }
     log(`run ${runId}: failed: ${error}`)
     await release(true, error)
     return { status: 'failed', runId, error }

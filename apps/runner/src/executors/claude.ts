@@ -1,7 +1,7 @@
 import { RunUsage } from '@yoda/shared'
 import type { RunnerConfig } from '../config.js'
 import { runProcess } from './process.js'
-import { childEnv, readMarker, tail, type Executor, type ExecutorOptions } from './types.js'
+import { childEnv, notStarted, readMarker, tail, type Executor, type ExecutorOptions } from './types.js'
 
 type ClaudeResult = {
   type?: string
@@ -73,6 +73,7 @@ export function claudeExecutor(cfg: Pick<RunnerConfig, 'permissionMode' | 'extra
         signal: input.signal,
         killGraceMs: opts.killGraceMs,
       })
+      if (p.spawnError) return notStarted('claude', p.spawnError)
       if (p.timedOut) return { ok: false, summary: `claude timed out after ${Math.round(input.timeoutMs / 60_000)} min`, needsHuman: false }
       if (p.aborted) return { ok: false, summary: 'claude was stopped', needsHuman: false }
       const r = parseResult(p.stdout)
