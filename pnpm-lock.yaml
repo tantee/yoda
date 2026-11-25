@@ -119,6 +119,28 @@ importers:
         specifier: ^3.0.0
         version: 3.3.14(typescript@5.9.3)
 
+  apps/runner:
+    dependencies:
+      '@modelcontextprotocol/sdk':
+        specifier: 1.32.2
+        version: 1.32.2(zod@3.25.76)
+      '@yoda/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.20.5
+      esbuild:
+        specifier: ^0.25.0
+        version: 0.25.12
+      tsx:
+        specifier: ^4.20.0
+        version: 4.23.15
+
   packages/shared:
     dependencies:
       zod:
