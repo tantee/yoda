@@ -40,6 +40,8 @@ describe('loadConfig', () => {
     expect(c.s3Region).toBe('us-east-1')
     expect(c.s3Bucket).toBe('yoda')
     expect(c.aiWorkers).toBe(2)
+    expect(c.dailyTaskCap).toBe(8)
+    expect(loadConfig({ ...baseEnv, DAILY_TASK_CAP: '3' }).dailyTaskCap).toBe(3)
   })
   it('requires S3 credentials', () => {
     const { S3_ACCESS_KEY: _a, S3_SECRET_KEY: _s, ...rest } = baseEnv

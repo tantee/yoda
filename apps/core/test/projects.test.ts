@@ -4,7 +4,7 @@ import type { Todo, WorkItemDetail } from '@yoda/shared'
 import { and, asc, eq } from 'drizzle-orm'
 import { events, projectMembers } from '../src/db/schema.js'
 import { resetDb, testDb } from './helpers.js'
-import { auth, login, makeApp, type Who } from './support.js'
+import { acceptStepAdvance, auth, login, makeApp, type Who } from './support.js'
 
 let app: FastifyInstance
 let admin: Who
@@ -144,21 +144,38 @@ describe('projects API', () => {
     expect((await call(admin, 'PATCH', '/projects/00000000-0000-4000-8000-000000000000', { autonomy: 'propose' })).statusCode).toBe(404)
   })
 
-  it('PATCH persists aiBudgetUsd and noAi, and null clears the budget', async () => {
+  it('PM cannot change noAi or aiBudgetUsd (admin only), and nothing changes', async () => {
     const p = await createProject()
     await call(admin, 'PUT', `/projects/${p.id}/members/${somchai.id}`, { roles: ['PM'] })
-    const res = await call(somchai, 'PATCH', `/projects/${p.id}`, { aiBudgetUsd: 25 })
+    expect((await call(somchai, 'PATCH', `/projects/${p.id}`, { noAi: true })).statusCode).toBe(403)
+    expect((await call(somchai, 'PATCH', `/projects/${p.id}`, { aiBudgetUsd: 5 })).statusCode).toBe(403)
+    expect((await call(somchai, 'PATCH', `/projects/${p.id}`, { autonomy: 'auto-assign', noAi: true })).statusCode).toBe(403)
+    expect((await call(somchai, 'PATCH', `/projects/${p.id}`, { aiBudgetUsd: null })).statusCode).toBe(403)
+    expect((await call(somchai, 'GET', `/projects/${p.id}`)).json()).toMatchObject({ autonomy: 'propose', noAi: false, aiBudgetUsd: null })
+    expect((await call(somchai, 'PATCH', `/projects/${p.id}`, { autonomy: 'auto-assign' })).statusCode).toBe(200)
+    const both = await call(admin, 'PATCH', `/projects/${p.id}`, { noAi: true, aiBudgetUsd: 5 })
+    expect(both.statusCode).toBe(200)
+    expect(both.json()).toMatchObject({ noAi: true, aiBudgetUsd: 5 })
+  })
+
+  it('PATCH persists aiBudgetUsd and noAi, and null clears the budget', async () => {
+    const p = await createProject()
+        const res = await call(admin, 'PATCH', `/projects/${p.id}`, { aiBudgetUsd: 25 })
     expect(res.statusCode).toBe(200)
     expect(res.json().aiBudgetUsd).toBe(25)
-    expect((await call(somchai, 'GET', `/projects/${p.id}`)).json().aiBudgetUsd).toBe(25)
-    const noAi = await call(somchai, 'PATCH', `/projects/${p.id}`, { noAi: true })
+    expect((await call(admin, 'GET', `/projects/${p.id}`)).json().aiBudgetUsd).toBe(25)
+    const noAi = await call(admin, 'PATCH', `/projects/${p.id}`, { noAi: true })
     expect(noAi.json()).toMatchObject({ noAi: true, aiBudgetUsd: 25 })
-    expect((await call(somchai, 'GET', `/projects/${p.id}`)).json().noAi).toBe(true)
-    const cleared = await call(somchai, 'PATCH', `/projects/${p.id}`, { aiBudgetUsd: null })
+    expect((await call(admin, 'GET', `/projects/${p.id}`)).json().noAi).toBe(true)
+    const cleared = await call(admin, 'PATCH', `/projects/${p.id}`, { aiBudgetUsd: null })
     expect(cleared.json().aiBudgetUsd).toBeNull()
     // numeric(12,2) holds up to 9 999 999 999.99: larger values are a 400, not a database 500.
-    expect((await call(somchai, 'PATCH', `/projects/${p.id}`, { aiBudgetUsd: 9_999_999_999 })).statusCode).toBe(200)
-    expect((await call(somchai, 'PATCH', `/projects/${p.id}`, { aiBudgetUsd: 1e12 })).statusCode).toBe(400)
+    expect((await call(admin, 'PATCH', `/projects/${p.id}`, { aiBudgetUsd: 9_999_999_999 })).statusCode).toBe(200)
+    expect((await call(admin, 'PATCH', `/projects/${p.id}`, { aiBudgetUsd: 1e12 })).statusCode).toBe(400)
+    expect((await call(admin, 'PATCH', `/projects/${p.id}`, { aiBudgetUsd: 9_999_999_999.99 })).statusCode).toBe(200)
+    // Would round past numeric(12,2) (or silently lose a cent): rejected.
+    expect((await call(admin, 'PATCH', `/projects/${p.id}`, { aiBudgetUsd: 9_999_999_999.999 })).statusCode).toBe(400)
+    expect((await call(admin, 'PATCH', `/projects/${p.id}`, { aiBudgetUsd: 1.005 })).statusCode).toBe(400)
   })
 
   it('removing a member unassigns their open and proposed tasks into the PM confirmations', async () => {
@@ -169,6 +186,7 @@ describe('projects API', () => {
     const accept = wi.tasks[0]!.id
     await call(somchai, 'POST', `/tasks/${accept}/confirm`)
     await call(somchai, 'POST', `/tasks/${accept}/submit`, { decision: 'approve' })
+    expect(await acceptStepAdvance(app, somchai, wi.id)).toBe(true)
     const key = async (k: string) =>
       ((await call(somchai, 'GET', `/work-items/${wi.id}`)).json() as WorkItemDetail).tasks.find((t) => t.templateTaskKey === k)!
     const impl = await key('implement')
@@ -198,5 +216,39 @@ describe('projects API', () => {
     expect(unassigned.every((e) => e.reason === 'member_removed' && e.actorId === somchai.id)).toBe(true)
     // The removed member can no longer see the project's tasks.
     expect((await call(other, 'GET', `/tasks/${draft.id}`)).statusCode).toBe(404)
+  })
+
+  it('removing a role unassigns that person\'s active tasks with that role (reason role_removed)', async () => {
+    const p = await createProject()
+    await call(admin, 'PUT', `/projects/${p.id}/members/${somchai.id}`, { roles: ['PM'] })
+    await call(admin, 'PUT', `/projects/${p.id}/members/${other.id}`, { roles: ['DEV', 'QC'] })
+    await call(somchai, 'PATCH', `/projects/${p.id}`, { autonomy: 'auto-assign' })
+    const wi = (await call(somchai, 'POST', `/projects/${p.id}/work-items`, { title: 'แก้รายงานแล็บ', templateKey: 'bug-fix' })).json() as WorkItemDetail
+    await call(somchai, 'POST', `/tasks/${wi.tasks[0]!.id}/submit`, { decision: 'approve' })
+    const key = async (k: string) =>
+      ((await call(somchai, 'GET', `/work-items/${wi.id}`)).json() as WorkItemDetail).tasks.find((t) => t.templateTaskKey === k)!
+    const impl = await key('implement')
+    const tests = await key('draft-tests')
+    await call(somchai, 'POST', `/tasks/${impl.id}/assign`, { personId: other.id })
+    await call(somchai, 'POST', `/tasks/${tests.id}/assign`, { personId: other.id })
+    expect(await key('implement')).toMatchObject({ state: 'open', assigneeId: other.id })
+
+    // Unchanged roles: nothing happens.
+    expect((await call(somchai, 'PUT', `/projects/${p.id}/members/${other.id}`, { roles: ['DEV', 'QC'] })).statusCode).toBe(200)
+    expect(await key('implement')).toMatchObject({ assigneeId: other.id })
+
+    const put = await call(somchai, 'PUT', `/projects/${p.id}/members/${other.id}`, { roles: ['QC'] })
+    expect(put.statusCode).toBe(200)
+    expect(await key('implement')).toMatchObject({ state: 'open', assigneeId: null, proposedAssigneeId: null })
+    // The QC task they still hold stays theirs.
+    expect(await key('draft-tests')).toMatchObject({ state: 'open', assigneeId: other.id })
+    expect(((await call(somchai, 'GET', '/me/todo')).json() as Todo).confirmations.map((c) => c.id)).toContain(impl.id)
+    const db = await testDb()
+    const unassigned = await db
+      .select()
+      .from(events)
+      .where(and(eq(events.workItemId, wi.id), eq(events.type, 'task.unassigned')))
+    expect(unassigned.map((e) => [e.taskId, e.reason, e.actorId])).toEqual([[impl.id, 'role_removed', somchai.id]])
+    expect(unassigned[0]!.payload).toEqual({ personId: other.id, roles: ['DEV'] })
   })
 })

@@ -3,10 +3,12 @@ import { and, asc, desc, eq, sql } from 'drizzle-orm'
 import type { Me, TaskResult } from '@yoda/shared'
 import type { AppDeps } from '../src/app.js'
 import type { Db } from '../src/db/client.js'
-import { events, knowledgeEntries, people, projectMembers, projects, tasks, workItems } from '../src/db/schema.js'
+import { events, knowledgeEntries, people, projectMembers, projects, proposals, tasks, workItems } from '../src/db/schema.js'
+import { decideProposal } from '../src/proposals/service.js'
 import { recordEvent, runWork } from '../src/work/context.js'
 import { InlineJobQueue } from '../src/jobs/queue.js'
 import { createTaskAttempt } from '../src/work/tasks.js'
+import { pickAssignee } from '../src/work/assign.js'
 import {
   assignTask,
   cancelWorkItem,
@@ -93,6 +95,12 @@ async function complete(s: Setup, wi: string, key: string, me: Me, result: Parti
   const t = (await latest(wi, key))!
   if (t.assigneeId !== me.id) await run(s.pm, (ctx) => assignTask(ctx, s.pm, t.id, me.id))
   await submit(me, t.id, result)
+  // In propose projects a finished step waits for the PM to confirm the advance.
+  const [pending] = await db
+    .select({ id: proposals.id })
+    .from(proposals)
+    .where(and(eq(proposals.workItemId, wi), eq(proposals.kind, 'step_advance'), eq(proposals.state, 'pending')))
+  if (pending) await run(s.pm, (ctx) => decideProposal(ctx, s.pm, pending.id, { decision: 'accept' }))
   return t.id
 }
 
@@ -133,6 +141,9 @@ describe('workflow engine', () => {
     await complete(s, wi, 'verify', s.qc, { text: 'ok' })
     await complete(s, wi, 'approve-release', s.qc, approve)
     expect((await item(wi)).currentStepKey).toBe('close')
+    // No requester: accept-delivery goes to the owner (the PM here), open, never proposed.
+    expect(await latest(wi, 'accept-delivery')).toMatchObject({ role: 'REQUESTER', assigneeId: s.pm.id, state: 'open' })
+    await complete(s, wi, 'accept-delivery', s.pm, approve)
     await complete(s, wi, 'close-bug', s.pm, approve)
 
     const done = await item(wi)
@@ -214,6 +225,14 @@ describe('workflow engine', () => {
     const review2 = (await latest(wi, 'review-code'))!
     expect(review2).toMatchObject({ attempt: 2, state: 'open', assigneeId: s.dev.id })
     await submit(s.dev, review2.id, approve)
+    // A step with rework is not advanced automatically (guard G1): the PM confirms the advance.
+    expect((await item(wi)).currentStepKey).toBe('dev')
+    const [pending] = await db
+      .select()
+      .from(proposals)
+      .where(and(eq(proposals.workItemId, wi), eq(proposals.kind, 'step_advance'), eq(proposals.state, 'pending')))
+    expect(pending!.payload).toMatchObject({ guard: 'rework' })
+    await run(s.pm, (ctx) => decideProposal(ctx, s.pm, pending!.id, { decision: 'accept' }))
     expect((await item(wi)).currentStepKey).toBe('qc')
   })
 
@@ -514,6 +533,130 @@ describe('workflow engine', () => {
       await complete(s, wi, 'review-code', s.dev, approve)
       expect((await entriesFor(impl1)).map((e) => e.type)).toEqual(['progress'])
       expect((await entriesFor(impl2)).map((e) => e.type).sort()).toEqual(['document', 'progress'])
+    })
+  })
+
+  describe('requesters', () => {
+    async function requesterPerson(name: string): Promise<Me> {
+      const p = await person(db, name)
+      return { ...p, isStaff: false }
+    }
+
+    async function toClose(s: Setup, wi: string) {
+      await complete(s, wi, 'accept-bug', s.pm, approve)
+      await complete(s, wi, 'implement', s.dev, { text: 'x' })
+      await complete(s, wi, 'draft-tests', s.qc, { text: 't' })
+      await complete(s, wi, 'review-code', s.dev, approve)
+      await complete(s, wi, 'verify', s.qc, { text: 'ok' })
+      await complete(s, wi, 'approve-release', s.qc, approve)
+    }
+
+    it('records the requester and assigns requester tasks to them, even in propose projects', async () => {
+      const s = await setup(db, 'propose')
+      const nurse = await requesterPerson('nurse1')
+      const wi = await create(s, s.pm, { requesterId: nurse.id })
+      expect(await item(wi)).toMatchObject({ requesterId: nurse.id, ownerId: s.pm.id })
+      // Drive intake by hand: in a propose project the PM confirms first.
+      const intake = (await latest(wi, 'accept-bug'))!
+      await run(s.pm, (ctx) => confirmTask(ctx, s.pm, intake.id))
+      await toClose(s, wi)
+      const accept = (await latest(wi, 'accept-delivery'))!
+      expect(accept).toMatchObject({ assigneeId: nurse.id, state: 'open', proposedAssigneeId: null, executor: 'human' })
+      const ev = (await itemEvents(wi)).filter((e) => e.taskId === accept.id).map((e) => [e.type, e.payload])
+      expect(ev).toEqual([
+        ['task.created', {}],
+        ['task.assigned', { assigneeId: nurse.id }],
+      ])
+
+      // The requester (not a member) may start and submit their own task; request changes re-opens it for them.
+      await run(nurse, (ctx) => startTask(ctx, nurse, accept.id))
+      await submit(nurse, accept.id, { decision: 'changes', text: 'ยังไม่ครบ' })
+      const again = (await latest(wi, 'accept-delivery'))!
+      expect(again).toMatchObject({ attempt: 2, assigneeId: nurse.id, state: 'open', feedback: 'ยังไม่ครบ' })
+      await submit(nurse, again.id, approve)
+      expect((await latest(wi, 'close-bug'))!.proposedAssigneeId).toBe(s.pm.id)
+      // ...but nothing else.
+      const close = (await latest(wi, 'close-bug'))!
+      await run(s.pm, (ctx) => confirmTask(ctx, s.pm, close.id))
+      await expect(submit(nurse, close.id, approve)).rejects.toMatchObject({ statusCode: 403 })
+    })
+
+    it('a requester task reassigned by the PM to someone else does not let the requester act', async () => {
+      const s = await setup(db)
+      const nurse = await requesterPerson('nurse1')
+      const wi = await create(s, s.pm, { requesterId: nurse.id })
+      await toClose(s, wi)
+      const accept = (await latest(wi, 'accept-delivery'))!
+      await run(s.pm, (ctx) => assignTask(ctx, s.pm, accept.id, s.pm.id))
+      await expect(submit(nurse, accept.id, approve)).rejects.toMatchObject({ statusCode: 403 })
+      await expect(run(nurse, (ctx) => startTask(ctx, nurse, accept.id))).rejects.toMatchObject({ statusCode: 403 })
+
+      // The PM can hand it back to the requester (not a member); other non-members and other tasks stay refused.
+      await expect(run(s.pm, (ctx) => assignTask(ctx, s.pm, accept.id, s.outsider.id))).rejects.toMatchObject({
+        statusCode: 422,
+        body: { error: 'not_member' },
+      })
+      await expect(run(s.dev, (ctx) => assignTask(ctx, s.dev, accept.id, nurse.id))).rejects.toMatchObject({ statusCode: 403 })
+      await run(s.pm, (ctx) => assignTask(ctx, s.pm, accept.id, nurse.id))
+      expect(await latest(wi, 'accept-delivery')).toMatchObject({ assigneeId: nurse.id, state: 'open' })
+      await submit(nurse, accept.id, approve)
+      const close = (await latest(wi, 'close-bug'))!
+      await expect(run(s.pm, (ctx) => assignTask(ctx, s.pm, close.id, nurse.id))).rejects.toMatchObject({
+        statusCode: 422,
+        body: { error: 'not_member' },
+      })
+    })
+
+    it('without a requester, an owner who left the project does not get the requester task', async () => {
+      const s = await setup(db)
+      const wi = await create(s, s.pm, { ownerId: s.qc.id })
+      await complete(s, wi, 'accept-bug', s.pm, approve)
+      await complete(s, wi, 'implement', s.dev, { text: 'x' })
+      await complete(s, wi, 'draft-tests', s.dev, { text: 't' })
+      await complete(s, wi, 'review-code', s.dev, approve)
+      await complete(s, wi, 'verify', s.qc, { text: 'ok' })
+      await db.delete(projectMembers).where(and(eq(projectMembers.projectId, s.projectId), eq(projectMembers.personId, s.qc.id)))
+      await complete(s, wi, 'approve-release', s.pm, approve)
+      const accept = (await latest(wi, 'accept-delivery'))!
+      expect(accept).toMatchObject({ assigneeId: null, state: 'open' })
+      const created = (await itemEvents(wi)).find((e) => e.taskId === accept.id && e.type === 'task.created')
+      expect(created!.reason).toBe('no_candidate')
+    })
+
+    it('rejects an unknown requester', async () => {
+      const s = await setup(db)
+      await expect(create(s, s.pm, { requesterId: '00000000-0000-4000-8000-000000000000' })).rejects.toMatchObject({
+        statusCode: 404,
+      })
+    })
+
+    it('requester tasks are not counted as load by pickAssignee', async () => {
+      const s = await setup(db)
+      const dev2 = await person(db, 'zdev')
+      await db.insert(projectMembers).values({ projectId: s.projectId, personId: dev2.id, roles: ['DEV'] })
+      // dev (sorted first) is the requester of several items that reached accept-delivery.
+      for (let i = 0; i < 2; i++) {
+        const wi = await create(s, s.pm, { requesterId: s.dev.id })
+        await toClose(s, wi)
+        expect((await latest(wi, 'accept-delivery'))!.assigneeId).toBe(s.dev.id)
+      }
+      const picked = await run(null, (ctx) => pickAssignee(ctx.tx, s.projectId, 'DEV'))
+      expect(picked).toBe(s.dev.id)
+    })
+
+    it('member removal leaves the requester their own requester tasks', async () => {
+      const s = await setup(db)
+      const wi = await create(s, s.pm, { requesterId: s.qc.id })
+      await toClose(s, wi)
+      const accept = (await latest(wi, 'accept-delivery'))!
+      expect(accept.assigneeId).toBe(s.qc.id)
+      await run(s.admin, async (ctx) => {
+        await ctx.tx.delete(projectMembers).where(and(eq(projectMembers.projectId, s.projectId), eq(projectMembers.personId, s.qc.id)))
+        await unassignMemberTasks(ctx, s.projectId, s.qc.id)
+      })
+      expect(await latest(wi, 'accept-delivery')).toMatchObject({ assigneeId: s.qc.id, state: 'open' })
+      await submit(s.qc, accept.id, approve)
+      expect((await latest(wi, 'accept-delivery'))!.state).toBe('accepted')
     })
   })
 

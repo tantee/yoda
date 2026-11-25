@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { Attachment } from '@yoda/shared'
 
-defineProps<{ attachments: Attachment[] }>()
+const props = defineProps<{ attachments: Attachment[]; conversationId?: string }>()
 const { t } = useI18n()
 const { download } = useUpload()
 const error = ref('')
@@ -9,7 +9,7 @@ const error = ref('')
 async function save(a: Attachment) {
   error.value = ''
   try {
-    await download(a.id, a.fileName)
+    await download(a.id, a.fileName, props.conversationId)
   } catch (e) {
     error.value = t((e as { key?: string }).key ?? 'errors.generic')
   }

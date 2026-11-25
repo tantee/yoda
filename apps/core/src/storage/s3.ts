@@ -15,7 +15,7 @@ export interface Storage {
   remove(key: string): Promise<void>
 }
 
-/** S3-compatible storage (MinIO in dev). Creates the bucket when missing. `prefix` namespaces every key (tests). */
+/** S3-compatible storage (RustFS in dev). Creates the bucket when missing. `prefix` namespaces every key (tests). */
 export async function createS3Storage(
   config: Pick<Config, 's3Endpoint' | 's3Region' | 's3Bucket' | 's3AccessKey' | 's3SecretKey'>,
   opts: { prefix?: string } = {},

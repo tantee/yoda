@@ -254,11 +254,13 @@ export async function confirmEntry(ctx: WorkCtx, me: Me | null, id: string): Pro
 
 /** Upload hook: a text-bearing attachment becomes a confirmed `document` entry. */
 export async function createAttachmentEntry(deps: WorkDeps, a: AttachmentRow, text: string | null): Promise<string | null> {
-  if (!text?.trim()) return null
+  // Conversation attachments (no project) never become knowledge entries.
+  const projectId = a.projectId
+  if (!text?.trim() || !projectId) return null
   return runWork(deps, { id: a.uploadedBy, kind: 'person' }, (ctx) =>
     createEntry(ctx, null, {
       scope: a.workItemId ? 'work_item' : 'project',
-      projectId: a.projectId,
+      projectId,
       workItemId: a.workItemId ?? undefined,
       type: 'document',
       title: a.fileName,

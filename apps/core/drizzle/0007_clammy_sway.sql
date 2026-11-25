@@ -1,0 +1,1 @@
+CREATE INDEX "events_auto_assigned_idx" ON "events" USING btree ("created_at") WHERE "events"."type" = 'task.assigned' and "events"."payload"->>'auto' = 'true';

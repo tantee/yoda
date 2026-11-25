@@ -34,11 +34,14 @@ export type ProjectDetail = z.infer<typeof ProjectDetail>
 export const MemberRolesPut = z.object({ roles: z.array(ProjectRole).min(1) })
 export type MemberRolesPut = z.infer<typeof MemberRolesPut>
 
+/** An AI budget in USD: fits numeric(12,2) exactly (whole cents, at most 9 999 999 999.99). */
+export const AiBudgetUsd = z.number().min(0).max(9_999_999_999.99).multipleOf(0.01)
+
 export const ProjectPatch = z
   .object({
     autonomy: z.enum(['propose', 'auto-assign']),
     noAi: z.boolean(),
-    aiBudgetUsd: z.number().min(0).max(9_999_999_999).nullable(),
+    aiBudgetUsd: AiBudgetUsd.nullable(),
   })
   .partial()
   .refine((v) => Object.keys(v).length > 0, { message: 'at least one field is required' })

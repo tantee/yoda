@@ -26,6 +26,7 @@ export function sanitizeFileName(name: string): string {
 const columns = {
   id: attachments.id,
   projectId: attachments.projectId,
+  conversationId: attachments.conversationId,
   workItemId: attachments.workItemId,
   taskId: attachments.taskId,
   fileName: attachments.fileName,
@@ -40,7 +41,8 @@ const columns = {
 
 function toAttachment(r: {
   id: string
-  projectId: string
+  projectId: string | null
+  conversationId: string | null
   workItemId: string | null
   taskId: string | null
   fileName: string
@@ -98,4 +100,16 @@ export async function attachmentsByTask(db: Db | Tx, taskIds: string[]): Promise
     out.set(r.taskId!, list)
   }
   return out
+}
+
+/** The given attachments by id (unknown ids are skipped). */
+export async function attachmentsByIds(db: Db | Tx, ids: string[]): Promise<Map<string, Attachment>> {
+  const set = [...new Set(ids)]
+  if (!set.length) return new Map()
+  const rows = await db
+    .select(columns)
+    .from(attachments)
+    .innerJoin(people, eq(people.id, attachments.uploadedBy))
+    .where(inArray(attachments.id, set))
+  return new Map(rows.map((r) => [r.id, toAttachment(r)]))
 }

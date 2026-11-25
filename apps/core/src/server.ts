@@ -18,7 +18,7 @@ const jwks = createRemoteJWKSet(
 )
 const storage = await createS3Storage(config)
 const bus = new LiveBus()
-const ai = new AiGateway({ db, bus, models: buildModels(config) })
+const ai = new AiGateway({ db, bus, models: buildModels(config), config })
 const jobs = await createPgBossQueue(config.databaseUrl, config.aiWorkers)
 const app = await buildApp({ config, db, jwks, bus, storage, ai, jobs })
 await registerJobHandlers(app.deps)

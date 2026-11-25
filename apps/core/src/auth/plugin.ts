@@ -22,6 +22,7 @@ export class HttpError extends Error {
         | 'comment_required'
         | 'too_large'
         | 'unsupported_type'
+        | 'project_required'
     },
   ) {
     super(body.error)
@@ -39,6 +40,8 @@ export const notMember = () => new HttpError(422, { error: 'not_member' })
 export const decisionRequired = () => new HttpError(422, { error: 'decision_required' })
 export const tooLarge = () => new HttpError(413, { error: 'too_large' })
 export const unsupportedType = () => new HttpError(415, { error: 'unsupported_type' })
+/** Accepting a create_work_item proposal that names no project, without choosing one. */
+export const projectRequired = () => new HttpError(422, { error: 'project_required' })
 export const commentRequired = () => new HttpError(422, { error: 'comment_required' })
 
 /**
@@ -90,6 +93,11 @@ export function registerAuth(app: FastifyInstance): void {
       isStaff: person.isAdmin || isStaff(person, claims, deps.config.staffGroup),
     }
   })
+}
+
+/** Any signed-in person, staff or requester; the route itself must then authorize per resource. */
+export function requireSignedIn(request: FastifyRequest): void {
+  if (!request.me) throw unauthorized()
 }
 
 export function requireStaff(request: FastifyRequest): void {
