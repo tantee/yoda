@@ -238,12 +238,14 @@ export async function tasksWithContext(
         title: depTask.title,
         executor: dep.executor as TaskInput['executor'],
         // A requester never learns the ids of staff files they cannot see.
-        result: requesterView ? { ...result, attachmentIds: visibleIds(result.attachmentIds, depFiles) } : result,
+        result: requesterView ? { ...forRequesterResult(result), attachmentIds: visibleIds(result.attachmentIds, depFiles) } : result,
         attachments: depFiles,
       })
     }
+    const task = toTask(r.t, def, who, ai)
     return TaskWithContext.parse({
-      ...toTask(r.t, def, who, ai),
+      ...task,
+      result: requesterView && task.result ? forRequesterResult(task.result) : task.result,
       workItemTitle: r.workItemTitle,
       workItemPriority: r.workItemPriority,
       projectName: r.projectName,
@@ -263,6 +265,12 @@ function forRequester(list: Attachment[], viewerId: string, opts: { onlyOwn?: bo
   return list
     .filter((a) => !opts.onlyOwn || a.uploadedById === viewerId)
     .map((a) => ({ ...a, uploadedById: a.uploadedById === viewerId ? a.uploadedById : null, uploadedByName: '' }))
+}
+
+/** A task result as a requester sees it: without the AI drafter's internal `confidence` / `missing` notes. */
+function forRequesterResult<T extends { confidence?: unknown; missing?: unknown }>(result: T): Omit<T, 'confidence' | 'missing'> {
+  const { confidence: _confidence, missing: _missing, ...rest } = result
+  return rest
 }
 
 /** Of `ids`, those among the visible `files`, in order. */

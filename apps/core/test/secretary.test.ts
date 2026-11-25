@@ -290,7 +290,7 @@ describe('secretary chat: staff', () => {
     expect((await thread(outsider, t.id)).at(-1)).toMatchObject({ authorKind: 'ai', text: 'คำขอของคุณได้รับแล้ว' })
   })
 
-  it('propose_priority: a proposal in propose projects; applied directly (as the person) in auto-assign projects', async () => {
+  it('propose_priority: always a proposal, in propose and auto-assign projects alike (never applied directly)', async () => {
     const p = await project('ระบบแล็บ', [[pm, ['PM']], [dev, ['DEV']]])
     const wi = (await call(pm, 'POST', `/projects/${p}/work-items`, { title: 'งาน A', templateKey: 'bug-fix' })).json() as WorkItemDetail
     play({ toolCalls: [{ name: 'propose_priority', input: { workItemId: wi.id, priority: 'urgent', reason: 'ผู้ใช้รอ' } }] }, { text: 'เสนอแล้ว' })
@@ -303,15 +303,42 @@ describe('secretary chat: staff', () => {
     expect((await db.select().from(workItems).where(eq(workItems.id, wi.id)))[0]!.priority).toBe('normal')
 
     expect((await call(admin, 'PATCH', `/projects/${p}`, { autonomy: 'auto-assign' })).statusCode).toBe(200)
-    play({ toolCalls: [{ name: 'propose_priority', input: { workItemId: wi.id, priority: 'high', reason: 'ผู้ใช้รอ' } }] }, { text: 'ปรับแล้ว' })
+    play({ toolCalls: [{ name: 'propose_priority', input: { workItemId: wi.id, priority: 'high', reason: 'ผู้ใช้รอ' } }] }, { text: 'เสนอแล้ว' })
     await say(dev, c.id, 'ปรับเป็นสูง')
-    expect((await db.select().from(workItems).where(eq(workItems.id, wi.id)))[0]!.priority).toBe('high')
+    expect((await db.select().from(workItems).where(eq(workItems.id, wi.id)))[0]!.priority).toBe('normal')
     const changed = await db
       .select()
       .from(events)
       .where(and(eq(events.workItemId, wi.id), eq(events.type, 'work_item.priority_changed')))
-    expect(changed).toMatchObject([{ actorKind: 'ai', actorId: dev.id, payload: { from: 'normal', to: 'high', onBehalfOf: dev.id } }])
-    expect(await db.select().from(proposals)).toHaveLength(1)
+    expect(changed).toEqual([])
+    // The new proposal supersedes the earlier pending one.
+    const rows = await db.select().from(proposals).orderBy(proposals.createdAt)
+    expect(rows.map((r) => [r.state, (r.payload as { priority: string }).priority])).toEqual([
+      ['superseded', 'urgent'],
+      ['pending', 'high'],
+    ])
+    expect((await thread(dev, c.id)).at(-1)!.actions).toEqual([{ type: 'proposal', proposalId: rows[1]!.id }])
+  })
+
+  it('propose_work_item with a requester (staff, personal chat): accepted; the proposal lists the requester name', async () => {
+    const p = await project('ระบบแล็บ', [[pm, ['PM']], [dev, ['DEV']]])
+    play(
+      {
+        toolCalls: [
+          {
+            name: 'propose_work_item',
+            input: { projectId: p, title: 'งานของพยาบาล', description: '', templateKey: 'bug-fix', priority: 'normal', requesterId: nurse.id },
+          },
+        ],
+      },
+      { text: 'เตรียมไว้แล้ว' },
+    )
+    const c = await personal(dev)
+    await say(dev, c.id, 'เปิดงานให้พยาบาลหนึ่ง')
+    const [row] = await (await testDb()).select().from(proposals)
+    expect(row!.payload).toMatchObject({ requesterId: nurse.id })
+    const listed = (await call(pm, 'GET', `/proposals?projectId=${p}`)).json() as Proposal[]
+    expect(listed).toMatchObject([{ id: row!.id, requesterName: 'พยาบาลหนึ่ง' }])
   })
 
   it('save_note saves a draft AI knowledge entry with a knowledge_saved card', async () => {
@@ -361,6 +388,37 @@ describe('secretary chat: team threads', () => {
     expect(all).not.toContain('งานภายในอีกงาน')
     expect(all).toContain('คำขอพยาบาล')
     expect(await (await testDb()).select().from(knowledgeEntries).where(eq(knowledgeEntries.title, 'x'))).toHaveLength(0)
+  })
+
+  it('a requester-visible thread: writes only on its own work item, and no requester can be set', async () => {
+    const p = await project('ระบบแล็บ', [[pm, ['PM']], [dev, ['DEV']]])
+    const wi = (await call(pm, 'POST', `/projects/${p}/work-items`, { title: 'คำขอพยาบาล', templateKey: 'bug-fix', requesterId: nurse.id })).json() as WorkItemDetail
+    const sibling = (await call(pm, 'POST', `/projects/${p}/work-items`, { title: 'งานภายในอีกงาน', templateKey: 'bug-fix' })).json() as WorkItemDetail
+    const t = (await call(pm, 'POST', '/conversations', { kind: 'work_item', workItemId: wi.id })).json() as Conversation
+    play(
+      {
+        toolCalls: [
+          { name: 'propose_priority', input: { workItemId: sibling.id, priority: 'urgent', reason: 'ด่วน' } },
+          { name: 'save_note', input: { projectId: p, type: 'fact', title: 'โน้ตระดับโครงการ', body: 'x' } },
+          { name: 'save_note', input: { projectId: p, workItemId: sibling.id, type: 'fact', title: 'โน้ตงานอื่น', body: 'x' } },
+          {
+            name: 'propose_work_item',
+            input: { projectId: p, title: 'งานใหม่', description: '', templateKey: 'bug-fix', priority: 'normal', requesterId: nurse2.id },
+          },
+          { name: 'propose_priority', input: { workItemId: wi.id, priority: 'high', reason: 'ผู้ขอรอ' } },
+          { name: 'save_note', input: { projectId: p, workItemId: wi.id, type: 'fact', title: 'โน้ตงานนี้', body: 'y' } },
+        ],
+      },
+      { text: 'เรียบร้อย' },
+    )
+    await say(dev, t.id, '@ai ช่วยจัดการ')
+    const out = lastToolOutputs()
+    expect(out.match(/only change or note things on the thread's own work item/g)).toHaveLength(3)
+    expect(out).toContain('cannot set a requester')
+    const db = await testDb()
+    const rows = await db.select().from(proposals)
+    expect(rows).toMatchObject([{ kind: 'priority_change', workItemId: wi.id }])
+    expect((await db.select().from(knowledgeEntries)).map((e) => e.title)).toEqual(['โน้ตงานนี้'])
   })
 
   it('a work_item thread without a requester keeps the project-scoped tools', async () => {
@@ -421,6 +479,87 @@ describe('secretary chat: team threads', () => {
   })
 })
 
+describe('secretary chat: personal thread replies', () => {
+  const quietPost = (who: Who, conversationId: string, text: string, authorKind: 'person' | 'system' = 'person') =>
+    runWork({ ...app.deps, jobs: { send: async () => {} } }, { id: who.id, kind: 'person' }, (ctx) =>
+      postMessage(ctx, { conversationId, authorKind, authorId: authorKind === 'person' ? who.id : null, text }),
+    )
+  const rowsOf = async (conversationId: string) =>
+    (await (await testDb()).select().from(messages).where(eq(messages.conversationId, conversationId)).orderBy(messages.seq)).map((r) => [
+      r.authorKind,
+      r.text,
+      r.replyToId,
+    ])
+  const run = (id: string) => secretaryChat(app.deps, { id, attempt: 1, isFinalAttempt: true })
+
+  it('a follow-up sent while the first reply is being written is still answered', async () => {
+    const c = await personal(dev)
+    const a = await quietPost(dev, c.id, 'คำถามแรก')
+    let b = ''
+    play(async () => {
+      b = await quietPost(dev, c.id, 'คำถามที่สอง')
+      return { text: 'ตอบแรก' }
+    }, { text: 'ตอบสอง' })
+    await run(a)
+    await run(b)
+    expect(model.doStreamCalls).toHaveLength(2)
+    expect(JSON.stringify(model.doStreamCalls[1]!.prompt)).toContain('คำถามที่สอง')
+    expect(await rowsOf(c.id)).toEqual([
+      ['person', 'คำถามแรก', null],
+      ['person', 'คำถามที่สอง', null],
+      ['ai', 'ตอบแรก', a],
+      ['ai', 'ตอบสอง', b],
+    ])
+  })
+
+  it('a reply covering two questions answers both: the earlier job then skips', async () => {
+    const c = await personal(dev)
+    const a = await quietPost(dev, c.id, 'คำถามแรก')
+    const b = await quietPost(dev, c.id, 'คำถามที่สอง')
+    play({ text: 'ตอบทั้งสอง' })
+    await run(b)
+    await run(a)
+    expect(model.doStreamCalls).toHaveLength(1)
+    expect(await rowsOf(c.id)).toEqual([
+      ['person', 'คำถามแรก', null],
+      ['person', 'คำถามที่สอง', null],
+      ['ai', 'ตอบทั้งสอง', b],
+    ])
+  })
+
+  it('a later [[request.done]] marker does not swallow a pending question', async () => {
+    const c = await personal(nurse)
+    const q = await quietPost(nurse, c.id, 'คำขอของฉันถึงไหนแล้ว')
+    await quietPost(nurse, c.id, '[[request.done]]', 'system')
+    play({ text: 'เสร็จแล้วค่ะ' })
+    await run(q)
+    expect(model.doStreamCalls).toHaveLength(1)
+    expect((await rowsOf(c.id)).at(-1)).toEqual(['ai', 'เสร็จแล้วค่ะ', q])
+  })
+
+  it('history: each message clipped to 4,000 chars, 30,000 in all (oldest dropped first), the trigger always kept', async () => {
+    const c = await personal(dev)
+    const first = await quietPost(dev, c.id, `FIRST-${'ก'.repeat(5000)}`)
+    let last = ''
+    for (let i = 0; i < 12; i++) last = await quietPost(dev, c.id, `M${String(i).padStart(2, '0')}-${'x'.repeat(4500)}`)
+    play({ text: 'ok' })
+    await run(first)
+    const history = model.doStreamCalls[0]!.prompt
+      .filter((m) => m.role !== 'system')
+      .flatMap((m) => (Array.isArray(m.content) ? m.content.map((part) => ('text' in part ? part.text : '')) : [m.content]))
+      .join('')
+    expect(history).toContain('FIRST-')
+    expect(history).toContain('…[truncated]')
+    expect(history).not.toMatch(/x{4001}/)
+    expect(history.length).toBeLessThanOrEqual(30000 + 100)
+    // 13 messages of 4,012 chars: the six oldest after the trigger are dropped.
+    for (const gone of ['M00-', 'M05-']) expect(history).not.toContain(gone)
+    for (const kept of ['M06-', 'M11-']) expect(history).toContain(kept)
+    // The reply answers up to the last person message it saw.
+    expect((await rowsOf(c.id)).at(-1)).toEqual(['ai', 'ok', last])
+  })
+})
+
 describe('secretary chat: requesters', () => {
   it('submit_request creates a project-less proposal on behalf of the requester, visible to admins', async () => {
     const c = await personal(nurse)
@@ -438,6 +577,25 @@ describe('secretary chat: requesters', () => {
     expect((await thread(nurse, c.id)).at(-1)).toMatchObject({ authorKind: 'ai', actions: [{ type: 'proposal', proposalId: rows[0]!.id }] })
     const listed = (await call(admin, 'GET', '/proposals?state=pending')).json() as Proposal[]
     expect(listed.map((p) => p.id)).toEqual([rows[0]!.id])
+  })
+
+  it('submit_request files join the work item once a PM accepts the request', async () => {
+    const p = await project('ระบบแล็บ', [[pm, ['PM']], [dev, ['DEV']]])
+    const c = await personal(nurse)
+    const file = await upload(nurse, c.id)
+    play(
+      { toolCalls: [{ name: 'submit_request', input: { title: 'ระบบแล็บช้า', description: 'เปิดผลแล็บนานมาก', attachmentIds: [file.id] } }] },
+      { text: 'ส่งคำขอให้ทีมแล้ว' },
+    )
+    await say(nurse, c.id, 'ระบบแล็บช้ามาก', [file.id])
+    const db = await testDb()
+    const [prop] = await db.select().from(proposals)
+    expect((await call(pm, 'POST', `/proposals/${prop!.id}/decide`, { decision: 'accept', projectId: p })).statusCode).toBe(200)
+    const [accepted] = await db.select().from(proposals)
+    expect(accepted).toMatchObject({ state: 'accepted', projectId: p })
+    const listed = (await call(dev, 'GET', `/projects/${p}/attachments?workItemId=${accepted!.workItemId}`)).json() as Attachment[]
+    expect(listed.map((a) => a.id)).toEqual([file.id])
+    expect((await call(dev, 'GET', `/attachments/${file.id}/download`)).statusCode).toBe(200)
   })
 
   it('submit_request with another requester’s upload is refused; nothing created', async () => {

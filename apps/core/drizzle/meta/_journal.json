@@ -78,6 +78,13 @@
       "when": 1795564204913,
       "tag": "0010_message_reply_to",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1795573449725,
+      "tag": "0011_notification_budget_alert",
+      "breakpoints": true
     }
   ]
 }

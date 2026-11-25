@@ -42,6 +42,9 @@ const workItemLink = computed(() => {
         </div>
         <template v-if="proposal">
           <div data-testid="proposal-summary">{{ proposal.summary || (proposalFallbackKey(proposal) ? t(proposalFallbackKey(proposal)!) : '') }}</div>
+          <div v-if="proposal.requesterName" class="text-caption" data-testid="proposal-requester">
+            {{ t('chat.card.requester') }}: {{ proposal.requesterName }}
+          </div>
           <GuardNote v-if="guardOf(proposal.payload)" :guard="guardOf(proposal.payload)!" />
           <div v-else-if="proposal.reason" class="text-caption text-medium-emphasis">{{ proposal.reason }}</div>
           <div v-if="proposal.state !== 'pending' || !canDecide" class="mt-1">

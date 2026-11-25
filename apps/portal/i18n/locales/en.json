@@ -307,7 +307,8 @@
         "superseded": "No longer applies"
       },
       "project": "Project",
-      "chooseProject": "Choose a project"
+      "chooseProject": "Choose a project",
+      "requester": "Requester"
     },
     "textRequired": "Add a message to send the attached files",
     "marker": {

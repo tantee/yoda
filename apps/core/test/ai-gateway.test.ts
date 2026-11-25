@@ -314,7 +314,7 @@ describe('department AI budget (project-less calls)', () => {
     await gen(g, null) // 0.028 >= 80% (and >= 100%)
     const warnings = await deptNotes('warning')
     expect(warnings.map((n) => n.personId).sort()).toEqual([a1!.id, a2!.id].sort())
-    expect(warnings[0]!.kind).toBe('secretary_message')
+    expect(warnings[0]!.kind).toBe('budget_alert')
     expect(warnings[0]!.dedupeKey).toMatch(/^dept-ai-budget:\d{4}-\d{2}:warning$/)
 
     await expect(gen(g, null)).rejects.toMatchObject({ name: 'AiRefused', reason: 'budget_exceeded' })

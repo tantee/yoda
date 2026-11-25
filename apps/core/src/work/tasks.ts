@@ -2,11 +2,11 @@ import type { GuardReason, TaskExecutor, TemplateTask } from '@yoda/shared'
 import { and, eq } from 'drizzle-orm'
 import type { Tx } from '../db/client.js'
 import { projectMembers, projects, tasks, workItems } from '../db/schema.js'
-import { notifyTaskAssigned } from '../notifications/service.js'
+import { notifyTaskAssigned, notifyTaskProposed } from '../notifications/service.js'
 import { lockAutoAssign, pickAssignee } from './assign.js'
 import { templateById } from '../workflow/seed.js'
 import { recordEvent, type WorkCtx } from './context.js'
-import { REPEATED_REWORK, reworkCount } from './guards.js'
+import { guardText, REPEATED_REWORK, reworkCount } from './guards.js'
 
 export async function createTaskAttempt(
   ctx: WorkCtx,
@@ -109,6 +109,8 @@ export async function createTaskAttempt(
     })
   } else if (proposedAssigneeId) {
     await recordEvent(ctx, { type: 'task.proposed', ...base, reason: guard, payload: { proposedAssigneeId } })
+    // A guard rail handed this assignment back: the PMs hear why (plain proposals show up in their to-do).
+    if (guard) await notifyTaskProposed(ctx, { ...base, taskTitle: input.task.title.th, reason: guardText({ reason: guard }) })
   }
 
   // AI drafting runs after commit; a noAi project gets no AI calls at all (its AI tasks wait for a person).

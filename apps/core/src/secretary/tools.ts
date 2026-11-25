@@ -9,7 +9,7 @@ import { attachments, conversations, knowledgeEntries, people, projects, workIte
 import { createEntry } from '../knowledge/service.js'
 import { searchKnowledge } from '../knowledge/search.js'
 import { createProposal, supersedePending } from '../proposals/service.js'
-import { recordEvent, type WorkCtx } from '../work/context.js'
+import type { WorkCtx } from '../work/context.js'
 import { lockItem, memberRoles } from '../work/engine.js'
 import { canSeeProject, getMyAnswers, getMyRequests, getTodo, getWorkItemDetail, listTemplates, listWorkItems } from '../work/queries.js'
 import { latestTemplate } from '../workflow/seed.js'
@@ -32,6 +32,13 @@ export const NOT_AVAILABLE = 'This is not available to the assistant (the projec
 const NOT_MEMBER = 'You are not a member of that project, so I cannot do this there.'
 const NOT_FOUND = 'Not found, or you do not have access to it.'
 const OUT_OF_SCOPE = "In this thread I can only work on the thread's own project. Ask me in your personal chat for anything else."
+const OWN_ITEM_ONLY =
+  "This thread is visible to the requester, so I can only change or note things on the thread's own work item here. Ask me in your personal chat for anything else."
+
+/** A requester-visible thread: writes only ever target the thread's own work item. */
+function requireOwnItem(scope: ToolScope, workItemId: string | undefined): void {
+  if (scope.requesterVisible && workItemId !== scope.workItemId) throw new ToolRefusal(OWN_ITEM_ONLY)
+}
 
 /**
  * Team threads (`projectId` set): everyone in the thread reads the reply, so tools work only on that project.
@@ -250,6 +257,10 @@ function staffTools(deps: ToolDeps, me: Me, pending: PendingAction[], scope: Too
       }),
       execute: guarded(async (input) => {
         requireInScope(scope, input.projectId)
+        // Naming someone else as the requester is for staff in threads the requester cannot read.
+        if (input.requesterId && (!me.isStaff || scope.requesterVisible)) {
+          throw new ToolRefusal('I cannot set a requester from this thread. Ask me in your personal chat.')
+        }
         await aiVisibleProject(db, me, input.projectId)
         if (!(await latestTemplate(db, input.templateKey))) {
           const keys = (await listTemplates(db)).map((t) => t.key)
@@ -275,31 +286,19 @@ function staffTools(deps: ToolDeps, me: Me, pending: PendingAction[], scope: Too
     }),
 
     propose_priority: tool({
-      description:
-        "Suggest a work item's priority. In 'propose' projects this becomes a proposal the PM confirms; in 'auto-assign' projects it is applied when your reply is sent.",
+      description: "Suggest a work item's priority. This always becomes a proposal a PM confirms; it is never applied directly.",
       inputSchema: z.object({ workItemId: uuid, priority: Priority, reason: z.string().trim().min(1).max(2000) }),
       execute: guarded(async ({ workItemId, priority, reason }) => {
-        const { item, project } = await aiVisibleWorkItem(db, me, workItemId)
+        requireOwnItem(scope, workItemId)
+        const { item } = await aiVisibleWorkItem(db, me, workItemId)
         requireInScope(scope, item.projectId)
         if (item.state !== 'active') throw new ToolRefusal('That work item is no longer active.')
         if (item.priority === priority) throw new ToolRefusal(`The priority is already ${priority}.`)
-        const direct = project.autonomy === 'auto-assign'
         pending.push(async (ctx) => {
           const locked = await lockItem(ctx.tx, workItemId)
           if (!me.isAdmin && !(await memberRoles(ctx.tx, locked.projectId, me.id))) throw notFound()
           if (locked.state !== 'active') throw new ToolRefusal('That work item is no longer active.')
-          if (direct) {
-            await ctx.tx.update(workItems).set({ priority, updatedAt: sql`now()` }).where(eq(workItems.id, workItemId))
-            await recordEvent(ctx, {
-              type: 'work_item.priority_changed',
-              projectId: locked.projectId,
-              workItemId,
-              taskId: null,
-              reason,
-              payload: { from: locked.priority, to: priority },
-            })
-            return { type: 'link', label: locked.title, to: `/work-items/${workItemId}` }
-          }
+          // The secretary never changes priority itself, whatever the project's autonomy: a PM decides.
           await supersedePending(ctx, workItemId, 'priority_change')
           const proposalId = await createProposal(ctx, {
             projectId: locked.projectId,
@@ -312,9 +311,7 @@ function staffTools(deps: ToolDeps, me: Me, pending: PendingAction[], scope: Too
           })
           return { type: 'proposal', proposalId }
         })
-        return direct
-          ? { status: 'prepared', note: `The priority will be set to ${priority} when your reply is sent (this project applies changes directly).` }
-          : { status: 'prepared', note: 'A priority change proposal will be attached to your reply; a PM must confirm it.' }
+        return { status: 'prepared', note: 'A priority change proposal will be attached to your reply; a PM must confirm it.' }
       }),
     }),
 
@@ -329,6 +326,7 @@ function staffTools(deps: ToolDeps, me: Me, pending: PendingAction[], scope: Too
       }),
       execute: guarded(async (input) => {
         requireInScope(scope, input.projectId)
+        requireOwnItem(scope, input.workItemId)
         await aiVisibleProject(db, me, input.projectId)
         if (input.workItemId) {
           const { item } = await aiVisibleWorkItem(db, me, input.workItemId)

@@ -9,6 +9,7 @@ import { events, knowledgeEntries, messages, notifications, people, projectMembe
 import { InlineJobQueue, type JobName } from '../src/jobs/queue.js'
 import { LiveBus } from '../src/live/bus.js'
 import { decideProposal } from '../src/proposals/service.js'
+import { secretaryEvent } from '../src/secretary/events.js'
 import { runWork } from '../src/work/context.js'
 import { assignTask, createWorkItem, submitTask } from '../src/work/engine.js'
 import { textStream } from './ai-mocks.js'
@@ -179,6 +180,24 @@ describe('secretary event: work item done', () => {
     failing = true
     await finish(s, wi, s.nurse)
     expect(await summaries()).toHaveLength(0)
+    expect(await aiMessages()).toMatchObject([{ authorKind: 'system', text: '[[request.done]]' }])
+  })
+
+  it('the requester note never waits on the work item lock (lock order conversation → work item)', async () => {
+    const s = await setup(true)
+    const wi = await create(s, { requesterId: s.nurse.id })
+    await finish(s, wi, s.nurse)
+    await db.delete(messages)
+    // Another transaction holds the work item row lock (as a secretary reply applying a staged action would,
+    // after locking its conversation): posting the note must not queue behind it.
+    const outcome = await db.transaction(async (tx) => {
+      await tx.select({ id: workItems.id }).from(workItems).where(eq(workItems.id, wi)).for('update')
+      return Promise.race([
+        secretaryEvent(deps, { id: wi, attempt: 1, isFinalAttempt: true }).then(() => 'posted'),
+        new Promise((resolve) => setTimeout(() => resolve('blocked'), 3000)),
+      ])
+    })
+    expect(outcome).toBe('posted')
     expect(await aiMessages()).toMatchObject([{ authorKind: 'system', text: '[[request.done]]' }])
   })
 
