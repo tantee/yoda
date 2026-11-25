@@ -10,6 +10,7 @@ import type { LiveBus } from './live/bus.js'
 import type { AiGateway } from './ai/gateway.js'
 import type { AttachmentStoredHook } from './attachments/service.js'
 import type { JobQueue } from './jobs/queue.js'
+import type { GitLabClient } from './gitlab/client.js'
 import { createAttachmentEntry } from './knowledge/service.js'
 import { knowledgeRoutes } from './routes/knowledge.js'
 import { aiRoutes } from './routes/ai.js'
@@ -35,6 +36,8 @@ export type AppDeps = {
   storage: Storage
   ai: AiGateway
   jobs: JobQueue
+  /** Null when GITLAB_URL / GITLAB_TOKEN are not both set. */
+  gitlab: GitLabClient | null
   /** Replaces the default upload hook (create the attachment's knowledge entry); tests use it to observe calls. */
   onAttachmentStored?: AttachmentStoredHook
 }

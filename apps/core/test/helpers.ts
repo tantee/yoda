@@ -96,6 +96,7 @@ export async function testDeps(overrides: Partial<AppDeps> = {}): Promise<AppDep
       onError: (err, name, id) => console.warn(`test job ${name} ${id} failed`, err),
       ignore: ['draft-task', 'secretary-chat', 'secretary-event', 'discussion-brief'],
     }),
+    gitlab: null,
     ...overrides,
   }
   // Handlers see the final deps (overrides included). Tests await `(deps.jobs as InlineJobQueue).drain()`.
