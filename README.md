@@ -22,6 +22,17 @@ The root `.env` is loaded automatically by `pnpm --filter @yoda/core dev`, `db:m
 `BOOTSTRAP_ADMINS=somchai` in your `.env` to get an admin on first login. Never set a common real
 username against the hospital Keycloak.
 
+### Object storage (RustFS)
+
+The S3 API is on `127.0.0.1:${S3_PORT:-9000}` and the web console on `127.0.0.1:${S3_CONSOLE_PORT:-9001}`;
+log in to the console with `S3_ACCESS_KEY` / `S3_SECRET_KEY`. Both ports are set in `.env`.
+
+**Migrating from MinIO.** The `rustfsdata` volume starts empty. Before switching, copy existing objects
+from the old MinIO endpoint to RustFS with `aws s3 sync` (or `mc mirror`) using each endpoint's
+credentials. Afterwards remove the old volume with `docker volume rm <project>_miniodata`. A `.env`
+copied from the old example still works (compose passes whatever `S3_*` is set) but should switch to
+the new dev secret from `.env.example`.
+
 Keycloak dev realm `yoda` is imported from `infra/keycloak` (dev test users, password `dev`; see
 `infra/keycloak/README.md`). If you change `KEYCLOAK_PORT`, update `OIDC_ISSUER` and
 `NUXT_PUBLIC_KEYCLOAK_URL` to match.
@@ -51,6 +62,9 @@ Images: `yoda-core` (runs migrations, then `node dist/server.js`) and `yoda-port
 - core object storage (the compose `rustfs` service): `S3_ACCESS_KEY`, `S3_SECRET_KEY` (required; the
   overlay also uses them as the RustFS credentials), `S3_REGION` (`us-east-1`), `S3_BUCKET` (`yoda`,
   created on startup). `S3_ENDPOINT` is fixed to `http://rustfs:9000` by the overlay.
+- RustFS in prod: bind-mounted data directories must be owned by the image's `rustfs` user. The image
+  has no healthcheck, so core only waits for the container to start and relies on
+  `restart: unless-stopped` if RustFS is not ready on first start.
 - core AI: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENAI_BASE_URL` (all optional; jobs whose provider
   has no key are unavailable), `AI_MODEL_DRAFT` (`anthropic:claude-opus-5-5`), `AI_MODEL_FAST`
   (`anthropic:claude-haiku-5-5`), `AI_EMBEDDING_MODEL` (empty = no embeddings, trigram search only),
