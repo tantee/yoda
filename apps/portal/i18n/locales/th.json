@@ -19,7 +19,8 @@
     "answers": "สิ่งที่ต้องตอบ",
     "admin": {
       "people": "จัดการบุคลากร",
-      "ai": "งบประมาณ AI"
+      "ai": "งบประมาณ AI",
+      "gitlab": "GitLab"
     }
   },
   "projects": {
@@ -44,7 +45,8 @@
       "overview": "ภาพรวม",
       "items": "งาน",
       "knowledge": "ความรู้",
-      "ai": "ตั้งค่า AI"
+      "ai": "ตั้งค่า AI",
+      "repos": "Repositories"
     }
   },
   "people": {
@@ -67,7 +69,11 @@
     "commentRequired": "กรุณาใส่ความเห็นเมื่อขอให้แก้ไข",
     "tooLarge": "ไฟล์ใหญ่เกิน 25 MB",
     "unsupportedType": "ไม่รองรับไฟล์ชนิดนี้",
-    "projectRequired": "กรุณาเลือกโครงการก่อน"
+    "projectRequired": "กรุณาเลือกโครงการก่อน",
+    "gitlabNotConnected": "ยังไม่ได้เชื่อมต่อ GitLab",
+    "repoNotFound": "ไม่พบ repository นี้ใน GitLab หรือบัญชีบอทไม่มีสิทธิ์เข้าถึง",
+    "issueNotFound": "ไม่พบ issue นี้ใน GitLab หรือบัญชีบอทไม่มีสิทธิ์เข้าถึง",
+    "gitlabUnavailable": "ติดต่อ GitLab ไม่ได้ กรุณาลองใหม่ภายหลัง"
   },
   "todo": {
     "myTasks": "งานของฉัน",
@@ -175,7 +181,8 @@
       "step_advanced": "ไปยังขั้นตอนถัดไป",
       "done": "งานเสร็จสิ้น",
       "cancelled": "ยกเลิกงาน",
-      "reopened": "ย้อนกลับไปขั้นตอนก่อนหน้า"
+      "reopened": "ย้อนกลับไปขั้นตอนก่อนหน้า",
+      "priority_changed": "เปลี่ยนความสำคัญ"
     },
     "task": {
       "created": "สร้างงานย่อย",
@@ -202,7 +209,13 @@
       "no_ai": "โครงการนี้ไม่ใช้ AI",
       "reopened": "รายการงานถูกย้อนกลับไปขั้นตอนก่อนหน้า",
       "mr_opened_in_gitlab": "เปิด merge request ใน GitLab แล้ว",
-      "merged_in_gitlab": "merge ใน GitLab แล้ว"
+      "merged_in_gitlab": "merge ใน GitLab แล้ว",
+      "not_found": "ไม่พบใน GitLab",
+      "forbidden": "บัญชีบอทไม่มีสิทธิ์",
+      "unavailable": "ติดต่อ GitLab ไม่ได้",
+      "bad_request": "GitLab ปฏิเสธคำขอ",
+      "internal": "เกิดข้อผิดพลาดภายใน",
+      "issue_missing": "issue ถูกลบหรือย้ายใน GitLab"
     },
     "ai": {
       "drafted": "AI ร่างผลงานแล้ว",
@@ -211,7 +224,30 @@
       "budget_warning": "ใช้งบ AI ถึง 80%",
       "budget_exceeded": "งบ AI เต็มแล้ว"
     },
-    "aiLabel": "AI"
+    "aiLabel": "AI",
+    "knowledge": {
+      "created": "เพิ่มความรู้",
+      "updated": "แก้ไขความรู้",
+      "confirmed": "ยืนยันความรู้"
+    },
+    "gitlab": {
+      "issue_synced": "ซิงก์ issue ใน GitLab แล้ว",
+      "issue_sync_failed": "ซิงก์ issue ใน GitLab ไม่สำเร็จ",
+      "mr_opened": "เปิด merge request แล้ว",
+      "mr_merged": "merge แล้ว",
+      "mr_closed": "ปิด merge request โดยไม่ merge",
+      "pipeline": "สถานะไปป์ไลน์เปลี่ยน",
+      "note": "มีความเห็นใหม่ใน GitLab"
+    },
+    "discussion": {
+      "raised": "เปิดประเด็นสนทนา",
+      "brief_ready": "สรุปประเด็นพร้อมแล้ว",
+      "brief_failed": "เตรียมสรุปประเด็นไม่สำเร็จ",
+      "scheduled": "นำเข้าวาระการประชุม",
+      "decided": "ตัดสินประเด็นแล้ว",
+      "withdrawn": "ถอนประเด็นสนทนา",
+      "responded": "มีผู้ให้ความเห็นในประเด็นสนทนา"
+    }
   },
   "knowledge": {
     "search": "ค้นหาความรู้",
@@ -503,6 +539,73 @@
       "presentHint": "ใช้ปุ่มลูกศรซ้ายและขวาเพื่อเปลี่ยนประเด็น",
       "exit": "ออก",
       "readOnly": "เฉพาะผู้จัดการโครงการและผู้ดูแลระบบที่แก้ไขวาระได้"
+    }
+  },
+  "gitlab": {
+    "notConnected": "ยังไม่ได้เชื่อมต่อ GitLab",
+    "sync": {
+      "pending": "รอซิงก์",
+      "synced": "ซิงก์แล้ว",
+      "failed": "ซิงก์ไม่สำเร็จ: {reason}"
+    },
+    "mrState": {
+      "opened": "เปิดอยู่",
+      "merged": "merge แล้ว",
+      "closed": "ปิดแล้ว"
+    },
+    "pipeline": {
+      "none": "ไม่มีไปป์ไลน์",
+      "pending": "ไปป์ไลน์รอคิว",
+      "running": "ไปป์ไลน์กำลังรัน",
+      "success": "ไปป์ไลน์ผ่าน",
+      "failed": "ไปป์ไลน์ไม่ผ่าน",
+      "canceled": "ไปป์ไลน์ถูกยกเลิก"
+    },
+    "repos": {
+      "title": "Repositories ที่เชื่อมไว้",
+      "empty": "ยังไม่มี repository ที่เชื่อมไว้",
+      "path": "Path ของโครงการใน GitLab",
+      "pathHint": "เช่น group/sub/app",
+      "link": "เชื่อม",
+      "unlink": "ยกเลิกการเชื่อม",
+      "defaultBranch": "Branch หลัก",
+      "open": "เปิดใน GitLab",
+      "duplicate": "repository นี้เชื่อมกับโครงการแล้ว",
+      "hasIssues": "ยกเลิกการเชื่อมไม่ได้ เพราะมี issue ที่ผูกกับรายการงานอยู่"
+    },
+    "import": {
+      "title": "นำเข้า issue จาก GitLab",
+      "repo": "Repository",
+      "issueIid": "หมายเลข issue",
+      "submit": "นำเข้า",
+      "duplicate": "issue นี้ถูกนำเข้าเป็นรายการงานแล้ว"
+    },
+    "code": {
+      "title": "โค้ด",
+      "repos": "Repositories ของรายการงานนี้",
+      "noRepos": "ยังไม่ได้เลือก repository",
+      "pickHint": "เลือกได้จนกว่าจะเริ่มขั้นตอนพัฒนา",
+      "save": "บันทึก",
+      "locked": "เปลี่ยน repository ไม่ได้หลังเริ่มพัฒนาแล้ว",
+      "issue": "Issue",
+      "noIssue": "ยังไม่มี issue (จะสร้างเมื่อเริ่มพัฒนา)",
+      "mergeRequests": "Merge requests",
+      "noMrs": "ยังไม่มี merge request",
+      "closesHint": "ใส่ {hint} ในคำอธิบาย merge request"
+    },
+    "admin": {
+      "title": "การเชื่อมต่อ GitLab",
+      "configured": "ตั้งค่าแล้ว",
+      "reachable": "ติดต่อได้",
+      "botUser": "บัญชีบอท",
+      "lastWebhook": "webhook ล่าสุด",
+      "never": "ยังไม่เคยได้รับ",
+      "yes": "ใช่",
+      "no": "ไม่",
+      "unknown": "-",
+      "webhookUrl": "URL สำหรับตั้ง webhook ใน GitLab",
+      "webhookHint": "ใน GitLab ไปที่ Settings → Webhooks ใส่ URL นี้ ใส่ Secret token เป็นค่า GITLAB_WEBHOOK_SECRET และเลือกเหตุการณ์ Merge request, Pipeline และ Comments",
+      "copy": "คัดลอก"
     }
   }
 }

@@ -15,6 +15,11 @@ describe('navItemsFor', () => {
     expect(navItemsFor({ ...base, isStaff: true, isAdmin: true }).map(i => i.key)).toContain('nav.admin.ai')
     expect(navItemsFor({ ...base, isStaff: true, isAdmin: false }).map(i => i.key)).not.toContain('nav.admin.ai')
   })
+  it('GitLab admin page is admin only', () => {
+    expect(navItemsFor({ ...base, isStaff: true, isAdmin: true }).map(i => i.key)).toContain('nav.admin.gitlab')
+    expect(navItemsFor({ ...base, isStaff: true, isAdmin: false }).map(i => i.key)).not.toContain('nav.admin.gitlab')
+    expect(navItemsFor({ ...base, isStaff: false, isAdmin: true }).map(i => i.key)).not.toContain('nav.admin.gitlab')
+  })
   it('requester nav has no staff areas', () => {
     expect(navItemsFor({ ...base, isStaff: false, isAdmin: false }).map(i => i.key))
       .toEqual(['nav.requests', 'nav.chat', 'nav.answers'])
