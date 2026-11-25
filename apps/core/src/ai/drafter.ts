@@ -14,7 +14,8 @@ export type DrafterDeps = Pick<AppDeps, 'db' | 'ai' | 'bus' | 'jobs' | 'config'>
 
 export type DraftMeta = { confidence: 'high' | 'low'; missing: string[] }
 
-const META_LINE = /\n?[ \t]*<!--\s*meta\b([\s\S]*?)-->\s*$/
+/** Matched against the tail from the last `<!--`: only a note that ends the draft is the meta note. */
+const META_NOTE = /^<!--\s*meta\b([\s\S]*?)-->\s*$/
 const MAX_MISSING = 10
 const MAX_MISSING_LENGTH = 200
 
@@ -24,9 +25,10 @@ const MAX_MISSING_LENGTH = 200
  */
 export function parseDraftMeta(raw: string): { text: string; meta: DraftMeta } {
   const fallback: DraftMeta = { confidence: 'high', missing: [] }
-  const m = META_LINE.exec(raw)
+  const start = raw.lastIndexOf('<!--')
+  const m = start >= 0 ? META_NOTE.exec(raw.slice(start)) : null
   if (!m) return { text: raw, meta: fallback }
-  const text = raw.slice(0, m.index).trimEnd()
+  const text = raw.slice(0, start).trimEnd()
   try {
     const v = JSON.parse(m[1]!.trim()) as { confidence?: unknown; missing?: unknown }
     if (v === null || typeof v !== 'object') return { text, meta: fallback }

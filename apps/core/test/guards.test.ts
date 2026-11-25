@@ -9,6 +9,7 @@ import { aiCalls, events, notifications, people, projectMembers, projects, propo
 import { decideProposal } from '../src/proposals/service.js'
 import { LiveBus } from '../src/live/bus.js'
 import { runWork } from '../src/work/context.js'
+import { checkAdvanceGuards, reworkCount } from '../src/work/guards.js'
 import { InlineJobQueue } from '../src/jobs/queue.js'
 import {
   assignTask,
@@ -260,6 +261,45 @@ describe('auto-assign guard rails', () => {
     }
   })
 
+  it('G5: noAi projects spend nothing on AI, so the budget guard never trips', async () => {
+    const s = await setup('auto-assign', { budget: '1.00' })
+    await db.update(projects).set({ noAi: true }).where(eq(projects.id, s.projectId))
+    await db.insert(aiCalls).values({ projectId: s.projectId, job: 'draft', ok: true, costUsd: '0.950000' })
+    const wi = await create(s)
+    await finish(s, wi, 'accept-bug', s.pm, approve)
+    expect(await pendingAdvance(wi)).toBeUndefined()
+    expect((await item(wi)).currentStepKey).toBe('dev')
+  })
+
+  it('G2 counts per task the same way at step advance and at assignment', async () => {
+    const s = await setup()
+    const wi = await create(s)
+    // A task with two dependent reviews, each asking for changes once: the task was sent back twice.
+    const step = {
+      key: 'dev',
+      name: { th: 'd', en: 'd' },
+      tasks: [
+        { key: 'build', type: 'human', role: 'DEV', title: { th: 'b', en: 'b' }, instructions: { th: 'x', en: 'x' }, dependsOn: [] },
+        { key: 'review-a', type: 'review', role: 'DEV', title: { th: 'a', en: 'a' }, instructions: { th: 'x', en: 'x' }, dependsOn: ['build'] },
+        { key: 'review-b', type: 'review', role: 'DEV', title: { th: 'b', en: 'b' }, instructions: { th: 'x', en: 'x' }, dependsOn: ['build'] },
+      ],
+    } as const
+    const base = { workItemId: wi, projectId: s.projectId, stepKey: 'dev', attempt: 1, type: 'review', role: 'DEV', executor: 'human' } as const
+    const rejection = { state: 'rejected' as const, result: { text: 'x', decision: 'changes' as const, attachmentIds: [] } }
+    await db.insert(tasks).values([
+      { ...base, templateTaskKey: 'review-a', ...rejection },
+      { ...base, templateTaskKey: 'review-b', ...rejection },
+    ])
+    const [row] = await db.select().from(workItems).where(eq(workItems.id, wi))
+    const stepDef = step as unknown as Parameters<typeof checkAdvanceGuards>[2]
+    const verdict = await db.transaction(async (tx) => ({
+      count: await reworkCount(tx, wi, stepDef, 'build'),
+      guard: await checkAdvanceGuards(tx, row!, stepDef, stepDef),
+    }))
+    expect(verdict.count).toBe(2)
+    expect(verdict.guard).toEqual({ reason: 'repeated_rework' })
+  })
+
   it('G6: everyone at the daily cap → the task is proposed to the least-loaded person with reason daily_cap', async () => {
     deps = { ...deps, config: { ...deps.config, dailyTaskCap: 1 } }
     const s = await setup('auto-assign', { roles: { pm: ['PM'], dev: ['PM', 'DEV'], qc: ['QC'] } })
@@ -362,6 +402,16 @@ describe('parseDraftMeta', () => {
     expect(parseDraftMeta('# A\n<!--meta not json-->')).toEqual({ text: '# A', meta: { confidence: 'high', missing: [] } })
     expect(parseDraftMeta('# A\n<!--meta {"confidence":"maybe"}-->')).toEqual({ text: '# A', meta: { confidence: 'high', missing: [] } })
     expect(parseDraftMeta('# A')).toEqual({ text: '# A', meta: { confidence: 'high', missing: [] } })
+    // Two notes: only the trailing one is stripped and read; the earlier text stays.
+    expect(parseDraftMeta('# A\n<!--meta {"confidence":"high"}-->\nbody\n<!--meta {"confidence":"low","missing":["z"]}-->')).toEqual({
+      text: '# A\n<!--meta {"confidence":"high"}-->\nbody',
+      meta: { confidence: 'low', missing: ['z'] },
+    })
+    // A quoted `<!--meta` earlier in the body with a valid trailing note: the body is intact.
+    expect(parseDraftMeta('use `<!--meta` notes\nmore\n<!--meta {"confidence":"low","missing":[]}-->')).toEqual({
+      text: 'use `<!--meta` notes\nmore',
+      meta: { confidence: 'low', missing: [] },
+    })
     // A note that is not at the end is left in place.
     expect(parseDraftMeta('<!--meta {"confidence":"low"}-->\n# A').text).toBe('<!--meta {"confidence":"low"}-->\n# A')
   })
