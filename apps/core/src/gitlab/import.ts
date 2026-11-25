@@ -1,10 +1,10 @@
-import { ISSUE_BEGIN, ISSUE_END } from './issue-section.js'
+import { ISSUE_BEGIN, ISSUE_END, stripCommentMarkers } from './issue-section.js'
 
 export const MAX_TITLE_CHARS = 200
 export const MAX_DESCRIPTION_CHARS = 10_000
 
 /** Issue text is untrusted: no HTML comments (so it can never fake or break the portal's markers). */
-const stripMarkers = (s: string) => s.replace(/<!--|-->/g, '')
+const stripMarkers = stripCommentMarkers
 
 const clip = (s: string, n: number) => {
   const chars = Array.from(s)

@@ -29,7 +29,7 @@ type Link = { repo: typeof projectRepos.$inferSelect; link: typeof workItemRepos
 type Content = Omit<IssueSectionInput, 'siblings' | 'iid'>
 
 /** Everything the section shows, read from committed state (confirmed knowledge, decided discussions, accepted tasks). */
-async function readContent(db: Db, item: typeof workItems.$inferSelect, projectName: string, portalUrl: string): Promise<Content> {
+async function readContent(db: Db, item: typeof workItems.$inferSelect, projectName: string, portalUrl: string, imported: boolean): Promise<Content> {
   const def = await templateById(db, item.templateId)
   const codeSteps = (def?.steps ?? []).filter((s) => s.tasks.some((t) => t.capability === 'code-change'))
   const codeKeys = new Set(codeSteps.flatMap((s) => s.tasks.filter((t) => t.capability === 'code-change').map((t) => t.key)))
@@ -52,9 +52,10 @@ async function readContent(db: Db, item: typeof workItems.$inferSelect, projectN
     )
     .orderBy(desc(knowledgeEntries.createdAt), desc(knowledgeEntries.id))
   const requirements = docs.find((d) => d.role === 'BA')?.body ?? null
-  // Only a template without a requirements (BA) step falls back to the unreviewed original request.
+  // Only a template without a requirements (BA) step falls back to the unreviewed original request; an item
+  // imported from an issue has its original text in that issue already (above the section).
   const hasBaStep = (def?.steps ?? []).some((s) => s.tasks.some((t) => t.role === 'BA'))
-  const originalRequest = !hasBaStep && item.description.trim() ? item.description : null
+  const originalRequest = !hasBaStep && !imported && item.description.trim() ? item.description : null
   const design = docs.find((d) => d.role === 'SA')?.body ?? null
 
   const ds = await db
@@ -126,7 +127,9 @@ async function syncOnce(deps: SyncDeps, run: JobRun): Promise<void> {
     .where(eq(workItemRepos.workItemId, item.id))
     .orderBy(asc(projectRepos.pathWithNamespace), asc(projectRepos.id))
   if (!links.length) return
-  const content = await readContent(db, item, project?.name ?? '', deps.config.portalUrl)
+  // Imported items start their description with the issue URL (see importedText); nothing else links an issue up front.
+  const imported = links.some((l) => !!l.link.issueUrl && item.description.startsWith(l.link.issueUrl))
+  const content = await readContent(db, item, project?.name ?? '', deps.config.portalUrl, imported)
 
   const known = new Map<string, { iid: number; url: string }>()
   for (const l of links) if (l.link.issueIid !== null && l.link.issueUrl) known.set(l.repo.id, { iid: l.link.issueIid, url: l.link.issueUrl })

@@ -78,19 +78,46 @@ export function renderIssueSection(input: IssueSectionInput): string {
   return lines.join('\n')
 }
 
-/** Start/end offsets of the owned section (end exclusive), or null when the markers are missing. */
-function findSection(body: string): [number, number] | null {
-  // The last begin marker and the end after it: a stray end marker in the developer's text comes before it.
-  const b = body.lastIndexOf(ISSUE_BEGIN)
-  if (b < 0) return null
-  const e = body.indexOf(ISSUE_END, b)
-  if (e < 0) return null
-  return [b, e + ISSUE_END.length]
+/** Removes HTML comment markers until none remain (a single pass could reassemble one, e.g. `<!<!---->--`). */
+export function stripCommentMarkers(text: string): string {
+  let s = text
+  let prev: string
+  do {
+    prev = s
+    s = s.replace(/<!--|-->/g, '')
+  } while (s !== prev)
+  return s
 }
+
+const WORK_ITEM_MARKER = /<!-- yoda:work-item:[0-9a-f-]{36} -->/
+
+/**
+ * Start/end offsets of the owned section (end exclusive), or null when there is no well-formed pair. A pair is an
+ * end marker and the nearest begin before it, with no other marker between them. The pair holding `marker` (the
+ * work item's hidden marker) wins; otherwise the last pair.
+ */
+function findSection(body: string, marker: string | null): [number, number] | null {
+  const pairs: [number, number][] = []
+  let from = 0
+  let prevEnd = 0
+  for (;;) {
+    const e = body.indexOf(ISSUE_END, from)
+    if (e < 0) break
+    const b = body.lastIndexOf(ISSUE_BEGIN, e)
+    if (b >= prevEnd && b >= 0) pairs.push([b, e + ISSUE_END.length])
+    prevEnd = e + ISSUE_END.length
+    from = prevEnd
+  }
+  if (!pairs.length) return null
+  const own = marker ? pairs.filter(([b, e]) => body.slice(b, e).includes(marker)) : []
+  return own.at(-1) ?? pairs.at(-1)!
+}
+
+const markerOf = (section: string) => section.match(WORK_ITEM_MARKER)?.[0] ?? null
 
 /** Replaces the owned section; without markers, appends it after the developer's text. */
 export function mergeSection(body: string, section: string): string {
-  const at = findSection(body)
+  const at = findSection(body, markerOf(section))
   if (at) return body.slice(0, at[0]) + section + body.slice(at[1])
   const rest = body.trimEnd()
   return rest ? `${rest}\n\n${section}` : section
@@ -115,7 +142,7 @@ function parts(section: string): Map<string, string> {
 
 /** Headings whose content differs between the section in `oldBody` and `section` (all of them if none was found). */
 export function changedSections(oldBody: string, section: string): string[] {
-  const at = findSection(oldBody)
+  const at = findSection(oldBody, markerOf(section))
   const next = parts(section)
   if (!at) return [...next.keys()]
   const prev = parts(oldBody.slice(at[0], at[1]))
