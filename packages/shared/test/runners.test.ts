@@ -30,6 +30,9 @@ describe('runner schemas', () => {
     expect(WorkingHours.safeParse({ ...wh, days: [] }).success).toBe(false)
     expect(WorkingHours.safeParse({ ...wh, days: [7] }).success).toBe(false)
     expect(WorkingHours.safeParse({ ...wh, start: '9:00' }).success).toBe(false)
+    expect(WorkingHours.safeParse({ ...wh, end: '24:00' }).success).toBe(false)
+    expect(WorkingHours.safeParse({ ...wh, end: '17:60' }).success).toBe(false)
+    expect(WorkingHours.safeParse({ ...wh, end: '23:59' }).success).toBe(true)
   })
   it('patches a subset of fields', () => {
     expect(RunnerPatch.safeParse({ paused: true }).success).toBe(true)

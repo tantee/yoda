@@ -13,7 +13,7 @@ export type AccountType = z.infer<typeof AccountType>
 export const RunnerCapability = z.enum(['analyze-repo', 'code-change', 'run-tests'])
 export type RunnerCapability = z.infer<typeof RunnerCapability>
 
-const hhmm = z.string().regex(/^\d{2}:\d{2}$/)
+const hhmm = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/)
 
 /** When an unattended runner may claim work, in Asia/Bangkok. Days are 0 (Sunday) to 6. */
 export const WorkingHours = z

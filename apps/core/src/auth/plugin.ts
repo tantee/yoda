@@ -27,6 +27,7 @@ export class HttpError extends Error {
         | 'repo_not_found'
         | 'issue_not_found'
         | 'gitlab_unavailable'
+        | 'empty_patch'
     },
   ) {
     super(body.error)
@@ -50,6 +51,7 @@ export const gitlabNotConnected = () => new HttpError(422, { error: 'gitlab_not_
 export const repoNotFound = () => new HttpError(422, { error: 'repo_not_found' })
 export const issueNotFound = () => new HttpError(422, { error: 'issue_not_found' })
 export const commentRequired = () => new HttpError(422, { error: 'comment_required' })
+export const emptyPatch = () => new HttpError(422, { error: 'empty_patch' })
 
 /**
  * Verify the bearer token. Returns validated claims, or null for any failure
