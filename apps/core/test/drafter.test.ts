@@ -382,15 +382,15 @@ describe('AI drafter', () => {
     expect(held.held).toHaveLength(0)
 
     // Unchanged / true → true never queues.
-    expect((await call(pm, 'PATCH', `/projects/${p}`, { noAi: true })).statusCode).toBe(200)
+    expect((await call(admin, 'PATCH', `/projects/${p}`, { noAi: true })).statusCode).toBe(200)
     expect(held.held).toHaveLength(0)
-    expect((await call(pm, 'PATCH', `/projects/${p}`, { noAi: false })).statusCode).toBe(200)
+    expect((await call(admin, 'PATCH', `/projects/${p}`, { noAi: false })).statusCode).toBe(200)
     expect(held.held.map((j) => j.id).sort()).toEqual([draftA.id, draftB.id].sort())
     expect(await active(a.id, 'draft-requirements')).toMatchObject({ aiStatus: 'drafting' })
     expect((await taskEvents(draftA.id)).at(-1)).toMatchObject({ type: 'ai.retried' })
     expect((await taskEvents(draftB.id)).map((e) => e.type)).not.toContain('ai.retried')
     // false → false does not queue again.
-    expect((await call(pm, 'PATCH', `/projects/${p}`, { noAi: false })).statusCode).toBe(200)
+    expect((await call(admin, 'PATCH', `/projects/${p}`, { noAi: false })).statusCode).toBe(200)
     expect(held.held).toHaveLength(2)
 
     await held.release()

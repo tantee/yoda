@@ -182,7 +182,7 @@ describe('knowledge API', () => {
   it('switching a project noAi off re-embeds its entries whose chunks lack vectors (not noAi entries)', async () => {
     await setup({ ai: await gatewayWith(topicEmbedder()) })
     const p = await newProject()
-    expect((await call(pm, 'PATCH', `/projects/${p}`, { noAi: true })).statusCode).toBe(200)
+    expect((await call(admin, 'PATCH', `/projects/${p}`, { noAi: true })).statusCode).toBe(200)
     const plain = await create(dev, { scope: 'project', projectId: p, type: 'fact', title: 'ห้องแล็บชั้นสอง', body: 'เปิดแปดโมง' })
     const secret = await create(dev, { scope: 'project', projectId: p, type: 'fact', title: 'วัคซีน', body: 'ลับ', noAi: true })
     await drain()
@@ -191,7 +191,7 @@ describe('knowledge API', () => {
     expect(await vectors(plain.id)).toEqual([null])
     expect(await vectors(secret.id)).toEqual([null])
 
-    expect((await call(pm, 'PATCH', `/projects/${p}`, { noAi: false })).statusCode).toBe(200)
+    expect((await call(admin, 'PATCH', `/projects/${p}`, { noAi: false })).statusCode).toBe(200)
     await drain()
     const [v] = await vectors(plain.id)
     expect(v).toHaveLength(1024)
