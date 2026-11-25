@@ -1,0 +1,41 @@
+import type { ConversationKind } from '@yoda/shared'
+import { eq } from 'drizzle-orm'
+import type { Db, Tx } from '../db/client.js'
+import { workItems } from '../db/schema.js'
+import { OWN_KINDS, type ConversationRow } from './service.js'
+
+export type ThreadAudience = {
+  kind: ConversationKind
+  /** personal/intake: only the owner reads the thread. */
+  own: boolean
+  /** project/work_item: several people read the thread. */
+  team: boolean
+  projectId: string | null
+  workItemId: string | null
+  /** A work_item thread whose item currently has a requester, who reads the replies. */
+  requesterVisible: boolean
+  /** A non-staff person can read the thread: staff names stay out of it. */
+  hideStaffNames: boolean
+}
+
+/** Is the thread shared (project/work_item) rather than one person's own? Decidable from the kind alone. */
+export const isTeamKind = (kind: string): boolean => !(OWN_KINDS as readonly string[]).includes(kind)
+
+/** Single source of truth for who reads a thread, for content decisions (not access: see visibleConversation). */
+export async function threadAudience(db: Db | Tx, c: ConversationRow): Promise<ThreadAudience> {
+  const team = isTeamKind(c.kind)
+  let requesterVisible = false
+  if (c.kind === 'work_item' && c.workItemId) {
+    const [w] = await db.select({ requesterId: workItems.requesterId }).from(workItems).where(eq(workItems.id, c.workItemId))
+    requesterVisible = !!w?.requesterId
+  }
+  return {
+    kind: c.kind as ConversationKind,
+    own: !team,
+    team,
+    projectId: team ? c.projectId : null,
+    workItemId: team ? c.workItemId : null,
+    requesterVisible,
+    hideStaffNames: c.kind === 'work_item',
+  }
+}

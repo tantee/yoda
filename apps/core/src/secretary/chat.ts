@@ -4,7 +4,8 @@ import { and, asc, desc, eq, inArray, lte, sql } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/pg-core'
 import type { AppDeps } from '../app.js'
 import { AiFailed, AiRefused, type BillingTarget } from '../ai/gateway.js'
-import { secretaryAnswers, postMessage, visibleConversation, OWN_KINDS, type ConversationRow } from '../chat/service.js'
+import { isTeamKind, threadAudience } from '../chat/audience.js'
+import { secretaryAnswers, postMessage, visibleConversation, type ConversationRow } from '../chat/service.js'
 import type { Db, Tx } from '../db/client.js'
 import { attachments, conversations, messages, people, projectMembers, projects, workItems } from '../db/schema.js'
 import type { JobRun } from '../jobs/queue.js'
@@ -101,7 +102,7 @@ export async function secretaryChat(deps: SecretaryDeps, run: JobRun): Promise<v
     .innerJoin(conversations, eq(conversations.id, messages.conversationId))
     .where(eq(messages.id, run.id))
   if (!m || m.authorKind !== 'person' || !m.authorId || !secretaryAnswers(m.kind, m.text)) return
-  const team = !(OWN_KINDS as readonly string[]).includes(m.kind)
+  const team = isTeamKind(m.kind)
   const trigger: Trigger = { id: m.id, conversationId: m.conversationId, seq: Number(m.seq), team }
   if (await answered(db, trigger)) return
   const me = await personAsMe(db, m.authorId)
@@ -132,6 +133,7 @@ export async function secretaryChat(deps: SecretaryDeps, run: JobRun): Promise<v
     const { messages: history, lastPersonId } = await loadHistory(db, me, conversation, trigger)
     if (!team && lastPersonId) replyToId = lastPersonId
     const pending: PendingAction[] = []
+    const audience = await threadAudience(db, conversation)
     const out = await deps.ai.chat({
       job: 'fast',
       billing,
@@ -139,9 +141,9 @@ export async function secretaryChat(deps: SecretaryDeps, run: JobRun): Promise<v
       messages: history,
       tools: secretaryTools({ db, ai: deps.ai }, me, pending, {
         projectId: scopeProjectId,
-        workItemId: team ? conversation.workItemId : null,
-        hideStaffNames: conversation.kind === 'work_item',
-        requesterVisible: await hasRequester(db, conversation),
+        workItemId: audience.workItemId,
+        hideStaffNames: audience.hideStaffNames,
+        requesterVisible: audience.requesterVisible,
       }),
       maxSteps: SECRETARY_MAX_STEPS,
       maxOutputTokens: SECRETARY_MAX_OUTPUT_TOKENS,
@@ -161,13 +163,6 @@ export async function secretaryChat(deps: SecretaryDeps, run: JobRun): Promise<v
     console.warn(`secretary-chat ${run.id}: ${logLine(err)}`)
     await postFailure(deps, trigger, replyToId, reason ?? 'ai_failed')
   }
-}
-
-/** A work_item thread whose work item has a requester: they read the secretary's replies. */
-async function hasRequester(db: Db, c: ConversationRow): Promise<boolean> {
-  if (c.kind !== 'work_item' || !c.workItemId) return false
-  const [w] = await db.select({ requesterId: workItems.requesterId }).from(workItems).where(eq(workItems.id, c.workItemId))
-  return !!w?.requesterId
 }
 
 /**
@@ -232,7 +227,7 @@ const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}…` : s
 
 /** Short context for project / work_item threads (the project is not noAi: checked before). */
 async function threadContext(db: Db, me: Me, c: ConversationRow): Promise<string | null> {
-  if (!c.projectId || (OWN_KINDS as readonly string[]).includes(c.kind)) return null
+  if (!c.projectId || !isTeamKind(c.kind)) return null
   // Staff outside the project reach a work_item thread only as its requester: they get the requester's view.
   const insider = me.isStaff && (await canSeeProject(db, me, c.projectId))
   if (c.kind === 'work_item' && c.workItemId) {
