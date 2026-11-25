@@ -200,7 +200,9 @@
       "ai_failed": "AI สร้างร่างไม่สำเร็จ",
       "ai_unavailable": "ยังไม่ได้ตั้งค่า AI",
       "no_ai": "โครงการนี้ไม่ใช้ AI",
-      "reopened": "รายการงานถูกย้อนกลับไปขั้นตอนก่อนหน้า"
+      "reopened": "รายการงานถูกย้อนกลับไปขั้นตอนก่อนหน้า",
+      "mr_opened_in_gitlab": "เปิด merge request ใน GitLab แล้ว",
+      "merged_in_gitlab": "merge ใน GitLab แล้ว"
     },
     "ai": {
       "drafted": "AI ร่างผลงานแล้ว",
