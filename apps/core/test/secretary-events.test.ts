@@ -111,8 +111,7 @@ beforeEach(async () => {
     doStream: async ({ prompt }) => {
       if (failing) throw new Error('upstream down')
       prompts.push(JSON.stringify(prompt))
-      const sys = JSON.stringify(prompt.find((m) => m.role === 'system'))
-      return { stream: textStream(sys.includes('closing summary') ? 'สรุป: แก้รายงานช้าเรียบร้อย' : 'คำขอของคุณเสร็จเรียบร้อยแล้วค่ะ') }
+      return { stream: textStream('สรุป: แก้รายงานช้าเรียบร้อย') }
     },
   })
   jobs = new SpyQueue({ onError: (err, name, id) => console.warn(`job ${name} ${id} failed`, err) })
@@ -127,7 +126,7 @@ afterEach(async () => {
 })
 
 describe('secretary event: work item done', () => {
-  it('writes a draft AI summary and tells the requester in their intake conversation; no chat job', async () => {
+  it('writes a draft AI summary and tells the requester with the fixed system message; no chat job', async () => {
     const s = await setup()
     const wi = await create(s, { requesterId: s.nurse.id })
     await finish(s, wi, s.nurse)
@@ -137,15 +136,18 @@ describe('secretary event: work item done', () => {
     const sums = await summaries()
     expect(sums).toHaveLength(1)
     expect(sums[0]).toMatchObject({ scope: 'work_item', workItemId: wi, status: 'draft', sourceKind: 'ai', body: 'สรุป: แก้รายงานช้าเรียบร้อย' })
-    // The summary prompt carries the work item's material; the requester note carries none of it.
-    expect(prompts.some((p) => p.includes('คุณเดฟ'))).toBe(true)
-    const notePrompt = prompts.find((p) => p.includes('friendly'))!
-    expect(notePrompt).toContain('แก้รายงานช้า')
-    expect(notePrompt).not.toContain('คุณเดฟ')
+    // The summary is the only AI call; its prompt carries the work item's material.
+    expect(prompts).toHaveLength(1)
+    expect(prompts[0]).toContain('คุณเดฟ')
 
     const msgs = await aiMessages()
     expect(msgs).toHaveLength(1)
-    expect(msgs[0]).toMatchObject({ authorKind: 'ai', authorId: null, text: 'คำขอของคุณเสร็จเรียบร้อยแล้วค่ะ' })
+    expect(msgs[0]).toMatchObject({
+      authorKind: 'system',
+      authorId: null,
+      text: '[[request.done]]',
+      actions: [{ type: 'link', label: 'แก้รายงานช้า', to: `/requests/${wi}` }],
+    })
     const conv = await db.execute(sql`select kind, owner_id from conversations where id = ${msgs[0]!.conversationId}`)
     expect(conv[0]).toMatchObject({ kind: 'intake', owner_id: s.nurse.id })
   })
@@ -188,6 +190,28 @@ describe('secretary event: work item done', () => {
     expect(await aiMessages()).toHaveLength(0)
   })
 
+  it('a re-run after success bills no second summary and posts no second message', async () => {
+    const s = await setup()
+    const wi = await create(s, { requesterId: s.nurse.id })
+    await finish(s, wi, s.nurse)
+    expect(prompts).toHaveLength(1)
+    await jobs.send('secretary-event', { id: wi })
+    await jobs.drain()
+    expect(prompts).toHaveLength(1)
+    expect(await aiMessages()).toHaveLength(1)
+  })
+
+  it('a cancelled item has no secretary effects', async () => {
+    const s = await setup()
+    const wi = await create(s, { requesterId: s.nurse.id })
+    await db.update(workItems).set({ state: 'cancelled' }).where(eq(workItems.id, wi))
+    await jobs.send('secretary-event', { id: wi })
+    await jobs.drain()
+    expect(prompts).toHaveLength(0)
+    expect(await summaries()).toHaveLength(0)
+    expect(await aiMessages()).toHaveLength(0)
+  })
+
   it('ignores a work item that is not done', async () => {
     const s = await setup()
     const wi = await create(s, { requesterId: s.nurse.id })
@@ -214,6 +238,45 @@ describe('secretary sweep', () => {
     expect(rows.map((r) => r.personId).sort()).toEqual([s.dev.id, s.pm.id].sort())
     const day = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' })
     expect(rows.every((r) => r.dedupeKey === `stuck:${wi}:${day}` && r.link === `/work-items/${wi}`)).toBe(true)
+  })
+
+  it('one failing item does not stop the sweep: the next stuck item is still flagged', async () => {
+    const s = await setup()
+    const a = await create(s, { title: 'A' })
+    const b = await create(s, { title: 'B' })
+    await db.execute(sql`update events set created_at = now() - interval '4 days'`)
+    const publish = deps.bus.publish.bind(deps.bus)
+    let first = true
+    deps.bus.publish = (e) => {
+      if (first) {
+        first = false
+        throw new Error('bus down')
+      }
+      publish(e)
+    }
+    await jobs.runScheduled('secretary-sweep')
+    const rows = await db.select().from(notifications).where(eq(notifications.kind, 'work_item_stuck'))
+    expect(rows.map((r) => r.link).sort()).toEqual([`/work-items/${a}`, `/work-items/${b}`].sort())
+  })
+
+  it('one failing orphan does not stop the next from being re-queued', async () => {
+    const s = await setup()
+    const a = await create(s, { title: 'A' })
+    const b = await create(s, { title: 'B' })
+    for (const wi of [a, b]) await complete(s, wi, 'accept-bug', s.pm, { decision: 'approve' })
+    await db.execute(sql`update tasks set created_at = now() - interval '1 hour'`)
+    let boom = true
+    const orig = jobs.send.bind(jobs)
+    jobs.send = async (name, data) => {
+      if (name === 'draft-task' && boom) {
+        boom = false
+        throw new Error('queue down')
+      }
+      return orig(name, data)
+    }
+    jobs.sent = []
+    await jobs.runScheduled('secretary-sweep')
+    expect(jobs.count('draft-task')).toBe(1)
   })
 
   it('leaves recently active, finished and cancelled work alone', async () => {
