@@ -393,7 +393,7 @@ export class AiGateway {
               ? 'งบประมาณ AI ของแผนกใช้ไปแล้วเกิน 80%'
               : 'งบประมาณ AI ของแผนกหมดแล้ว: งาน AI ที่ไม่อยู่ในโครงการจะถูกหยุด',
           body: spent,
-          link: null,
+          link: '/admin/ai',
           dedupeKey: `dept-ai-budget:${usage.month}:${level}`,
         })
       }

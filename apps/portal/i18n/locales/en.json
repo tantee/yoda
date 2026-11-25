@@ -18,7 +18,8 @@
     "requests": "My requests",
     "answers": "Things to answer",
     "admin": {
-      "people": "People admin"
+      "people": "People admin",
+      "ai": "AI budget"
     }
   },
   "projects": {
@@ -262,10 +263,13 @@
     "spend": "Spend",
     "calls": "Calls",
     "noLimit": "No limit",
-    "readOnly": "Only a PM or admin can change these settings",
+    "readOnly": "Only an administrator can change these settings",
     "drafting": "AI is drafting…",
     "failed": "AI couldn't draft this ({reason})",
-    "retry": "Retry AI"
+    "retry": "Retry AI",
+    "deptTitle": "Department AI budget",
+    "deptHint": "Monthly limit for all AI use in the department. Empty = no limit.",
+    "saved": "Saved"
   },
   "chat": {
     "threads": "Conversations",

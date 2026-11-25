@@ -19,7 +19,10 @@ export function navItemsFor(me: Me): NavItem[] {
     item('status', '/status', 'mdi-chart-timeline-variant'),
     item('projects', '/projects', 'mdi-folder-multiple-outline'),
   ]
-  if (me.isAdmin) items.push(item('admin.people', '/admin/people', 'mdi-account-cog-outline'))
+  if (me.isAdmin) {
+    items.push(item('admin.people', '/admin/people', 'mdi-account-cog-outline'))
+    items.push(item('admin.ai', '/admin/ai', 'mdi-robot-outline'))
+  }
   return items
 }
 

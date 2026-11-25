@@ -11,6 +11,10 @@ describe('navItemsFor', () => {
   it('admin also gets people admin', () => {
     expect(navItemsFor({ ...base, isStaff: true, isAdmin: true }).map(i => i.key)).toContain('nav.admin.people')
   })
+  it('AI budget page is admin only', () => {
+    expect(navItemsFor({ ...base, isStaff: true, isAdmin: true }).map(i => i.key)).toContain('nav.admin.ai')
+    expect(navItemsFor({ ...base, isStaff: true, isAdmin: false }).map(i => i.key)).not.toContain('nav.admin.ai')
+  })
   it('requester nav has no staff areas', () => {
     expect(navItemsFor({ ...base, isStaff: false, isAdmin: false }).map(i => i.key))
       .toEqual(['nav.requests', 'nav.chat', 'nav.answers'])

@@ -163,6 +163,8 @@ export function projectRoutes(app: FastifyInstance): void {
     requireStaff(request)
     const { id } = ProjectParams.parse(request.params)
     const patch = ProjectPatch.parse(request.body)
+    // noAi and the AI budget are admin-only; autonomy stays PM/admin. Checked before any write.
+    if (patch.noAi !== undefined || patch.aiBudgetUsd !== undefined) requireAdmin(request)
     await requireManage(request, id)
     // runWork so jobs queued when AI is switched back on are sent after commit.
     return runWork(app.deps, { id: request.me.id, kind: 'person' }, async (ctx) => {
