@@ -4,10 +4,11 @@ import { MockLanguageModelV4 } from 'ai/test'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { and, asc, eq, isNull, sql } from 'drizzle-orm'
 import { BRIEF_MAX_OUTPUT_TOKENS } from '../src/discussions/brief.js'
+import { BRIEF_STUCK_MINUTES } from '../src/discussions/service.js'
 import { AiGateway } from '../src/ai/gateway.js'
 import type { ModelSet } from '../src/ai/models.js'
-import { aiCalls, departmentSettings, discussions, events, knowledgeEntries, projects } from '../src/db/schema.js'
-import { InlineJobQueue, type JobName } from '../src/jobs/queue.js'
+import { aiCalls, departmentSettings, discussionResponses, discussions, events, knowledgeEntries, notifications, projects } from '../src/db/schema.js'
+import { InlineJobQueue, POLICY, SINGLETON, type JobName } from '../src/jobs/queue.js'
 import { LiveBus } from '../src/live/bus.js'
 import { textStream } from './ai-mocks.js'
 import { mockModels, resetDb, testDb } from './helpers.js'
@@ -345,7 +346,7 @@ describe('AI discussion briefs', () => {
     expect((await call(dev, 'POST', `/discussions/${d.id}/brief/retry`)).statusCode).toBe(409)
   })
 
-  it('retry: a brief stuck pending for over 15 minutes can be re-queued', async () => {
+  it('retry: a brief stuck pending for over 35 minutes can be re-queued', async () => {
     const m = briefModel()
     const held = new HeldQueue()
     await boot(mockModels({ draft: m.model }), held)
@@ -354,7 +355,11 @@ describe('AI discussion briefs', () => {
     held.held.splice(0) // the job is lost
     expect((await call(dev, 'POST', `/discussions/${d.id}/brief/retry`)).statusCode).toBe(409)
     const db = await testDb()
-    await db.update(discussions).set({ updatedAt: sql`now() - interval '16 minutes'` }).where(eq(discussions.id, d.id))
+    // Within the queue's worst case (3 attempts × 10 min + delays) the job may still be running: not stuck.
+    await db.update(discussions).set({ updatedAt: sql`now() - interval '32 minutes'` }).where(eq(discussions.id, d.id))
+    expect((await call(dev, 'POST', `/discussions/${d.id}/brief/retry`)).statusCode).toBe(409)
+    expect(BRIEF_STUCK_MINUTES).toBe(35)
+    await db.update(discussions).set({ updatedAt: sql`now() - interval '36 minutes'` }).where(eq(discussions.id, d.id))
     const res = await call(dev, 'POST', `/discussions/${d.id}/brief/retry`)
     expect(res.statusCode, res.body).toBe(200)
     expect(res.json().brief).toMatchObject({ status: 'pending' })
@@ -365,6 +370,38 @@ describe('AI discussion briefs', () => {
     await queue.drain()
     expect(m.state.calls).toBe(1)
     expect((await get(d.id)).brief).toMatchObject({ status: 'ready', source: 'ai' })
+  })
+
+  it('discussion-brief jobs are singletons per discussion on an exclusive queue (like draft-task)', () => {
+    expect(POLICY['discussion-brief']).toBe('exclusive')
+    expect(SINGLETON).toContain('discussion-brief')
+  })
+
+  it('an AI brief re-keying the options resets votes on options whose key now names another option', async () => {
+    const m = briefModel()
+    const held = new HeldQueue()
+    await boot(mockModels({ draft: m.model }), held)
+    const p = await project()
+    // People's hints: a matches the AI's option a; b is a different option (the AI's b is another title).
+    const hints = [
+      { key: 'a', title: 'ใช้ระบบเดิม', pros: '', cons: '' },
+      { key: 'b', title: 'จ้างบริษัทภายนอก', pros: '', cons: '' },
+    ]
+    const d = await raise(dev, { projectId: p, question: 'เลือกแนวทาง', options: hints })
+    expect(d.brief).toMatchObject({ status: 'pending' })
+    expect((await call(ba, 'POST', `/discussions/${d.id}/responses`, { kind: 'vote', optionKey: 'a' })).statusCode).toBe(200)
+    expect((await call(pm, 'POST', `/discussions/${d.id}/responses`, { kind: 'vote', optionKey: 'b' })).statusCode).toBe(200)
+    await held.release()
+    await queue.drain()
+    expect((await get(d.id)).brief).toMatchObject({ status: 'ready', source: 'ai' })
+    const db = await testDb()
+    const votes = await db.select().from(discussionResponses).where(eq(discussionResponses.discussionId, d.id))
+    expect(votes.map((v) => [v.authorId, v.optionKey])).toEqual([[ba.id, 'a']])
+    const resets = await db
+      .select()
+      .from(notifications)
+      .where(and(eq(notifications.kind, 'discussion'), sql`${notifications.dedupeKey} like ${`discussion:${d.id}:vote-reset:%`}`))
+    expect(resets.map((n) => n.personId)).toEqual([pm.id])
   })
 
   it('a person editing the brief while the AI generates wins', async () => {

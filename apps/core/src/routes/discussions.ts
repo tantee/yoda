@@ -11,7 +11,7 @@ import {
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { requireStaff } from '../auth/plugin.js'
-import { createAgenda, deleteAgenda, getAgenda, listAgendas, putAgendaItems } from '../discussions/agendas.js'
+import { canEditAgendas, createAgenda, deleteAgenda, getAgenda, listAgendas, putAgendaItems } from '../discussions/agendas.js'
 import { getDiscussion, listDiscussions, listResponses } from '../discussions/queries.js'
 import { createDiscussion, decideDiscussion, editBrief, respond, retryBrief, withdrawDiscussion } from '../discussions/service.js'
 import { runWork } from '../work/context.js'
@@ -32,6 +32,12 @@ export function discussionRoutes(app: FastifyInstance): void {
     requireStaff(request)
     const q = z.object({ upcoming: z.enum(['true', 'false']).optional() }).parse(request.query)
     return listAgendas(db(), request.me, q.upcoming === 'true')
+  })
+
+  /** → `{ canEdit }`: whether `me` may create and edit agendas (admins, PMs of any project). */
+  app.get('/agendas/permissions', async (request) => {
+    requireStaff(request)
+    return { canEdit: await canEditAgendas(db(), request.me) }
   })
 
   app.post('/agendas', async (request, reply) => {

@@ -2,12 +2,12 @@ import type { FastifyInstance } from 'fastify'
 import type { Discussion, DiscussionResponse, LiveEvent, Me, Notification, WorkItemDetail } from '@yoda/shared'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { and, eq, sql } from 'drizzle-orm'
-import { discussions, events, knowledgeEntries, projectMembers } from '../src/db/schema.js'
-import { decideDiscussion } from '../src/discussions/service.js'
+import { discussionResponses, discussions, events, knowledgeEntries, projectMembers } from '../src/db/schema.js'
+import { AI_BRIEF_HEADING, decideDiscussion, lockDiscussion, recordDiscussionEvent } from '../src/discussions/service.js'
 import type { InlineJobQueue } from '../src/jobs/queue.js'
 import { searchKnowledge } from '../src/knowledge/search.js'
 import { deliverable } from '../src/routes/stream.js'
-import { runWork } from '../src/work/context.js'
+import { recordEvent, runWork } from '../src/work/context.js'
 import { lockItem } from '../src/work/engine.js'
 import { resetDb, testDb } from './helpers.js'
 import { auth, login, makeApp, type Who } from './support.js'
@@ -466,5 +466,167 @@ describe('discussions', () => {
     expect(await ids(dev, '?sort=project')).toEqual([normal2.id, normal1.id, low.id, urgent.id])
     expect(await ids(outsider)).toEqual([normal2.id])
     expect((await call(dev, 'GET', '/discussions?state=nope')).statusCode).toBe(400)
+  })
+
+  it('a work item lock does not block event inserts that reference the item (FK key-share)', async () => {
+    const p = await project()
+    const wi = await createItem(p)
+    let release!: () => void
+    const held = new Promise<void>((r) => (release = r))
+    let locked = false
+    const holder = runWork(app.deps, { id: pm.id, kind: 'person' }, async (ctx) => {
+      await lockItem(ctx.tx, wi.id)
+      locked = true
+      await held
+    })
+    while (!locked) await new Promise((r) => setTimeout(r, 5))
+    // With FOR UPDATE on the item this insert would wait for the holder; lock_timeout turns a wait into an error.
+    try {
+      await runWork(app.deps, { id: dev.id, kind: 'person' }, async (ctx) => {
+        await ctx.tx.execute(sql`set local lock_timeout = '2s'`)
+        await recordEvent(ctx, { type: 'discussion.raised', projectId: p, workItemId: wi.id, taskId: null })
+      })
+    } finally {
+      release()
+      await holder
+    }
+  })
+
+  it('discussion lock → event insert does not deadlock against work item lock → discussion lock', async () => {
+    const p = await project()
+    const wi = await createItem(p)
+    const d = await raise(dev, { workItemId: wi.id, question: 'ล็อก', options: OPTIONS, requestBrief: false })
+    let itemLocked!: () => void
+    const itemHeld = new Promise<void>((r) => (itemLocked = r))
+    let discussionLocked!: () => void
+    const discussionHeld = new Promise<void>((r) => (discussionLocked = r))
+    // A: as the brief settle / agenda put do — the discussion row, then an event referencing the work item.
+    const a = runWork(app.deps, { id: null, kind: 'system' }, async (ctx) => {
+      const row = await lockDiscussion(ctx.tx, d.id)
+      discussionLocked()
+      await itemHeld
+      await recordDiscussionEvent(ctx, row, 'discussion.brief_failed', { reason: 'test' })
+    })
+    // B: as decide / withdraw do — the work item, then the discussion.
+    const b = runWork(app.deps, { id: pm.id, kind: 'person' }, async (ctx) => {
+      await discussionHeld
+      await lockItem(ctx.tx, wi.id)
+      itemLocked()
+      await lockDiscussion(ctx.tx, d.id)
+    })
+    const settled = await Promise.allSettled([a, b])
+    expect(settled.map((x) => x.status)).toEqual(['fulfilled', 'fulfilled'])
+  })
+
+  it('decision knowledge: AI brief content goes under the unconfirmed heading; a person brief keeps its sections', async () => {
+    const p = await project()
+    const wi = await createItem(p)
+    const db = await testDb()
+    const ai = await raise(dev, { workItemId: wi.id, question: 'ควรใช้ระบบไหน?' })
+    const aiBrief = {
+      context: 'AI-CONTEXT บริบท',
+      options: OPTIONS,
+      recommendation: 'AI-RECOMMENDATION',
+      recommendedKey: 'b',
+      source: 'ai' as const,
+      status: 'ready' as const,
+      failReason: null,
+    }
+    await db.update(discussions).set({ brief: aiBrief }).where(eq(discussions.id, ai.id))
+    expect((await call(pm, 'POST', `/discussions/${ai.id}/decide`, { decision: 'เลือกระบบเดิม', optionKey: 'a' })).statusCode).toBe(200)
+    const [entry] = await db.select().from(knowledgeEntries).where(eq(knowledgeEntries.sourceRef, ai.id))
+    const body = entry!.body
+    const heading = body.indexOf(`## ${AI_BRIEF_HEADING}`)
+    expect(heading).toBeGreaterThan(0)
+    expect(AI_BRIEF_HEADING).toBe('สรุปจาก AI (ยังไม่ได้ยืนยัน) / AI-prepared, unconfirmed')
+    const confirmed = body.slice(0, heading)
+    expect(confirmed).toContain('คำถาม: ควรใช้ระบบไหน?')
+    expect(confirmed).toContain('ข้อสรุป: เลือกระบบเดิม')
+    expect(confirmed).toContain('ทางเลือกที่เลือก: ใช้ระบบเดิม')
+    expect(confirmed).not.toContain('AI-CONTEXT')
+    expect(confirmed).not.toContain('AI-RECOMMENDATION')
+    const unconfirmed = body.slice(heading)
+    expect(unconfirmed).toContain('AI-CONTEXT')
+    expect(unconfirmed).toContain('AI-RECOMMENDATION')
+    expect(unconfirmed).toContain('- สร้างระบบใหม่ (แนะนำ)')
+    expect(unconfirmed).toContain('ข้อดี: ยืดหยุ่น')
+
+    const person = await raise(dev, { workItemId: wi.id, question: 'คนเขียนบทสรุป', options: OPTIONS, requestBrief: false })
+    const edit = { context: 'PERSON-CONTEXT', options: OPTIONS, recommendation: 'PERSON-RECOMMENDATION', recommendedKey: 'a' }
+    expect((await call(dev, 'PUT', `/discussions/${person.id}/brief`, edit)).statusCode).toBe(200)
+    expect((await call(pm, 'POST', `/discussions/${person.id}/decide`, { decision: 'ตกลง' })).statusCode).toBe(200)
+    const [pe] = await db.select().from(knowledgeEntries).where(eq(knowledgeEntries.sourceRef, person.id))
+    expect(pe!.body).toContain('บริบท: PERSON-CONTEXT')
+    expect(pe!.body).toContain('ข้อเสนอแนะ: PERSON-RECOMMENDATION')
+    expect(pe!.body).not.toContain(AI_BRIEF_HEADING)
+  })
+
+  it('a brief edit dropping an option deletes its votes and tells each voter once', async () => {
+    const p = await project()
+    const d = await raise(dev, { projectId: p, question: 'เลือกแนวทาง', options: OPTIONS, requestBrief: false })
+    expect((await call(ba, 'POST', `/discussions/${d.id}/responses`, { kind: 'vote', optionKey: 'b' })).statusCode).toBe(200)
+    expect((await call(pm2, 'POST', `/discussions/${d.id}/responses`, { kind: 'vote', optionKey: 'a' })).statusCode).toBe(200)
+    expect((await call(pm, 'POST', `/discussions/${d.id}/responses`, { kind: 'vote', optionKey: 'b' })).statusCode).toBe(200)
+    await call(ba, 'POST', `/discussions/${d.id}/responses`, { kind: 'opinion', text: 'ความเห็นยังอยู่' })
+    const before = async (who: Who) => (await discussionNotes(who)).length
+    const [ba0, pm20, pm0] = [await before(ba), await before(pm2), await before(pm)]
+
+    // The PM drops option b (their own vote goes too, but they are the editor: not notified).
+    const edit = { context: '', options: [OPTIONS[0]!, { key: 'c', title: 'ทางเลือกใหม่', pros: '', cons: '' }], recommendation: '', recommendedKey: null }
+    const res = await call(pm, 'PUT', `/discussions/${d.id}/brief`, edit)
+    expect(res.statusCode, res.body).toBe(200)
+    expect(res.json()).toMatchObject({ voteCounts: { a: 1 } })
+    const db = await testDb()
+    const rows = await db.select().from(discussionResponses).where(eq(discussionResponses.discussionId, d.id))
+    expect(rows.map((r) => [r.authorId, r.kind, r.optionKey]).sort()).toEqual(
+      [[ba.id, 'opinion', null], [pm2.id, 'vote', 'a']].sort(),
+    )
+    const baNotes = await discussionNotes(ba)
+    expect(baNotes).toHaveLength(ba0 + 1)
+    expect(baNotes.find((n) => n.title.includes('ทางเลือกที่คุณโหวตถูกเปลี่ยน'))).toMatchObject({ link: `/discussions/${d.id}` })
+    expect(await before(pm2)).toBe(pm20)
+    expect(await before(pm)).toBe(pm0)
+    // The same edit again removes nothing and tells nobody.
+    expect((await call(pm, 'PUT', `/discussions/${d.id}/brief`, edit)).statusCode).toBe(200)
+    expect(await discussionNotes(ba)).toHaveLength(ba0 + 1)
+    // A later reset is a new notification for the same voter.
+    expect((await call(ba, 'POST', `/discussions/${d.id}/responses`, { kind: 'vote', optionKey: 'c' })).statusCode).toBe(200)
+    expect((await call(pm, 'PUT', `/discussions/${d.id}/brief`, { ...edit, options: [OPTIONS[0]!] })).statusCode).toBe(200)
+    expect(await discussionNotes(ba)).toHaveLength(ba0 + 2)
+  })
+
+  it('a response pushes a live-only discussion.responded event to the project', async () => {
+    const p = await project()
+    const wi = await createItem(p)
+    const d = await raise(dev, { workItemId: wi.id, question: 'สด', options: OPTIONS, requestBrief: false })
+    const seen: LiveEvent[] = []
+    const off = app.deps.bus.subscribe((e) => void seen.push(e))
+    try {
+      expect((await call(ba, 'POST', `/discussions/${d.id}/responses`, { kind: 'opinion', text: 'เห็นด้วย' })).statusCode).toBe(200)
+      expect((await call(ba, 'POST', `/discussions/${d.id}/responses`, { kind: 'vote', optionKey: 'a' })).statusCode).toBe(200)
+    } finally {
+      off()
+    }
+    const responded = seen.filter((e) => e.type === 'discussion.responded')
+    expect(responded).toHaveLength(2)
+    expect(responded[0]).toMatchObject({ projectId: p, workItemId: wi.id, personId: null })
+    expect(await deliverable(await testDb(), asMe(outsider, 'outsider'), responded[0]!)).toBe(false)
+    expect(await deliverable(await testDb(), asMe(dev, 'dev'), responded[0]!)).toBe(true)
+    // Live-only: never stored.
+    const db = await testDb()
+    expect(await db.select().from(events).where(eq(events.type, 'discussion.responded'))).toHaveLength(0)
+
+    // A department discussion: pushed with no project (all staff).
+    const dept = await raise(dev, { question: 'แผนก', options: OPTIONS, requestBrief: false })
+    const seen2: LiveEvent[] = []
+    const off2 = app.deps.bus.subscribe((e) => void seen2.push(e))
+    try {
+      expect((await call(ba, 'POST', `/discussions/${dept.id}/responses`, { kind: 'opinion', text: 'ok' })).statusCode).toBe(200)
+    } finally {
+      off2()
+    }
+    expect(seen2.filter((e) => e.type === 'discussion.responded')).toEqual([
+      { type: 'discussion.responded', projectId: null, workItemId: null, taskId: null, conversationId: null, personId: null },
+    ])
   })
 })

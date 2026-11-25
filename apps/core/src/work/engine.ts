@@ -44,11 +44,14 @@ export type WorkItemRow = typeof workItems.$inferSelect
 type TaskRow = typeof tasks.$inferSelect
 
 // Lock order everywhere: project row (only work item creation and member removal), then work_items row
-// FOR UPDATE, then the task row. Serialising on the work item is what makes concurrent sibling
-// completions advance a step once.
+// FOR NO KEY UPDATE, then the task row. Serialising on the work item is what makes concurrent sibling
+// completions advance a step once. NO KEY UPDATE (not FOR UPDATE) still excludes other work item lockers
+// but not the FOR KEY SHARE that FK checks take: a path holding a discussion lock that inserts an event
+// referencing the item must not wait on the item lock, or it deadlocks against decide/withdraw (item, then
+// discussion).
 
 export async function lockItem(tx: Tx, workItemId: string): Promise<WorkItemRow> {
-  const [row] = await tx.select().from(workItems).where(eq(workItems.id, workItemId)).for('update')
+  const [row] = await tx.select().from(workItems).where(eq(workItems.id, workItemId)).for('no key update')
   if (!row) throw notFound()
   return row
 }
@@ -219,6 +222,8 @@ async function advanceStep(ctx: WorkCtx, item: WorkItemRow, status: StepStatus):
       .where(eq(workItems.id, item.id))
     await recordEvent(ctx, { type: 'work_item.done', ...base })
     await notifyRequestEnded(ctx, item, 'done')
+    // Nothing left to decide for a finished item (e.g. a pending raise_discussion); work item lock held.
+    await supersedePending(ctx, item.id)
     // The secretary reacts in its own job, after this transaction (and its locks) are released.
     ctx.jobs.push({ name: 'secretary-event', id: item.id })
     return
@@ -708,7 +713,7 @@ export async function unassignMemberTasks(
     .from(workItems)
     .where(and(eq(workItems.projectId, projectId), eq(workItems.state, 'active')))
     .orderBy(asc(workItems.id))
-    .for('update')
+    .for('no key update')
   const cleared = await tx
     .update(tasks)
     .set({ assigneeId: null, proposedAssigneeId: null, state: 'open', updatedAt: sql`now()` })
