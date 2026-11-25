@@ -1,4 +1,5 @@
 import { and, eq, isNull, like, lt, sql } from 'drizzle-orm'
+import { errorSummary } from '../ai/gateway.js'
 import type { AppDeps } from '../app.js'
 import { events, projects, tasks, workItems } from '../db/schema.js'
 import { notify, projectPms } from '../notifications/service.js'
@@ -27,6 +28,7 @@ async function flagStuck(deps: SweepDeps): Promise<void> {
     )
   const day = bangkokDate()
   for (const item of stuck) {
+    try {
     await runWork(deps, { id: null, kind: 'system' }, async (ctx) => {
       const recipients = new Set([item.ownerId, ...(await projectPms(ctx, item.projectId))])
       for (const personId of recipients) {
@@ -40,6 +42,9 @@ async function flagStuck(deps: SweepDeps): Promise<void> {
         })
       }
     })
+    } catch (err) {
+      console.error(`secretary-sweep: stuck check failed for work item ${item.id}: ${errorSummary(err)}`)
+    }
   }
 }
 
@@ -62,14 +67,14 @@ async function requeueOrphans(deps: SweepDeps): Promise<void> {
       ),
     )
   for (const { task, item } of rows) {
-    const def = await deps.db.transaction((tx) => definitionOf(tx, item))
-    const tt = def.steps.find((s) => s.key === task.stepKey)?.tasks.find((t) => t.key === task.templateTaskKey)
-    if (tt?.capability !== 'draft-text') continue
     try {
+      const def = await deps.db.transaction((tx) => definitionOf(tx, item))
+      const tt = def.steps.find((s) => s.key === task.stepKey)?.tasks.find((t) => t.key === task.templateTaskKey)
+      if (tt?.capability !== 'draft-text') continue
       // The draft-task queue keeps one job per task (singletonKey), so a job still queued is not doubled.
       await deps.jobs.send('draft-task', { id: task.id })
     } catch (err) {
-      console.error(`secretary-sweep: failed to queue draft-task ${task.id}`, err)
+      console.error(`secretary-sweep: orphan check failed for task ${task.id}: ${errorSummary(err)}`)
     }
   }
 }
