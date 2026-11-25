@@ -52,8 +52,9 @@ describe('threadAudience edge cases', () => {
 
   it('a work_item conversation without a work item has no requester', async () => {
     const { db, p, proj } = await seed()
-    const [c] = await db.insert(conversations).values({ kind: 'work_item', ownerId: p.id, projectId: proj.id, title: 't' }).returning()
-    expect(await threadAudience(db, { ...c!, workItemId: null })).toMatchObject({ team: true, workItemId: null, requesterVisible: false, requesterId: null, hideStaffNames: true })
+    // The table forbids this row, so the audience of a hand-built one is checked.
+    const c = { id: randomUUID(), kind: 'work_item', ownerId: p.id, projectId: proj.id, workItemId: null, title: 't', createdAt: new Date(), lastMessageAt: null }
+    expect(await threadAudience(db, c)).toMatchObject({ team: true, workItemId: null, requesterVisible: false, requesterId: null, hideStaffNames: true })
   })
 
   it('re-reads the requester each call', async () => {
