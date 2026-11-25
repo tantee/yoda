@@ -22,6 +22,7 @@ const assigningId = ref<string | null>(null)
 const assignee = ref<string | null>(null)
 const raiseOpen = ref(false)
 const blockers = ref<Discussion[]>([])
+const codePanel = ref<{ reload: () => Promise<void> } | null>(null)
 
 const isPm = computed(() => !!project.value?.members.some(m => m.personId === me.value?.id && m.roles.includes('PM')))
 const canManage = computed(() => !!me.value?.isAdmin || isPm.value)
@@ -53,6 +54,7 @@ async function load() {
     if (mine !== seq) return
     item.value = loaded
     loadError.value = ''
+    void codePanel.value?.reload()
     if (loaded.openDiscussions > 0) {
       try {
         const all = await api<Discussion[]>('/discussions', { query: { projectId: loaded.projectId } })
@@ -219,6 +221,15 @@ useLiveEvents((e) => {
           </template>
         </v-stepper-header>
       </v-stepper>
+
+      <WorkItemCodePanel
+        v-if="me?.isStaff"
+        ref="codePanel"
+        :work-item-id="item.id"
+        :project-id="item.projectId"
+        :can-manage="canManage"
+        :active="isActive"
+      />
 
       <h2 class="text-h6 mb-2">{{ t('workItems.tasks') }}</h2>
       <template v-for="s in item.steps" :key="s.key">

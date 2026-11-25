@@ -21,7 +21,7 @@ const itemsError = ref('')
 const autonomyError = ref('')
 const createOpen = ref(false)
 const router = useRouter()
-const TABS = ['overview', 'items', 'knowledge', 'ai'] as const
+const TABS = ['overview', 'items', 'repos', 'knowledge', 'ai'] as const
 const tab = ref<string>(TABS.includes(route.query.tab as never) ? (route.query.tab as string) : 'overview')
 watch(tab, (v) => router.replace({ query: { ...route.query, tab: v } }))
 
@@ -153,6 +153,7 @@ useLiveEvents((e) => {
     <v-tabs v-model="tab" class="mb-4" data-testid="project-tabs">
       <v-tab value="overview" data-testid="tab-overview">{{ t('projects.tabs.overview') }}</v-tab>
       <v-tab value="items" data-testid="tab-items">{{ t('projects.tabs.items') }}</v-tab>
+      <v-tab value="repos" data-testid="tab-repos">{{ t('projects.tabs.repos') }}</v-tab>
       <v-tab value="knowledge" data-testid="tab-knowledge">{{ t('projects.tabs.knowledge') }}</v-tab>
       <v-tab value="ai" data-testid="tab-ai">{{ t('projects.tabs.ai') }}</v-tab>
     </v-tabs>
@@ -253,6 +254,9 @@ useLiveEvents((e) => {
       @created="onCreated"
     />
 
+      </v-window-item>
+      <v-window-item value="repos">
+        <ProjectReposTab :project-id="id" :can-manage="canManage" :can-import="canCreate" />
       </v-window-item>
       <v-window-item value="knowledge">
         <ProjectKnowledgeTab :project-id="id" :is-member="isMember" />

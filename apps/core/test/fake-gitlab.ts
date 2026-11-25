@@ -36,13 +36,13 @@ export class FakeGitLab {
   delayNext(ms: number, count = 1) { this.delay = { ms, count } }
   requireToken(token: string | null) { this.token = token }
 
-  async start(): Promise<void> {
+  async start(port = 0): Promise<void> {
     this.server = createServer((req, res) => {
       const chunks: Buffer[] = []
       req.on('data', (c: Buffer) => chunks.push(c))
       req.on('end', () => void this.handle(req.method ?? 'GET', req.url ?? '/', req.headers['private-token'], Buffer.concat(chunks).toString(), res))
     })
-    await new Promise<void>((r) => this.server!.listen(0, '127.0.0.1', r))
+    await new Promise<void>((r) => this.server!.listen(port, '127.0.0.1', r))
     this.url = `http://127.0.0.1:${(this.server.address() as AddressInfo).port}`
   }
 

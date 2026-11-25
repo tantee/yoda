@@ -87,6 +87,36 @@ Inside containers:
 Production secrets come only from the deploy environment / CI variables, never from committed files.
 The dev compose services use throwaway credentials and must not be exposed publicly.
 
+## GitLab integration
+
+GitLab is optional: with `GITLAB_URL` / `GITLAB_TOKEN` unset the portal works as before and GitLab
+features show "not connected". Configure core with:
+
+- `GITLAB_URL`: the GitLab base URL, e.g. `https://gitlab.example.org`
+- `GITLAB_TOKEN`: a personal (or group/project) access token of a dedicated bot user with the `api`
+  scope, and at least Developer access to every repository linked in the portal
+- `GITLAB_WEBHOOK_SECRET`: a random string of at least 16 characters
+- `PORTAL_URL`: the portal's public base URL (links from GitLab issues back to the portal)
+
+The token and secret come only from the deploy environment; never commit them.
+
+**Webhook.** In each linked GitLab project (or once on the group), Settings → Webhooks:
+
+- URL: `<PORTAL_URL>/api/gitlab/webhook` (shown on the portal's admin GitLab page). The portal's
+  `/api` proxy forwards the `X-Gitlab-Token` / `X-Gitlab-Event-UUID` headers and the raw JSON body to
+  core's `/gitlab/webhook` unchanged; core's own `/gitlab/webhook` works too if it is reachable.
+- Secret token: the value of `GITLAB_WEBHOOK_SECRET`
+- Trigger: **Merge request events**, **Pipeline events**, **Comments** (notes)
+- Keep SSL verification enabled for an HTTPS portal.
+
+The admin GitLab page shows whether core is configured, whether GitLab is reachable, the bot user and
+the time of the last webhook.
+
+**Local try-out (DEV ONLY).** `FAKE_GITLAB_PORT=4100 FAKE_GITLAB_PROJECTS=demo/app pnpm --filter @yoda/core fake-gitlab`
+runs the in-memory FakeGitLab used by the tests. Start core with `GITLAB_URL=http://127.0.0.1:4100`,
+any placeholder `GITLAB_TOKEN` (e.g. `fake-dev-token`) and a placeholder `GITLAB_WEBHOOK_SECRET`, then
+post webhooks with `curl` using that secret. Never point a real deployment at it.
+
 ## Hospital Keycloak requirements
 
 - Access tokens must include `preferred_username`.

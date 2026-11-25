@@ -4,6 +4,10 @@ const CODES: Record<string, string> = {
   decision_required: 'errors.decisionRequired',
   comment_required: 'errors.commentRequired',
   project_required: 'errors.projectRequired',
+  gitlab_not_connected: 'errors.gitlabNotConnected',
+  repo_not_found: 'errors.repoNotFound',
+  issue_not_found: 'errors.issueNotFound',
+  gitlab_unavailable: 'errors.gitlabUnavailable',
 }
 
 export function errorKey(e: unknown): string {
