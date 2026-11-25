@@ -8,9 +8,10 @@ import {
   type ProposalState,
 } from '@yoda/shared'
 import { and, desc, eq, inArray, isNull, or, sql, type SQL } from 'drizzle-orm'
+import { alias } from 'drizzle-orm/pg-core'
 import { commentRequired, forbidden, HttpError, invalidState, notFound, projectRequired } from '../auth/plugin.js'
 import type { Db, Tx } from '../db/client.js'
-import { people, projectMembers, projects, proposals, workItems } from '../db/schema.js'
+import { attachments, conversations, people, projectMembers, projects, proposals, workItems } from '../db/schema.js'
 import { notifyProposalPending } from '../notifications/service.js'
 import { lockProject } from '../projects/access.js'
 import { recordEvent, type WorkCtx } from '../work/context.js'
@@ -259,6 +260,7 @@ export async function decideProposal(ctx: WorkCtx, me: Me, id: string, decision:
         requesterId: requested ?? (behalf && !behalfCanCreate ? behalf.id : undefined),
       })
       const workItemId = await createWorkItem(ctx, creator, target, input)
+      if (p.onBehalfOf) await linkIntakeUploads(tx, p.onBehalfOf, payload.attachmentIds, target, workItemId)
       await setState(ctx, p, 'accepted', me, note, { projectId: target, workItemId })
       return { superseded: false }
     }
@@ -266,7 +268,35 @@ export async function decideProposal(ctx: WorkCtx, me: Me, id: string, decision:
   throw invalidState()
 }
 
-function toProposal(row: ProposalRow, decidedByName: string | null): Proposal {
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/**
+ * Files attached to a `create_work_item` proposal (`submit_request`) join the new work item, under the same
+ * rule as a requester's own chat files on a task submit: uploaded by `personId` to a conversation they own and
+ * not yet in any project. Ids that no longer qualify (deleted, already linked elsewhere) are skipped.
+ */
+async function linkIntakeUploads(tx: Tx, personId: string, raw: unknown, projectId: string, workItemId: string): Promise<void> {
+  const ids = Array.isArray(raw) ? [...new Set(raw.filter((x): x is string => typeof x === 'string' && UUID.test(x)))] : []
+  if (!ids.length) return
+  await tx
+    .update(attachments)
+    .set({ projectId, workItemId })
+    .where(
+      and(
+        inArray(attachments.id, ids),
+        isNull(attachments.projectId),
+        isNull(attachments.workItemId),
+        isNull(attachments.taskId),
+        eq(attachments.uploadedBy, personId),
+        inArray(
+          attachments.conversationId,
+          tx.select({ id: conversations.id }).from(conversations).where(eq(conversations.ownerId, personId)),
+        ),
+      ),
+    )
+}
+
+function toProposal(row: ProposalRow, decidedByName: string | null, requesterName: string | null): Proposal {
   return Proposal.parse({
     id: row.id,
     projectId: row.projectId,
@@ -280,19 +310,22 @@ function toProposal(row: ProposalRow, decidedByName: string | null): Proposal {
     onBehalfOfId: row.onBehalfOf,
     decidedById: row.decidedBy,
     decidedByName,
+    requesterName,
     createdAt: row.createdAt.toISOString(),
     decidedAt: row.decidedAt?.toISOString() ?? null,
   })
 }
 
 async function select(db: Conn, where: SQL | undefined): Promise<Proposal[]> {
+  const requester = alias(people, 'requester')
   const rows = await db
-    .select({ p: proposals, name: people.displayName })
+    .select({ p: proposals, name: people.displayName, requesterName: requester.displayName })
     .from(proposals)
     .leftJoin(people, eq(people.id, proposals.decidedBy))
+    .leftJoin(requester, sql`${requester.id}::text = ${proposals.payload}->>'requesterId'`)
     .where(where)
     .orderBy(desc(proposals.createdAt), desc(proposals.id))
-  return rows.map((r) => toProposal(r.p, r.name ?? null))
+  return rows.map((r) => toProposal(r.p, r.name ?? null, r.requesterName ?? null))
 }
 
 export async function getProposal(db: Conn, id: string): Promise<Proposal> {

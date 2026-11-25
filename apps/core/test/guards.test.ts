@@ -192,6 +192,9 @@ describe('auto-assign guard rails', () => {
     const ev = (await itemEvents(wi)).filter((e) => e.taskId === impl.id)
     expect(ev.map((e) => e.type)).toEqual(['task.created', 'task.proposed'])
     expect(ev.map((e) => e.reason)).toEqual(['repeated_rework', 'repeated_rework'])
+    // The PMs are told about the proposed assignment and why (the guard's Thai reason).
+    const told = await db.select().from(notifications).where(eq(notifications.dedupeKey, `task-proposed:${impl.id}`))
+    expect(told).toMatchObject([{ personId: s.pm.id, kind: 'proposal_pending', body: 'งานถูกส่งกลับให้แก้ไขตั้งแต่ 2 ครั้งขึ้นไป' }])
     await finish(s, wi, 'implement', s.dev, { text: 'code v3' })
     // The review itself was sent back twice: its next attempt is proposed too.
     expect(await latest(wi, 'review-code')).toMatchObject({ attempt: 3, state: 'proposed', proposedAssigneeId: s.dev.id })
@@ -316,6 +319,9 @@ describe('auto-assign guard rails', () => {
     const ev = (await itemEvents(third)).filter((e) => e.taskId === t.id)
     expect(ev.map((e) => e.type)).toEqual(['task.created', 'task.proposed'])
     expect(ev.map((e) => e.reason)).toEqual(['daily_cap', 'daily_cap'])
+    const told = await db.select().from(notifications).where(eq(notifications.dedupeKey, `task-proposed:${t.id}`))
+    expect(told.map((n) => n.personId).sort()).toEqual([s.pm.id, s.dev.id].sort())
+    expect(told[0]).toMatchObject({ kind: 'proposal_pending', body: 'ทุกคนที่รับงานนี้ได้ครบจำนวนงานต่อวันแล้ว' })
   })
 
   it('G7: next step has a QC task and no QC member → proposal no_assignee', async () => {

@@ -3,7 +3,7 @@ import type { AppDeps } from '../app.js'
 import { AiFailed, AiRefused, errorSummary } from '../ai/gateway.js'
 import { ensurePersonalConversation, postMessage } from '../chat/service.js'
 import type { Db, Tx } from '../db/client.js'
-import { knowledgeEntries, messages, projects, workItems } from '../db/schema.js'
+import { conversations, knowledgeEntries, messages, projects, workItems } from '../db/schema.js'
 import type { JobRun } from '../jobs/queue.js'
 import { createEntry } from '../knowledge/service.js'
 import { personAsMe } from '../proposals/service.js'
@@ -67,8 +67,9 @@ async function aiText(run: JobRun, call: () => Promise<{ text: string }>, what: 
  * `secretary-event` job: a work item is done. The AI writes a draft summary into the work item's knowledge and
  * the requester hears about it in their personal conversation (always the fixed `[[request.done]]` system
  * message with a link card: no AI text reaches the requester). Idempotent: a summary entry (`sourceRef` = work item) and a message
- * carrying the item's link card exist at most once. Generation happens before the short transaction that
- * writes, which holds the work item's row lock only to serialize duplicate runs.
+ * carrying the item's link card exist at most once. The note's transaction locks only the requester's
+ * conversation; the summary is generated before the short transaction that writes it, which holds the work
+ * item's row lock only to serialize duplicate runs (and touches no conversation).
  */
 export async function secretaryEvent(deps: EventDeps, run: JobRun): Promise<void> {
   const { db } = deps
@@ -118,7 +119,10 @@ export async function secretaryEvent(deps: EventDeps, run: JobRun): Promise<void
       )[0]
     if (!(await hasNote(db))) {
       await runWork(deps, { id: null, kind: 'system' }, async (ctx) => {
-        await ctx.tx.select({ id: workItems.id }).from(workItems).where(eq(workItems.id, item.id)).for('update')
+        // Serialized on the conversation row, never the work item: lock order is conversation → work item (the
+        // secretary's reply locks its conversation, then a staged action its work item), and posting the
+        // message touches the conversation row, so holding the work item lock here would invert that order.
+        await ctx.tx.select({ id: conversations.id }).from(conversations).where(eq(conversations.id, conversationId)).for('update')
         if (await hasNote(ctx.tx)) return
         await postMessage(ctx, {
           conversationId,

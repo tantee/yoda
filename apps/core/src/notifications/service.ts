@@ -130,6 +130,26 @@ export async function notifyChangesRequested(
   }
 }
 
+/**
+ * An `auto-assign` guard rail (G2 repeated rework, G6 daily cap) turned an automatic assignment into a
+ * proposed one: the project's PMs confirm it. `reason` is the guard's plain-language (Thai) text.
+ */
+export async function notifyTaskProposed(
+  ctx: WorkCtx,
+  t: { projectId: string; workItemId: string; taskId: string; taskTitle: string; reason: string },
+): Promise<void> {
+  for (const personId of await projectPms(ctx, t.projectId)) {
+    await notify(ctx, {
+      personId,
+      kind: 'proposal_pending',
+      title: `รอยืนยันการมอบหมายงาน: ${t.taskTitle}`,
+      body: t.reason,
+      link: `/work-items/${t.workItemId}`,
+      dedupeKey: `task-proposed:${t.taskId}`,
+    })
+  }
+}
+
 const PROPOSAL_TITLE: Record<ProposalKind, string> = {
   step_advance: 'รอยืนยันการไปขั้นตอนถัดไป',
   priority_change: 'รอยืนยันการเปลี่ยนความสำคัญ',

@@ -387,7 +387,7 @@ export class AiGateway {
       for (const { id } of admins) {
         await notify(ctx, {
           personId: id,
-          kind: 'secretary_message',
+          kind: 'budget_alert',
           title:
             level === 'warning'
               ? 'งบประมาณ AI ของแผนกใช้ไปแล้วเกิน 80%'

@@ -125,6 +125,7 @@ const isEmpty = computed(
             <div class="font-weight-medium" data-testid="proposal-summary">{{ p.summary || (proposalFallbackKey(p) ? t(proposalFallbackKey(p)!) : '') }}</div>
             <GuardNote v-if="guardOf(p.payload)" :guard="guardOf(p.payload)!" />
             <div v-else-if="p.reason" class="text-caption text-medium-emphasis">{{ p.reason }}</div>
+            <div v-if="p.requesterName" class="text-caption" data-testid="proposal-requester">{{ t('chat.card.requester') }}: {{ p.requesterName }}</div>
             <div v-if="p.workItemId" class="text-caption">
               <NuxtLink :to="`/work-items/${p.workItemId}`">{{ t('todo.workItem') }}</NuxtLink>
             </div>

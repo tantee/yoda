@@ -38,6 +38,8 @@ export const Proposal = z.object({
   onBehalfOfId: uuid.nullable(),
   decidedById: uuid.nullable(),
   decidedByName: z.string().nullable(),
+  /** `create_work_item`: the display name of the person named as requester in the payload (null when none). */
+  requesterName: z.string().nullable().default(null),
   createdAt: z.string(),
   decidedAt: z.string().nullable(),
 })

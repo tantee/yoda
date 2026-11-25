@@ -140,6 +140,29 @@ describe('requesters in the workflow', () => {
     expect((await requests(nurse)).map((r) => r.workItemId)).toEqual([wi.id])
   })
 
+  it('the requester view of task results hides the AI drafter confidence notes', async () => {
+    const p = await project([[pm, ['PM']], [ba, ['BA']]])
+    const wi = await createItem(p, { requesterId: nurse.id })
+    await drive(wi.id, 'accept-intake', pm, approve)
+    await drive(wi.id, 'draft-requirements', ba, { text: 'คำถาม: รายวันหรือรายเดือน?' })
+    const draft = (await active(wi.id, 'draft-requirements'))!
+    const answer = (await active(wi.id, 'answer-questions'))!
+    const db = await testDb()
+    const note = { confidence: 'low' as const, missing: ['รูปแบบรายงานภายใน'] }
+    await db.update(tasks).set({ result: { text: 'คำถาม: รายวันหรือรายเดือน?', attachmentIds: [], ...note } }).where(eq(tasks.id, draft.id))
+    await db.update(tasks).set({ result: { text: 'ร่างคำตอบ', attachmentIds: [], ...note } }).where(eq(tasks.id, answer.id))
+
+    const mine = (await call(nurse, 'GET', `/tasks/${answer.id}`)).json() as TaskWithContext
+    expect(mine.viewerIsRequester).toBe(true)
+    expect(mine.inputs[0]!.result).toEqual({ text: 'คำถาม: รายวันหรือรายเดือน?', attachmentIds: [] })
+    expect(mine.result).toEqual({ text: 'ร่างคำตอบ', attachmentIds: [] })
+    expect(JSON.stringify(await answers(nurse))).not.toContain('รูปแบบรายงานภายใน')
+    // Staff still see them.
+    const staff = (await call(pm, 'GET', `/tasks/${answer.id}`)).json() as TaskWithContext
+    expect(staff.inputs[0]!.result).toMatchObject(note)
+    expect(staff.result).toMatchObject(note)
+  })
+
   it('a requester view of a later task sees only its immediately preceding input', async () => {
     const p = await project([[pm, ['PM']], [ba, ['BA']], [dev, ['DEV', 'SA']], [qc, ['QC']]])
     const wi = await createItem(p, { requesterId: nurse.id, templateKey: 'bug-fix' })

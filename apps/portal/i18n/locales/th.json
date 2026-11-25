@@ -307,7 +307,8 @@
         "superseded": "ใช้ไม่ได้แล้ว"
       },
       "project": "โครงการ",
-      "chooseProject": "เลือกโครงการ"
+      "chooseProject": "เลือกโครงการ",
+      "requester": "ผู้ขอ"
     },
     "textRequired": "พิมพ์ข้อความเพื่อส่งไฟล์ที่แนบ",
     "marker": {

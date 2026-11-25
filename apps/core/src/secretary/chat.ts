@@ -1,6 +1,7 @@
 import type { ActionCard, Me } from '@yoda/shared'
 import type { ModelMessage } from 'ai'
-import { and, asc, desc, eq, gt, inArray, lte } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, lte, sql } from 'drizzle-orm'
+import { alias } from 'drizzle-orm/pg-core'
 import type { AppDeps } from '../app.js'
 import { AiFailed, AiRefused, type BillingTarget } from '../ai/gateway.js'
 import { secretaryAnswers, postMessage, visibleConversation, OWN_KINDS, type ConversationRow } from '../chat/service.js'
@@ -17,6 +18,11 @@ export type SecretaryDeps = Pick<AppDeps, 'db' | 'ai' | 'bus' | 'jobs' | 'config
 
 /** Messages of the conversation the model sees (newest last). */
 export const HISTORY_LIMIT = 30
+/** Each history message is clipped to this many characters. */
+export const HISTORY_MESSAGE_CHARS = 4000
+/** Total characters of history sent to the model: the oldest messages are dropped first (never the trigger). */
+export const HISTORY_TOTAL_CHARS = 30000
+export const TRUNCATED_MARKER = '…[truncated]'
 export const SECRETARY_MAX_STEPS = 6
 export const SECRETARY_MAX_OUTPUT_TOKENS = 4000
 
@@ -36,31 +42,39 @@ type Trigger = { id: string; conversationId: string; seq: number; team: boolean 
 
 /**
  * Is the trigger already answered? In team threads only a reply to this very message counts (another person's
- * question must not swallow it); in personal/intake threads any later `ai`/`system` message does (a reply to
- * a later message covers the earlier ones too).
+ * question must not swallow it). In personal/intake threads a reply (or failure marker) whose `replyToId`
+ * message is this one or a later one does: each reply points at the last person message its history included,
+ * so it covers everything up to there. `ai`/`system` messages without `replyToId` (e.g. `[[request.done]]`)
+ * never count.
  */
 async function answered(conn: Db | Tx, t: Trigger): Promise<boolean> {
+  const repliedTo = alias(messages, 'replied_to')
   const [row] = await conn
     .select({ id: messages.id })
     .from(messages)
+    .innerJoin(repliedTo, eq(repliedTo.id, messages.replyToId))
     .where(
       and(
         eq(messages.conversationId, t.conversationId),
         inArray(messages.authorKind, ['system', 'ai']),
-        t.team ? eq(messages.replyToId, t.id) : gt(messages.seq, t.seq),
+        t.team ? eq(messages.replyToId, t.id) : sql`${repliedTo.seq} >= ${t.seq}`,
       ),
     )
     .limit(1)
   return !!row
 }
 
-/** Locks the conversation (serializing replies) and reports whether the trigger is already answered. */
+/**
+ * Locks the conversation (serializing replies) and reports whether the trigger is already answered.
+ * Lock order: conversation → work item (a staged action may then lock its work item); code that needs both
+ * must never take them the other way round.
+ */
 async function lockAndCheck(tx: Tx, t: Trigger): Promise<boolean> {
   await tx.select({ id: conversations.id }).from(conversations).where(eq(conversations.id, t.conversationId)).for('update')
   return answered(tx, t)
 }
 
-async function postFailure(deps: SecretaryDeps, t: Trigger, reason: FailureReason): Promise<void> {
+async function postFailure(deps: SecretaryDeps, t: Trigger, replyToId: string, reason: FailureReason): Promise<void> {
   await runWork(deps, { id: null, kind: 'system' }, async (ctx) => {
     if (await lockAndCheck(ctx.tx, t)) return
     await postMessage(ctx, {
@@ -68,14 +82,14 @@ async function postFailure(deps: SecretaryDeps, t: Trigger, reason: FailureReaso
       authorKind: 'system',
       authorId: null,
       text: secretaryFailed(reason),
-      replyToId: t.id,
+      replyToId,
     })
   })
 }
 
 /**
  * `secretary-chat` job: the secretary's reply to a person's message, acting as that person. Idempotent (skips
- * when an `ai`/`system` message already follows). Tool writes are collected during the model run and applied
+ * when a reply already answers the message, see `answered`). Tool writes are collected during the model run and applied
  * with the reply in one transaction, so a failed run changes nothing; failures post a
  * `[[secretary.failed:<reason>]]` system message instead of a reply.
  */
@@ -96,6 +110,9 @@ export async function secretaryChat(deps: SecretaryDeps, run: JobRun): Promise<v
   if (!me || !conversation) return
 
   let modelDone = false
+  // The person message the reply answers: the trigger in team threads; in personal/intake threads the last
+  // person message of the history sent (later ones the model never saw stay unanswered).
+  let replyToId = trigger.id
   try {
     const billing: BillingTarget = conversation.projectId ? { projectId: conversation.projectId } : { department: true }
     if (conversation.projectId) {
@@ -112,7 +129,8 @@ export async function secretaryChat(deps: SecretaryDeps, run: JobRun): Promise<v
       visibleToRequester: conversation.kind === 'work_item',
       today: new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' }),
     })
-    const history = await loadHistory(db, me, conversation, trigger)
+    const { messages: history, lastPersonId } = await loadHistory(db, me, conversation, trigger)
+    if (!team && lastPersonId) replyToId = lastPersonId
     const pending: PendingAction[] = []
     const out = await deps.ai.chat({
       job: 'fast',
@@ -134,14 +152,14 @@ export async function secretaryChat(deps: SecretaryDeps, run: JobRun): Promise<v
       if (await lockAndCheck(ctx.tx, trigger)) return
       const { actions, failed } = await applyActions(ctx, pending)
       const text = failed ? `${out.text.trim()}\n\n${actionsFailedNote(out.text, failed)}` : out.text.trim()
-      await postMessage(ctx, { conversationId: trigger.conversationId, authorKind: 'ai', authorId: null, text, actions, replyToId: trigger.id })
+      await postMessage(ctx, { conversationId: trigger.conversationId, authorKind: 'ai', authorId: null, text, actions, replyToId })
     })
   } catch (err) {
     const reason = failureReason(err)
     // Unexpected errors before the model ran (e.g. the database) are retried; after it, retrying would bill again.
     if (!reason && !modelDone && !run.isFinalAttempt) throw err
     console.warn(`secretary-chat ${run.id}: ${logLine(err)}`)
-    await postFailure(deps, trigger, reason ?? 'ai_failed')
+    await postFailure(deps, trigger, replyToId, reason ?? 'ai_failed')
   }
 }
 
@@ -252,9 +270,16 @@ async function threadContext(db: Db, me: Me, c: ConversationRow): Promise<string
  * The last messages as model messages. In team threads the history ends at the trigger (later questions are
  * other people's to ask) and person messages are labelled: by name in project threads; in work_item threads
  * (the requester may read them) only as "Me" / "Requester" / "Team member". System messages (markers) are left
- * out; attachments appear by name and id, and "do not send to AI" files by id only.
+ * out; attachments appear by name and id, and "do not send to AI" files by id only. Each message is clipped to
+ * HISTORY_MESSAGE_CHARS and the oldest ones are dropped until the whole fits HISTORY_TOTAL_CHARS (the trigger
+ * always stays). `lastPersonId`: the newest person message kept.
  */
-async function loadHistory(db: Db, me: Me, c: ConversationRow, trigger: Trigger): Promise<ModelMessage[]> {
+async function loadHistory(
+  db: Db,
+  me: Me,
+  c: ConversationRow,
+  trigger: Trigger,
+): Promise<{ messages: ModelMessage[]; lastPersonId: string | null }> {
   const rows = (
     await db
       .select({ m: messages, name: people.displayName })
@@ -288,9 +313,8 @@ async function loadHistory(db: Db, me: Me, c: ConversationRow, trigger: Trigger)
     return authorId !== null && authorId === requesterId ? 'Requester' : 'Team member'
   }
 
-  const out: { role: 'user' | 'assistant'; content: string }[] = []
-  for (const { m, name } of rows) {
-    let content = m.text
+  const items = rows.map(({ m, name }) => {
+    let content = clipText(m.text, HISTORY_MESSAGE_CHARS)
     if (m.authorKind === 'person' && trigger.team) content = `${label(m.authorId, name)}: ${content}`
     const attached = m.attachmentIds.flatMap((id) => {
       const f = files.get(id)
@@ -298,11 +322,30 @@ async function loadHistory(db: Db, me: Me, c: ConversationRow, trigger: Trigger)
       return [f.noAi ? `[attached file id ${id}: not available to the assistant]` : `[attached file "${f.fileName}" id ${id}]`]
     })
     if (attached.length) content = `${content}\n${attached.join('\n')}`
-    const role = m.authorKind === 'ai' ? 'assistant' : 'user'
+    return { id: m.id, role: m.authorKind === 'ai' ? ('assistant' as const) : ('user' as const), content }
+  })
+  // Oldest first out until the history fits (the trigger is never dropped).
+  let total = items.reduce((n, x) => n + x.content.length, 0)
+  for (let i = 0; i < items.length && total > HISTORY_TOTAL_CHARS; ) {
+    if (items[i]!.id === trigger.id) {
+      i++
+      continue
+    }
+    total -= items[i]!.content.length
+    items.splice(i, 1)
+  }
+
+  const out: { role: 'user' | 'assistant'; content: string }[] = []
+  for (const { role, content } of items) {
     const last = out.at(-1)
     if (last && last.role === role) last.content = `${last.content}\n\n${content}`
     else out.push({ role, content })
   }
   while (out[0]?.role === 'assistant') out.shift()
-  return out
+  return { messages: out, lastPersonId: items.findLast((x) => x.role === 'user')?.id ?? null }
+}
+
+/** `s` cut to `n` characters, marked when cut. */
+function clipText(s: string, n: number): string {
+  return s.length > n ? `${s.slice(0, n)}${TRUNCATED_MARKER}` : s
 }
