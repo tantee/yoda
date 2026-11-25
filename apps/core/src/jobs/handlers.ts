@@ -16,4 +16,6 @@ export async function registerJobHandlers(deps: Pick<AppDeps, 'db' | 'ai' | 'bus
   await deps.jobs.work('secretary-sweep', () => secretarySweep(deps))
   await deps.jobs.work('discussion-brief', (run) => runBrief(deps, run.id, run))
   await deps.jobs.work('gitlab-issue-sync', (run) => syncIssues(deps, run))
+  // Task 6 gives merge requests their workflow effects; until then the job is a no-op.
+  await deps.jobs.work('gitlab-mr-effect', async () => {})
 }
