@@ -4,6 +4,7 @@ import {
   bigserial,
   boolean,
   check,
+  date,
   index,
   integer,
   jsonb,
@@ -136,6 +137,8 @@ export const workItems = pgTable(
     requesterId: uuid('requester_id').references(() => people.id),
     currentStepKey: text('current_step_key'),
     state: text('state').notNull().default('active'),
+    /** Optional, set by the PM or owner; an active item is overdue once this Asia/Bangkok date has passed. */
+    targetDate: date('target_date', { mode: 'string' }),
     createdBy: uuid('created_by').references(() => people.id),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

@@ -426,6 +426,7 @@ function toWorkItem(r: WorkItemJoined, state: AdvanceState): WorkItem {
     templateVersion: r.templateVersion,
     currentStepKey: w.currentStepKey,
     priority: w.priority,
+    targetDate: w.targetDate,
     ownerId: w.ownerId,
     ownerName: r.ownerName,
     requesterId: w.requesterId,

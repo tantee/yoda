@@ -185,7 +185,8 @@
       "done": "งานเสร็จสิ้น",
       "cancelled": "ยกเลิกงาน",
       "reopened": "ย้อนกลับไปขั้นตอนก่อนหน้า",
-      "priority_changed": "เปลี่ยนความสำคัญ"
+      "priority_changed": "เปลี่ยนความสำคัญ",
+      "target_date_changed": "เปลี่ยนวันที่กำหนดเสร็จ"
     },
     "task": {
       "created": "สร้างงานย่อย",

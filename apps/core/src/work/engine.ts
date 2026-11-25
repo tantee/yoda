@@ -1,8 +1,17 @@
-import { ACTIVE_TASK_STATES, type Me, type TaskResult, type TaskState, type WorkflowTemplateDef, type WorkItemCreate } from '@yoda/shared'
+import {
+  ACTIVE_TASK_STATES,
+  type Me,
+  type TaskResult,
+  type TaskState,
+  type WorkflowTemplateDef,
+  type WorkItemCreate,
+  type WorkItemPatch,
+} from '@yoda/shared'
 import { and, asc, desc, eq, inArray, isNull, like, or, sql } from 'drizzle-orm'
 import {
   commentRequired,
   decisionRequired,
+  emptyPatch,
   forbidden,
   HttpError,
   invalidState,
@@ -825,6 +834,28 @@ export async function cancelWorkItem(ctx: WorkCtx, me: Me, workItemId: string): 
   await notifyRequestEnded(ctx, item, 'cancelled')
   // Nothing left to decide for a cancelled item (work item lock held, so proposals are locked after it).
   await supersedePending(ctx, workItemId)
+}
+
+/**
+ * The PM (or admin) or the item's owner, while still a member, edits an active item. Only the target date
+ * so far: records `work_item.target_date_changed` when it changes (past dates are allowed).
+ */
+export async function patchWorkItem(ctx: WorkCtx, me: Me, workItemId: string, patch: WorkItemPatch): Promise<void> {
+  const { tx } = ctx
+  if (patch.targetDate === undefined) throw emptyPatch()
+  const item = await lockItem(tx, workItemId)
+  const ownerStillMember = item.ownerId === me.id && (await memberRoles(tx, item.projectId, me.id)) !== null
+  if (!ownerStillMember && !(await isPmOrAdmin(tx, me, item.projectId))) throw forbidden()
+  if (item.state !== 'active') throw invalidState()
+  if (patch.targetDate === item.targetDate) return
+  await tx.update(workItems).set({ targetDate: patch.targetDate, updatedAt: sql`now()` }).where(eq(workItems.id, workItemId))
+  await recordEvent(ctx, {
+    type: 'work_item.target_date_changed',
+    projectId: item.projectId,
+    workItemId,
+    taskId: null,
+    payload: { from: item.targetDate, to: patch.targetDate },
+  })
 }
 
 /** The AI runner may still act on the task: open, unassigned and executed by the AI. */

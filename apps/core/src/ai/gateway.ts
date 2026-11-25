@@ -1,6 +1,6 @@
 import { embedMany, isStepCount, Output, streamText, type ModelMessage, type ToolSet } from 'ai'
 import type { AiUsage } from '@yoda/shared'
-import { and, eq, gte, isNull, sql, type SQL } from 'drizzle-orm'
+import { and, eq, gte, inArray, isNull, sql, type SQL } from 'drizzle-orm'
 import type { ZodType, ZodTypeDef } from 'zod'
 import type { Db, Tx } from '../db/client.js'
 import { aiCalls, events, people, projects } from '../db/schema.js'
@@ -81,6 +81,17 @@ export async function monthUsage(db: Db | Tx, projectId: string): Promise<AiUsag
 /** Department usage this Asia/Bangkok month: every project-less call, against the department budget. */
 export async function departmentMonthUsage(db: Db): Promise<AiUsage> {
   return usageOf(db, isNull(aiCalls.projectId), sql`(select ai_budget_usd from department_settings where id = 1)`)
+}
+
+/** `monthUsage` cost for several projects in one query; projects without calls are absent. */
+export async function projectsMonthSpend(db: Db | Tx, projectIds: string[]): Promise<Map<string, number>> {
+  if (!projectIds.length) return new Map()
+  const rows = await db
+    .select({ projectId: aiCalls.projectId, cost: sql<string>`coalesce(sum(${aiCalls.costUsd}), 0)` })
+    .from(aiCalls)
+    .where(and(inArray(aiCalls.projectId, projectIds), gte(aiCalls.createdAt, MONTH_START)))
+    .groupBy(aiCalls.projectId)
+  return new Map(rows.map((r) => [r.projectId!, Number(r.cost)]))
 }
 
 async function usageOf(db: Db | Tx, scope: SQL, budget: SQL): Promise<AiUsage> {

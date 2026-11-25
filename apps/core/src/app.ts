@@ -29,6 +29,7 @@ import { notificationRoutes } from './routes/notifications.js'
 import { adminRoutes } from './routes/admin.js'
 import { gitlabRoutes } from './routes/gitlab.js'
 import { runnerRoutes } from './routes/runners.js'
+import { statusRoutes } from './routes/status.js'
 import { mcpRoutes } from './routes/mcp.js'
 
 export type AppDeps = {
@@ -97,6 +98,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   adminRoutes(app)
   gitlabRoutes(app)
   runnerRoutes(app)
+  statusRoutes(app)
   if (deps.config.mcpEnabled) mcpRoutes(app)
   streamRoutes(app)
   // Text-bearing uploads become `document` entries. The attachment is already committed, so a failure here

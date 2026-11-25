@@ -2,7 +2,8 @@ import type { ProjectRole } from '@yoda/shared'
 import { sql } from 'drizzle-orm'
 import type { Tx } from '../db/client.js'
 
-const DAY_START = sql`date_trunc('day', now() at time zone 'Asia/Bangkok') at time zone 'Asia/Bangkok'`
+/** Start of today in Asia/Bangkok: the daily automatic-assignment cap counts from here. */
+export const DAY_START = sql`date_trunc('day', now() at time zone 'Asia/Bangkok') at time zone 'Asia/Bangkok'`
 
 /**
  * Serialises automatic assignment so concurrent creators cannot each see a person just under the daily cap.

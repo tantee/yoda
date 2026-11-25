@@ -185,7 +185,8 @@
       "done": "Work item completed",
       "cancelled": "Work item cancelled",
       "reopened": "Sent back to an earlier step",
-      "priority_changed": "Priority changed"
+      "priority_changed": "Priority changed",
+      "target_date_changed": "Target date changed"
     },
     "task": {
       "created": "Task created",
