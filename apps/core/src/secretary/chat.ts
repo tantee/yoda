@@ -4,7 +4,7 @@ import { and, asc, desc, eq, inArray, lte, sql } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/pg-core'
 import type { AppDeps } from '../app.js'
 import { AiFailed, AiRefused, type BillingTarget } from '../ai/gateway.js'
-import { isTeamKind, threadAudience } from '../chat/audience.js'
+import { isTeamKind, threadAudience, type ThreadAudience } from '../chat/audience.js'
 import { secretaryAnswers, postMessage, visibleConversation, type ConversationRow } from '../chat/service.js'
 import type { Db, Tx } from '../db/client.js'
 import { attachments, conversations, messages, people, projectMembers, projects, workItems } from '../db/schema.js'
@@ -102,7 +102,7 @@ export async function secretaryChat(deps: SecretaryDeps, run: JobRun): Promise<v
     .innerJoin(conversations, eq(conversations.id, messages.conversationId))
     .where(eq(messages.id, run.id))
   if (!m || m.authorKind !== 'person' || !m.authorId || !secretaryAnswers(m.kind, m.text)) return
-  const team = isTeamKind(m.kind)
+  const team = isTeamKind(m.kind) // from the kind alone: the dedupe check runs before the row is loaded
   const trigger: Trigger = { id: m.id, conversationId: m.conversationId, seq: Number(m.seq), team }
   if (await answered(db, trigger)) return
   const me = await personAsMe(db, m.authorId)
@@ -115,6 +115,7 @@ export async function secretaryChat(deps: SecretaryDeps, run: JobRun): Promise<v
   // person message of the history sent (later ones the model never saw stay unanswered).
   let replyToId = trigger.id
   try {
+    const audience = await threadAudience(db, conversation)
     const billing: BillingTarget = conversation.projectId ? { projectId: conversation.projectId } : { department: true }
     if (conversation.projectId) {
       const [p] = await db.select({ noAi: projects.noAi }).from(projects).where(eq(projects.id, conversation.projectId))
@@ -123,17 +124,16 @@ export async function secretaryChat(deps: SecretaryDeps, run: JobRun): Promise<v
     }
     // Team threads: everyone in the thread reads the reply, so the secretary works only on the thread's project,
     // and work_item threads (the requester may read them) get no staff names or internal notes.
-    const scopeProjectId = team ? conversation.projectId : null
+    const scopeProjectId = audience.projectId
     const system = secretarySystemPrompt({
       ...(await personContext(db, me, scopeProjectId)),
       thread: await threadContext(db, me, conversation),
-      visibleToRequester: conversation.kind === 'work_item',
+      visibleToRequester: audience.hideStaffNames,
       today: new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Bangkok' }),
     })
-    const { messages: history, lastPersonId } = await loadHistory(db, me, conversation, trigger)
+    const { messages: history, lastPersonId } = await loadHistory(db, me, conversation, audience, trigger)
     if (!team && lastPersonId) replyToId = lastPersonId
     const pending: PendingAction[] = []
-    const audience = await threadAudience(db, conversation)
     const out = await deps.ai.chat({
       job: 'fast',
       billing,
@@ -273,6 +273,7 @@ async function loadHistory(
   db: Db,
   me: Me,
   c: ConversationRow,
+  a: ThreadAudience,
   trigger: Trigger,
 ): Promise<{ messages: ModelMessage[]; lastPersonId: string | null }> {
   const rows = (
@@ -298,14 +299,10 @@ async function loadHistory(
         ),
       )
     : new Map<string, { id: string; fileName: string; noAi: boolean }>()
-  const requesterId =
-    c.kind === 'work_item' && c.workItemId
-      ? ((await db.select({ id: workItems.requesterId }).from(workItems).where(eq(workItems.id, c.workItemId)))[0]?.id ?? null)
-      : null
   const label = (authorId: string | null, name: string | null): string => {
-    if (authorId === me.id) return c.kind === 'project' ? me.displayName : 'Me'
-    if (c.kind === 'project' && me.isStaff) return name ?? 'Someone'
-    return authorId !== null && authorId === requesterId ? 'Requester' : 'Team member'
+    if (authorId === me.id) return a.kind === 'project' ? me.displayName : 'Me'
+    if (a.kind === 'project' && me.isStaff) return name ?? 'Someone'
+    return authorId !== null && authorId === a.requesterId ? 'Requester' : 'Team member'
   }
 
   const items = rows.map(({ m, name }) => {
