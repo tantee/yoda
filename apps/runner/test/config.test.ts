@@ -1,7 +1,7 @@
 import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { afterAll, describe, expect, it } from 'vitest'
-import { loadConfig, maskedConfig } from '../src/config.js'
+import { afterAll, describe, expect, it, vi } from 'vitest'
+import { configWarnings, loadConfig, maskedConfig, RunnerConfig, warnConfigOnce } from '../src/config.js'
 import { tempDir, TOKEN } from './helpers.js'
 
 const tmp = tempDir()
@@ -63,5 +63,54 @@ describe('loadConfig', () => {
     const shown = JSON.stringify(maskedConfig(cfg))
     expect(shown).not.toContain(TOKEN)
     expect(maskedConfig(cfg).token).toBe('yoda_rt_…')
+  })
+})
+
+describe('maskedConfig', () => {
+  it('scrubs credentials from clone URLs', () => {
+    const cfg = RunnerConfig.parse({
+      coreUrl: 'http://a.invalid',
+      token: TOKEN,
+      repos: {
+        'g/a': { cloneUrl: 'https://oauth2:glpat-TESTONLYxxxx@gitlab.example.invalid/g/a.git' }, // DEV ONLY: test placeholder
+        'g/b': { cloneUrl: 'https://gitlab.example.invalid/g/b.git' },
+        'g/c': { clonePath: '/c' },
+      },
+    })
+    const shown = maskedConfig(cfg)
+    expect(JSON.stringify(shown)).not.toContain('glpat-')
+    expect(JSON.stringify(shown)).not.toContain(TOKEN)
+    expect(shown.repos).toEqual({
+      'g/a': { cloneUrl: 'https://***@gitlab.example.invalid/g/a.git' },
+      'g/b': { cloneUrl: 'https://gitlab.example.invalid/g/b.git' },
+      'g/c': { clonePath: '/c' },
+    })
+  })
+})
+
+describe('configWarnings', () => {
+  const base = { coreUrl: 'https://core.example.invalid', token: TOKEN }
+  it('is quiet for https and for plain http to this machine', () => {
+    expect(configWarnings(RunnerConfig.parse(base))).toEqual([])
+    for (const coreUrl of ['http://localhost:4000', 'http://127.0.0.1:4000', 'http://[::1]:4000', 'http://core.localhost']) {
+      expect(configWarnings(RunnerConfig.parse({ ...base, coreUrl }))).toEqual([])
+    }
+  })
+
+  it('warns about bypassPermissions and plain http to another host', () => {
+    const w = configWarnings(RunnerConfig.parse({ ...base, coreUrl: 'http://core.example.invalid', permissionMode: 'bypassPermissions' }))
+    expect(w).toHaveLength(2)
+    expect(w.join('\n')).toMatch(/bypassPermissions/)
+    expect(w.join('\n')).toMatch(/http/)
+    expect(w.join('\n')).not.toContain(TOKEN)
+  })
+
+  it('writes each warning once', () => {
+    const write = vi.fn()
+    const cfg = RunnerConfig.parse({ ...base, permissionMode: 'bypassPermissions' })
+    warnConfigOnce(cfg, write)
+    warnConfigOnce(cfg, write)
+    expect(write).toHaveBeenCalledTimes(1)
+    expect(write.mock.calls[0][0]).toMatch(/^yoda-runner: warning: .*bypassPermissions.*\n$/)
   })
 })

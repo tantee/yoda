@@ -110,6 +110,20 @@ printf '%s\\n' '${JSON.stringify(claudeResult)}'`,
       '--mcp-config',
       mcp,
       '--strict-mcp-config',
+      '--allowedTools',
+      'mcp__yoda',
+      'Bash(git add:*)',
+      'Bash(git commit:*)',
+      'Bash(git status:*)',
+      'Bash(git diff:*)',
+      'Bash(git log:*)',
+      '--disallowedTools',
+      'Bash(git push:*)',
+      'Bash(git checkout:*)',
+      'Bash(git switch:*)',
+      'Bash(git branch:*)',
+      'Bash(git reset --hard:*)',
+      'Bash(git remote:*)',
       '--permission-mode',
       'acceptEdits',
       '--model',
@@ -119,6 +133,15 @@ printf '%s\\n' '${JSON.stringify(claudeResult)}'`,
     expect(readFileSync(join(out, 'claude-stdin'), 'utf8')).toBe('do the thing')
     expect(realpathSync(readFileSync(join(out, 'claude-cwd'), 'utf8').trim())).toBe(realpathSync(clone))
     expect(readFileSync(join(out, 'claude-token-env'), 'utf8')).toBe('unset')
+  })
+
+  it('takes the tool lists from config, and leaves out an empty list', async () => {
+    stub('claude', `printf '%s\\n' "$@" > "$STUB_OUT/claude-args"\ncat > /dev/null\nprintf '%s\\n' '${JSON.stringify(claudeResult)}'`)
+    const ex = claudeExecutor(cfg({ allowedTools: ['mcp__yoda', 'Read'], disallowedTools: [] }), { env: env() })
+    await ex.run({ dir: clone, prompt: 'p', mcpConfigPath: '/x', timeoutMs: 10_000 })
+    const args = readFileSync(join(out, 'claude-args'), 'utf8').trim().split('\n')
+    expect(args.slice(6, 10)).toEqual(['--allowedTools', 'mcp__yoda', 'Read', '--permission-mode'])
+    expect(args).not.toContain('--disallowedTools')
   })
 
   it('reports needsHuman when the agent asked a person', async () => {

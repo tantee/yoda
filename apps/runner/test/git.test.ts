@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { RunnerConfig } from '../src/config.js'
 import type { RunCode } from '../src/core.js'
-import { hasNewCommits, prepareWorkspace, pushBranch, PushRefused } from '../src/git.js'
+import { commitLeftovers, hasNewCommits, prepareWorkspace, pushBranch, PushRefused } from '../src/git.js'
 import { git, isolateGit, makeOrigin, tempDir, TOKEN } from './helpers.js'
 
 const BRANCH = 'yoda/abcd1234-x'
@@ -119,6 +119,25 @@ describe('pushBranch', () => {
     } finally {
       await ws.cleanup()
       git(clone, 'branch', '-D', 'main-local')
+    }
+  })
+})
+
+describe('commitLeftovers', () => {
+  it('commits uncommitted changes (new and changed files) and reports whether it did', async () => {
+    const ws = await prepareWorkspace(cfgWith({ 'group/demo': { clonePath: clone } }), repo(), BRANCH)
+    try {
+      expect(await commitLeftovers(ws.dir, 'yoda: uncommitted changes from agent run')).toBe(false)
+      expect(await hasNewCommits(ws.dir, 'origin/main')).toBe(false)
+      writeFileSync(join(ws.dir, 'new.txt'), 'new\n')
+      writeFileSync(join(ws.dir, 'README.md'), '# Changed\n')
+      expect(await commitLeftovers(ws.dir, 'yoda: uncommitted changes from agent run')).toBe(true)
+      expect(git(ws.dir, 'status', '--porcelain')).toBe('')
+      expect(git(ws.dir, 'log', '-1', '--format=%s')).toBe('yoda: uncommitted changes from agent run')
+      expect(git(ws.dir, 'show', '--name-only', '--format=', 'HEAD').split('\n').sort()).toEqual(['README.md', 'new.txt'])
+      expect(git(ws.dir, 'symbolic-ref', '--short', 'HEAD')).toBe(BRANCH)
+    } finally {
+      await ws.cleanup()
     }
   })
 })

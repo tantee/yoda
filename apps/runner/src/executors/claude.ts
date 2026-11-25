@@ -44,10 +44,11 @@ function usageOf(r: ClaudeResult): RunUsage | undefined {
 
 /**
  * Claude Code, headless: `claude -p --output-format json --mcp-config <file> --strict-mcp-config
- * --permission-mode <mode> ...extraArgs`, cwd = the worktree. The prompt goes on stdin (a context pack can be
+ * --allowedTools <...> --disallowedTools <...> --permission-mode <mode> ...extraArgs`, cwd = the worktree. Each
+ * tool rule is its own argument (the flags are variadic; a flag ends the list). The prompt goes on stdin (a context pack can be
  * larger than one command-line argument may be).
  */
-export function claudeExecutor(cfg: Pick<RunnerConfig, 'permissionMode' | 'extraArgs'>, opts: ExecutorOptions = {}): Executor {
+export function claudeExecutor(cfg: Pick<RunnerConfig, 'permissionMode' | 'extraArgs' | 'allowedTools' | 'disallowedTools'>, opts: ExecutorOptions = {}): Executor {
   return {
     name: 'claude',
     async run(input) {
@@ -58,6 +59,8 @@ export function claudeExecutor(cfg: Pick<RunnerConfig, 'permissionMode' | 'extra
         '--mcp-config',
         input.mcpConfigPath,
         '--strict-mcp-config',
+        ...(cfg.allowedTools.length ? ['--allowedTools', ...cfg.allowedTools] : []),
+        ...(cfg.disallowedTools.length ? ['--disallowedTools', ...cfg.disallowedTools] : []),
         '--permission-mode',
         cfg.permissionMode,
         ...cfg.extraArgs,

@@ -24,8 +24,8 @@ export class PushRefused extends Error {
   }
 }
 
-/** Strips `user:password@` from URLs, so git errors never carry clone credentials. */
-const scrub = (s: string) => s.replace(/(\/\/)[^/@\s]+@/g, '$1***@')
+/** Strips `user:password@` from URLs, so git errors and `config show` never carry clone credentials. */
+export const scrub = (s: string) => s.replace(/(\/\/)[^/@\s]+@/g, '$1***@')
 
 class GitError extends Error {
   override name = 'GitError'
@@ -131,4 +131,15 @@ export async function pushBranch(dir: string, branch: string, defaultBranch: str
 /** Whether HEAD has commits that `base` (e.g. `origin/main`) does not. */
 export async function hasNewCommits(dir: string, base: string): Promise<boolean> {
   return Number(await git(dir, ['rev-list', '--count', `${base}..HEAD`])) > 0
+}
+
+/**
+ * Commits whatever the agent left uncommitted (`git add -A`, so .gitignore applies) on the current branch.
+ * Returns whether it made a commit. The push guard still checks the branch afterwards.
+ */
+export async function commitLeftovers(dir: string, message: string): Promise<boolean> {
+  if (!(await git(dir, ['status', '--porcelain']))) return false
+  await git(dir, ['add', '-A'])
+  await git(dir, ['commit', '--quiet', '-m', message])
+  return true
 }

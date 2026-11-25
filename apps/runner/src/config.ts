@@ -2,6 +2,7 @@ import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { z } from 'zod'
+import { scrub } from './git.js'
 
 const expandHome = (p: string) => (p === '~' ? homedir() : p.startsWith('~/') ? join(homedir(), p.slice(2)) : p)
 const localPath = z.string().min(1).transform((p) => resolve(expandHome(p)))
@@ -16,6 +17,25 @@ export type RepoSource = z.infer<typeof RepoSource>
 /** Claude Code's `--permission-mode` choices (checked against `claude --help`, 2.1.x). */
 export const PermissionMode = z.enum(['acceptEdits', 'auto', 'bypassPermissions', 'manual', 'dontAsk', 'plan'])
 
+/** The yoda MCP tools and the git commands an agent needs to commit its work. */
+export const DEFAULT_ALLOWED_TOOLS = [
+  'mcp__yoda',
+  'Bash(git add:*)',
+  'Bash(git commit:*)',
+  'Bash(git status:*)',
+  'Bash(git diff:*)',
+  'Bash(git log:*)',
+]
+/** Git commands that would push or leave the run's branch (the push guard refuses those runs anyway). */
+export const DEFAULT_DISALLOWED_TOOLS = [
+  'Bash(git push:*)',
+  'Bash(git checkout:*)',
+  'Bash(git switch:*)',
+  'Bash(git branch:*)',
+  'Bash(git reset --hard:*)',
+  'Bash(git remote:*)',
+]
+
 export const RunnerConfig = z.object({
   coreUrl: z.string().url(),
   token: z.string().startsWith('yoda_rt_', { message: 'must be a runner token (yoda_rt_…)' }),
@@ -28,6 +48,10 @@ export const RunnerConfig = z.object({
   /** Hard timeout per task, in minutes. */
   maxTurnsMinutes: z.number().int().min(1).max(24 * 60).default(60),
   permissionMode: PermissionMode.default('acceptEdits'),
+  /** Claude Code `--allowedTools`: headless runs deny anything not allowed (MCP tools, Bash). */
+  allowedTools: z.array(z.string().min(1)).default(DEFAULT_ALLOWED_TOOLS),
+  /** Claude Code `--disallowedTools`: denied even when another rule would allow them. */
+  disallowedTools: z.array(z.string().min(1)).default(DEFAULT_DISALLOWED_TOOLS),
   /** Appended to the executor's command line (e.g. `["--model", "sonnet"]`). */
   extraArgs: z.array(z.string()).default([]),
 })
@@ -75,8 +99,41 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): RunnerConfig {
 /** The token reduced to its prefix, for display. */
 export const maskToken = (token: string) => (token.startsWith('yoda_rt_') ? 'yoda_rt_…' : '…')
 
-/** The config as `config show` prints it. */
-export const maskedConfig = (cfg: RunnerConfig) => ({ ...cfg, token: maskToken(cfg.token) })
+/** The config as `config show` prints it: the token masked, credentials removed from clone URLs. */
+export const maskedConfig = (cfg: RunnerConfig) => ({
+  ...cfg,
+  token: maskToken(cfg.token),
+  repos: Object.fromEntries(
+    Object.entries(cfg.repos).map(([path, r]) => [path, 'cloneUrl' in r ? { cloneUrl: scrub(r.cloneUrl) } : r]),
+  ),
+})
+
+const isLocalHost = (host: string) =>
+  ['localhost', '127.0.0.1', '[::1]', '::1'].includes(host) || host.endsWith('.localhost')
+
+/** Risky settings worth a warning: bypassed permissions, or the token sent over plain http off this machine. */
+export function configWarnings(cfg: RunnerConfig): string[] {
+  const out: string[] = []
+  if (cfg.permissionMode === 'bypassPermissions') {
+    out.push('permissionMode is bypassPermissions: the agent runs any command without asking (use only in a sandbox)')
+  }
+  const url = new URL(cfg.coreUrl)
+  if (url.protocol === 'http:' && !isLocalHost(url.hostname)) {
+    out.push(`coreUrl uses plain http to ${url.hostname}: the runner token is sent unencrypted (use https)`)
+  }
+  return out
+}
+
+const warned = new Set<string>()
+
+/** Writes each config warning to stderr (or `write`) once per process. */
+export function warnConfigOnce(cfg: RunnerConfig, write: (line: string) => void = (l) => process.stderr.write(l)): void {
+  for (const w of configWarnings(cfg)) {
+    if (warned.has(w)) continue
+    warned.add(w)
+    write(`yoda-runner: warning: ${w}\n`)
+  }
+}
 
 /** Core's MCP endpoint: `<coreUrl>/mcp`, keeping any path prefix of coreUrl. */
 export const mcpUrl = (cfg: Pick<RunnerConfig, 'coreUrl'>) => `${cfg.coreUrl.replace(/\/+$/, '')}/mcp`

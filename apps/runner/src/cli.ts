@@ -1,4 +1,4 @@
-import { loadConfig, maskedConfig } from './config.js'
+import { loadConfig, maskedConfig, warnConfigOnce } from './config.js'
 
 // Commands. Task 8 adds `work <taskId>`, `start` and `mcp-config`.
 const USAGE = `Usage: yoda-runner <command>
@@ -10,7 +10,9 @@ Commands:
 async function main(argv: string[]): Promise<number> {
   const [cmd, sub] = argv
   if (cmd === 'config' && sub === 'show') {
-    process.stdout.write(`${JSON.stringify(maskedConfig(loadConfig()), null, 2)}\n`)
+    const cfg = loadConfig()
+    warnConfigOnce(cfg)
+    process.stdout.write(`${JSON.stringify(maskedConfig(cfg), null, 2)}\n`)
     return 0
   }
   process.stderr.write(USAGE)
