@@ -10,6 +10,7 @@ import { registerJobHandlers } from './jobs/handlers.js'
 import { createPgBossQueue } from './jobs/queue.js'
 import { GitLabClient } from './gitlab/client.js'
 import { seedTemplates } from './workflow/seed.js'
+import { createMailTransport, emailConfigured } from './notifications/channels/email.js'
 
 const config = loadConfig(process.env)
 const db = createDb(config.databaseUrl)
@@ -24,7 +25,8 @@ const jobs = await createPgBossQueue(config.databaseUrl, config.aiWorkers)
 const gitlab = config.gitlabUrl && config.gitlabToken ? new GitLabClient({ baseUrl: config.gitlabUrl, token: config.gitlabToken }) : null
 // Caches the bot user for the webhook (which never calls GitLab); best effort, the admin status page retries it.
 if (gitlab) void gitlab.currentUser().catch(() => console.warn('gitlab: bot user not resolved at boot (GitLab unreachable?)'))
-const app = await buildApp({ config, db, jwks, bus, storage, ai, jobs, gitlab })
+const mailTransport = emailConfigured(config) ? createMailTransport(config) : undefined
+const app = await buildApp({ config, db, jwks, bus, storage, ai, jobs, gitlab, mailTransport })
 await registerJobHandlers(app.deps)
 
 let stopping = false

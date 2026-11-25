@@ -29,6 +29,8 @@ export class HttpError extends Error {
         | 'gitlab_unavailable'
         | 'empty_patch'
         | 'invalid_branch'
+        | 'invalid_prefs'
+        | 'channel_not_configured'
       /** Machine-readable detail for some errors (runner claims: why `invalid_state`). */
       reason?: string
     },
@@ -58,6 +60,10 @@ export const commentRequired = () => new HttpError(422, { error: 'comment_requir
 export const emptyPatch = () => new HttpError(422, { error: 'empty_patch' })
 export const invalidBranch = (reason?: string) =>
   new HttpError(422, reason ? { error: 'invalid_branch', reason } : { error: 'invalid_branch' })
+/** Notification prefs naming an unknown kind or channel, or a kind the person may not choose. */
+export const invalidPrefs = () => new HttpError(422, { error: 'invalid_prefs' })
+/** Enabling an outside channel whose credentials are not set in env. */
+export const channelNotConfigured = () => new HttpError(422, { error: 'channel_not_configured' })
 export const gitlabUnavailable = () => new HttpError(502, { error: 'gitlab_unavailable' })
 
 /**

@@ -3,6 +3,7 @@ import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm'
 import type { Db } from '../db/client.js'
 import { notifications, people, projectMembers, workItems } from '../db/schema.js'
 import type { WorkCtx } from '../work/context.js'
+import { resolveChannels } from './prefs.js'
 
 export type NotifyInput = {
   personId: string
@@ -16,7 +17,8 @@ export type NotifyInput = {
 
 /**
  * Stores a notification (once per person and dedupe key) and, only when it was newly stored, queues a live
- * event addressed to that person. The event is published after the transaction commits (runWork).
+ * event addressed to that person and, when any outside channel applies to them (`resolveChannels`), one
+ * `notify-deliver` job. Both go out after the transaction commits (runWork).
  */
 export async function notify(ctx: WorkCtx, input: NotifyInput): Promise<void> {
   const rows = await ctx.tx
@@ -36,6 +38,9 @@ export async function notify(ctx: WorkCtx, input: NotifyInput): Promise<void> {
     conversationId: null,
     personId: input.personId,
   })
+  if (ctx.channels.length && (await resolveChannels(ctx.tx, ctx.channels, input.personId, input.kind)).length) {
+    ctx.jobs.push({ name: 'notify-deliver', id: rows[0]!.id })
+  }
 }
 
 async function workItemTitle(ctx: WorkCtx, workItemId: string): Promise<string> {

@@ -1,6 +1,6 @@
 import { PgBoss } from 'pg-boss'
 
-export type JobName = 'embed-entry' | 'draft-task' | 'secretary-chat' | 'secretary-event' | 'secretary-sweep' | 'discussion-brief' | 'gitlab-issue-sync' | 'gitlab-mr-effect' | 'gitlab-mr-reconcile' | 'runner-lease-sweep' | 'weekly-summary' | 'weekly-summary-project'
+export type JobName = 'embed-entry' | 'draft-task' | 'secretary-chat' | 'secretary-event' | 'secretary-sweep' | 'discussion-brief' | 'gitlab-issue-sync' | 'gitlab-mr-effect' | 'gitlab-mr-reconcile' | 'runner-lease-sweep' | 'weekly-summary' | 'weekly-summary-project' | 'notify-deliver'
 export const JOB_NAMES: readonly JobName[] = [
   'embed-entry',
   'draft-task',
@@ -14,6 +14,7 @@ export const JOB_NAMES: readonly JobName[] = [
   'runner-lease-sweep',
   'weekly-summary',
   'weekly-summary-project',
+  'notify-deliver',
 ]
 
 /** Recurring jobs (cron, Asia/Bangkok): pg-boss sends them; tests run them with `InlineJobQueue.runScheduled`. */
@@ -48,7 +49,8 @@ const QUEUE_OPTIONS = { retryLimit: RETRY_LIMIT, retryDelay: RETRY_DELAY_SECONDS
  * likewise, so the sweep and new code-change tasks never pile up reconciles of one item. `runner-lease-sweep` is
  * `exclusive` too, so a slow sweep never overlaps the next minute's. `weekly-summary-project`
  * (= `<projectId>:<week>`, with `:force` for a regenerate) is `exclusive`, so a restart re-sending the fan-out
- * never queues a second run of one project-week. The policy only applies when the
+ * never queues a second run of one project-week. `notify-deliver` (= notification id) is `exclusive`, so two
+ * deliveries of one notification never run at once (its `sent` rows make a later re-run a no-op). The policy only applies when the
  * queue is first created (pg-boss cannot change an existing queue's policy).
  */
 export const POLICY: Partial<Record<JobName, 'exclusive' | 'stately'>> = {
@@ -59,8 +61,15 @@ export const POLICY: Partial<Record<JobName, 'exclusive' | 'stately'>> = {
   'runner-lease-sweep': 'exclusive',
   'weekly-summary': 'exclusive',
   'weekly-summary-project': 'exclusive',
+  'notify-deliver': 'exclusive',
 }
-export const SINGLETON: readonly JobName[] = ['draft-task', 'discussion-brief', 'gitlab-issue-sync', 'gitlab-mr-reconcile', 'weekly-summary-project']
+export const SINGLETON: readonly JobName[] = ['draft-task', 'discussion-brief', 'gitlab-issue-sync', 'gitlab-mr-reconcile', 'weekly-summary-project', 'notify-deliver']
+
+/** Per-queue retry overrides: outside channels back off exponentially (30 s, then about a minute). */
+const QUEUE_OVERRIDES: Partial<Record<JobName, { retryBackoff: boolean }>> = {
+  'notify-deliver': { retryBackoff: true },
+}
+const queueOptions = (name: JobName) => ({ ...QUEUE_OPTIONS, ...QUEUE_OVERRIDES[name] })
 
 /** pg-boss backed queue (its own `pgboss` schema in the app database). Used only by server.ts. */
 export async function createPgBossQueue(databaseUrl: string, concurrency: number): Promise<JobQueue> {
@@ -70,8 +79,8 @@ export async function createPgBossQueue(databaseUrl: string, concurrency: number
   for (const name of JOB_NAMES) {
     // createQueue is insert-if-absent; updateQueue applies changed retry settings to an existing queue.
     const policy = POLICY[name]
-    await boss.createQueue(name, policy ? { ...QUEUE_OPTIONS, policy } : QUEUE_OPTIONS)
-    await boss.updateQueue(name, QUEUE_OPTIONS)
+    await boss.createQueue(name, policy ? { ...queueOptions(name), policy } : queueOptions(name))
+    await boss.updateQueue(name, queueOptions(name))
   }
   for (const [name, cron] of Object.entries(SCHEDULES)) {
     // Insert-or-update by queue name, so every instance may call it on start.
@@ -79,7 +88,7 @@ export async function createPgBossQueue(databaseUrl: string, concurrency: number
   }
   return {
     async send(name, data) {
-      await boss.send(name, data, SINGLETON.includes(name) ? { ...QUEUE_OPTIONS, singletonKey: data.id } : QUEUE_OPTIONS)
+      await boss.send(name, data, SINGLETON.includes(name) ? { ...queueOptions(name), singletonKey: data.id } : queueOptions(name))
     },
     async work(name, handler) {
       await boss.work<{ id: string }>(name, { localConcurrency: concurrency, batchSize: 1 }, async (jobs) => {

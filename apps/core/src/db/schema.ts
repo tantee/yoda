@@ -24,6 +24,7 @@ import {
   ActorKind,
   AgentRunState,
   AuthorKind,
+  ChannelName,
   ConversationKind,
   DiscussionResponseKind,
   DiscussionState,
@@ -46,6 +47,7 @@ import {
   TaskType,
   TemplateRole,
   WorkItemState,
+  type NotificationPrefs,
   type RunUsage,
   type TaskResult,
   type WorkingHours,
@@ -681,5 +683,83 @@ export const agentRuns = pgTable(
       .on(t.taskId)
       .where(sql`${t.state} = 'running'`),
     index('agent_runs_runner_state_idx').on(t.runnerId, t.state),
+  ],
+)
+
+/** Admin switches for the outside channels (single row). A channel also needs its env credentials to be on. */
+export const notificationChannelSettings = pgTable(
+  'notification_channel_settings',
+  {
+    id: integer('id').primaryKey().default(1),
+    emailEnabled: boolean('email_enabled').notNull().default(false),
+    lineEnabled: boolean('line_enabled').notNull().default(false),
+    telegramEnabled: boolean('telegram_enabled').notNull().default(false),
+    updatedBy: uuid('updated_by').references(() => people.id, { onDelete: 'set null' }),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [check('notification_channel_settings_single_row', sql`${t.id} = 1`)],
+)
+
+/** A person's channel choice per notification kind; no row (or a missing kind) means the role default. */
+export const notificationPrefs = pgTable('notification_prefs', {
+  personId: uuid('person_id')
+    .primaryKey()
+    .references(() => people.id, { onDelete: 'cascade' }),
+  kinds: jsonb('kinds').$type<NotificationPrefs['kinds']>().notNull().default({}),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+})
+
+/** A person's linked LINE user id / Telegram chat id. One person per external id. */
+export const channelLinks = pgTable(
+  'channel_links',
+  {
+    personId: uuid('person_id')
+      .notNull()
+      .references(() => people.id, { onDelete: 'cascade' }),
+    channel: text('channel').notNull(),
+    externalId: text('external_id').notNull(),
+    linkedAt: timestamp('linked_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.personId, t.channel] }),
+    unique('channel_links_external_unique').on(t.channel, t.externalId),
+    check('channel_links_channel_check', sql`${t.channel} in ('line', 'telegram')`),
+  ],
+)
+
+/** One-time codes (`LINK-XXXXXX`) a person sends to the LINE account or Telegram bot to link it. */
+export const channelLinkCodes = pgTable(
+  'channel_link_codes',
+  {
+    code: text('code').primaryKey(),
+    personId: uuid('person_id')
+      .notNull()
+      .references(() => people.id, { onDelete: 'cascade' }),
+    channel: text('channel').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    usedAt: timestamp('used_at', { withTimezone: true }),
+  },
+  (t) => [
+    check('channel_link_codes_channel_check', sql`${t.channel} in ('line', 'telegram')`),
+    index('channel_link_codes_person_idx').on(t.personId, t.channel),
+  ],
+)
+
+/** One outcome per notification and channel: a `sent` row makes delivery on that channel idempotent. */
+export const notificationDeliveries = pgTable(
+  'notification_deliveries',
+  {
+    notificationId: uuid('notification_id')
+      .notNull()
+      .references(() => notifications.id, { onDelete: 'cascade' }),
+    channel: text('channel').notNull(),
+    state: text('state').notNull(),
+    errorCode: text('error_code'),
+    at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.notificationId, t.channel] }),
+    check('notification_deliveries_channel_check', sql`${t.channel} in (${list(ChannelName.options)})`),
+    check('notification_deliveries_state_check', sql`${t.state} in ('sent', 'failed', 'skipped')`),
   ],
 )

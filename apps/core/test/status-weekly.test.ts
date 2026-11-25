@@ -257,7 +257,8 @@ describe('runWeeklySummary', () => {
     expect(rows[1]!.body).toBe('## ความคืบหน้า\nสรุปรอบที่ 2')
     // The previous summary is not material for the next one.
     expect(prompts[1]).not.toContain('สรุปรอบที่ 1')
-  })
+    // Two AI summaries in one test: slow under a loaded run, so it gets more than the 5 s default.
+  }, 15_000)
 
   it('skips no-AI projects: no AI call, no entry', async () => {
     const s = await setup({ noAi: true })

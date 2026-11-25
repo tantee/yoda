@@ -32,7 +32,16 @@ function logout() {
       </v-btn>
     </v-btn-toggle>
     <NotificationBell v-if="me" />
-    <span v-if="me" class="mr-2" data-testid="display-name">{{ me.displayName }}</span>
+    <v-menu v-if="me">
+      <template #activator="{ props }">
+        <v-btn v-bind="props" variant="text" class="mr-2 text-none" append-icon="mdi-menu-down" data-testid="user-menu">
+          <span data-testid="display-name">{{ me.displayName }}</span>
+        </v-btn>
+      </template>
+      <v-list density="compact">
+        <v-list-item to="/settings/notifications" prepend-icon="mdi-bell-cog-outline" :title="t('notifications.settingsLink')" data-testid="menu-notification-settings" />
+      </v-list>
+    </v-menu>
     <v-btn icon="mdi-logout" :title="t('app.logout')" @click="logout" />
   </v-app-bar>
   <v-navigation-drawer v-model="drawer">

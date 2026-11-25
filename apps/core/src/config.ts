@@ -32,6 +32,14 @@ export type Config = {
   runnerLeaseSeconds: number
   /** Serves the runner MCP endpoint at `/mcp`. */
   mcpEnabled: boolean
+  /** SMTP relay for the email channel; unset host or sender = email not configured. */
+  smtpHost?: string
+  smtpPort: number
+  smtpSecure: boolean
+  smtpUser?: string
+  /** Only ever read from the environment; never logged, stored or returned. */
+  smtpPassword?: string
+  mailFrom?: string
 }
 
 const modelId = z.string().regex(/^(anthropic|openai):.+$/, 'must be provider:model with provider anthropic or openai')
@@ -64,6 +72,12 @@ const envSchema = z.object({
   PORTAL_URL: z.string().url().default('http://localhost:3000'),
   RUNNER_LEASE_SECONDS: z.coerce.number().int().min(180).max(86400).default(600),
   MCP_ENABLED: z.preprocess((v) => (v === '' ? undefined : v), z.enum(['true', 'false']).default('true')),
+  SMTP_HOST: optional(z.string()),
+  SMTP_PORT: z.preprocess((v) => (v === '' ? undefined : v), z.coerce.number().int().min(1).max(65535).default(587)),
+  SMTP_SECURE: z.preprocess((v) => (v === '' ? undefined : v), z.enum(['true', 'false']).default('false')),
+  SMTP_USER: optional(z.string()),
+  SMTP_PASSWORD: optional(z.string()),
+  MAIL_FROM: optional(z.string()),
 })
 
 export function loadConfig(env: NodeJS.ProcessEnv): Config {
@@ -103,5 +117,11 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     portalUrl: e.PORTAL_URL.replace(/\/+$/, ''),
     runnerLeaseSeconds: e.RUNNER_LEASE_SECONDS,
     mcpEnabled: e.MCP_ENABLED === 'true',
+    smtpHost: e.SMTP_HOST,
+    smtpPort: e.SMTP_PORT,
+    smtpSecure: e.SMTP_SECURE === 'true',
+    smtpUser: e.SMTP_USER,
+    smtpPassword: e.SMTP_PASSWORD,
+    mailFrom: e.MAIL_FROM,
   }
 }

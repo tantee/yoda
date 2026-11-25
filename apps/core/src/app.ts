@@ -11,6 +11,7 @@ import type { AiGateway } from './ai/gateway.js'
 import type { AttachmentStoredHook } from './attachments/service.js'
 import type { JobQueue } from './jobs/queue.js'
 import type { GitLabClient } from './gitlab/client.js'
+import type { MailTransport } from './notifications/channels/email.js'
 import { createAttachmentEntry } from './knowledge/service.js'
 import { knowledgeRoutes } from './routes/knowledge.js'
 import { aiRoutes } from './routes/ai.js'
@@ -31,6 +32,7 @@ import { gitlabRoutes } from './routes/gitlab.js'
 import { runnerRoutes } from './routes/runners.js'
 import { statusRoutes } from './routes/status.js'
 import { mcpRoutes } from './routes/mcp.js'
+import { notificationChannelRoutes } from './routes/notification-channels.js'
 
 export type AppDeps = {
   config: Config
@@ -42,6 +44,8 @@ export type AppDeps = {
   jobs: JobQueue
   /** Null when GITLAB_URL / GITLAB_TOKEN are not both set. */
   gitlab: GitLabClient | null
+  /** SMTP transport for the email channel (server.ts builds it when SMTP is configured; tests inject a fake). */
+  mailTransport?: MailTransport
   /** Replaces the default upload hook (create the attachment's knowledge entry); tests use it to observe calls. */
   onAttachmentStored?: AttachmentStoredHook
 }
@@ -95,6 +99,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   proposalRoutes(app)
   discussionRoutes(app)
   notificationRoutes(app)
+  notificationChannelRoutes(app)
   adminRoutes(app)
   gitlabRoutes(app)
   runnerRoutes(app)
