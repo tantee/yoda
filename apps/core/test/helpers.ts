@@ -29,7 +29,7 @@ export function testDb(): Promise<Db> {
 }
 
 export async function resetDb(db: Db): Promise<void> {
-  await db.execute(sql`TRUNCATE department_settings, notifications, proposals, conversation_reads, messages, conversations, ai_calls, knowledge_chunks, knowledge_entries, attachments, people, projects, project_members, events, tasks, work_items, workflow_templates CASCADE`)
+  await db.execute(sql`TRUNCATE department_settings, discussion_responses, discussions, agendas, notifications, proposals, conversation_reads, messages, conversations, ai_calls, knowledge_chunks, knowledge_entries, attachments, people, projects, project_members, events, tasks, work_items, workflow_templates CASCADE`)
   // The migration seeds the single department_settings row; TRUNCATE (cascading from people) removes it.
   await db.execute(sql`INSERT INTO department_settings (id) VALUES (1) ON CONFLICT DO NOTHING`)
   await seedTemplates(db)
@@ -88,11 +88,11 @@ export async function testDeps(overrides: Partial<AppDeps> = {}): Promise<AppDep
     bus,
     ai: new AiGateway({ db, bus, models: mockModels(), config }),
     storage: await testStorage(config),
-    // Most tests drive AI tasks by hand, so drafting and secretary jobs are dropped by default; drafter,
-    // chat and secretary tests that assert on them pass their own queue.
+    // Most tests drive AI tasks by hand, so drafting, secretary and discussion-brief jobs are dropped by
+    // default; tests that assert on them pass their own queue.
     jobs: new InlineJobQueue({
       onError: (err, name, id) => console.warn(`test job ${name} ${id} failed`, err),
-      ignore: ['draft-task', 'secretary-chat', 'secretary-event'],
+      ignore: ['draft-task', 'secretary-chat', 'secretary-event', 'discussion-brief'],
     }),
     ...overrides,
   }

@@ -18,6 +18,7 @@ const text = ref('')
 const newAssignee = ref<string | null>(null)
 const attached = ref<Attachment[]>([])
 const intakeId = ref<string | null>(null)
+const raiseOpen = ref(false)
 
 /**
  * Requesters, and staff who see this task only as its requester (outside the project), get a trimmed view:
@@ -32,6 +33,7 @@ const canManage = computed(() => staff.value && (!!me.value?.isAdmin || isPm.val
 const active = computed(() => ['proposed', 'open', 'in_progress', 'submitted'].includes(task.value?.state ?? ''))
 const workable = computed(() => task.value?.state === 'open' || task.value?.state === 'in_progress')
 const isDecision = computed(() => task.value?.type === 'review' || task.value?.type === 'approval')
+const canRaise = computed(() => staff.value && active.value && (isAssignee.value || canManage.value))
 const showConfirm = computed(() => canManage.value && task.value?.state === 'proposed' && !!task.value.proposedAssigneeId)
 
 let seq = 0
@@ -128,6 +130,19 @@ useLiveEvents((e) => {
         · {{ t('todo.project') }}: <NuxtLink :to="`/projects/${task.projectId}`">{{ task.projectName }}</NuxtLink>
         · {{ t('task.assignee') }}: {{ task.assigneeName ?? task.proposedAssigneeName ?? t('task.unassigned') }}
       </p>
+
+      <v-btn v-if="canRaise" variant="outlined" prepend-icon="mdi-forum-outline" class="mb-4" data-testid="raise-btn" @click="raiseOpen = true">
+        {{ t('workItems.raiseDiscussion') }}
+      </v-btn>
+      <DiscussionsRaiseDiscussionDialog
+        v-if="canRaise"
+        v-model="raiseOpen"
+        :project-id="task.projectId"
+        :work-item-id="task.workItemId"
+        :task-id="task.id"
+        :no-ai="project?.noAi"
+        @raised="(did: string) => navigateTo(`/discussions/${did}`)"
+      />
 
       <h2 class="text-h6 mb-1">{{ t('task.instructions') }}</h2>
       <p class="mb-4" style="white-space: pre-wrap">{{ localized(task.instructions, locale) }}</p>

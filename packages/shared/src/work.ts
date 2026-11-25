@@ -199,6 +199,8 @@ export const WorkItem = z.object({
    * pending (e.g. the PM rejected it): a PM may advance it with POST /work-items/:id/advance.
    */
   awaitingAdvance: z.boolean(),
+  /** Open or scheduled discussions linked to this item (they block its step from advancing). */
+  openDiscussions: z.number().int(),
   createdAt: z.string(),
   updatedAt: z.string(),
 })
@@ -221,6 +223,9 @@ export const EventType = z.enum([
   'ai.drafted', 'ai.failed', 'ai.retried', 'ai.budget_warning', 'ai.budget_exceeded',
   'knowledge.created', 'knowledge.updated', 'knowledge.confirmed',
   'proposal.created', 'proposal.accepted', 'proposal.rejected', 'proposal.superseded', 'work_item.priority_changed',
+  'discussion.raised', 'discussion.brief_ready', 'discussion.brief_failed', 'discussion.scheduled', 'discussion.decided', 'discussion.withdrawn',
+  /** Live-only (never stored in `events`): someone gave an opinion or voted on a discussion. */
+  'discussion.responded',
   /** Live-only (never stored in `events`): a message was posted in `conversationId`. */
   'message.created',
   /** Live-only (never stored in `events`): a notification was created for `personId`. */

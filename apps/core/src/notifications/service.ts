@@ -154,6 +154,7 @@ const PROPOSAL_TITLE: Record<ProposalKind, string> = {
   step_advance: 'รอยืนยันการไปขั้นตอนถัดไป',
   priority_change: 'รอยืนยันการเปลี่ยนความสำคัญ',
   create_work_item: 'รอยืนยันการสร้างงานใหม่',
+  raise_discussion: 'รอยืนยันการยกประเด็นหารือ',
 }
 
 /**
@@ -192,6 +193,88 @@ export async function notifyProposalPending(
       body,
       link: '/todo',
       dedupeKey: `proposal:${p.id}`,
+    })
+  }
+}
+
+/** Of `ids`, the staff who may still see a discussion of `projectId` (null: a department discussion). */
+async function staffWhoSee(ctx: WorkCtx, ids: string[], projectId: string | null): Promise<string[]> {
+  if (!ids.length) return []
+  const rows = await ctx.tx
+    .select({ id: people.id })
+    .from(people)
+    .where(
+      and(
+        inArray(people.id, ids),
+        sql`(${people.isAdmin} or coalesce(${people.staffOverride}, ${people.lastSeenStaff}))`,
+        projectId
+          ? sql`(${people.isAdmin} or exists (select 1 from ${projectMembers} where ${projectMembers.projectId} = ${projectId} and ${projectMembers.personId} = ${people.id}))`
+          : undefined,
+      ),
+    )
+  return rows.map((r) => r.id).sort()
+}
+
+type DiscussionRef = { id: string; projectId: string | null; question: string }
+
+/**
+ * A new discussion: its deciders hear about it, the project's PMs (admins when it has none); admins for a
+ * department discussion. Not the raiser themself.
+ */
+export async function notifyDiscussionRaised(ctx: WorkCtx, d: DiscussionRef & { raisedBy: string }): Promise<void> {
+  let recipients = d.projectId ? await projectPms(ctx, d.projectId) : []
+  if (!recipients.length) recipients = await admins(ctx)
+  const ids = [...new Set(recipients)].filter((id) => id !== d.raisedBy)
+  for (const personId of await staffWhoSee(ctx, ids, d.projectId)) {
+    await notify(ctx, {
+      personId,
+      kind: 'discussion',
+      title: 'มีประเด็นหารือใหม่',
+      body: d.question,
+      link: `/discussions/${d.id}`,
+      dedupeKey: `discussion:${d.id}:raised`,
+    })
+  }
+}
+
+/**
+ * A discussion was decided or withdrawn: the raiser and everyone who responded hear about it (not whoever
+ * decided / withdrew it). `text` is the decision or the withdrawal reason.
+ */
+export async function notifyDiscussionEnded(
+  ctx: WorkCtx,
+  event: 'decided' | 'withdrawn',
+  d: DiscussionRef & { raisedBy: string; text: string; responders: string[] },
+): Promise<void> {
+  const ids = [...new Set([d.raisedBy, ...d.responders])].filter((id) => id !== ctx.actorId)
+  for (const personId of await staffWhoSee(ctx, ids, d.projectId)) {
+    await notify(ctx, {
+      personId,
+      kind: 'discussion',
+      title: event === 'decided' ? `ได้ข้อสรุปแล้ว: ${d.question}` : `ประเด็นหารือถูกถอน: ${d.question}`,
+      body: d.text,
+      link: `/discussions/${d.id}`,
+      dedupeKey: `discussion:${d.id}:${event}`,
+    })
+  }
+}
+
+/**
+ * The brief changed and these voters' options are gone: each is told once per reset (not whoever changed
+ * the brief). The dedupe key carries the reset time, so a later reset tells them again.
+ */
+export async function notifyVotesReset(ctx: WorkCtx, d: DiscussionRef, voters: string[]): Promise<void> {
+  const ids = [...new Set(voters)].filter((id) => id !== ctx.actorId)
+  if (!ids.length) return
+  const [now] = await ctx.tx.execute<{ at: string }>(sql`select to_char(now() at time zone 'UTC', 'YYYYMMDDHH24MISSUS') as at`)
+  for (const personId of await staffWhoSee(ctx, ids, d.projectId)) {
+    await notify(ctx, {
+      personId,
+      kind: 'discussion',
+      title: `ทางเลือกที่คุณโหวตถูกเปลี่ยน: ${d.question}`,
+      body: 'ทางเลือกในบทสรุปถูกแก้ไขหรือนำออก คะแนนเสียงของคุณถูกล้าง กรุณาโหวตใหม่',
+      link: `/discussions/${d.id}`,
+      dedupeKey: `discussion:${d.id}:vote-reset:${now!.at}`,
     })
   }
 }

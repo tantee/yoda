@@ -18,7 +18,7 @@ const MARKER = '…[truncated]'
  * department entries (the same set the pack reads directly). Chosen over a second search function so
  * ranking, `forAi` filtering and embedding stay in one place.
  */
-const SYSTEM_ME: Me = { id: '00000000-0000-0000-0000-000000000000', username: 'system', displayName: 'system', email: null, isAdmin: true, isStaff: true }
+export const SYSTEM_ME: Me = { id: '00000000-0000-0000-0000-000000000000', username: 'system', displayName: 'system', email: null, isAdmin: true, isStaff: true }
 
 /** SQL conditions that keep anything flagged "do not send to AI" out of a prompt. */
 const sendable: SQL[] = [
@@ -38,7 +38,7 @@ const toPackEntry = (r: Pick<Row, 'id' | 'title' | 'body' | 'status' | 'type'>):
 })
 
 /** Current entries of a type: work item first, then project, then department, newest first inside each. */
-async function currentEntries(
+export async function currentEntries(
   db: Db,
   w: { workItemId: string; projectId: string },
   type: Row['type'],

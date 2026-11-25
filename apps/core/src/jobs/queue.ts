@@ -1,7 +1,14 @@
 import { PgBoss } from 'pg-boss'
 
-export type JobName = 'embed-entry' | 'draft-task' | 'secretary-chat' | 'secretary-event' | 'secretary-sweep'
-export const JOB_NAMES: readonly JobName[] = ['embed-entry', 'draft-task', 'secretary-chat', 'secretary-event', 'secretary-sweep']
+export type JobName = 'embed-entry' | 'draft-task' | 'secretary-chat' | 'secretary-event' | 'secretary-sweep' | 'discussion-brief'
+export const JOB_NAMES: readonly JobName[] = [
+  'embed-entry',
+  'draft-task',
+  'secretary-chat',
+  'secretary-event',
+  'secretary-sweep',
+  'discussion-brief',
+]
 
 /** Recurring jobs (cron, Asia/Bangkok): pg-boss sends them; tests run them with `InlineJobQueue.runScheduled`. */
 export const SCHEDULES: Partial<Record<JobName, string>> = { 'secretary-sweep': '*/15 * * * *' }
@@ -24,12 +31,13 @@ export const EXPIRE_IN_SECONDS = 10 * 60
 const QUEUE_OPTIONS = { retryLimit: RETRY_LIMIT, retryDelay: RETRY_DELAY_SECONDS, expireInSeconds: EXPIRE_IN_SECONDS }
 
 /**
- * `draft-task` is sent with `singletonKey` = task id on an `exclusive` queue, so at most one drafting job per
- * task is queued, retrying or active; a duplicate send is dropped by pg-boss. The policy only applies when the
- * queue is first created (pg-boss cannot change an existing queue's policy).
+ * `draft-task` (singletonKey = task id) and `discussion-brief` (= discussion id) are sent on `exclusive`
+ * queues, so at most one job per task / discussion is queued, retrying or active; a duplicate send is dropped
+ * by pg-boss. The policy only applies when the queue is first created (pg-boss cannot change an existing
+ * queue's policy).
  */
-const POLICY: Partial<Record<JobName, 'exclusive'>> = { 'draft-task': 'exclusive' }
-const SINGLETON: readonly JobName[] = ['draft-task']
+export const POLICY: Partial<Record<JobName, 'exclusive'>> = { 'draft-task': 'exclusive', 'discussion-brief': 'exclusive' }
+export const SINGLETON: readonly JobName[] = ['draft-task', 'discussion-brief']
 
 /** pg-boss backed queue (its own `pgboss` schema in the app database). Used only by server.ts. */
 export async function createPgBossQueue(databaseUrl: string, concurrency: number): Promise<JobQueue> {
