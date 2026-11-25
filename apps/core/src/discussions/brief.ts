@@ -8,7 +8,7 @@ import { currentEntries, SYSTEM_ME } from '../knowledge/context-pack.js'
 import { searchKnowledge } from '../knowledge/search.js'
 import { runWork, type Actor } from '../work/context.js'
 import type { DiscussionRow } from './queries.js'
-import { isUndecided, lockDiscussion, recordDiscussionEvent } from './service.js'
+import { isUndecided, lockDiscussion, recordDiscussionEvent, resetStaleVotes } from './service.js'
 
 /** A brief is short: bounded so a runaway generation does not run up the bill. */
 export const BRIEF_MAX_OUTPUT_TOKENS = 6000
@@ -196,7 +196,8 @@ function permanentReason(err: unknown): string | null {
 
 /**
  * Writes the outcome under the discussion row lock, only while the discussion is open / scheduled and its
- * brief still pending: a person's edit (or a withdrawal) during generation wins.
+ * brief still pending: a person's edit (or a withdrawal) during generation wins. Votes for options the new
+ * brief no longer has are reset (resetStaleVotes).
  */
 async function settle(
   deps: BriefDeps,
@@ -210,7 +211,10 @@ async function settle(
     const d = await lockDiscussion(ctx.tx, id)
     const current = d.brief as DiscussionBrief | null
     if (!isUndecided(d.state) || current?.status !== 'pending') return
-    await ctx.tx.update(discussions).set({ brief: next(current), updatedAt: sql`now()` }).where(eq(discussions.id, id))
+    const brief = next(current)
+    await ctx.tx.update(discussions).set({ brief, updatedAt: sql`now()` }).where(eq(discussions.id, id))
+    // Votes cast on people's options while the AI worked: an option the AI dropped or re-keyed loses them.
+    await resetStaleVotes(ctx, d, current.options, brief.options, { sameTitle: true })
     await recordDiscussionEvent(ctx, d, type, extra)
   })
 }

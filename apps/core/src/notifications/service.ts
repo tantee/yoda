@@ -259,6 +259,26 @@ export async function notifyDiscussionEnded(
   }
 }
 
+/**
+ * The brief changed and these voters' options are gone: each is told once per reset (not whoever changed
+ * the brief). The dedupe key carries the reset time, so a later reset tells them again.
+ */
+export async function notifyVotesReset(ctx: WorkCtx, d: DiscussionRef, voters: string[]): Promise<void> {
+  const ids = [...new Set(voters)].filter((id) => id !== ctx.actorId)
+  if (!ids.length) return
+  const [now] = await ctx.tx.execute<{ at: string }>(sql`select to_char(now() at time zone 'UTC', 'YYYYMMDDHH24MISSUS') as at`)
+  for (const personId of await staffWhoSee(ctx, ids, d.projectId)) {
+    await notify(ctx, {
+      personId,
+      kind: 'discussion',
+      title: `ทางเลือกที่คุณโหวตถูกเปลี่ยน: ${d.question}`,
+      body: 'ทางเลือกในบทสรุปถูกแก้ไขหรือนำออก คะแนนเสียงของคุณถูกล้าง กรุณาโหวตใหม่',
+      link: `/discussions/${d.id}`,
+      dedupeKey: `discussion:${d.id}:vote-reset:${now!.at}`,
+    })
+  }
+}
+
 type Row = typeof notifications.$inferSelect
 
 const toNotification = (r: Row): Notification => ({

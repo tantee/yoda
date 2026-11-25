@@ -154,7 +154,7 @@ export async function secretaryEvent(deps: EventDeps, run: JobRun): Promise<void
   )
   if (!summary) return
   await runWork(deps, { id: null, kind: 'system' }, async (ctx) => {
-    await ctx.tx.select({ id: workItems.id }).from(workItems).where(eq(workItems.id, item.id)).for('update')
+    await ctx.tx.select({ id: workItems.id }).from(workItems).where(eq(workItems.id, item.id)).for('no key update')
     if (await summaryExists(ctx.tx)) return
     await createEntry(ctx, null, {
       scope: 'work_item',

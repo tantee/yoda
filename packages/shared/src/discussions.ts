@@ -138,3 +138,7 @@ export type AgendaCreate = z.infer<typeof AgendaCreate>
 
 export const AgendaItemsPut = z.object({ discussionIds: z.array(uuid).max(50) })
 export type AgendaItemsPut = z.infer<typeof AgendaItemsPut>
+
+/** `GET /agendas/permissions`: whether the caller may create and edit agendas. */
+export const AgendaPermissions = z.object({ canEdit: z.boolean() })
+export type AgendaPermissions = z.infer<typeof AgendaPermissions>

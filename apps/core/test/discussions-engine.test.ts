@@ -210,6 +210,8 @@ describe('discussions block and resume work items', () => {
 
   it('a decision racing the last task acceptance advances the step exactly once', async () => {
     for (let round = 0; round < 3; round++) {
+      // The previous round's jobs (e.g. embedding the decision entry) must not race the truncate.
+      await (deps.jobs as InlineJobQueue).drain()
       await resetDb(db)
       const s = await setup(db, 'auto-assign')
       const wi = await toDev(s)
@@ -266,9 +268,47 @@ describe('discussions block and resume work items', () => {
     expect(await advancesFrom(wi, 'close')).toHaveLength(1)
   })
 
+  it('a pending raise_discussion proposal is superseded when the item is done or cancelled', async () => {
+    const s = await setup(db, 'auto-assign')
+    const pendingRaise = (wi: string) =>
+      db
+        .insert(proposals)
+        .values({
+          projectId: s.projectId,
+          workItemId: wi,
+          kind: 'raise_discussion',
+          summary: 'ยกประเด็น',
+          payload: { question: 'ควรทำอย่างไร?', details: '', priority: 'normal', options: [] },
+          createdByKind: 'ai',
+          onBehalfOf: s.dev.id,
+        })
+        .returning()
+        .then((r) => r[0]!)
+    const stateOf = async (id: string) => (await db.select().from(proposals).where(eq(proposals.id, id)))[0]!.state
+
+    const wi = await toDev(s)
+    await submitLatest(s, wi, 'implement', s.dev, { text: 'v1' })
+    await submitLatest(s, wi, 'draft-tests', s.qc, { text: 'tests' })
+    await submitLatest(s, wi, 'review-code', s.dev, approve)
+    await submitLatest(s, wi, 'verify', s.qc, { text: 'ok' })
+    await submitLatest(s, wi, 'approve-release', s.qc, approve)
+    await submitLatest(s, wi, 'accept-delivery', s.pm, approve)
+    const atDone = await pendingRaise(wi)
+    await submitLatest(s, wi, 'close-bug', s.pm, approve)
+    expect(await item(wi)).toMatchObject({ state: 'done' })
+    expect(await stateOf(atDone.id)).toBe('superseded')
+    expect((await itemEvents(wi)).filter((e) => e.type === 'proposal.superseded')).toHaveLength(1)
+
+    const wi2 = await create(s)
+    const atCancel = await pendingRaise(wi2)
+    await run(s.pm, (ctx) => cancelWorkItem(ctx, s.pm, wi2))
+    expect(await stateOf(atCancel.id)).toBe('superseded')
+  })
+
   it('a raise racing the last task acceptance either holds the step or gets 409, never both', async () => {
     const outcomes = new Set<string>()
     for (let round = 0; round < 6; round++) {
+      await (deps.jobs as InlineJobQueue).drain()
       await resetDb(db)
       const s = await setup(db, 'auto-assign')
       const wi = await toDev(s)

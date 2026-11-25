@@ -53,6 +53,24 @@ describe('agendas', () => {
     await app.close()
   })
 
+  it('GET /agendas/permissions: admins and PMs of any project may edit; other staff not; requesters 403', async () => {
+    const can = async (who: Who) => {
+      const res = await call(who, 'GET', '/agendas/permissions')
+      expect(res.statusCode, res.body).toBe(200)
+      return (res.json() as { canEdit: boolean }).canEdit
+    }
+    expect(await can(admin)).toBe(true)
+    expect(await can(pm)).toBe(false)
+    const p = await project('ก', [[pm, ['PM']], [admin, ['PM']], [dev, ['DEV']]])
+    expect(await can(pm)).toBe(true)
+    expect(await can(dev)).toBe(false)
+    expect(await can(outsider)).toBe(false)
+    expect((await call(nurse, 'GET', '/agendas/permissions')).statusCode).toBe(403)
+    // Losing the PM role takes the right away at once (the admin stays the project's PM).
+    expect((await call(admin, 'PUT', `/projects/${p}/members/${pm.id}`, { roles: ['DEV'] })).statusCode).toBe(200)
+    expect(await can(pm)).toBe(false)
+  })
+
   it('a PM schedules three discussions in order, reorders, removes one, deletes the agenda', async () => {
     const p = await project('ก', [[pm, ['PM']], [dev, ['DEV']]])
     const [a, b, c] = [await raise(pm, { projectId: p, question: 'คำถาม ก' }), await raise(dev, { projectId: p, question: 'คำถาม ข' }), await raise(pm, { question: 'ระดับแผนก' })] as [Discussion, Discussion, Discussion]

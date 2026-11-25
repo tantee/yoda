@@ -1,19 +1,26 @@
-import type { Project, ProjectDetail } from '@yoda/shared'
+import type { AgendaPermissions } from '@yoda/shared'
 
-/** Agendas are edited by admins and by PMs of any project (the server enforces; this only hides the controls). */
+/**
+ * Agendas are edited by admins and by PMs of any project (the server enforces; this only hides the controls).
+ * Asked of the server on mount and whenever `me` changes (one cheap call, no per-project scan).
+ */
 export function useCanEditAgendas() {
   const { me } = useMe()
   const api = useApi()
-  const isPm = ref(false)
-  onMounted(async () => {
-    if (!me.value || me.value.isAdmin) return
+  const allowed = useState<{ personId: string; canEdit: boolean } | null>('agenda-permissions', () => null)
+  async function load() {
+    const id = me.value?.id
+    if (!id || me.value?.isAdmin) return
     try {
-      const projects = await api<Project[]>('/projects')
-      const details = await Promise.all(projects.map(p => api<ProjectDetail>(`/projects/${p.id}`).catch(() => null)))
-      isPm.value = details.some(p => p?.members.some(m => m.personId === me.value?.id && m.roles.includes('PM')))
+      const res = await api<AgendaPermissions>('/agendas/permissions')
+      if (me.value?.id === id) allowed.value = { personId: id, canEdit: res.canEdit }
     } catch {
-      isPm.value = false
+      // Controls stay hidden; the server would refuse anyway.
     }
+  }
+  onMounted(() => {
+    void load()
   })
-  return computed(() => !!me.value?.isAdmin || isPm.value)
+  watch(() => me.value?.id, () => void load())
+  return computed(() => !!me.value?.isAdmin || (allowed.value?.personId === me.value?.id && !!allowed.value?.canEdit))
 }

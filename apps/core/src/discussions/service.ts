@@ -17,7 +17,7 @@ import { forbidden, HttpError, invalidState, notFound } from '../auth/plugin.js'
 import type { Tx } from '../db/client.js'
 import { discussionResponses, discussions, projects, tasks, workItems } from '../db/schema.js'
 import { createEntry } from '../knowledge/service.js'
-import { notifyDiscussionEnded, notifyDiscussionRaised } from '../notifications/service.js'
+import { notifyDiscussionEnded, notifyDiscussionRaised, notifyVotesReset } from '../notifications/service.js'
 import { recordEvent, type WorkCtx } from '../work/context.js'
 import { isPmOrAdmin, lockItem, progressWorkItem } from '../work/engine.js'
 import { canSeeProject } from '../work/queries.js'
@@ -58,6 +58,58 @@ export async function recordDiscussionEvent(
     return
   }
   ctx.emitted.push({ type, projectId: null, workItemId: null, taskId: null, conversationId: null, personId: null })
+}
+
+/**
+ * A live-only discussion event (never stored, so the work item timeline is not flooded): pushed to whoever
+ * may see the discussion (project members, or all staff for a department one; see stream.ts) so open views
+ * refresh.
+ */
+function emitDiscussionLive(
+  ctx: WorkCtx,
+  d: Pick<DiscussionRow, 'projectId' | 'workItemId' | 'taskId'>,
+  type: Extract<EventType, `discussion.${string}`>,
+): void {
+  ctx.emitted.push({
+    type,
+    projectId: d.projectId,
+    workItemId: d.projectId ? d.workItemId : null,
+    taskId: d.projectId ? d.taskId : null,
+    conversationId: null,
+    personId: null,
+  })
+}
+
+/**
+ * The brief's options changed (`prev` → `next`) under the discussion row lock: votes for an option that is
+ * gone are deleted and each of their authors is told once. An option is gone when its key is no longer in
+ * `next`; with `sameTitle` (an AI brief replacing the options, which re-keys them a, b, c, …) also when the
+ * key now names an option with another title.
+ */
+export async function resetStaleVotes(
+  ctx: WorkCtx,
+  d: Pick<DiscussionRow, 'id' | 'projectId' | 'question'>,
+  prev: DiscussionOption[],
+  next: DiscussionOption[],
+  opts: { sameTitle: boolean },
+): Promise<void> {
+  const kept = new Map(next.map((o) => [o.key, o.title.trim()]))
+  const stale = prev
+    .filter((o) => !kept.has(o.key) || (opts.sameTitle && kept.get(o.key) !== o.title.trim()))
+    .map((o) => o.key)
+  if (!stale.length) return
+  const removed = await ctx.tx
+    .delete(discussionResponses)
+    .where(
+      and(
+        eq(discussionResponses.discussionId, d.id),
+        eq(discussionResponses.kind, 'vote'),
+        inArray(discussionResponses.optionKey, stale),
+      ),
+    )
+    .returning({ authorId: discussionResponses.authorId })
+  if (!removed.length) return
+  await notifyVotesReset(ctx, d, removed.map((r) => r.authorId))
 }
 
 /**
@@ -182,6 +234,7 @@ export async function respond(ctx: WorkCtx, me: Me, id: string, input: Discussio
   } else {
     ;[row] = (await tx.insert(discussionResponses).values(values).returning()) as [typeof discussionResponses.$inferSelect]
   }
+  emitDiscussionLive(ctx, d, 'discussion.responded')
   return toResponse(row, me.displayName)
 }
 
@@ -199,10 +252,14 @@ export async function editBrief(ctx: WorkCtx, me: Me, id: string, input: Discuss
   if (!isUndecided(d.state)) throw invalidState()
   const brief: DiscussionBrief = { ...input, source: 'person', status: 'ready', failReason: null }
   await tx.update(discussions).set({ brief, updatedAt: sql`now()` }).where(eq(discussions.id, id))
+  await resetStaleVotes(ctx, d, briefOptions(d), brief.options, { sameTitle: false })
 }
 
-/** A brief pending this long has lost its job (queue outage, expired job): it may be retried. */
-export const BRIEF_STUCK_MINUTES = 15
+/**
+ * A brief pending this long has lost its job (queue outage, expired job): it may be retried. Longer than the
+ * queue's worst case for one job: 3 attempts × 10 min expiry plus the retry delays (about 31 min).
+ */
+export const BRIEF_STUCK_MINUTES = 35
 
 /**
  * `POST /discussions/:id/brief/retry`: the raiser, a PM or an admin asks the AI again for a failed brief (or
@@ -339,18 +396,38 @@ function knowledgeTitle(question: string): string {
   return chars.length <= KNOWLEDGE_TITLE_MAX ? question : `${chars.slice(0, KNOWLEDGE_TITLE_MAX - 1).join('')}…`
 }
 
-function decisionBody(d: DiscussionRow, decision: string, option: DiscussionOption | null): string {
+/** Heading over AI-prepared brief content in a decision entry: it was never confirmed by a person. */
+export const AI_BRIEF_HEADING = 'สรุปจาก AI (ยังไม่ได้ยืนยัน) / AI-prepared, unconfirmed'
+
+/**
+ * The confirmed decision entry: question, decision and chosen option are what people confirmed. A person's
+ * brief keeps its context and recommendation; an AI brief's context, options and recommendation go under
+ * AI_BRIEF_HEADING so they are not read as confirmed knowledge.
+ */
+export function decisionBody(d: Pick<DiscussionRow, 'question' | 'details' | 'brief'>, decision: string, option: DiscussionOption | null): string {
   const brief = d.brief as DiscussionBrief | null
-  return [
+  const parts = [
     `คำถาม: ${d.question}`,
     `ข้อสรุป: ${decision}`,
     option ? `ทางเลือกที่เลือก: ${option.title}` : '',
     d.details ? `รายละเอียด: ${d.details}` : '',
-    brief?.context ? `บริบท: ${brief.context}` : '',
-    brief?.recommendation ? `ข้อเสนอแนะ: ${brief.recommendation}` : '',
   ]
-    .filter(Boolean)
-    .join('\n\n')
+  if (brief?.source === 'ai') {
+    const options = brief.options.map((o) =>
+      [`- ${o.title}${o.key === brief.recommendedKey ? ' (แนะนำ)' : ''}`, o.pros ? `  ข้อดี: ${o.pros}` : '', o.cons ? `  ข้อเสีย: ${o.cons}` : '']
+        .filter(Boolean)
+        .join('\n'),
+    )
+    const ai = [
+      brief.context ? `บริบท: ${brief.context}` : '',
+      options.length ? `ทางเลือก:\n${options.join('\n')}` : '',
+      brief.recommendation ? `ข้อเสนอแนะ: ${brief.recommendation}` : '',
+    ].filter(Boolean)
+    if (ai.length) parts.push(`## ${AI_BRIEF_HEADING}\n\n${ai.join('\n\n')}`)
+  } else {
+    parts.push(brief?.context ? `บริบท: ${brief.context}` : '', brief?.recommendation ? `ข้อเสนอแนะ: ${brief.recommendation}` : '')
+  }
+  return parts.filter(Boolean).join('\n\n')
 }
 
 /**
