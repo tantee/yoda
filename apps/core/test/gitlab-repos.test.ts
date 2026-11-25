@@ -98,6 +98,37 @@ describe('repository links', () => {
     expect(res.statusCode).toBe(409)
   })
 
+  it('PUT refuses a repo of another project, and removing a repo whose issue exists', async () => {
+    const a = (await link('dept/lab-report')).json() as Repo
+    const b = (await link('dept/lab-web')).json() as Repo
+    const otherProject = ((await call(admin, 'POST', '/projects', { name: 'other' })).json() as { id: string }).id
+    await call(admin, 'PUT', `/projects/${otherProject}/members/${pm.id}`, { roles: ['PM'] })
+    const foreign = (await call(pm, 'POST', `/projects/${otherProject}/repos`, { path: 'dept/lab-web' })).json() as Repo
+    const id = await newItem()
+    const cross = await call(pm, 'PUT', `/work-items/${id}/repos`, { repoIds: [a.id, foreign.id] })
+    expect(cross.statusCode).toBe(422)
+    expect(cross.json()).toEqual({ error: 'repo_not_found' })
+
+    const { workItemRepos } = await import('../src/db/schema.js')
+    const { and, eq } = await import('drizzle-orm')
+    await app.deps.db.update(workItemRepos).set({ issueIid: 5 }).where(and(eq(workItemRepos.workItemId, id), eq(workItemRepos.repoId, b.id)))
+    const drop = await call(pm, 'PUT', `/work-items/${id}/repos`, { repoIds: [a.id] })
+    expect(drop.statusCode).toBe(409)
+    expect(drop.json()).toEqual({ error: 'invalid_state' })
+    expect(((await call(pm, 'GET', `/work-items/${id}/code`)).json() as WorkItemCode).repos).toHaveLength(2)
+    // Dropping the repo without an issue is fine while the one with it stays.
+    expect((await call(pm, 'PUT', `/work-items/${id}/repos`, { repoIds: [b.id] })).statusCode).toBe(200)
+    expect((await call(pm, 'PUT', `/work-items/${id}/repos`, { repoIds: [a.id, b.id] })).statusCode).toBe(200)
+  })
+
+  it('non-member staff get 404 on work item code', async () => {
+    await link('dept/lab-report')
+    const id = await newItem()
+    const other = await login(app, 'other', { staff: true })
+    expect((await call(other, 'GET', `/work-items/${id}/code`)).statusCode).toBe(404)
+    expect((await call(other, 'PUT', `/work-items/${id}/repos`, { repoIds: [] })).statusCode).toBe(404)
+  })
+
   it('deletes a repo unless an issue exists in it', async () => {
     const a = (await link('dept/lab-report')).json() as Repo
     const b = (await link('dept/lab-web')).json() as Repo

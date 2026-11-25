@@ -15,6 +15,7 @@ import { AiRefused, errorSummary, type AiGateway } from '../ai/gateway.js'
 import type { AttachmentRow } from '../attachments/service.js'
 import type { Db, Tx } from '../db/client.js'
 import { attachments, knowledgeChunks, knowledgeEntries, people, projectMembers, projects, workItems } from '../db/schema.js'
+import { queueIssueSync } from '../gitlab/sync.js'
 import type { JobRun } from '../jobs/queue.js'
 import { canSeeProject } from '../work/queries.js'
 import { recordEvent, runWork, type WorkCtx, type WorkDeps } from '../work/context.js'
@@ -202,6 +203,7 @@ export async function createEntry(ctx: WorkCtx, me: Me | null, input: CreateInpu
     .returning()
   await recordKnowledgeEvent(ctx, 'knowledge.created', row!)
   ctx.jobs.push({ name: 'embed-entry', id: row!.id })
+  await queueIssueResync(ctx, row!)
   return row!.id
 }
 
@@ -229,7 +231,14 @@ async function insertNextVersion(
     .returning()
   await recordKnowledgeEvent(ctx, event, row!)
   ctx.jobs.push({ name: 'embed-entry', id: row!.id })
+  await queueIssueResync(ctx, row!)
   return row!.id
+}
+
+/** A confirmed document / decision on a work item that already has GitLab issues refreshes their section. */
+async function queueIssueResync(ctx: WorkCtx, row: EntryRow): Promise<void> {
+  if (!row.workItemId || row.status !== 'confirmed' || (row.type !== 'document' && row.type !== 'decision')) return
+  await queueIssueSync(ctx, row.workItemId, { withIssues: true })
 }
 
 /** New version with the patch applied; a person's edit verifies the entry (status confirmed). */

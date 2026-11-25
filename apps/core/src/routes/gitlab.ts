@@ -1,5 +1,5 @@
 import { GitLabStatus, RepoLink, WorkItemReposPut } from '@yoda/shared'
-import { and, eq, inArray, sql } from 'drizzle-orm'
+import { and, eq, inArray, isNotNull, notInArray } from 'drizzle-orm'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { forbidden, gitlabNotConnected, HttpError, invalidState, notFound, repoNotFound, requireAdmin, requireStaff } from '../auth/plugin.js'
@@ -95,13 +95,19 @@ export function gitlabRoutes(app: FastifyInstance): void {
       const [ref] = await tx.select({ projectId: workItems.projectId }).from(workItems).where(eq(workItems.id, id))
       if (!ref || !(await canSeeProject(tx, me, ref.projectId))) throw notFound()
       if (!(await isPmOrAdmin(tx, me, ref.projectId))) throw forbidden()
+      // Lock order project → work item; the share lock keeps the project's repos from being deleted meanwhile.
+      await lockProject(tx, ref.projectId, 'share')
       const item = await lockItem(tx, id)
       if (await devStarted(tx, item)) throw invalidState()
       if (wanted.length) {
         const own = await tx.select({ id: projectRepos.id }).from(projectRepos).where(and(eq(projectRepos.projectId, item.projectId), inArray(projectRepos.id, wanted)))
         if (own.length !== wanted.length) throw repoNotFound()
       }
-      await tx.delete(workItemRepos).where(and(eq(workItemRepos.workItemId, id), wanted.length ? sql`${workItemRepos.repoId} not in ${wanted}` : undefined))
+      const dropped = and(eq(workItemRepos.workItemId, id), wanted.length ? notInArray(workItemRepos.repoId, wanted) : undefined)
+      // A repo whose issue already exists stays linked (the issue would be orphaned).
+      const withIssue = await tx.select({ r: workItemRepos.repoId }).from(workItemRepos).where(and(dropped, isNotNull(workItemRepos.issueIid))).limit(1)
+      if (withIssue.length) throw invalidState()
+      await tx.delete(workItemRepos).where(dropped)
       if (wanted.length) await tx.insert(workItemRepos).values(wanted.map((repoId) => ({ workItemId: id, repoId }))).onConflictDoNothing()
       return workItemCode(tx, item, app.deps.gitlab !== null)
     })
