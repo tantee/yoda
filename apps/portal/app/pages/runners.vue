@@ -2,7 +2,7 @@
 import type { Runner, RunnerSettings } from '@yoda/shared'
 import { withinHours } from '~/utils/runners'
 
-const { t, locale } = useI18n()
+const { t } = useI18n()
 const { me } = useMe()
 const api = useApi()
 const docsUrl = useRuntimeConfig().public.runnerDocsUrl as string
@@ -19,7 +19,7 @@ const createOpen = ref(false)
 const confirm = ref<{ runner: Runner; action: 'pause' | 'resume' | 'revoke' } | null>(null)
 const now = ref(new Date())
 
-const fmt = (s: string) => new Date(s).toLocaleString(locale.value === 'en' ? 'en-GB' : 'th-TH')
+const { dateTime: fmt } = useDateFormat()
 const outsideHours = (r: Runner) => r.mode === 'unattended' && !withinHours(r.workingHours, now.value)
 
 async function load() {
@@ -155,9 +155,7 @@ useLiveEvents((e) => {
           <td>{{ r.lastSeenAt ? fmt(r.lastSeenAt) : t('runners.never') }}</td>
           <td data-testid="runner-active-runs">{{ r.activeRuns }}</td>
           <td data-testid="runner-status">
-            <v-chip v-if="r.revokedAt" size="x-small" color="error">{{ t('runners.revoked') }}</v-chip>
-            <v-chip v-else-if="r.paused" size="x-small" color="warning">{{ t('runners.paused') }}</v-chip>
-            <v-chip v-else size="x-small" color="success">{{ t('runners.active') }}</v-chip>
+            <StatusChip kind="runner" :value="r.revokedAt ? 'revoked' : r.paused ? 'paused' : 'active'" size="x-small" />
             <v-chip v-if="!r.revokedAt && outsideHours(r)" size="x-small" variant="outlined" class="ml-1" data-testid="runner-outside-hours">{{ t('runners.outsideHours') }}</v-chip>
           </td>
           <td class="text-no-wrap">

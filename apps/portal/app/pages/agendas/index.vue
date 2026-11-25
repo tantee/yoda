@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { Agenda } from '@yoda/shared'
 
-const { t, locale } = useI18n()
+const { t } = useI18n()
 const api = useApi()
 const router = useRouter()
 const canEdit = useCanEditAgendas()
@@ -14,7 +14,7 @@ const title = ref('')
 const meetingAt = ref('')
 const busy = ref(false)
 
-const fmt = (s: string) => new Date(s).toLocaleString(locale.value === 'en' ? 'en-GB' : 'th-TH', { dateStyle: 'medium', timeStyle: 'short' })
+const { dateTime: fmt } = useDateFormat()
 
 let seq = 0
 async function load() {

@@ -2,7 +2,7 @@
 import type { Discussion, ProjectDetail } from '@yoda/shared'
 import { voteSummary } from '~/utils/discussions'
 
-const { t, locale } = useI18n()
+const { t } = useI18n()
 const { me } = useMe()
 const route = useRoute()
 const api = useApi()
@@ -24,7 +24,7 @@ const isAdmin = computed(() => !!me.value?.isAdmin)
 const undecided = computed(() => d.value?.state === 'open' || d.value?.state === 'scheduled')
 const canDecide = computed(() => undecided.value && (isAdmin.value || (!!d.value?.projectId && isPm.value)))
 const canEdit = computed(() => undecided.value && (isAdmin.value || isPm.value || d.value?.raisedById === me.value?.id))
-const fmt = (s: string) => new Date(s).toLocaleString(locale.value === 'en' ? 'en-GB' : 'th-TH')
+const { dateTime: fmt } = useDateFormat()
 const decidedTitle = computed(() => d.value?.brief?.options.find(o => o.key === d.value?.decidedOptionKey)?.title ?? '')
 const summary = computed(() => (d.value ? voteSummary(d.value) : []))
 
@@ -104,9 +104,9 @@ async function saved() {
         <v-btn v-if="canDecide" color="primary" data-testid="decide-btn" @click="decideOpen = true">{{ t('discussions.decide.button') }}</v-btn>
         <v-btn v-if="canEdit" variant="outlined" color="error" data-testid="withdraw-btn" @click="withdrawOpen = true">{{ t('discussions.withdraw.button') }}</v-btn>
       </div>
-      <div class="d-flex flex-wrap ga-2 mb-2">
-        <v-chip size="small" data-testid="state-chip">{{ t(`discussions.state.${d.state}`) }}</v-chip>
-        <v-chip size="small" variant="outlined">{{ t(`priority.${d.priority}`) }}</v-chip>
+      <div class="d-flex flex-wrap align-center ga-2 mb-2">
+        <StatusChip kind="discussion" :value="d.state" data-testid="state-chip" />
+        <PriorityMark :priority="d.priority" />
         <v-chip size="small" variant="outlined" prepend-icon="mdi-account-outline">{{ t('discussions.raisedBy', { name: d.raisedByName }) }}</v-chip>
       </div>
       <p class="text-medium-emphasis mb-4">

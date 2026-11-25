@@ -3,7 +3,7 @@ import type { Discussion, DiscussionResponse } from '@yoda/shared'
 
 const props = defineProps<{ discussion: Discussion; canRespond: boolean }>()
 const emit = defineEmits<{ changed: [] }>()
-const { t, locale } = useI18n()
+const { t } = useI18n()
 const api = useApi()
 
 const responses = ref<DiscussionResponse[]>([])
@@ -12,7 +12,7 @@ const error = ref('')
 const busy = ref(false)
 const options = computed(() => props.discussion.brief?.options ?? [])
 const optionTitle = (key: string | null) => options.value.find(o => o.key === key)?.title ?? key ?? ''
-const fmt = (s: string) => new Date(s).toLocaleString(locale.value === 'en' ? 'en-GB' : 'th-TH')
+const { dateTime: fmt } = useDateFormat()
 
 let seq = 0
 async function load() {

@@ -49,9 +49,7 @@ const workItemLink = computed(() => {
           <GuardNote v-if="guardOf(proposal.payload)" :guard="guardOf(proposal.payload)!" />
           <div v-else-if="proposal.reason" class="text-caption text-medium-emphasis">{{ proposal.reason }}</div>
           <div v-if="proposal.state !== 'pending' || !canDecide" class="mt-1">
-            <v-chip size="small" :color="proposal.state === 'accepted' ? 'success' : undefined" data-testid="proposal-state">
-              {{ t(`chat.card.state.${proposal.state}`) }}
-            </v-chip>
+            <StatusChip kind="proposal" :value="proposal.state" :label="t(`chat.card.state.${proposal.state}`)" data-testid="proposal-state" />
           </div>
           <ProposalDecide v-if="proposal.state === 'pending' && canDecide" :proposal="proposal" @decided="emit('decided')" />
         </template>

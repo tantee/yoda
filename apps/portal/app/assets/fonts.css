@@ -1,0 +1,9 @@
+/* Self-hosted IBM Plex (proposal §3.2): Thai glyphs from Plex Sans Thai, Latin from Plex Sans. */
+@import '@fontsource/ibm-plex-sans-thai/thai-400.css';
+@import '@fontsource/ibm-plex-sans-thai/thai-500.css';
+@import '@fontsource/ibm-plex-sans-thai/thai-600.css';
+@import '@fontsource/ibm-plex-sans-thai/thai-700.css';
+@import '@fontsource/ibm-plex-sans/latin-400.css';
+@import '@fontsource/ibm-plex-sans/latin-500.css';
+@import '@fontsource/ibm-plex-sans/latin-600.css';
+@import '@fontsource/ibm-plex-sans/latin-700.css';

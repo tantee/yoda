@@ -1,0 +1,22 @@
+// Vuetify SASS settings (proposal §2.2 / §3.3): Plex fonts, no uppercase, zero tracking (Thai has no case).
+@use 'vuetify/settings' with (
+  $body-font-family: ('IBM Plex Sans Thai', 'IBM Plex Sans', 'Leelawadee UI', 'Thonburi', system-ui, sans-serif),
+  $heading-font-family: ('IBM Plex Sans Thai', 'IBM Plex Sans', 'Leelawadee UI', 'Thonburi', system-ui, sans-serif),
+  $button-text-transform: none,
+  $button-text-letter-spacing: 0,
+  $button-height: 36px,
+  $table-row-height: 48px,
+  $card-border-radius: 8px,
+  $typography: (
+    'h4': ('size': 1.5rem, 'weight': 600, 'line-height': 1.3, 'letter-spacing': 0),
+    'h5': ('size': 1.25rem, 'weight': 600, 'line-height': 1.4, 'letter-spacing': 0),
+    'h6': ('size': 1rem, 'weight': 600, 'line-height': 1.5, 'letter-spacing': 0),
+    'subtitle-1': ('size': 1rem, 'weight': 500, 'line-height': 1.5, 'letter-spacing': 0),
+    'subtitle-2': ('size': .875rem, 'weight': 600, 'line-height': 1.5, 'letter-spacing': 0),
+    'body-1': ('size': .875rem, 'weight': 400, 'line-height': 1.6, 'letter-spacing': 0),
+    'body-2': ('size': .8125rem, 'weight': 400, 'line-height': 1.6, 'letter-spacing': 0),
+    'button': ('size': .875rem, 'weight': 500, 'letter-spacing': 0, 'text-transform': none),
+    'caption': ('size': .75rem, 'weight': 400, 'line-height': 1.5, 'letter-spacing': 0),
+    'overline': ('size': .75rem, 'weight': 500, 'letter-spacing': 0, 'text-transform': none),
+  )
+);

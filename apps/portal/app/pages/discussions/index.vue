@@ -77,12 +77,17 @@ const votes = (d: Discussion) => Object.values(d.voteCounts).reduce((a, b) => a 
         <v-list-item-subtitle>
           {{ d.projectName ?? t('discussions.department') }}<template v-if="d.workItemTitle"> · {{ d.workItemTitle }}</template>
         </v-list-item-subtitle>
-        <div class="d-flex flex-wrap ga-1 mt-1">
-          <v-chip size="x-small" data-testid="priority-chip">{{ t(`priority.${d.priority}`) }}</v-chip>
-          <v-chip v-if="d.brief?.status === 'pending'" size="x-small" color="info" data-testid="brief-status">{{ t('discussions.brief.preparing') }}</v-chip>
-          <v-chip v-else-if="d.brief?.status === 'failed'" size="x-small" color="warning" data-testid="brief-status">
-            {{ t('discussions.brief.failed', { reason: t(briefFailKey(d.brief.failReason)) }) }}
-          </v-chip>
+        <div class="d-flex flex-wrap align-center ga-1 mt-1">
+          <PriorityMark :priority="d.priority" class="mr-2" data-testid="priority-chip" />
+          <StatusChip v-if="d.brief?.status === 'pending'" kind="brief" value="pending" :label="t('discussions.brief.preparing')" size="x-small" data-testid="brief-status" />
+          <StatusChip
+            v-else-if="d.brief?.status === 'failed'"
+            kind="brief"
+            value="failed"
+            :label="t('discussions.brief.failed', { reason: t(briefFailKey(d.brief.failReason)) })"
+            size="x-small"
+            data-testid="brief-status"
+          />
           <v-chip size="x-small" variant="outlined">{{ t('discussions.votes', { n: votes(d) }) }}</v-chip>
           <v-chip v-if="d.agendaId" size="x-small" variant="outlined" prepend-icon="mdi-calendar-text-outline">{{ t('discussions.onAgenda') }}</v-chip>
         </div>

@@ -9,6 +9,7 @@ const { t, locale } = useI18n()
 const api = useApi()
 const todo = ref<Todo | null>(null)
 const loadError = ref('')
+const loadFailure = ref<unknown>(null)
 const error = ref('')
 
 let seq = 0
@@ -20,7 +21,9 @@ async function load() {
     todo.value = result
     loadError.value = ''
   } catch (e) {
-    if (mine === seq) loadError.value = t(errorKey(e))
+    if (mine !== seq) return
+    loadError.value = t(errorKey(e))
+    loadFailure.value = e
   }
 }
 
@@ -71,11 +74,13 @@ const isEmpty = computed(
 
 <template>
   <div>
-    <h1 class="text-h5 mb-4">{{ t('nav.todo') }}</h1>
-    <v-alert v-if="loadError" type="error" class="mb-4" data-testid="load-error">{{ loadError }}</v-alert>
+    <PageHeader :title="t('nav.todo')" />
+    <ErrorState v-if="loadError && !todo" :error="loadFailure" class="mb-4" data-testid="load-error" @retry="load" />
+    <v-alert v-else-if="loadError" type="error" class="mb-4" data-testid="load-error">{{ loadError }}</v-alert>
+    <SkeletonList v-else-if="!todo" />
     <v-alert v-if="error" type="error" class="mb-4" data-testid="action-error">{{ error }}</v-alert>
     <template v-if="todo">
-      <p v-if="isEmpty" class="text-medium-emphasis" data-testid="todo-empty">{{ t('todo.empty') }}</p>
+      <EmptyState v-if="isEmpty" icon="mdi-check-circle-outline" :title="t('todo.empty')" data-testid="todo-empty" />
 
       <template v-if="todo.tasks.length">
         <h2 class="text-h6 mb-2">{{ t('todo.myTasks') }}</h2>
@@ -84,8 +89,8 @@ const isEmpty = computed(
             <v-list-item-title>{{ localized(task.title, locale) }}</v-list-item-title>
             <v-list-item-subtitle>{{ task.projectName }} · {{ task.workItemTitle }}</v-list-item-subtitle>
             <template #append>
-              <v-chip size="small" class="mr-1" data-testid="priority-chip">{{ t(`priority.${task.workItemPriority}`) }}</v-chip>
-              <v-chip size="small">{{ t(`task.state.${task.state}`) }}</v-chip>
+              <PriorityMark :priority="task.workItemPriority" class="mr-3" data-testid="priority-chip" />
+              <StatusChip kind="task" :value="task.state" />
             </template>
           </v-list-item>
         </v-list>
@@ -149,7 +154,7 @@ const isEmpty = computed(
               <template v-if="task.aiStatus"> · <AiStatus :task="task" can-retry @retried="load" /></template>
             </v-list-item-subtitle>
             <template #append>
-              <v-chip size="small" class="mr-2" data-testid="priority-chip">{{ t(`priority.${task.workItemPriority}`) }}</v-chip>
+              <PriorityMark :priority="task.workItemPriority" class="mr-3" data-testid="priority-chip" />
               <v-btn
                 v-if="task.state === 'proposed' && task.proposedAssigneeId"
                 color="primary"

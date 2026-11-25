@@ -1,17 +1,4 @@
-import { RunnerCapability, type AgentRunState, type Task, type WorkingHours } from '@yoda/shared'
-
-const RUN_STATE: Record<AgentRunState, string> = {
-  running: 'info',
-  succeeded: 'success',
-  failed: 'error',
-  expired: 'warning',
-  parked: 'warning',
-  released: 'grey',
-}
-
-export function runStateColor(s: AgentRunState): string {
-  return RUN_STATE[s] ?? 'grey'
-}
+import { RunnerCapability, type Task, type WorkingHours } from '@yoda/shared'
 
 /** Bangkok has no daylight saving: UTC+7 all year. */
 const BANGKOK_OFFSET_MS = 7 * 60 * 60 * 1000

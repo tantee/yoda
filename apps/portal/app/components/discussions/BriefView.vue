@@ -14,7 +14,7 @@ const undecided = computed(() => props.discussion.state === 'open' || props.disc
   <section data-testid="brief">
     <div class="d-flex align-center ga-2 mb-2">
       <h2 class="text-h6">{{ t('discussions.brief.title') }}</h2>
-      <v-chip v-if="brief?.status === 'ready' && brief.source === 'ai'" size="x-small" color="secondary" data-testid="ai-prepared">{{ t('discussions.brief.aiPrepared') }}</v-chip>
+      <StatusChip v-if="brief?.status === 'ready' && brief.source === 'ai'" kind="aiDraft" value="normal" :label="t('discussions.brief.aiPrepared')" size="x-small" data-testid="ai-prepared" />
       <v-chip v-else-if="brief?.status === 'ready'" size="x-small" variant="outlined">{{ t('discussions.brief.personWritten') }}</v-chip>
       <v-spacer />
       <v-btn v-if="canEdit && undecided && brief?.status !== 'pending'" size="small" variant="outlined" prepend-icon="mdi-pencil" data-testid="brief-edit" @click="emit('edit')">

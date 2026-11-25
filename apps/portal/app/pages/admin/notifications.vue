@@ -51,9 +51,12 @@ onMounted(load)
         <tr v-for="c in channels" :key="c.name" :data-testid="`channel-${c.name}`">
           <td>{{ t(channelKey(c.name)) }}</td>
           <td>
-            <v-chip size="small" :color="c.configured ? 'success' : 'grey'" :data-testid="`channel-${c.name}-configured`">
-              {{ t(c.configured ? 'notifications.admin.yes' : 'notifications.admin.no') }}
-            </v-chip>
+            <StatusChip
+              kind="yesNo"
+              :value="c.configured ? 'yes' : 'no'"
+              :label="t(c.configured ? 'notifications.admin.yes' : 'notifications.admin.no')"
+              :data-testid="`channel-${c.name}-configured`"
+            />
           </td>
           <td>
             <v-switch

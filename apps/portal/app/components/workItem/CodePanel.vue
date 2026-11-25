@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import type { IssueSync, Repo, WorkItemCode } from '@yoda/shared'
-import { closesHint, mrStateColor, pipelineColor, syncStatusKey } from '~/utils/gitlab'
+import type { Repo, WorkItemCode } from '@yoda/shared'
+import { closesHint, syncStatusKey } from '~/utils/gitlab'
 
 /** Staff only: the work item page is a staff path; requesters never load /work-items/:id/code. */
 const props = defineProps<{ workItemId: string; projectId: string; canManage: boolean; active: boolean }>()
@@ -19,7 +19,6 @@ const withIssue = computed(() => new Set(code.value?.issues.filter(i => i.issueI
 const repoItemProps = (r: Repo) => (withIssue.value.has(r.id) ? { disabled: true, subtitle: t('gitlab.code.hasIssue') } : {})
 const repoPath = (repoId: string) => code.value?.repos.find(r => r.id === repoId)?.pathWithNamespace ?? ''
 const reasonText = (r: string | null) => (r && te(`events.reason.${r}`) ? t(`events.reason.${r}`) : (r ?? ''))
-const syncColor = (s: IssueSync['status']) => (s === 'synced' ? 'success' : s === 'failed' ? 'error' : 'warning')
 
 let seq = 0
 async function load() {
@@ -104,9 +103,7 @@ onMounted(load)
             <span class="font-weight-medium">{{ i.pathWithNamespace }}</span>
             <a v-if="i.issueIid !== null && i.issueUrl" :href="i.issueUrl" target="_blank" rel="noopener noreferrer" data-testid="code-issue-link">#{{ i.issueIid }}</a>
             <span v-else class="text-medium-emphasis text-caption">{{ t('gitlab.code.noIssue') }}</span>
-            <v-chip size="x-small" :color="syncColor(i.status)" data-testid="code-sync" :data-status="i.status">
-              {{ t(syncStatusKey(i.status), { reason: reasonText(i.error) }) }}
-            </v-chip>
+            <StatusChip kind="sync" :value="i.status" :label="t(syncStatusKey(i.status), { reason: reasonText(i.error) })" data-testid="code-sync" :data-status="i.status" />
           </div>
           <div v-if="closesHint(i.issueIid)" class="text-caption text-medium-emphasis" data-testid="code-closes-hint">
             <i18n-t keypath="gitlab.code.closesHint" tag="span">
@@ -120,8 +117,8 @@ onMounted(load)
         <div v-for="mr in code.mergeRequests" :key="mr.id" class="d-flex flex-wrap align-center ga-2 mb-1" data-testid="code-mr">
           <a :href="mr.url" target="_blank" rel="noopener noreferrer">{{ repoPath(mr.repoId) }}!{{ mr.mrIid }}</a>
           <span>{{ mr.title }}</span>
-          <v-chip size="x-small" :color="mrStateColor(mr.state)" data-testid="code-mr-state" :data-state="mr.state">{{ t(`gitlab.mrState.${mr.state}`) }}</v-chip>
-          <v-chip v-if="mr.pipeline !== 'none'" size="x-small" variant="outlined" :color="pipelineColor(mr.pipeline)" data-testid="code-mr-pipeline">{{ t(`gitlab.pipeline.${mr.pipeline}`) }}</v-chip>
+          <StatusChip kind="mr" :value="mr.state" data-testid="code-mr-state" :data-state="mr.state" />
+          <StatusChip v-if="mr.pipeline !== 'none'" kind="pipeline" :value="mr.pipeline" :label="t(`gitlab.pipeline.${mr.pipeline}`)" data-testid="code-mr-pipeline" />
         </div>
       </template>
     </v-card-text>

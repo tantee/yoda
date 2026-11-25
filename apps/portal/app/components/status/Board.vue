@@ -4,8 +4,7 @@ import { localized } from '~/utils/localized'
 
 defineProps<{ columns: BoardColumn[] }>()
 const { t, locale } = useI18n()
-const PRIORITY_COLOR: Record<string, string | undefined> = { urgent: 'error', high: 'warning', normal: undefined, low: 'grey' }
-const fmtDate = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString(locale.value === 'en' ? 'en-GB' : 'th-TH', { day: 'numeric', month: 'short', year: 'numeric' })
+const { date: fmtDate } = useDateFormat()
 </script>
 
 <template>
@@ -20,7 +19,7 @@ const fmtDate = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString(loca
         <v-card-text class="pa-3">
           <div class="text-body-2 font-weight-medium mb-1">{{ item.title }}</div>
           <div class="d-flex flex-wrap ga-1 align-center">
-            <v-chip size="x-small" :color="PRIORITY_COLOR[item.priority]" variant="tonal" data-testid="board-priority">{{ t(`priority.${item.priority}`) }}</v-chip>
+            <PriorityMark :priority="item.priority" data-testid="board-priority" />
             <v-chip v-if="item.overdue" size="x-small" color="error" prepend-icon="mdi-calendar-alert" data-testid="board-overdue">{{ t('status.overdue') }}</v-chip>
             <v-chip v-if="item.stuckDays !== null" size="x-small" color="error" variant="outlined" prepend-icon="mdi-timer-sand" data-testid="board-stuck">
               {{ t('status.stuck', { n: item.stuckDays }, item.stuckDays) }}

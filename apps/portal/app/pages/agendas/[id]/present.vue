@@ -81,8 +81,8 @@ useLiveEvents((e) => {
         <v-alert v-if="loadError" type="error" class="mb-4" data-testid="load-error">{{ loadError }}</v-alert>
         <template v-if="current">
           <div class="d-flex flex-wrap ga-2 mb-2">
-            <v-chip size="small">{{ t(`discussions.state.${current.state}`) }}</v-chip>
-            <v-chip size="small" variant="outlined">{{ t(`priority.${current.priority}`) }}</v-chip>
+            <StatusChip kind="discussion" :value="current.state" />
+            <PriorityMark :priority="current.priority" />
             <v-chip size="small" variant="outlined">{{ current.projectName ?? t('discussions.department') }}</v-chip>
           </div>
           <h1 class="text-h4 mb-3" data-testid="present-question">{{ current.question }}</h1>

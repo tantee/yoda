@@ -3,7 +3,7 @@ import type { LiveEvent, ProjectStatus } from '@yoda/shared'
 import { debounceMax } from '~/utils/status'
 
 const props = defineProps<{ projectId: string; noAi: boolean; canManage: boolean }>()
-const { t, locale } = useI18n()
+const { t } = useI18n()
 const api = useApi()
 const status = ref<ProjectStatus | null>(null)
 const error = ref('')
@@ -35,7 +35,7 @@ function onLive(e: LiveEvent) {
 }
 defineExpose({ onLive, reload: loadSoon })
 
-const fmt = (s: string) => new Date(s).toLocaleString(locale.value === 'en' ? 'en-GB' : 'th-TH')
+const { dateTime: fmt } = useDateFormat()
 </script>
 
 <template>
@@ -44,7 +44,7 @@ const fmt = (s: string) => new Date(s).toLocaleString(locale.value === 'en' ? 'e
     <v-progress-linear v-if="!status && !error" indeterminate class="mb-4" data-testid="status-loading" />
     <template v-if="status">
       <div class="d-flex align-center flex-wrap ga-2 mb-2">
-        <StatusHealthChip :health="status.health" size="default" />
+        <StatusHealthChip :health="status.health" />
         <span class="text-body-2 text-medium-emphasis">
           {{ t('status.card.active') }} {{ status.activeItems }} · {{ t('status.card.overdue') }} {{ status.overdueItems }} · {{ t('status.card.discussions') }} {{ status.openDiscussions }}
         </span>

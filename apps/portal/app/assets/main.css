@@ -1,0 +1,34 @@
+/* Global design rules (proposal §3.3, §7.2). Component looks live in the Vuetify theme/defaults. */
+html { font-size: 16px; }
+body { font-family: 'IBM Plex Sans Thai', 'IBM Plex Sans', 'Leelawadee UI', 'Thonburi', system-ui, sans-serif; }
+
+/* Thai has no case and needs no tracking: never uppercase, zero letter-spacing everywhere. */
+.v-application, .v-btn, .v-tab, .v-chip, .v-overlay-container { letter-spacing: 0 !important; }
+.text-uppercase, .text-overline { text-transform: none !important; }
+
+/* Tabular numbers for counts, times and money. */
+.tabular-nums, .v-table td, .v-badge__badge { font-variant-numeric: tabular-nums; }
+
+/* Visible focus ring on every interactive element (Vuetify's overlay alone is not enough). */
+:focus-visible { outline: 2px solid rgb(var(--v-theme-primary)); outline-offset: 2px; }
+.v-navigation-drawer :focus-visible { outline-color: rgb(var(--v-theme-nav-accent)); }
+
+/* Chips: room for stacked Thai vowels and tone marks; 12 px minimum. */
+.v-chip { line-height: 1.5; }
+.v-chip.v-chip--size-x-small { font-size: .75rem; }
+
+/* Things that float get the one shadow. */
+.v-overlay__content > .v-card, .v-menu > .v-overlay__content > .v-list { box-shadow: 0 8px 24px rgba(11, 37, 69, .12) !important; }
+
+@media (prefers-reduced-motion: reduce) {
+  .v-progress-circular--indeterminate > svg { animation: none !important; }
+}
+.text-placeholder { color: #6B7789 !important; }
+
+/* Outlined cards and neutral outlined buttons use the light border, not the text colour (proposal §6.1, §6.2). */
+.v-card.v-card--variant-outlined { border-color: rgba(var(--v-border-color), var(--v-border-opacity)); }
+/* Coloured ones (text-primary, text-error, ...) keep their colour. */
+.v-btn.v-btn--variant-outlined:not(.text-primary):not(.text-error):not(.text-warning):not(.text-success):not(.text-info),
+.v-chip.v-chip--variant-outlined:not(.text-primary):not(.text-error):not(.text-warning):not(.text-success):not(.text-info) {
+  border-color: rgb(var(--v-theme-border-strong));
+}

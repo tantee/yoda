@@ -881,5 +881,134 @@
         "ai_failed": "ไม่ได้สร้างสรุป: เรียก AI ไม่สำเร็จ กรุณาลองใหม่ภายหลัง"
       }
     }
+  },
+  "chip": {
+    "workItem": {
+      "active": "กำลังดำเนินการ",
+      "done": "เสร็จสิ้น",
+      "cancelled": "ยกเลิกแล้ว"
+    },
+    "task": {
+      "proposed": "รอยืนยันผู้รับผิดชอบ",
+      "open": "ยังไม่เริ่ม",
+      "in_progress": "กำลังทำ",
+      "submitted": "รอตรวจ",
+      "accepted": "ยอมรับแล้ว",
+      "rejected": "ไม่ผ่าน"
+    },
+    "taskType": {
+      "ai": "AI",
+      "human": "คน",
+      "review": "ตรวจทาน",
+      "approval": "อนุมัติ"
+    },
+    "step": {
+      "done": "เสร็จแล้ว",
+      "current": "ขั้นตอนปัจจุบัน",
+      "pending": "รอเริ่ม"
+    },
+    "request": {
+      "submitted": "รับเรื่องแล้ว",
+      "in_progress": "กำลังดำเนินการ",
+      "waiting_for_you": "รอคุณตอบ",
+      "done": "เสร็จแล้ว",
+      "cancelled": "ยกเลิกแล้ว"
+    },
+    "health": {
+      "on_track": "ตามแผน",
+      "at_risk": "มีความเสี่ยง",
+      "blocked": "ติดขัด"
+    },
+    "aiStatus": {
+      "drafting": "AI กำลังร่าง",
+      "failed": "AI ร่างไม่สำเร็จ"
+    },
+    "aiDraft": {
+      "low": "ความมั่นใจต่ำ",
+      "normal": "ร่างโดย AI"
+    },
+    "waiting": {
+      "runner": "รอรันเนอร์ว่าง",
+      "ai": "รอ AI ร่าง"
+    },
+    "run": {
+      "running": "กำลังรัน",
+      "succeeded": "สำเร็จ",
+      "failed": "ล้มเหลว",
+      "expired": "หมดเวลา",
+      "parked": "รอคำตอบ",
+      "released": "คืนงานแล้ว"
+    },
+    "runner": {
+      "active": "ใช้งาน",
+      "paused": "หยุดชั่วคราว",
+      "revoked": "เพิกถอนแล้ว"
+    },
+    "sync": {
+      "synced": "ซิงก์แล้ว",
+      "failed": "ซิงก์ไม่สำเร็จ",
+      "pending": "รอซิงก์"
+    },
+    "pipeline": {
+      "success": "ผ่าน",
+      "failed": "ไม่ผ่าน",
+      "running": "กำลังรัน",
+      "pending": "รอคิว",
+      "canceled": "ถูกยกเลิก",
+      "none": "ไม่มีไปป์ไลน์"
+    },
+    "mr": {
+      "opened": "เปิดอยู่",
+      "merged": "merge แล้ว",
+      "closed": "ปิดแล้ว"
+    },
+    "discussion": {
+      "open": "เปิดอยู่",
+      "scheduled": "อยู่ในวาระ",
+      "decided": "ตัดสินแล้ว",
+      "withdrawn": "ถอนแล้ว"
+    },
+    "brief": {
+      "pending": "กำลังเตรียมสรุป",
+      "ready": "สรุปพร้อมแล้ว",
+      "failed": "เตรียมสรุปไม่สำเร็จ"
+    },
+    "proposal": {
+      "pending": "รอตัดสิน",
+      "accepted": "ยอมรับแล้ว",
+      "rejected": "ปฏิเสธแล้ว",
+      "superseded": "ถูกแทนที่"
+    },
+    "knowledge": {
+      "draft": "ฉบับร่าง",
+      "confirmed": "ยืนยันแล้ว"
+    },
+    "project": {
+      "active": "ใช้งานอยู่",
+      "archived": "เก็บถาวรแล้ว"
+    },
+    "yesNo": {
+      "yes": "ใช่",
+      "no": "ไม่ใช่"
+    }
+  },
+  "stateView": {
+    "loading": "กำลังโหลด…",
+    "errorTitle": "โหลดข้อมูลไม่สำเร็จ",
+    "errorServer": "เซิร์ฟเวอร์ตอบกลับผิดพลาด ({status})",
+    "errorNetwork": "เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ ตรวจการเชื่อมต่อเครือข่าย",
+    "errorGeneric": "เกิดข้อผิดพลาด กรุณาลองใหม่",
+    "retry": "ลองอีกครั้ง"
+  },
+  "aiDraft": {
+    "label": "ร่างโดย AI",
+    "editedBy": "ร่างโดย AI · แก้ไขโดย {name}",
+    "missingTitle": "AI ยังขาดข้อมูล:",
+    "missingHint": "ตรวจและเติมก่อนยอมรับ"
+  },
+  "stepTrack": {
+    "short": "{n}/{total} {name}",
+    "long": "ขั้นที่ {n} จาก {total}: {name}",
+    "allDone": "เสร็จครบ {total} ขั้นตอน"
   }
 }

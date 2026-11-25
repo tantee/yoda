@@ -1,11 +1,7 @@
-import type { Health, HealthReason, HealthReasonCode, WeeklySummaryOutcome } from '@yoda/shared'
+import type { HealthReason, HealthReasonCode, WeeklySummaryOutcome } from '@yoda/shared'
 
 /** The slice of vue-i18n's `t` the status helpers need: a key, named values and a plural count. */
 export type Translate = (key: string, named: Record<string, unknown>, plural: number) => string
-
-export function healthColor(h: Health): 'success' | 'warning' | 'error' {
-  return h === 'blocked' ? 'error' : h === 'at_risk' ? 'warning' : 'success'
-}
 
 /** A localized sentence with the reason's count (a percent for `ai_budget`). */
 export function reasonText(t: Translate, r: HealthReason): string {

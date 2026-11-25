@@ -44,7 +44,7 @@ useLiveEvents(loadSoon, loadSoon)
           <v-list-item-title>{{ localized(a.title, locale) }}</v-list-item-title>
           <v-list-item-subtitle>{{ a.workItemTitle }}</v-list-item-subtitle>
           <template #append>
-            <v-chip size="small">{{ t(`task.state.${a.state}`) }}</v-chip>
+            <StatusChip kind="task" :value="a.state" />
           </template>
         </v-list-item>
       </v-list>

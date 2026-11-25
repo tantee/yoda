@@ -1,24 +1,13 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { AccountType, AgentRunState, RunnerCapability, RunnerKind, RunnerMode } from '@yoda/shared'
-import { heartbeatAgeMinutes, runStateColor, waitingFor, withinHours } from '../app/utils/runners'
+import { heartbeatAgeMinutes, waitingFor, withinHours } from '../app/utils/runners'
 import { isStaffPath, navItemsFor } from '../app/utils/nav'
 
 const load = (f: string) => JSON.parse(readFileSync(new URL(`../i18n/locales/${f}`, import.meta.url), 'utf8'))
 const LOCALES = { th: load('th.json'), en: load('en.json') }
 const lookup = (o: Record<string, unknown>, key: string): unknown =>
   key.split('.').reduce<unknown>((acc, k) => (acc && typeof acc === 'object' ? (acc as Record<string, unknown>)[k] : undefined), o)
-
-describe('runStateColor', () => {
-  it('colours each run state', () => {
-    expect(runStateColor('running')).toBe('info')
-    expect(runStateColor('succeeded')).toBe('success')
-    expect(runStateColor('failed')).toBe('error')
-    expect(runStateColor('expired')).toBe('warning')
-    expect(runStateColor('parked')).toBe('warning')
-    expect(runStateColor('released')).toBe('grey')
-  })
-})
 
 describe('withinHours', () => {
   // 2026-11-25 is a Wednesday (day 3). Bangkok is UTC+7 all year.

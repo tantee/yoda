@@ -115,7 +115,7 @@ async function save(a: Attachment) {
         <template #append>
           <div class="d-flex ga-1 align-center">
             <v-chip size="x-small">{{ t(`knowledge.types.${e.type}`) }}</v-chip>
-            <v-chip size="x-small" :color="e.status === 'draft' ? 'amber' : 'success'" data-testid="status-chip">{{ t(`knowledge.statuses.${e.status}`) }}</v-chip>
+            <StatusChip kind="knowledge" :value="e.status" :label="t(`knowledge.statuses.${e.status}`)" size="x-small" data-testid="status-chip" />
             <v-chip v-if="e.noAi" size="x-small" color="warning" data-testid="no-ai-chip">{{ t('knowledge.noAi') }}</v-chip>
             <span class="text-caption text-medium-emphasis ml-1">{{ t(`knowledge.sources.${e.sourceKind}`) }}<template v-if="e.createdByName"> &middot; {{ e.createdByName }}</template></span>
           </div>

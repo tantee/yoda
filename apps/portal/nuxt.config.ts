@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url'
 import vuetify, { transformAssetUrls } from 'vite-plugin-vuetify'
 
 export default defineNuxtConfig({
@@ -7,13 +8,16 @@ export default defineNuxtConfig({
   modules: [
     '@nuxtjs/i18n',
     // Tree-shaken Vuetify: only the components and directives the templates use are bundled.
+    // Styles compile from SASS with the design settings (fonts, type scale, no uppercase).
     (_options, nuxt) => {
       nuxt.hooks.hook('vite:extendConfig', (config) => {
-        config.plugins?.push(vuetify({ autoImport: true }))
+        const styles = { configFile: fileURLToPath(new URL('./app/assets/vuetify-settings.scss', import.meta.url)) }
+        // vite-plugin-vuetify is typed against a newer Vite than Nuxt's; the plugin objects are compatible.
+        config.plugins?.push(vuetify({ autoImport: true, styles }) as unknown as NonNullable<typeof config.plugins>[number])
       })
     },
   ],
-  css: ['@mdi/font/css/materialdesignicons.css', 'vuetify/styles'],
+  css: ['~/assets/fonts.css', '@mdi/font/css/materialdesignicons.css', 'vuetify/styles', '~/assets/main.css'],
   build: { transpile: ['vuetify'] },
   vite: { vue: { template: { transformAssetUrls } } },
   devServer: { port: Number(process.env.PORTAL_PORT ?? 3000) },

@@ -881,5 +881,134 @@
         "ai_failed": "No summary was written: the AI call failed. Try again later."
       }
     }
+  },
+  "chip": {
+    "workItem": {
+      "active": "In progress",
+      "done": "Done",
+      "cancelled": "Cancelled"
+    },
+    "task": {
+      "proposed": "Awaiting assignment",
+      "open": "Not started",
+      "in_progress": "In progress",
+      "submitted": "Awaiting review",
+      "accepted": "Accepted",
+      "rejected": "Rejected"
+    },
+    "taskType": {
+      "ai": "AI",
+      "human": "Person",
+      "review": "Review",
+      "approval": "Approval"
+    },
+    "step": {
+      "done": "Done",
+      "current": "Current",
+      "pending": "Not started"
+    },
+    "request": {
+      "submitted": "Received",
+      "in_progress": "In progress",
+      "waiting_for_you": "Waiting for you",
+      "done": "Done",
+      "cancelled": "Cancelled"
+    },
+    "health": {
+      "on_track": "On track",
+      "at_risk": "At risk",
+      "blocked": "Blocked"
+    },
+    "aiStatus": {
+      "drafting": "AI drafting",
+      "failed": "AI draft failed"
+    },
+    "aiDraft": {
+      "low": "Low confidence",
+      "normal": "AI draft"
+    },
+    "waiting": {
+      "runner": "Waiting for a runner",
+      "ai": "Waiting for AI"
+    },
+    "run": {
+      "running": "Running",
+      "succeeded": "Succeeded",
+      "failed": "Failed",
+      "expired": "Expired",
+      "parked": "Waiting for an answer",
+      "released": "Given back"
+    },
+    "runner": {
+      "active": "Active",
+      "paused": "Paused",
+      "revoked": "Revoked"
+    },
+    "sync": {
+      "synced": "Synced",
+      "failed": "Sync failed",
+      "pending": "Pending"
+    },
+    "pipeline": {
+      "success": "Passed",
+      "failed": "Failed",
+      "running": "Running",
+      "pending": "Pending",
+      "canceled": "Canceled",
+      "none": "No pipeline"
+    },
+    "mr": {
+      "opened": "Open",
+      "merged": "Merged",
+      "closed": "Closed"
+    },
+    "discussion": {
+      "open": "Open",
+      "scheduled": "On agenda",
+      "decided": "Decided",
+      "withdrawn": "Withdrawn"
+    },
+    "brief": {
+      "pending": "Preparing brief",
+      "ready": "Brief ready",
+      "failed": "Brief failed"
+    },
+    "proposal": {
+      "pending": "Pending",
+      "accepted": "Accepted",
+      "rejected": "Rejected",
+      "superseded": "Superseded"
+    },
+    "knowledge": {
+      "draft": "Draft",
+      "confirmed": "Confirmed"
+    },
+    "project": {
+      "active": "Active",
+      "archived": "Archived"
+    },
+    "yesNo": {
+      "yes": "Yes",
+      "no": "No"
+    }
+  },
+  "stateView": {
+    "loading": "Loading…",
+    "errorTitle": "Could not load this",
+    "errorServer": "The server returned an error ({status})",
+    "errorNetwork": "Cannot reach the server. Check the network connection.",
+    "errorGeneric": "Something went wrong. Please try again.",
+    "retry": "Try again"
+  },
+  "aiDraft": {
+    "label": "AI draft",
+    "editedBy": "AI draft · edited by {name}",
+    "missingTitle": "The AI is missing:",
+    "missingHint": "Check and fill in before accepting"
+  },
+  "stepTrack": {
+    "short": "{n}/{total} {name}",
+    "long": "Step {n} of {total}: {name}",
+    "allDone": "All {total} steps done"
   }
 }

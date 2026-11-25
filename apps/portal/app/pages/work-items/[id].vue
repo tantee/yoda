@@ -40,7 +40,7 @@ const canSetTarget = computed(() => isActive.value && (canManage.value || (item.
 const overdue = computed(() => isActive.value && isOverdue(item.value?.targetDate ?? null, bangkokToday()))
 const targetInput = ref('')
 watch(() => item.value?.targetDate, (v) => (targetInput.value = v ?? ''), { immediate: true })
-const fmtDate = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString(locale.value === 'en' ? 'en-GB' : 'th-TH', { day: 'numeric', month: 'short', year: 'numeric' })
+const { date: fmtDate } = useDateFormat()
 const templateName = computed(() => {
   const tpl = templates.value.find(x => x.key === item.value?.templateKey)
   return tpl ? localized(tpl.name, locale.value) : (item.value?.templateKey ?? '')
@@ -167,48 +167,45 @@ useLiveEvents((e) => {
     >{{ t('workItems.back') }}</v-btn>
     <v-alert v-if="loadError" type="error" class="mb-4" data-testid="load-error">{{ loadError }}</v-alert>
     <template v-if="item">
-      <div class="d-flex align-center mb-2">
-        <h1 class="text-h5">{{ item.title }}</h1>
-        <v-spacer />
-        <v-btn
-          v-if="canManage && item.awaitingAdvance && !item.openDiscussions"
-          color="primary"
-          class="mr-2"
-          :loading="busy"
-          data-testid="advance-btn"
-          @click="advance"
-        >{{ t('workItems.advance') }}</v-btn>
-        <v-btn
-          v-if="canRaise"
-          variant="outlined"
-          class="mr-2"
-          prepend-icon="mdi-forum-outline"
-          data-testid="raise-btn"
-          @click="raiseOpen = true"
-        >{{ t('workItems.raiseDiscussion') }}</v-btn>
-        <v-btn
-          v-if="reopenSteps.length"
-          variant="outlined"
-          class="mr-2"
-          prepend-icon="mdi-undo-variant"
-          data-testid="reopen-btn"
-          @click="openReopen"
-        >{{ t('workItems.reopen') }}</v-btn>
-        <v-btn v-if="canCancel" color="error" variant="outlined" data-testid="cancel-btn" @click="cancelOpen = true">{{ t('workItems.cancel') }}</v-btn>
-      </div>
-      <div class="d-flex flex-wrap ga-2 mb-2">
-        <v-chip size="small" data-testid="state-chip">{{ t(`workItems.stateName.${item.state}`) }}</v-chip>
-        <v-chip size="small" variant="outlined" data-testid="priority-chip">{{ t(`priority.${item.priority}`) }}</v-chip>
-        <v-chip size="small" variant="outlined" data-testid="template-chip">{{ templateName }}</v-chip>
-        <v-chip size="small" variant="outlined" data-testid="owner-chip" prepend-icon="mdi-account-outline">{{ item.ownerName }}</v-chip>
-        <v-chip v-if="item.requesterName" size="small" variant="outlined" data-testid="requester-chip" prepend-icon="mdi-account-voice">
-          {{ t('workItems.requester') }}: {{ item.requesterName }}
-        </v-chip>
-        <v-chip v-if="item.targetDate && !canSetTarget" size="small" variant="outlined" prepend-icon="mdi-calendar-outline" data-testid="target-chip">
-          {{ t('status.due', { date: fmtDate(item.targetDate) }) }}
-        </v-chip>
-        <v-chip v-if="overdue" size="small" color="error" prepend-icon="mdi-calendar-alert" data-testid="overdue-chip">{{ t('status.overdue') }}</v-chip>
-      </div>
+      <PageHeader :title="item.title" class="mb-2">
+        <template #actions>
+          <v-btn
+            v-if="canManage && item.awaitingAdvance && !item.openDiscussions"
+            color="primary"
+            :loading="busy"
+            data-testid="advance-btn"
+            @click="advance"
+          >{{ t('workItems.advance') }}</v-btn>
+          <v-btn
+            v-if="canRaise"
+            variant="outlined"
+            prepend-icon="mdi-forum-outline"
+            data-testid="raise-btn"
+            @click="raiseOpen = true"
+          >{{ t('workItems.raiseDiscussion') }}</v-btn>
+          <v-btn
+            v-if="reopenSteps.length"
+            variant="outlined"
+            prepend-icon="mdi-undo-variant"
+            data-testid="reopen-btn"
+            @click="openReopen"
+          >{{ t('workItems.reopen') }}</v-btn>
+          <v-btn v-if="canCancel" color="error" variant="outlined" data-testid="cancel-btn" @click="cancelOpen = true">{{ t('workItems.cancel') }}</v-btn>
+        </template>
+        <template #meta>
+          <StatusChip kind="workItem" :value="item.state" data-testid="state-chip" />
+          <PriorityMark :priority="item.priority" data-testid="priority-chip" />
+          <v-chip size="small" variant="outlined" data-testid="template-chip">{{ templateName }}</v-chip>
+          <v-chip size="small" variant="outlined" data-testid="owner-chip" prepend-icon="mdi-account-outline">{{ item.ownerName }}</v-chip>
+          <v-chip v-if="item.requesterName" size="small" variant="outlined" data-testid="requester-chip" prepend-icon="mdi-account-voice">
+            {{ t('workItems.requester') }}: {{ item.requesterName }}
+          </v-chip>
+          <v-chip v-if="item.targetDate && !canSetTarget" size="small" variant="outlined" prepend-icon="mdi-calendar-outline" data-testid="target-chip">
+            {{ t('status.due', { date: fmtDate(item.targetDate) }) }}
+          </v-chip>
+          <v-chip v-if="overdue" size="small" color="error" prepend-icon="mdi-calendar-alert" data-testid="overdue-chip">{{ t('status.overdue') }}</v-chip>
+        </template>
+      </PageHeader>
       <div v-if="canSetTarget" class="d-flex flex-wrap align-center ga-2 mb-2" data-testid="target-date">
         <v-text-field
           v-model="targetInput"
@@ -241,23 +238,7 @@ useLiveEvents((e) => {
         </ul>
       </v-alert>
 
-      <v-stepper :model-value="item.steps.findIndex(s => s.status === 'current')" flat class="mb-4" data-testid="stepper">
-        <v-stepper-header>
-          <template v-for="(s, i) in item.steps" :key="s.key">
-            <v-divider v-if="i > 0" />
-            <v-stepper-item
-              :title="localized(s.name, locale)"
-              :value="i"
-              :complete="s.status === 'done'"
-              :color="s.status === 'pending' ? undefined : 'primary'"
-              :subtitle="t(`steps.${s.status}`)"
-              :data-status="s.status"
-              data-testid="step"
-              readonly
-            />
-          </template>
-        </v-stepper-header>
-      </v-stepper>
+      <StepTrack :steps="item.steps" show-names class="mb-4" data-testid="stepper" />
 
       <WorkItemCodePanel
         v-if="me?.isStaff"
@@ -280,11 +261,11 @@ useLiveEvents((e) => {
                 <v-chip size="x-small" :color="task.executor === 'ai' ? 'secondary' : undefined" data-testid="executor-chip">
                   {{ task.executor === 'ai' ? t('workItems.executorAi') : (task.assigneeName ?? task.proposedAssigneeName ?? t('task.unassigned')) }}
                 </v-chip>
-                <v-chip size="x-small" variant="outlined" data-testid="task-state">{{ t(`task.state.${task.state}`) }}</v-chip>
+                <StatusChip kind="task" :value="task.state" size="x-small" data-testid="task-state" />
                 <v-spacer />
                 <RunnerRunChip v-if="task.run" :run="task.run" />
-                <v-chip v-if="waitingFor(task) === 'runner'" size="x-small" color="warning" data-testid="waiting-runner">{{ t('workItems.waitingForRunner') }}</v-chip>
-                <v-chip v-else-if="waitingFor(task) === 'ai'" size="x-small" color="warning" data-testid="waiting-ai">{{ t('workItems.waitingForAi') }}</v-chip>
+                <StatusChip v-if="waitingFor(task) === 'runner'" kind="waiting" value="runner" size="x-small" data-testid="waiting-runner" />
+                <StatusChip v-else-if="waitingFor(task) === 'ai'" kind="waiting" value="ai" size="x-small" data-testid="waiting-ai" />
                 <AiStatus v-if="task.aiStatus" :task="task" :can-retry="canManage && isActive" @retried="load" />
                 <v-btn v-if="showConfirm(task)" size="small" color="primary" :loading="busy" data-testid="confirm-btn" @click="confirmTask(task.id)">{{ t('task.confirm') }}</v-btn>
                 <v-btn v-if="showAssign(task)" size="small" variant="outlined" data-testid="assign-toggle" @click="toggleAssign(task.id)">

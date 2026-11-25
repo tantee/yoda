@@ -1,14 +1,4 @@
-import type { Me, MyRequest, Proposal, RequestStatus, TaskWithContext } from '@yoda/shared'
-
-export function requestStatusColor(status: RequestStatus): string {
-  switch (status) {
-    case 'waiting_for_you': return 'warning'
-    case 'in_progress':
-    case 'submitted': return 'info'
-    case 'done': return 'success'
-    default: return 'default'
-  }
-}
+import type { Me, MyRequest, Proposal, TaskWithContext } from '@yoda/shared'
 
 /** The requester's answer tasks that belong to one of their requests. */
 export function answersFor(request: Pick<MyRequest, 'workItemId'>, answers: TaskWithContext[]): TaskWithContext[] {

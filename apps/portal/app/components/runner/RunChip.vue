@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { TaskRunSummary } from '@yoda/shared'
-import { heartbeatAgeMinutes, runStateColor } from '~/utils/runners'
+import { heartbeatAgeMinutes } from '~/utils/runners'
 
 /** Staff only: the latest runner run of a task (state, runner, heartbeat age, branch). */
 const props = defineProps<{ run: TaskRunSummary }>()
@@ -25,10 +25,7 @@ const age = computed(() => heartbeatAgeMinutes(props.run.heartbeatAt, now.value)
 
 <template>
   <span class="d-inline-flex align-center flex-wrap ga-1" data-testid="run-chip" :data-state="run.state">
-    <v-chip size="x-small" :color="runStateColor(run.state)" prepend-icon="mdi-robot-industrial-outline">
-      <v-progress-circular v-if="run.state === 'running'" indeterminate size="10" width="2" class="mr-1" />
-      {{ label }}
-    </v-chip>
+    <StatusChip kind="run" :value="run.state" :label="label" size="x-small" />
     <span v-if="run.state === 'running'" class="text-caption text-medium-emphasis" data-testid="run-heartbeat">{{ t('runners.run.heartbeat', { n: age }) }}</span>
     <span v-if="run.branch" class="text-caption text-medium-emphasis" data-testid="run-branch">· <code>{{ run.branch }}</code></span>
   </span>

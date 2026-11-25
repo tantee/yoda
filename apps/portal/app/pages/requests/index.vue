@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import type { MyRequest } from '@yoda/shared'
 import { localized } from '~/utils/localized'
-import { requestStatusColor } from '~/utils/requests'
 
 const { t, locale } = useI18n()
 const api = useApi()
@@ -39,10 +38,9 @@ useLiveEvents(loadSoon, loadSoon)
     <h1 class="text-h5 mb-4">{{ t('nav.requests') }}</h1>
     <v-alert v-if="loadError" type="error" class="mb-4" data-testid="load-error">{{ loadError }}</v-alert>
     <template v-if="requests">
-      <div v-if="!requests.length" data-testid="requests-empty">
-        <p class="text-medium-emphasis mb-3">{{ t('requests.empty') }}</p>
+      <EmptyState v-if="!requests.length" icon="mdi-file-document-outline" :title="t('requests.empty')" data-testid="requests-empty">
         <v-btn color="primary" to="/chat" prepend-icon="mdi-chat-outline">{{ t('requests.startChat') }}</v-btn>
-      </div>
+      </EmptyState>
       <v-list v-else border lines="two" data-testid="request-list">
         <v-list-item v-for="r in requests" :key="r.workItemId" :to="`/requests/${r.workItemId}`" data-testid="request-item">
           <v-list-item-title>{{ r.title }}</v-list-item-title>
@@ -50,7 +48,7 @@ useLiveEvents(loadSoon, loadSoon)
             {{ r.projectName }}<template v-if="r.currentStepName"> · {{ localized(r.currentStepName, locale) }}</template>
           </v-list-item-subtitle>
           <template #append>
-            <v-chip size="small" :color="requestStatusColor(r.status)" data-testid="request-status">{{ t(`requests.status.${r.status}`) }}</v-chip>
+            <StatusChip kind="request" :value="r.status" data-testid="request-status" />
           </template>
         </v-list-item>
       </v-list>

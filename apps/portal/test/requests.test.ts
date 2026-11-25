@@ -1,16 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { MyRequest, TaskWithContext } from '@yoda/shared'
-import { answersFor, proposalFallbackKey, requestStatusColor, taskViewFor } from '../app/utils/requests'
-
-describe('requestStatusColor', () => {
-  it('maps every status to a colour', () => {
-    expect(requestStatusColor('waiting_for_you')).toBe('warning')
-    expect(requestStatusColor('in_progress')).toBe('info')
-    expect(requestStatusColor('submitted')).toBe('info')
-    expect(requestStatusColor('done')).toBe('success')
-    expect(requestStatusColor('cancelled')).toBe('default')
-  })
-})
+import { answersFor, proposalFallbackKey, taskViewFor } from '../app/utils/requests'
 
 describe('answersFor', () => {
   it('keeps only answer tasks of the given request', () => {

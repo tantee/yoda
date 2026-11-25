@@ -8,9 +8,9 @@ const guardFor = (ev: EventEntry) =>
 
 /** Status timelines pass project events, which also name their work item. */
 defineProps<{ events: (EventEntry & { workItemId?: string | null; workItemTitle?: string | null })[] }>()
-const { t, te, locale } = useI18n()
+const { t, te } = useI18n()
 const dateOf = (v: unknown) => (typeof v === 'string' ? v : null)
-const fmt = (s: string) => new Date(s).toLocaleString(locale.value === 'en' ? 'en-GB' : 'th-TH')
+const { dateTime: fmt } = useDateFormat()
 </script>
 
 <template>

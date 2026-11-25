@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import type { MyRequest, TaskWithContext } from '@yoda/shared'
 import { localized } from '~/utils/localized'
-import { answersFor, requestStatusColor } from '~/utils/requests'
+import { answersFor } from '~/utils/requests'
 
 const { t, locale } = useI18n()
+const { dateTime } = useDateFormat()
 const api = useApi()
 const id = useRoute().params.id as string
 const request = ref<MyRequest | null>(null)
@@ -47,11 +48,11 @@ useLiveEvents(loadSoon, loadSoon)
     <template v-if="request">
       <h1 class="text-h5 mb-2" data-testid="request-title">{{ request.title }}</h1>
       <div class="d-flex flex-wrap ga-2 mb-2">
-        <v-chip size="small" :color="requestStatusColor(request.status)" data-testid="request-status">{{ t(`requests.status.${request.status}`) }}</v-chip>
+        <StatusChip kind="request" :value="request.status" data-testid="request-status" />
         <v-chip v-if="request.currentStepName" size="small" variant="outlined" data-testid="request-step">{{ localized(request.currentStepName, locale) }}</v-chip>
         <v-chip size="small" variant="outlined">{{ request.projectName }}</v-chip>
       </div>
-      <p class="text-medium-emphasis mb-4">{{ t('requests.updated') }}: {{ new Date(request.updatedAt).toLocaleString(locale) }}</p>
+      <p class="text-medium-emphasis mb-4">{{ t('requests.updated') }}: {{ dateTime(request.updatedAt) }}</p>
       <p class="mb-4">{{ t(`requests.hint.${request.status}`) }}</p>
 
       <template v-if="answers.length">
@@ -60,7 +61,7 @@ useLiveEvents(loadSoon, loadSoon)
           <v-list-item v-for="a in answers" :key="a.id" :to="`/todo/${a.id}`">
             <v-list-item-title>{{ localized(a.title, locale) }}</v-list-item-title>
             <template #append>
-              <v-chip size="small">{{ t(`task.state.${a.state}`) }}</v-chip>
+              <StatusChip kind="task" :value="a.state" />
             </template>
           </v-list-item>
         </v-list>

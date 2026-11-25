@@ -17,7 +17,7 @@ const props = defineProps<{
   canManage: boolean
 }>()
 const emit = defineEmits<{ refresh: [] }>()
-const { t, locale } = useI18n()
+const { t } = useI18n()
 const api = useApi()
 
 const confirmOpen = ref(false)
@@ -87,7 +87,7 @@ function onLive(e: LiveEvent) {
 }
 defineExpose({ onLive })
 
-const fmt = (s: string) => new Date(s).toLocaleString(locale.value === 'en' ? 'en-GB' : 'th-TH')
+const { dateTime: fmt } = useDateFormat()
 </script>
 
 <template>
@@ -97,7 +97,7 @@ const fmt = (s: string) => new Date(s).toLocaleString(locale.value === 'en' ? 'e
         <span>{{ t('status.weekly.title') }}</span>
         <template v-if="summary">
           <span class="text-body-2 text-medium-emphasis">{{ t('status.weekly.week', { week: summary.week }) }}</span>
-          <v-chip v-if="summary.status === 'draft'" size="x-small" color="warning" variant="tonal" data-testid="weekly-draft">{{ t('status.weekly.draft') }}</v-chip>
+          <StatusChip v-if="summary.status === 'draft'" kind="knowledge" value="draft" :label="t('status.weekly.draft')" size="x-small" data-testid="weekly-draft" />
         </template>
         <v-spacer />
         <v-btn
@@ -128,7 +128,7 @@ const fmt = (s: string) => new Date(s).toLocaleString(locale.value === 'en' ? 'e
           <div class="d-flex align-center flex-wrap ga-2 mb-2">
             <span class="text-subtitle-2">{{ t('status.weekly.thisWeek') }}</span>
             <span class="text-body-2 text-medium-emphasis">{{ t('status.weekly.week', { week: inProgress.week }) }}</span>
-            <v-chip v-if="inProgress.status === 'draft'" size="x-small" color="warning" variant="tonal">{{ t('status.weekly.draft') }}</v-chip>
+            <StatusChip v-if="inProgress.status === 'draft'" kind="knowledge" value="draft" :label="t('status.weekly.draft')" size="x-small" />
             <span class="text-caption text-medium-emphasis">{{ fmt(inProgress.createdAt) }}</span>
           </div>
           <MarkdownView :source="inProgress.body" data-testid="weekly-in-progress-body" />

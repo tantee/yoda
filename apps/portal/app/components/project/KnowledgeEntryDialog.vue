@@ -7,6 +7,7 @@ const props = defineProps<{ modelValue: boolean; projectId: string; entryId: str
 const emit = defineEmits<{ 'update:modelValue': [boolean]; saved: [] }>()
 
 const { t } = useI18n()
+const { dateTime } = useDateFormat()
 const api = useApi()
 const { me } = useMe()
 const entry = ref<KnowledgeEntry | null>(null)
@@ -119,7 +120,7 @@ async function confirmEntry() {
         <v-alert v-if="error" type="error" class="mb-4" data-testid="entry-error">{{ error }}</v-alert>
         <div v-if="entry" class="mb-3 d-flex ga-2 align-center flex-wrap">
           <v-chip size="small">{{ t(`knowledge.types.${entry.type}`) }}</v-chip>
-          <v-chip size="small" :color="entry.status === 'draft' ? 'amber' : 'success'" data-testid="entry-status">{{ t(`knowledge.statuses.${entry.status}`) }}</v-chip>
+          <StatusChip kind="knowledge" :value="entry.status" :label="t(`knowledge.statuses.${entry.status}`)" data-testid="entry-status" />
           <span class="text-caption text-medium-emphasis">
             {{ t('knowledge.version') }} {{ entry.version }} &middot; {{ t(`knowledge.sources.${entry.sourceKind}`) }}<template v-if="entry.createdByName"> {{ t('knowledge.by') }} {{ entry.createdByName }}</template>
           </span>
@@ -135,7 +136,7 @@ async function confirmEntry() {
             <v-expansion-panel v-for="v in versions" :key="v.id" data-testid="version-row">
               <v-expansion-panel-title>
                 {{ t('knowledge.version') }} {{ v.version }}<span v-if="!v.supersededAt" class="ml-2 text-medium-emphasis">({{ t('knowledge.current') }})</span>
-                <span class="ml-auto mr-4 text-caption text-medium-emphasis">{{ new Date(v.createdAt).toLocaleString() }}</span>
+                <span class="ml-auto mr-4 text-caption text-medium-emphasis">{{ dateTime(v.createdAt) }}</span>
               </v-expansion-panel-title>
               <v-expansion-panel-text><div style="white-space: pre-wrap">{{ v.body }}</div></v-expansion-panel-text>
             </v-expansion-panel>

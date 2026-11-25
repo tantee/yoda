@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { GitLabStatus } from '@yoda/shared'
 
-const { t, locale } = useI18n()
+const { t } = useI18n()
 const api = useApi()
 const status = ref<GitLabStatus | null>(null)
 const error = ref('')
@@ -9,7 +9,7 @@ const error = ref('')
 // GitLab posts to the portal; its /api proxy forwards the X-Gitlab-* headers and the raw body to core.
 const webhookUrl = computed(() => `${window.location.origin}/api/gitlab/webhook`)
 const yesNo = (v: boolean | null) => (v === null ? t('gitlab.admin.unknown') : t(v ? 'gitlab.admin.yes' : 'gitlab.admin.no'))
-const fmt = (s: string) => new Date(s).toLocaleString(locale.value === 'en' ? 'en-GB' : 'th-TH')
+const { dateTime: fmt } = useDateFormat()
 
 async function load() {
   try {
@@ -45,7 +45,7 @@ onMounted(load)
         <tr>
           <td>{{ t('gitlab.admin.reachable') }}</td>
           <td data-testid="gitlab-reachable">
-            <v-chip v-if="status.reachable !== null" size="small" :color="status.reachable ? 'success' : 'error'">{{ yesNo(status.reachable) }}</v-chip>
+            <StatusChip v-if="status.reachable !== null" kind="yesNo" :value="status.reachable ? 'yes' : 'no'" :label="yesNo(status.reachable)" />
             <template v-else>{{ yesNo(null) }}</template>
           </td>
         </tr>

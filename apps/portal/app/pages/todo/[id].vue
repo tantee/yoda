@@ -119,10 +119,10 @@ useLiveEvents((e) => {
     <v-alert v-if="loadError" type="error" class="mb-4" data-testid="load-error">{{ loadError }}</v-alert>
     <template v-if="task">
       <h1 class="text-h5 mb-2">{{ localized(task.title, locale) }}</h1>
-      <div class="d-flex ga-2 mb-2">
-        <v-chip size="small" data-testid="state-chip">{{ t(`task.state.${task.state}`) }}</v-chip>
-        <v-chip size="small" variant="outlined">{{ t(`task.type.${task.type}`) }}</v-chip>
-        <v-chip size="small" variant="outlined" data-testid="priority-chip">{{ t(`priority.${task.workItemPriority}`) }}</v-chip>
+      <div class="d-flex flex-wrap align-center ga-2 mb-2">
+        <StatusChip kind="task" :value="task.state" data-testid="state-chip" />
+        <StatusChip kind="taskType" :value="task.type" />
+        <PriorityMark :priority="task.workItemPriority" data-testid="priority-chip" />
       </div>
       <p v-if="!staff" class="text-medium-emphasis mb-4" data-testid="requester-context">{{ task.workItemTitle }}</p>
       <p v-else class="text-medium-emphasis mb-4">
@@ -159,7 +159,7 @@ useLiveEvents((e) => {
       </div>
       <div v-if="staff && (task.run || waitingFor(task) === 'runner')" class="mb-4 d-flex align-center flex-wrap ga-2" data-testid="run-status">
         <RunnerRunChip v-if="task.run" :run="task.run" />
-        <v-chip v-if="waitingFor(task) === 'runner'" size="small" color="warning" data-testid="waiting-runner">{{ t('workItems.waitingForRunner') }}</v-chip>
+        <StatusChip v-if="waitingFor(task) === 'runner'" kind="waiting" value="runner" data-testid="waiting-runner" />
       </div>
 
       <template v-if="task.inputs.length">
@@ -168,7 +168,6 @@ useLiveEvents((e) => {
           <v-card-text>
             <div class="d-flex flex-wrap align-center ga-2 mb-2">
               <span class="font-weight-medium">{{ localized(input.title, locale) }}</span>
-              <v-chip v-if="input.executor === 'ai'" size="x-small" color="secondary" data-testid="ai-draft-chip">{{ t('task.aiDraft') }}</v-chip>
               <v-spacer />
               <v-btn
                 v-if="isAssignee && workable && input.result.text"
@@ -179,7 +178,15 @@ useLiveEvents((e) => {
                 @click="copyInput(input)"
               >{{ t('task.copyIntoResult') }}</v-btn>
             </div>
-            <MarkdownView v-if="input.result.text" :source="input.result.text" />
+            <AiDraft
+              v-if="input.executor === 'ai' && input.result.text"
+              :confidence="input.result.confidence"
+              :missing="input.result.missing"
+              data-testid="ai-draft-chip"
+            >
+              <MarkdownView :source="input.result.text" />
+            </AiDraft>
+            <MarkdownView v-else-if="input.result.text" :source="input.result.text" />
             <p v-else class="text-medium-emphasis">{{ t('task.noPreviousText') }}</p>
             <AttachmentList :attachments="input.attachments" class="mt-2" />
           </v-card-text>
