@@ -63,8 +63,9 @@ export function mockModels(overrides: Partial<ModelSet> = {}): ModelSet {
   }
 }
 
-export async function testDeps(overrides: Partial<AppDeps> = {}): Promise<AppDeps> {
-  const config: AppDeps['config'] = {
+/** The test Config: no SMTP, LINE or Telegram, so no outside channel is configured unless a test sets one. */
+export function testConfig(): AppDeps['config'] {
+  return {
       port: 0,
       databaseUrl: process.env.TEST_DATABASE_URL ?? DEFAULT_TEST_URL,
       oidcIssuer: TEST_ISSUER,
@@ -88,6 +89,10 @@ export async function testDeps(overrides: Partial<AppDeps> = {}): Promise<AppDep
       smtpPort: 587,
       smtpSecure: false,
   }
+}
+
+export async function testDeps(overrides: Partial<AppDeps> = {}): Promise<AppDeps> {
+  const config = testConfig()
   const db = await testDb()
   const bus = new LiveBus()
   const deps: AppDeps = {

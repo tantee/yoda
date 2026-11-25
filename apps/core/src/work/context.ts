@@ -26,8 +26,11 @@ export type WorkDeps = {
   db: Db
   bus: LiveBus
   jobs: Pick<JobQueue, 'send'>
-  /** The full Config at runtime; the SMTP / channel fields decide which outside channels are configured. */
-  config: { dailyTaskCap: number } & Partial<Config>
+  /**
+   * The full Config: its SMTP / LINE / Telegram fields decide which outside channels are configured, so a
+   * partial object would silently turn every outside notification off.
+   */
+  config: Config
 }
 
 export async function runWork<T>(

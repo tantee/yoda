@@ -6,7 +6,7 @@ import { AiGateway } from '../src/ai/gateway.js'
 import { aiCalls, discussions, events, projectRepos, workItemRepos, workItems } from '../src/db/schema.js'
 import { LiveBus } from '../src/live/bus.js'
 import { bangkokDate } from '../src/status/health.js'
-import { mockModels, resetDb, testDb } from './helpers.js'
+import { mockModels, resetDb, testConfig, testDb } from './helpers.js'
 import { auth, login, makeApp, type Who } from './support.js'
 
 let app: FastifyInstance
@@ -218,7 +218,7 @@ describe('status routes', () => {
   it('the project status says whether AI (the fast model) is configured', async () => {
     const id = await project('แล็บ')
     expect((await status(pm, id)).aiConfigured).toBe(true)
-    const bare = await makeApp({ ai: new AiGateway({ db: await testDb(), bus: new LiveBus(), models: mockModels({ fast: null, ids: { draft: 'anthropic:claude-opus-5-5', fast: null, embed: null } }), config: { dailyTaskCap: 8 } }) })
+    const bare = await makeApp({ ai: new AiGateway({ db: await testDb(), bus: new LiveBus(), models: mockModels({ fast: null, ids: { draft: 'anthropic:claude-opus-5-5', fast: null, embed: null } }), config: testConfig() }) })
     try {
       const res = await bare.inject({ url: `/projects/${id}/status`, headers: auth(pm) })
       expect((res.json() as ProjectStatus).aiConfigured).toBe(false)

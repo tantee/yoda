@@ -2,7 +2,9 @@ import { embedMany, isStepCount, Output, streamText, type ModelMessage, type Too
 import type { AiUsage } from '@yoda/shared'
 import { and, eq, gte, inArray, isNull, sql, type SQL } from 'drizzle-orm'
 import type { ZodType, ZodTypeDef } from 'zod'
+import type { Config } from '../config.js'
 import type { Db, Tx } from '../db/client.js'
+import type { JobQueue } from '../jobs/queue.js'
 import { aiCalls, events, people, projects } from '../db/schema.js'
 import type { LiveBus } from '../live/bus.js'
 import { notify } from '../notifications/service.js'
@@ -47,7 +49,7 @@ const priceOf = (model: string) =>
 
 export const isPriced = (model: string): boolean => priceOf(model) !== undefined
 
-/** The gateway only records events; it never enqueues jobs. */
+/** Without a queue (tests) the gateway only records events and portal notifications; it never enqueues jobs. */
 const NO_JOBS = {
   send: async (): Promise<void> => {
     throw new Error('AiGateway does not enqueue jobs')
@@ -114,7 +116,15 @@ async function usageOf(db: Db | Tx, scope: SQL, budget: SQL): Promise<AiUsage> {
 
 export class AiGateway {
   constructor(
-    private deps: { db: Db; bus: LiveBus; models: ModelSet; config: { dailyTaskCap: number } },
+    private deps: {
+      db: Db
+      bus: LiveBus
+      models: ModelSet
+      /** The full Config (see WorkDeps): budget alerts go out on the configured outside channels. */
+      config: Config
+      /** Queues the outside delivery of budget alerts; without it they stay portal-only. */
+      jobs?: Pick<JobQueue, 'send'>
+    },
     warn: (msg: string) => void = (m) => console.warn(m),
   ) {
     const unpriced = (['draft', 'fast', 'embed'] as const)
@@ -474,7 +484,7 @@ export class AiGateway {
   /** Tells every admin, once per Bangkok month and level (dedupe key), that the department budget is running out. */
   private async notifyDepartmentBudget(level: 'warning' | 'exceeded', usage: AiUsage): Promise<void> {
     const spent = `ใช้ไป $${usage.costUsd.toFixed(2)} จากงบ $${(usage.budgetUsd ?? 0).toFixed(2)} (${usage.month})`
-    await runWork({ ...this.deps, jobs: NO_JOBS }, { id: null, kind: 'system' }, async (ctx) => {
+    await runWork({ ...this.deps, jobs: this.deps.jobs ?? NO_JOBS }, { id: null, kind: 'system' }, async (ctx) => {
       const admins = await ctx.tx.select({ id: people.id }).from(people).where(eq(people.isAdmin, true))
       for (const { id } of admins) {
         await notify(ctx, {

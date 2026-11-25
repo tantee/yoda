@@ -9,7 +9,7 @@ import { aiCalls, attachments, events, knowledgeChunks, knowledgeEntries, people
 import { InlineJobQueue, type JobName } from '../src/jobs/queue.js'
 import { LiveBus } from '../src/live/bus.js'
 import { searchKnowledge } from '../src/knowledge/search.js'
-import { mockModels, resetDb, testDb } from './helpers.js'
+import { mockModels, resetDb, testConfig, testDb } from './helpers.js'
 import { auth, login, makeApp, type Who } from './support.js'
 
 let app: FastifyInstance
@@ -64,7 +64,7 @@ function topicEmbedder() {
 
 async function gatewayWith(embed: MockEmbeddingModelV4): Promise<AiGateway> {
   const models = mockModels({ embed, ids: { draft: 'anthropic:claude-opus-5-5', fast: 'anthropic:claude-haiku-5-5', embed: 'openai:mock-embed' } })
-  return new AiGateway({ db: await testDb(), bus: new LiveBus(), models, config: { dailyTaskCap: 8 } })
+  return new AiGateway({ db: await testDb(), bus: new LiveBus(), models, config: testConfig() })
 }
 
 /** Uploads a UTF-8 .txt as `dev`; returns the attachment id. */

@@ -11,7 +11,7 @@ import { InlineJobQueue } from '../src/jobs/queue.js'
 import { LiveBus } from '../src/live/bus.js'
 import { secretaryChat } from '../src/secretary/chat.js'
 import { turnStream } from './ai-mocks.js'
-import { mockModels, resetDb, testDb } from './helpers.js'
+import { mockModels, resetDb, testConfig, testDb } from './helpers.js'
 import { auth, login, makeApp, type Who } from './support.js'
 
 type Turn = { text?: string; toolCalls?: { name: string; input: unknown }[] }
@@ -105,7 +105,7 @@ beforeEach(async () => {
     },
   })
   jobs = new InlineJobQueue({ onError: (err, name, id) => console.warn(`job ${name} ${id} failed`, err) })
-  const ai = new AiGateway({ db, bus: new LiveBus(), models: mockModels({ fast: model }), config: { dailyTaskCap: 8 } })
+  const ai = new AiGateway({ db, bus: new LiveBus(), models: mockModels({ fast: model }), config: testConfig() })
   app = await makeApp({ jobs, ai })
   admin = await login(app, 'boss')
   pm = await login(app, 'pm', { staff: true, name: 'คุณพีเอ็ม' })
@@ -849,7 +849,7 @@ describe('secretary chat: failures', () => {
       db,
       bus: new LiveBus(),
       models: mockModels({ fast: null, ids: { draft: 'anthropic:claude-opus-5-5', fast: null, embed: null } }),
-      config: { dailyTaskCap: 8 },
+      config: testConfig(),
     })
     jobs = new InlineJobQueue()
     app = await makeApp({ jobs, ai })

@@ -14,7 +14,7 @@ import { isoWeek, queueWeeklyRegenerate, runWeeklySummary, summaryWeek, weekStar
 import { runWork } from '../src/work/context.js'
 import { createWorkItem } from '../src/work/engine.js'
 import { textStream } from './ai-mocks.js'
-import { mockModels, resetDb, testDb, testDeps } from './helpers.js'
+import { mockModels, resetDb, testConfig, testDb, testDeps } from './helpers.js'
 import { auth, login, makeApp, type Who } from './support.js'
 
 /** Records every send; `weekly-summary-project` runs only when `runWeekly` is set. */
@@ -92,7 +92,7 @@ beforeEach(async () => {
   jobs = new SpyQueue({ onError: (err, name, id) => console.warn(`job ${name} ${id} failed`, err) })
   deps = await testDeps({
     jobs,
-    ai: new AiGateway({ db, bus: new LiveBus(), models: mockModels({ fast: model }), config: { dailyTaskCap: 8 } }),
+    ai: new AiGateway({ db, bus: new LiveBus(), models: mockModels({ fast: model }), config: testConfig() }),
   })
 })
 
@@ -337,7 +337,7 @@ describe('weekly summary outcome (live only)', () => {
 
   it('reports AI not configured, and AI failures', async () => {
     const s = await setup()
-    const bare = { ...deps, ai: new AiGateway({ db, bus: new LiveBus(), models: mockModels({ fast: null, ids: { draft: 'anthropic:claude-opus-5-5', fast: null, embed: null } }), config: { dailyTaskCap: 8 } }) }
+    const bare = { ...deps, ai: new AiGateway({ db, bus: new LiveBus(), models: mockModels({ fast: null, ids: { draft: 'anthropic:claude-opus-5-5', fast: null, embed: null } }), config: testConfig() }) }
     await runWeeklySummary(bare, { projectId: s.projectId, week, force: true })
     const broken = new MockLanguageModelV4({
       modelId: 'claude-haiku-5-5',
@@ -345,7 +345,7 @@ describe('weekly summary outcome (live only)', () => {
         throw new Error('provider down')
       },
     })
-    const failing = { ...deps, ai: new AiGateway({ db, bus: new LiveBus(), models: mockModels({ fast: broken }), config: { dailyTaskCap: 8 } }) }
+    const failing = { ...deps, ai: new AiGateway({ db, bus: new LiveBus(), models: mockModels({ fast: broken }), config: testConfig() }) }
     await runWeeklySummary(failing, { projectId: s.projectId, week, force: true })
     expect(outcomes()).toEqual([
       { week, outcome: 'skipped', reason: 'ai_not_configured' },

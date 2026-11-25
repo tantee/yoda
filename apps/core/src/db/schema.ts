@@ -745,7 +745,10 @@ export const channelLinkCodes = pgTable(
   ],
 )
 
-/** One outcome per notification and channel: a `sent` row makes delivery on that channel idempotent. */
+/**
+ * One outcome per notification and channel: a `sent` row makes delivery on that channel idempotent, and a
+ * `failed` row with `permanent` set is never retried.
+ */
 export const notificationDeliveries = pgTable(
   'notification_deliveries',
   {
@@ -755,6 +758,8 @@ export const notificationDeliveries = pgTable(
     channel: text('channel').notNull(),
     state: text('state').notNull(),
     errorCode: text('error_code'),
+    /** The failure cannot be fixed by retrying (rejected credentials or recipient, blocked bot). */
+    permanent: boolean('permanent').notNull().default(false),
     at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [

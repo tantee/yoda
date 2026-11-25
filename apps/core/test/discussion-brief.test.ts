@@ -11,7 +11,7 @@ import { aiCalls, departmentSettings, discussionResponses, discussions, events, 
 import { InlineJobQueue, POLICY, SINGLETON, type JobName } from '../src/jobs/queue.js'
 import { LiveBus } from '../src/live/bus.js'
 import { textStream } from './ai-mocks.js'
-import { mockModels, resetDb, testDb } from './helpers.js'
+import { mockModels, resetDb, testConfig, testDb } from './helpers.js'
 import { auth, login, makeApp, type Who } from './support.js'
 
 let app: FastifyInstance
@@ -84,7 +84,7 @@ class HeldQueue extends InlineJobQueue {
 async function boot(models: ModelSet, jobs: InlineJobQueue = new InlineJobQueue()) {
   const db = await testDb()
   queue = jobs
-  app = await makeApp({ ai: new AiGateway({ db, bus: new LiveBus(), models, config: { dailyTaskCap: 8 } }), jobs })
+  app = await makeApp({ ai: new AiGateway({ db, bus: new LiveBus(), models, config: testConfig() }), jobs })
   admin = await login(app, 'boss', { staff: true })
   pm = await login(app, 'pm', { staff: true })
   dev = await login(app, 'dev', { staff: true })

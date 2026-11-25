@@ -6,7 +6,7 @@ import type { Db } from '../src/db/client.js'
 import { notificationChannelSettings, notificationDeliveries, notificationPrefs, notifications, people } from '../src/db/schema.js'
 import { InlineJobQueue } from '../src/jobs/queue.js'
 import type { MailMessage, MailTransport } from '../src/notifications/channels/email.js'
-import { deliver } from '../src/notifications/deliver.js'
+import { deliver, recordDelivery } from '../src/notifications/deliver.js'
 import { channelsFor } from '../src/notifications/prefs.js'
 import { notifyTaskAssigned, notify } from '../src/notifications/service.js'
 import { runWork } from '../src/work/context.js'
@@ -186,6 +186,26 @@ describe('email delivery', () => {
     await assignTask(dev)
     expect(mail.state.fail).toBe(2)
     expect(await db.select().from(notificationDeliveries)).toMatchObject([{ state: 'failed', errorCode: 'EENVELOPE' }])
+  })
+
+  it('a permanent failure is never retried, even when the job runs again', async () => {
+    const dev = await person(db, 'dev', { staff: true })
+    mail.state.fail = 3
+    mail.state.err = Object.assign(new Error('535 auth failed'), { code: 'EAUTH', responseCode: 535 })
+    const n = await assignTask(dev)
+    expect(mail.state.fail).toBe(2)
+    // Another channel failing transiently re-runs the job: the permanently failed channel stays settled.
+    await deliver(deps, n.id)
+    expect(mail.state.fail).toBe(2)
+    expect(await db.select().from(notificationDeliveries)).toMatchObject([{ state: 'failed', errorCode: 'EAUTH', permanent: true }])
+  })
+
+  it('a sent row is never downgraded by an overlapping failed run', async () => {
+    const dev = await person(db, 'dev', { staff: true })
+    const n = await assignTask(dev)
+    // An overlapping, slower run that failed must not overwrite the delivered row.
+    await recordDelivery(db, n.id, 'email', { state: 'failed', errorCode: 'ETIMEDOUT' })
+    expect(await db.select().from(notificationDeliveries)).toMatchObject([{ state: 'sent', errorCode: null, permanent: false }])
   })
 
   it('the job running twice sends one email', async () => {
