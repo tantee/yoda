@@ -404,3 +404,22 @@ describe('e2e: another identity provider with the same usernames', () => {
     expect((await inject({ url: '/me', headers: await token('other-idp-3') })).json().isAdmin).toBe(false)
   })
 })
+
+describe('e2e: a pre-grant makes exactly one admin', () => {
+  it('two first sign-ins at once with the same username and different subjects: one admin, the pre-grant used once', async () => {
+    await wizard()
+    const { h } = await recovery()
+    clock = new Date(clock.getTime() + 30_000)
+    await inject({ method: 'POST', url: '/recovery/admins', headers: h, payload: { username: 'newadmin', totpCode: totpCodeAt(totpSeed, clock.getTime()) } })
+    expect(app!.deps.config.bootstrapAdmins).toEqual(['newadmin'])
+    const token = async (sub: string) => ({
+      authorization: `Bearer ${await signToken({ iss: idp.issuer, azp: 'yoda-portal', sub, typ: 'Bearer', preferred_username: 'newadmin', groups: ['/it-dev'] })}`,
+    })
+    const [a, b] = await Promise.all([inject({ url: '/me', headers: await token('race-a') }), inject({ url: '/me', headers: await token('race-b') })])
+    expect([a.statusCode, b.statusCode]).toEqual([200, 200])
+    expect([a.json().isAdmin, b.json().isAdmin].filter(Boolean)).toHaveLength(1)
+    const rows = await (await testDb()).select().from(people).where(eq(people.username, 'newadmin'))
+    expect(rows.filter((r) => r.isAdmin)).toHaveLength(1)
+    expect(await (await testDb()).select().from(settingsAudit).where(eq(settingsAudit.action, 'recovery.pregrant_used'))).toHaveLength(1)
+  })
+})

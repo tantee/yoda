@@ -178,15 +178,19 @@ export function registerAuth(app: FastifyInstance): void {
  */
 async function personOf(deps: FastifyInstance['deps'], claims: TokenClaims, config: Config) {
   const store = deps.settings
-  if (!store || !config.bootstrapAdmins.includes(claims.preferred_username) || !store.recoveryWritable('oidc.bootstrapAdmins')) {
+  // Only a pre-grant stored in the database (not env-set, not a Config built elsewhere) goes through the lock.
+  const preGranted = !!store && store.recoveryWritable('oidc.bootstrapAdmins') && (store.get('oidc.bootstrapAdmins') ?? []).includes(claims.preferred_username)
+  if (!store || !preGranted) {
     return upsertPersonFromClaims(deps.db, claims, config)
   }
   let used = false
   const person = await deps.db.transaction(async (tx) => {
     const [known] = await tx.select({ id: people.id }).from(people).where(eq(people.keycloakSub, claims.sub))
-    const p = await upsertPersonFromClaims(tx, claims, config)
-    if (!known && p.isAdmin) used = await store.consumePreGrant(tx, p.username)
-    return p
+    // The pre-grant row is locked and consumed first; only the sign-in that consumed it creates an admin. The
+    // in-memory list is never trusted for the flag: two first sign-ins at once (or another core that has not
+    // reloaded yet) would both see the username in it. (BOOTSTRAP_ADMINS in env never reaches here.)
+    if (!known) used = await store.consumePreGrant(tx, claims.preferred_username)
+    return upsertPersonFromClaims(tx, claims, { ...config, bootstrapAdmins: used ? [claims.preferred_username] : [] })
   })
   if (used) await store.reloadSetting('oidc.bootstrapAdmins')
   return person
