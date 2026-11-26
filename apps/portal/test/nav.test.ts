@@ -33,10 +33,20 @@ describe('navItemsFor', () => {
     expect(navItemsFor(admin).map(i => i.key)).toContain('nav.admin.ai')
     expect(navItemsFor(staff).map(i => i.key)).not.toContain('nav.admin.ai')
   })
-  it('GitLab admin page is admin only', () => {
-    expect(navItemsFor(admin).map(i => i.key)).toContain('nav.admin.gitlab')
-    expect(navItemsFor(staff).map(i => i.key)).not.toContain('nav.admin.gitlab')
-    expect(navItemsFor({ ...base, isStaff: false, isAdmin: true }).map(i => i.key)).not.toContain('nav.admin.gitlab')
+  it('one system settings item (D5) replaces the GitLab and channel pages, admin only', () => {
+    const keys = navItemsFor(admin).map(i => i.key)
+    expect(keys.slice(-3)).toEqual(['nav.admin.people', 'nav.admin.ai', 'nav.admin.settings'])
+    expect(keys).not.toContain('nav.admin.gitlab')
+    expect(keys).not.toContain('nav.admin.notifications')
+    expect(navItemsFor(admin).find(i => i.key === 'nav.admin.settings')).toMatchObject({ to: '/admin/settings', icon: 'mdi-cog-outline' })
+    expect(navItemsFor(staff).map(i => i.key)).not.toContain('nav.admin.settings')
+    expect(navItemsFor({ ...base, isStaff: false, isAdmin: true }).map(i => i.key)).not.toContain('nav.admin.settings')
+  })
+  it('a settings category page belongs to the settings item; requesters and staff are kept out', () => {
+    expect(activeNavItem(navItemsFor(admin), '/admin/settings/channels')?.key).toBe('nav.admin.settings')
+    expect(forbiddenFor(staff, '/admin/settings/email')).toBe('admin')
+    expect(forbiddenFor(requester, '/admin/settings')).toBe('staff')
+    expect(forbiddenFor(admin, '/admin/settings/audit')).toBeNull()
   })
   it('requester nav has no staff areas', () => {
     expect(navItemsFor(requester).map(i => i.key)).toEqual(['nav.requests', 'nav.answers', 'nav.assistant'])

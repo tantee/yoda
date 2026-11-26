@@ -59,3 +59,8 @@ b, strong, .font-weight-bold { font-weight: 600 !important; }
 /* Table title cell: 500 weight link, never underlined until hover (§6.3). */
 .row-link { color: inherit; font-weight: 500; text-decoration: none; overflow-wrap: anywhere; }
 .row-link:hover { text-decoration: underline; }
+
+/* Settings forms (installer proposal §5.2): the label above each field and the small source / help lines under it. */
+.setting-label { display: block; margin-bottom: 6px; font-size: .875rem; font-weight: 500; }
+.setting-meta { margin: 4px 0 0; font-size: .75rem; line-height: 1.5; color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity)); overflow-wrap: anywhere; }
+.setting-meta code, .setting-code { font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .75rem; padding: 0 4px; border-radius: 4px; background: rgb(var(--v-theme-neutral-soft)); }

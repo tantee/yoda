@@ -24,8 +24,7 @@
     "admin": {
       "people": "บุคลากร",
       "ai": "งบประมาณ AI",
-      "gitlab": "การเชื่อม GitLab",
-      "notifications": "ช่องทางแจ้งเตือน"
+      "settings": "การตั้งค่าระบบ"
     },
     "runners": "รันเนอร์",
     "agendas": "วาระการประชุม",
@@ -1468,6 +1467,12 @@
       "submitted": "ส่งแล้ว",
       "accepted": "เรียบร้อยแล้ว",
       "rejected": "ส่งกลับให้แก้ไขแล้ว"
+    },
+    "masterKey": {
+      "ok": "ใช้งานได้",
+      "missing": "ไม่พบ",
+      "malformed": "ผิดรูปแบบ",
+      "mismatch": "ไม่ตรง"
     }
   },
   "stateView": {
@@ -1577,5 +1582,504 @@
       "กลับเป็นปกติ ในไม่ช้า ทุกอย่างจะ"
     ],
     "konami": "ขอให้ซอร์สโค้ดจงสถิตอยู่กับท่าน"
+  },
+  "settings": {
+    "title": "การตั้งค่าระบบ",
+    "hint": "ค่าที่กำหนดโดย environment แก้ที่นี่ไม่ได้ และมีผลเหนือค่าที่บันทึกไว้",
+    "navLabel": "หมวดการตั้งค่า",
+    "nav": {
+      "locked": "{n} ค่ากำหนดโดย environment"
+    },
+    "page": {
+      "general": "ทั่วไป",
+      "signin": "การเข้าสู่ระบบ",
+      "ai": "AI",
+      "gitlab": "GitLab",
+      "channels": "ช่องทางแจ้งเตือน",
+      "runners": "รันเนอร์",
+      "backups": "การสำรองข้อมูล",
+      "storage": "ที่เก็บข้อมูล",
+      "security": "ความปลอดภัย",
+      "audit": "บันทึกการเปลี่ยนแปลง"
+    },
+    "category": {
+      "general": "ทั่วไป",
+      "signin": "การเข้าสู่ระบบ (OIDC)",
+      "ai": "ผู้ให้บริการและโมเดล AI",
+      "gitlab": "การเชื่อม GitLab",
+      "email": "อีเมล (SMTP)",
+      "line": "LINE Official Account",
+      "telegram": "Telegram",
+      "runners": "รันเนอร์",
+      "backups": "การสำรองข้อมูล",
+      "storage": "ที่เก็บข้อมูลและฐานข้อมูล",
+      "security": "ความปลอดภัย"
+    },
+    "apply": {
+      "live": "มีผลทันที",
+      "reconnect": "เชื่อมต่อใหม่อัตโนมัติ",
+      "restart": "ต้องรีสตาร์ท"
+    },
+    "lock": {
+      "env": "กำหนดโดย environment · {name}",
+      "bootstrap": "ตั้งค่าตอนติดตั้งเท่านั้น",
+      "readonly": "ระบบกำหนดให้",
+      "recovery_only": "เปลี่ยนได้จากโหมดกู้คืนเท่านั้น",
+      "bound_secret_in_env": "ค่าลับที่ผูกอยู่กำหนดโดย environment · {name}",
+      "how": {
+        "env": "ถ้าต้องการแก้ที่นี่ ลบ {name} ออกจาก .env บนเครื่องที่ติดตั้ง แล้วรีสตาร์ท ค่าล่าสุดจะยังคงอยู่",
+        "bootstrap": "ค่านี้อยู่ในไฟล์ตั้งค่าของเครื่องที่ติดตั้ง แก้ที่ไฟล์นั้นแล้วรีสตาร์ท",
+        "readonly": "ระบบเติมค่านี้ให้เอง",
+        "recovery_only": "การเปลี่ยน issuer หรือ client อาจทำให้ทุกคนเข้าระบบไม่ได้ จึงเปลี่ยนได้จากหน้ากู้คืน (/recovery) พร้อมการทดสอบเท่านั้น",
+        "bound_secret_in_env": "ลบ {name} ออกจาก .env ก่อน จึงจะย้ายที่อยู่นี้ได้"
+      }
+    },
+    "source": {
+      "savedBy": "บันทึกโดย {name} · {at}",
+      "savedAt": "บันทึกเมื่อ {at}",
+      "default": "ค่าเริ่มต้น"
+    },
+    "secret": {
+      "placeholder": "วางค่าใหม่",
+      "set": "ตั้งค่าแล้ว",
+      "unset": "ยังไม่ได้ตั้งค่า",
+      "unavailable": "มีค่าเก็บไว้ แต่อ่านไม่ได้ (กุญแจหลักไม่ตรง)",
+      "willClear": "จะลบเมื่อบันทึก",
+      "undo": "ไม่ลบ",
+      "replace": "เปลี่ยน",
+      "clear": "ลบ",
+      "generate": "สร้างใหม่",
+      "noReadBack": "แสดงค่าย้อนหลังไม่ได้",
+      "writeOnly": "บันทึกแล้วจะแสดงเป็น “ตั้งค่าแล้ว” เท่านั้น ไม่มีใครดูค่าย้อนหลังได้",
+      "generatedTitle": "ค่าลับใหม่",
+      "generatedOnce": "คัดลอกไว้ตอนนี้ ค่านี้จะไม่แสดงอีก",
+      "generatedDone": "คัดลอกแล้ว"
+    },
+    "option": {
+      "th": "ไทย",
+      "en": "อังกฤษ"
+    },
+    "listHint": "คั่นแต่ละค่าด้วยจุลภาค",
+    "boundNote": "บันทึกแล้ว {secrets} ที่เก็บไว้จะถูกลบ ให้ใส่ใหม่ในการบันทึกเดียวกัน",
+    "restart": {
+      "title": "ต้องรีสตาร์ท core",
+      "text": "ค่าที่เปลี่ยนแล้วแต่ยังไม่มีผล: {keys}",
+      "how": "ให้ผู้ดูแลเครื่องรีสตาร์ท core บนเครื่องที่ติดตั้ง:",
+      "field": "บันทึกแล้ว มีผลหลังรีสตาร์ท"
+    },
+    "save": {
+      "saved": "บันทึกแล้ว",
+      "cleared": "ลบ {secrets} ที่เก็บไว้แล้ว เพราะเปลี่ยนที่อยู่ปลายทาง ให้ใส่ใหม่",
+      "conflict": "มีคนอื่นเปลี่ยน {name} ไปแล้ว โหลดค่าล่าสุดก่อนแก้ต่อ",
+      "reload": "โหลดใหม่",
+      "locked": "{name} กำหนดโดย environment ({env}) แก้ที่นี่ไม่ได้",
+      "boundInEnv": "ย้าย {name} ไม่ได้ เพราะค่าลับที่ผูกอยู่กำหนดโดย environment ({env})",
+      "invalid": "บางช่องไม่ถูกต้อง",
+      "invalidField": "ไม่ถูกต้อง: {message}",
+      "rateLimited": "ทำบ่อยเกินไป ลองใหม่ใน {s} วินาที",
+      "secretsUnavailable": "บันทึกค่าลับไม่ได้ เพราะกุญแจหลักใช้งานไม่ได้ ดูหมวดความปลอดภัย",
+      "dirty": "มีการแก้ไขที่ยังไม่ได้บันทึก {n} ช่อง"
+    },
+    "warning": {
+      "unpriced_model": "{name}: โมเดลนี้ไม่มีราคาในระบบ ค่าใช้จ่ายจะไม่ถูกนับในงบ",
+      "embedding_model_changed": "เปลี่ยนโมเดล embedding แล้ว ความรู้ {count} ชิ้นยังใช้โมเดลเดิม ค้นหาจะไม่ตรงจนกว่าจะทำ embedding ใหม่",
+      "other": "คำเตือน: {code}"
+    },
+    "test": {
+      "run": "ทดสอบการเชื่อมต่อ",
+      "sendSelf": "ส่งอีเมลทดสอบถึงตัวเอง",
+      "draftHint": "ทดสอบด้วยค่าบนฟอร์มที่ยังไม่ได้บันทึก",
+      "draftNote": "ใช้ค่าบนฟอร์มที่ยังไม่ได้บันทึก ทดสอบก่อนบันทึกได้",
+      "passed": "ผ่าน",
+      "failed": "ไม่ผ่าน",
+      "seconds": "{s} วินาที",
+      "code": {
+        "not_configured": "ยังไม่ได้ตั้งค่า",
+        "secret_required": "ต้องใส่ค่าลับ (เปลี่ยนที่อยู่แล้ว ใช้ค่าเดิมไม่ได้)",
+        "auth_rejected": "ปลายทางไม่รับข้อมูลยืนยันตัวตน",
+        "invalid_response": "ปลายทางตอบกลับในรูปแบบที่ไม่รู้จัก",
+        "failed": "ไม่สำเร็จ",
+        "timeout": "หมดเวลารอ",
+        "connect_failed": "เชื่อมต่อไม่ได้",
+        "tls_failed": "TLS ไม่ผ่าน (ใบรับรองหรือการเข้ารหัส)",
+        "dns_failed": "หาชื่อเครื่องไม่พบ (DNS)",
+        "blocked_host": "ไม่อนุญาตให้ทดสอบไปยังเครื่องนี้",
+        "blocked_address": "ไม่อนุญาตให้ทดสอบไปยังที่อยู่นี้",
+        "blocked_port": "ไม่อนุญาตพอร์ตนี้",
+        "https_required": "เครื่องนอกเครือข่ายภายในต้องใช้ https",
+        "scheme_not_allowed": "ใช้ได้เฉพาะ http หรือ https",
+        "invalid_url": "ที่อยู่ไม่ถูกต้อง",
+        "too_large": "คำตอบใหญ่เกินไป",
+        "issuer_mismatch": "issuer ที่ได้ไม่ตรงกับที่กรอก",
+        "no_keys": "ไม่พบกุญแจใน JWKS",
+        "client_rejected": "Keycloak ไม่รู้จัก client หรือ redirect URI",
+        "no_address": "บัญชีของคุณไม่มีอีเมล",
+        "no_sender": "ยังไม่ได้ตั้งผู้ส่ง (From)",
+        "webhook_not_registered": "ยังไม่ได้ลงทะเบียน webhook ที่ที่อยู่ของพอร์ทัล",
+        "missing_scope": "token ไม่มีสิทธิ์ api",
+        "model_not_found": "ไม่พบโมเดลนี้ที่ผู้ให้บริการ",
+        "provider_unavailable": "ยังไม่ได้ตั้งค่าผู้ให้บริการของโมเดลนี้",
+        "no_embeddings": "ผู้ให้บริการนี้ไม่มีโมเดล embedding",
+        "http": "ปลายทางตอบ HTTP {status}"
+      },
+      "check": {
+        "discovery": "ค้นหา issuer",
+        "jwks": "กุญแจ (JWKS)",
+        "client": "Client และ redirect",
+        "connect": "เชื่อมต่อและยืนยันตัวตน",
+        "send": "ส่งอีเมลทดสอบ",
+        "bot": "บอท",
+        "webhook": "Webhook",
+        "user": "บัญชีบอท",
+        "scopes": "สิทธิ์ของ token",
+        "anthropic": "Anthropic",
+        "openai": "OpenAI-compatible",
+        "model_draft": "โมเดลร่างงาน",
+        "model_fast": "โมเดลงานเร็ว",
+        "model_embed": "โมเดล embedding",
+        "config": "ค่าการสำรองข้อมูล",
+        "bucket": "Bucket",
+        "other": "การตรวจ"
+      }
+    },
+    "reauth": {
+      "title": "ยืนยันตัวตนอีกครั้ง",
+      "text": "การเปลี่ยนค่าลับ การเข้าสู่ระบบ หรือที่อยู่สาธารณะ ต้องเข้าสู่ระบบใหม่ภายใน 10 นาทีที่ผ่านมา ระบบจะพาไปหน้าเข้าสู่ระบบแล้วกลับมาที่หน้านี้",
+      "confirm": "เข้าสู่ระบบอีกครั้ง",
+      "retype": "ค่าลับที่พิมพ์ไว้จะไม่ถูกเก็บระหว่างนี้ กลับมาแล้วต้องพิมพ์ใหม่",
+      "retypeNow": "เข้าสู่ระบบแล้ว พิมพ์ {secrets} อีกครั้งแล้วกดบันทึก",
+      "again": "เข้าสู่ระบบแล้ว กดอีกครั้งเพื่อทำต่อ"
+    },
+    "audit": {
+      "recent": "การเปลี่ยนแปลงล่าสุด",
+      "seeAll": "ดูทั้งหมด",
+      "all": "บันทึกการเปลี่ยนแปลงทั้งหมด",
+      "empty": "ยังไม่มีการเปลี่ยนแปลง",
+      "system": "ระบบ",
+      "resultOk": "ผ่าน",
+      "resultFailed": "ไม่ผ่าน ({code})",
+      "cleared": "(ลบแล้ว)",
+      "allCategories": "ทุกหมวด",
+      "category": "หมวด",
+      "key": "ค่าที่ตั้ง (เช่น smtp.host)",
+      "more": "แสดงเพิ่ม",
+      "kept": "บันทึกการเปลี่ยนแปลงเก็บไว้ตลอด ค่าลับแสดงเป็นลายนิ้วมือ (fp) เท่านั้น",
+      "action": {
+        "set": "เปลี่ยน",
+        "clear": "ล้างค่า",
+        "import": "นำเข้าจาก environment",
+        "derived": "เติมค่าอัตโนมัติ",
+        "test": "ทดสอบ",
+        "setup_completed": "ติดตั้งเสร็จ",
+        "other": "ทำรายการ"
+      }
+    },
+    "channels": {
+      "on": "เปิดใช้งาน",
+      "off": "ปิดอยู่",
+      "enable": "เปิดใช้ {name}",
+      "webhookUrl": "Webhook URL",
+      "lineWebhookUrl": "Webhook URL (นำไปใส่ใน LINE Developers)"
+    },
+    "telegram": {
+      "register": "ลงทะเบียน webhook",
+      "dropPending": "ทิ้งข้อความที่ค้างอยู่",
+      "registerHint": "ใช้ token และ webhook secret ที่บันทึกไว้ บันทึกก่อนลงทะเบียน",
+      "dropTitle": "ทิ้งข้อความที่ค้างอยู่ใน Telegram?",
+      "dropText": "ข้อความที่ส่งถึงบอทแต่ยังไม่ได้ส่งต่อมาจะหายไป เช่น รหัสเชื่อมบัญชีที่เพิ่งส่ง",
+      "dropConfirm": "ทิ้งแล้วลงทะเบียน"
+    },
+    "gitlab": {
+      "steps": {
+        "1": "ใน GitLab เปิด Settings → Webhooks ของกลุ่มหรือโปรเจกต์",
+        "2": "วาง URL ด้านบนในช่อง URL",
+        "3": "ใส่ Secret token เป็น webhook secret ของหน้านี้ (กดสร้างใหม่แล้วคัดลอก)",
+        "4": "เลือกเหตุการณ์ Merge request, Pipeline และ Comments แล้วบันทึก"
+      }
+    },
+    "signin": {
+      "recoveryNote": "Issuer และ client เปลี่ยนจากหน้านี้ไม่ได้ เพื่อไม่ให้ทุกคนเข้าระบบไม่ได้ ใช้หน้ากู้คืน (/recovery)",
+      "loginFunNote": "โหมดสนุกของหน้าเข้าสู่ระบบตั้งที่เครื่อง Keycloak (YODA_LOGIN_FUN_MODE)"
+    },
+    "runners": {
+      "link": "หยุดรับงานและงานแบบไม่มีคนเฝ้า ตั้งที่หน้ารันเนอร์"
+    },
+    "storage": {
+      "readOnly": "ตั้งค่าตอนติดตั้งเท่านั้น หน้านี้ดูและทดสอบได้"
+    },
+    "security": {
+      "keyStatus": "กุญแจหลัก",
+      "keyId": "รหัสกุญแจ",
+      "recovery": "โหมดกู้คืน",
+      "keyHelp": "กุญแจหลักเก็บบนเครื่องที่ติดตั้งและในชุดกู้คืน การหมุนกุญแจทำด้วยคำสั่ง yoda-admin ตามคู่มือ",
+      "keyAlert": {
+        "missing": "ไม่พบกุญแจหลัก ค่าลับที่บันทึกไว้ใช้ไม่ได้ และบันทึกค่าลับใหม่ไม่ได้",
+        "malformed": "กุญแจหลักผิดรูปแบบ ค่าลับที่บันทึกไว้ใช้ไม่ได้",
+        "mismatch": "กุญแจหลักไม่ตรงกับที่ใช้เข้ารหัส ค่าลับที่บันทึกไว้ใช้ไม่ได้"
+      }
+    },
+    "ai": {
+      "usageLink": "ดูการใช้งานและงบรายโครงการ",
+      "budgetLink": "ตั้งงบและโหมดสนุก"
+    },
+    "leave": {
+      "title": "ออกโดยไม่บันทึก?",
+      "text": "การแก้ไขที่ยังไม่ได้บันทึกจะหายไป",
+      "confirm": "ออก",
+      "stay": "อยู่ต่อ"
+    },
+    "field": {
+      "boot": {
+        "port": {
+          "label": "พอร์ตของ core"
+        },
+        "databaseUrl": {
+          "label": "การเชื่อมต่อฐานข้อมูล"
+        },
+        "migrateOnStart": {
+          "label": "อัปเดตโครงสร้างฐานข้อมูลตอนเริ่ม"
+        }
+      },
+      "storage": {
+        "s3Endpoint": {
+          "label": "ที่อยู่ที่เก็บไฟล์ (S3)"
+        },
+        "s3Region": {
+          "label": "Region"
+        },
+        "s3Bucket": {
+          "label": "Bucket"
+        },
+        "s3AccessKey": {
+          "label": "Access key"
+        },
+        "s3SecretKey": {
+          "label": "Secret key"
+        }
+      },
+      "security": {
+        "masterKey": {
+          "label": "กุญแจหลัก (master key)",
+          "help": "ใช้เข้ารหัสค่าลับทั้งหมด เก็บอยู่บนเครื่องที่ติดตั้งเท่านั้น"
+        },
+        "masterKeyFile": {
+          "label": "ไฟล์กุญแจหลัก"
+        },
+        "settingsImport": {
+          "label": "นำเข้าค่าจาก environment ตอนเริ่ม"
+        },
+        "outboundAllowLoopback": {
+          "label": "ให้ทดสอบไปยัง loopback ได้ (สำหรับนักพัฒนา)"
+        }
+      },
+      "oidc": {
+        "issuer": {
+          "label": "Issuer (OIDC)"
+        },
+        "clientId": {
+          "label": "Client ID"
+        },
+        "jwksUrl": {
+          "label": "JWKS URL",
+          "help": "เว้นว่างไว้เพื่อใช้ค่าจาก issuer"
+        },
+        "staffGroup": {
+          "label": "กลุ่มเจ้าหน้าที่ฝ่าย IT",
+          "help": "สมาชิกกลุ่มนี้ใน Keycloak ได้สิทธิ์เจ้าหน้าที่"
+        },
+        "bootstrapAdmins": {
+          "label": "ผู้ดูแลเริ่มต้น (เลิกใช้แล้ว)"
+        }
+      },
+      "ai": {
+        "anthropicApiKey": {
+          "label": "Anthropic API key"
+        },
+        "openaiApiKey": {
+          "label": "OpenAI-compatible API key"
+        },
+        "openaiBaseUrl": {
+          "label": "OpenAI-compatible base URL",
+          "help": "เช่น gateway ภายในโรงพยาบาล เปลี่ยนแล้วต้องใส่ API key ใหม่"
+        },
+        "modelDraft": {
+          "label": "โมเดลสำหรับร่างงาน",
+          "help": "รูปแบบ provider:model เช่น anthropic:claude-opus-5-5"
+        },
+        "modelFast": {
+          "label": "โมเดลสำหรับงานเร็ว",
+          "help": "รูปแบบ provider:model"
+        },
+        "embeddingModel": {
+          "label": "โมเดล embedding",
+          "help": "เปลี่ยนแล้ว ความรู้ที่ทำ embedding ไว้ต้องทำใหม่"
+        },
+        "workers": {
+          "label": "จำนวนงาน AI พร้อมกัน"
+        }
+      },
+      "work": {
+        "dailyTaskCap": {
+          "label": "จำนวนงานต่อวันต่อคน"
+        }
+      },
+      "gitlab": {
+        "url": {
+          "label": "ที่อยู่ GitLab",
+          "help": "เปลี่ยนแล้วต้องใส่ token ใหม่"
+        },
+        "token": {
+          "label": "Token ของบัญชีบอท",
+          "help": "Personal access token ที่มีสิทธิ์ api"
+        },
+        "webhookSecret": {
+          "label": "Webhook secret",
+          "help": "ใส่ค่าเดียวกันในช่อง Secret token ของ webhook ใน GitLab"
+        }
+      },
+      "org": {
+        "publicUrl": {
+          "label": "ที่อยู่สาธารณะของพอร์ทัล",
+          "help": "ใช้ในลิงก์อีเมลและ webhook"
+        },
+        "runnerDocsUrl": {
+          "label": "ลิงก์คู่มือรันเนอร์"
+        },
+        "line": {
+          "label": "ข้อความท้ายเมนู",
+          "help": "เช่น ชื่อฝ่ายหรือโรงพยาบาล"
+        },
+        "name": {
+          "label": "ชื่อหน่วยงาน (ไทย)"
+        },
+        "nameEn": {
+          "label": "ชื่อหน่วยงาน (อังกฤษ)"
+        },
+        "defaultLocale": {
+          "label": "ภาษาเริ่มต้น"
+        }
+      },
+      "runners": {
+        "leaseSeconds": {
+          "label": "เวลาจองงานของรันเนอร์ (วินาที)"
+        },
+        "mcpEnabled": {
+          "label": "เปิด MCP endpoint"
+        }
+      },
+      "smtp": {
+        "host": {
+          "label": "เซิร์ฟเวอร์ SMTP",
+          "help": "เปลี่ยนแล้วต้องใส่รหัสผ่านใหม่"
+        },
+        "port": {
+          "label": "พอร์ต"
+        },
+        "secure": {
+          "label": "เชื่อมต่อแบบ TLS ตั้งแต่ต้น (พอร์ต 465)",
+          "help": "ปิดไว้เพื่อใช้ STARTTLS"
+        },
+        "user": {
+          "label": "ชื่อผู้ใช้"
+        },
+        "password": {
+          "label": "รหัสผ่าน"
+        },
+        "from": {
+          "label": "ผู้ส่ง (From)"
+        }
+      },
+      "line": {
+        "accessToken": {
+          "label": "Channel access token (long-lived)"
+        },
+        "channelSecret": {
+          "label": "Channel secret"
+        },
+        "apiUrl": {
+          "label": "LINE API URL"
+        },
+        "addFriendUrl": {
+          "label": "ลิงก์เพิ่มเพื่อน LINE",
+          "help": "แสดงให้ผู้ใช้ตอนเชื่อมบัญชี LINE"
+        }
+      },
+      "telegram": {
+        "botToken": {
+          "label": "Bot token",
+          "help": "จาก BotFather"
+        },
+        "botUsername": {
+          "label": "ชื่อบอท",
+          "help": "ระบบเติมให้หลังทดสอบ token"
+        },
+        "webhookSecret": {
+          "label": "Webhook secret"
+        },
+        "apiUrl": {
+          "label": "Telegram API URL"
+        }
+      },
+      "portal": {
+        "coreUrl": {
+          "label": "ที่อยู่ core (จากพอร์ทัล)"
+        },
+        "keycloakUrl": {
+          "label": "Keycloak URL (พอร์ทัล)"
+        },
+        "keycloakRealm": {
+          "label": "Keycloak realm (พอร์ทัล)"
+        },
+        "keycloakClientId": {
+          "label": "Keycloak client (พอร์ทัล)"
+        }
+      },
+      "compose": {
+        "imagePrefix": {
+          "label": "ที่อยู่ image"
+        },
+        "version": {
+          "label": "เวอร์ชัน"
+        },
+        "corePort": {
+          "label": "พอร์ต core บนเครื่อง"
+        },
+        "coreBind": {
+          "label": "ที่อยู่ bind ของ core"
+        },
+        "portalPort": {
+          "label": "พอร์ตพอร์ทัลบนเครื่อง"
+        },
+        "portalBind": {
+          "label": "ที่อยู่ bind ของพอร์ทัล"
+        },
+        "postgresUser": {
+          "label": "ผู้ใช้ฐานข้อมูล"
+        },
+        "postgresPassword": {
+          "label": "รหัสผ่านฐานข้อมูล"
+        },
+        "postgresDb": {
+          "label": "ชื่อฐานข้อมูล"
+        },
+        "profiles": {
+          "label": "Compose profiles"
+        }
+      },
+      "backup": {
+        "at": {
+          "label": "เวลาสำรองข้อมูล (HH:MM)",
+          "help": "ตามเวลาของเครื่องที่ติดตั้ง"
+        },
+        "keepDays": {
+          "label": "เก็บไว้ (วัน)"
+        }
+      },
+      "signin": {
+        "loginFunMode": {
+          "label": "โหมดสนุกหน้าเข้าสู่ระบบ"
+        }
+      }
+    }
   }
 }

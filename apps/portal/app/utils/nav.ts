@@ -37,8 +37,8 @@ export function navGroupsFor(me: Me): NavGroup[] {
       items: [
         item('admin.people', '/admin/people', 'mdi-account-group-outline'),
         item('admin.ai', '/admin/ai', 'mdi-cash-multiple'),
-        item('admin.gitlab', '/admin/gitlab', 'mdi-source-branch'),
-        item('admin.notifications', '/admin/notifications', 'mdi-bell-cog-outline'),
+        // One item for every system setting (D5); GitLab and the notification channels are its categories.
+        item('admin.settings', '/admin/settings', 'mdi-cog-outline'),
       ],
     })
   }

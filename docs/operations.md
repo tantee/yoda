@@ -294,7 +294,7 @@ leave it unset.
          Set a spending limit in the provider's console as well.
    - [ ] **GitLab** bot and webhook (section 7).
    - [ ] **Runners** (section 8).
-   - [ ] **Email, LINE and Telegram** (section 9), then enable each channel in Admin → Notification channels.
+   - [ ] **Email, LINE and Telegram** (section 9), then enable each channel in System settings → Notification channels.
    - [ ] **Backups** copied off the host (section 6), and a test restore.
    - [ ] **Monitoring:** alert on the `core`, `portal` and `backup` containers turning unhealthy (section 11).
 
@@ -415,7 +415,7 @@ Owner checklist (details in the README, "GitLab integration"):
 - [ ] A **webhook** on each linked project, or once on the group: URL
       `https://portal.example.org/api/gitlab/webhook`, secret token = `GITLAB_WEBHOOK_SECRET`, triggers
       **Merge request events**, **Pipeline events** and **Comments**, SSL verification on.
-- [ ] Admin → GitLab shows core configured, GitLab reachable, the bot user, and the time of the last webhook.
+- [ ] System settings → GitLab shows core configured, GitLab reachable, the bot user, and the time of the last webhook.
 
 GitLab does not retry failed deliveries and disables a webhook that keeps failing. After an outage, open the
 webhook's **Recent events**, re-enable it if needed and **Resend** the failed deliveries; resending is harmless.
@@ -441,7 +441,7 @@ Runners work the AI tasks that need a repository; see the README, "Runners", for
 ## 9. Email, LINE and Telegram
 
 The portal feed always works. Each outside channel is on only when its variables are set **and** an admin
-enables it in Admin → Notification channels; then each person chooses channels per notification kind in
+enables it in System settings → Notification channels; then each person chooses channels per notification kind in
 their settings. Messages carry only the notification's title, body and a portal link. Delivery is at least
 once from the moment it is queued: after a crash during sending a person may rarely get the same message twice.
 A channel error is retried 6 times with exponential backoff (about 30 seconds, doubling up to about 16
@@ -455,7 +455,7 @@ logged, stored or returned by the API.
 - [ ] Ask the mail team for a relay account for `yoda@example.org` on `smtp.example.org` (port 587 with
       STARTTLS, or 465 with `SMTP_SECURE=true`), and that the relay accepts the deploy host.
 - [ ] Set `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASSWORD` and `MAIL_FROM`; deploy.
-- [ ] Enable email in Admin → Notification channels and send a test (assign yourself a task).
+- [ ] Enable email in System settings → Notification channels and send a test (assign yourself a task).
 - [ ] SPF/DKIM for the sender domain are the mail team's; without them messages land in spam.
 
 ### 9.2 LINE Official Account (Messaging API)
@@ -470,7 +470,7 @@ logged, stored or returned by the API.
       messages off, or reword them), so people see Yoda's own linking replies only. Chat mode off.
 - [ ] Copy the account's add-friend link (`https://line.me/R/ti/p/@<id>`) into
       `NUXT_PUBLIC_LINE_ADD_FRIEND_URL`.
-- [ ] Enable LINE in Admin → Notification channels. A person links from Settings: add the account, then send
+- [ ] Enable LINE in System settings → Notification channels. A person links from Settings: add the account, then send
       the `LINK-XXXXXXXX` code shown in the portal (valid 15 minutes). Blocking the account unlinks them.
 
 ### 9.3 Telegram
@@ -494,7 +494,7 @@ logged, stored or returned by the API.
       ```
 
       Expect `{"ok":true,...}`. Check later with `.../getWebhookInfo` (look at `last_error_message`).
-- [ ] Enable Telegram in Admin → Notification channels. A person links from Settings with the
+- [ ] Enable Telegram in System settings → Notification channels. A person links from Settings with the
       `t.me/<bot>?start=<code>` link; blocking the bot unlinks them.
 
 ## 10. Rotating secrets
@@ -508,7 +508,7 @@ after a suspected leak.
 | Postgres password | `dc exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'`, then `\password yoda` (prompts, so the password stays out of history); update `POSTGRES_PASSWORD` and `DATABASE_URL` together and `dc up -d --no-build`. |
 | Storage keys | RustFS takes its credentials from the same variables: change both keys and `dc up -d --no-build` (restarts `rustfs`, `core`, `backup`). |
 | AI provider keys | Create the new key in the provider console, update `.env`, `dc up -d --no-build`, then delete the old key. |
-| GitLab bot token | Create a new token (`api`), update `GITLAB_TOKEN`, `dc up -d --no-build`, revoke the old one. Admin → GitLab should show the bot. |
+| GitLab bot token | Create a new token (`api`), update `GITLAB_TOKEN`, `dc up -d --no-build`, revoke the old one. System settings → GitLab should show the bot. |
 | GitLab webhook secret | Update `GITLAB_WEBHOOK_SECRET`, `dc up -d --no-build`, then the secret in every webhook right away; deliveries in between are refused (resend them). |
 | SMTP password | Change it with the mail team, update `SMTP_PASSWORD`, `dc up -d --no-build`. |
 | LINE token / secret | Issue a new long-lived token (or reissue the channel secret) in LINE Developers, update `.env`, `dc up -d --no-build`. |
@@ -547,9 +547,9 @@ is immediate, so run `dc up -d --no-build` straight after it).
   must be public with PKCE (section 2).
 - **A person is a requester but should be staff.** They are not in `STAFF_GROUP` (full path) in Keycloak, or an
   admin set an override in Admin → People.
-- **GitLab shows not connected.** Admin → GitLab; check `GITLAB_URL`, the token (expired?) and that core can
+- **GitLab shows not connected.** System settings → GitLab; check `GITLAB_URL`, the token (expired?) and that core can
   reach GitLab. Missing webhook events: GitLab's webhook **Recent events** (section 7).
-- **Emails, LINE or Telegram not arriving.** Admin → Notification channels shows whether each channel is
+- **Emails, LINE or Telegram not arriving.** System settings → Notification channels shows whether each channel is
   configured and enabled; the person's settings show what they chose and whether they are linked. Core logs a
   code per failed delivery, never the message or a credential: `smtp_<reply code>` (e.g. `smtp_535`, a wrong
   password), `line_<status>` / `telegram_<status>` (`401`: a wrong or revoked token, section 10),

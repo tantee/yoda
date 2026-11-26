@@ -64,16 +64,17 @@ describe('labels', () => {
       errorKey({ data: { error: 'invalid_prefs' } }),
       errorKey({ data: { error: 'channel_not_configured' } }),
       errorKey({ data: { error: 'channel_unavailable' } }),
-      'nav.admin.notifications',
+      'nav.admin.settings',
+      'settings.page.channels',
     ]
     for (const key of keys) {
       for (const [, locale] of Object.entries(LOCALES)) expect(typeof lookup(locale, key), key).toBe('string')
     }
   })
-  it('the admin page is in the admin nav only', () => {
+  it('the channel settings (now System settings → Notification channels) are in the admin nav only', () => {
     const base = { id: crypto.randomUUID(), username: 'u', displayName: 'U', email: null }
-    expect(navItemsFor({ ...base, isStaff: true, isAdmin: true }).map(i => i.key)).toContain('nav.admin.notifications')
-    expect(navItemsFor({ ...base, isStaff: true, isAdmin: false }).map(i => i.key)).not.toContain('nav.admin.notifications')
+    expect(navItemsFor({ ...base, isStaff: true, isAdmin: true }).map(i => i.key)).toContain('nav.admin.settings')
+    expect(navItemsFor({ ...base, isStaff: true, isAdmin: false }).map(i => i.key)).not.toContain('nav.admin.settings')
   })
 })
 
