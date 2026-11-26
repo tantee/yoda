@@ -42,7 +42,17 @@ if [ -z "$prefix" ] && [ -f release.env ]; then
 fi
 # The prod compose has no default prefix: without one it would pull `yoda/...` from Docker Hub. An install from
 # before install.sh keeps its prefix in .env (release.env, when it holds one, wins over .env).
-if [ -z "$prefix" ] && ! { [ -f .env ] && grep -Eq '^YODA_IMAGE_PREFIX=[A-Za-z0-9._:/-]+$' .env; }; then
+# As compose reads .env: the last line wins, surrounding quotes go, and an unquoted value ends at ' #'.
+env_prefix() {
+  [ -f .env ] || return 0
+  sed -n 's/^[[:space:]]*YODA_IMAGE_PREFIX[[:space:]]*=[[:space:]]*//p' .env | tail -n 1 | sed \
+    -e 's/^"\([^"]*\)".*$/\1/' -e "s/^'\\([^']*\\)'.*\$/\\1/" -e 's/[[:space:]]#.*$//' -e 's/[[:space:]]*$//'
+}
+legacy=$(env_prefix)
+case "$legacy" in
+  '' | -* | *[!A-Za-z0-9._:/-]*) legacy='' ;;
+esac
+if [ -z "$prefix" ] && [ -z "$legacy" ]; then
   cat >&2 <<'EOF'
 deploy: YODA_IMAGE_PREFIX is not set: the registry path of the images (e.g. registry.example.org/group/yoda).
   Pass it once, and it is pinned in release.env:  YODA_IMAGE_PREFIX=<path> YODA_VERSION=<tag> sh ops/deploy/deploy.sh

@@ -130,6 +130,26 @@ describe.skipIf(!posix)('ops/deploy/deploy.sh (stub docker)', () => {
     rmSync(s.dir, { recursive: true, force: true })
   })
 
+  it.each([['"registry.example.org/old/yoda"'], ["'registry.example.org/old/yoda'"], ['registry.example.org/old/yoda  # pinned']])(
+    'accepts a quoted or commented prefix in .env (%s), as compose reads it',
+    async (value) => {
+      const s = sandbox()
+      writeFileSync(join(s.dir, '.env'), `YODA_IMAGE_PREFIX=${value}\n`)
+      const r = await run('sh', [deploy], { cwd: s.dir, env: { ...s.env, YODA_VERSION: '1.2.0', FAKE_SETUP: 'done' } })
+      expect(r.code, r.out).toBe(0)
+      rmSync(s.dir, { recursive: true, force: true })
+    },
+  )
+
+  it('still refuses an empty or quoted-empty prefix in .env', async () => {
+    const s = sandbox()
+    writeFileSync(join(s.dir, '.env'), 'YODA_IMAGE_PREFIX=""\n')
+    const r = await run('sh', [deploy], { cwd: s.dir, env: { ...s.env, YODA_VERSION: '1.2.0' } })
+    expect(r.code).toBe(2)
+    expect(s.calls()).toBe('')
+    rmSync(s.dir, { recursive: true, force: true })
+  })
+
   it('uses PORTAL_PORT from .env in the hint and pins a given image prefix', async () => {
     const s = sandbox()
     writeFileSync(join(s.dir, '.env'), 'PORTAL_PORT=3100\n')

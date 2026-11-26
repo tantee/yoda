@@ -179,7 +179,7 @@ Compose changes (sketch, the real diff comes with phase 3):
 ```yaml
 services:
   init:
-    image: ${YODA_IMAGE_PREFIX:-yoda}/core:${YODA_VERSION:?…}
+    image: ${YODA_IMAGE_PREFIX:?…}/core:${YODA_VERSION:?…}
     command: ['node', 'dist/init.js']
     environment:              # every one optional; set only to override generation
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
