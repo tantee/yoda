@@ -2,7 +2,7 @@
 import type { GeneratedSecret, MasterKeyView, SettingCategory, SettingsCategoryView, SettingsPutResponse, SettingsTestResult, SettingWarning } from '@yoda/shared'
 import {
   REAUTH_STASH_KEY,
-  applyModes,
+  categoryApplyModes,
   applyReauthStash,
   boundSecretNotes,
   boundSecretsInEnv,
@@ -78,7 +78,7 @@ onBeforeUnmount(() => emit('dirty', false))
 const changes = computed(() => draftChanges(views.value, draft.value))
 const dirty = computed(() => Object.keys(changes.value.changes).length)
 watch(dirty, n => emit('dirty', n > 0), { immediate: true })
-const modes = computed(() => applyModes(views.value))
+const modes = computed(() => categoryApplyModes(props.category, views.value))
 const editable = computed(() => views.value.some(v => !v.locked))
 const label = (key: string) => t(fieldLabelKey(key))
 const notes = computed(() => {

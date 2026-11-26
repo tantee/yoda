@@ -10,6 +10,8 @@
 #   SHA256SUMS             both of the above
 # Signing is a separate step (the release job): minisign -S -s <key> -m SHA256SUMS -t "yoda release <version>"
 # writes SHA256SUMS.minisig, which install.sh verifies. No secret is read here.
+# Reproducible with GNU tar (CI): sorted names, owner 0:0, fixed modes, every mtime = SOURCE_DATE_EPOCH (default:
+# the last commit's time), gzip -n. Other tars (macOS) give the same contents, not the same bytes.
 set -eu
 
 [ $# -eq 3 ] || { echo 'usage: bundle.sh <version> <image prefix> <out dir>' >&2; exit 2; }
@@ -35,12 +37,24 @@ for f in $files; do
   mkdir -p "$stage/$(dirname "$f")"
   cp "$f" "$stage/$f"
 done
-chmod 0755 "$stage/ops/deploy/deploy.sh" "$stage/ops/install/install.sh"
 printf 'YODA_IMAGE_PREFIX=%s\nYODA_VERSION=%s\n' "$prefix" "$version" > "$stage/bundle.env"
+find "$stage" -type d -exec chmod 0755 {} +
+find "$stage" -type f -exec chmod 0644 {} +
+chmod 0755 "$stage/ops/deploy/deploy.sh" "$stage/ops/install/install.sh"
 
-# Plain files only (no macOS metadata).
+epoch=${SOURCE_DATE_EPOCH:-$(git log -1 --format=%ct 2>/dev/null || date +%s)}
+case "$epoch" in
+  '' | *[!0-9]*) echo 'bundle: SOURCE_DATE_EPOCH must be a Unix time' >&2; exit 2 ;;
+esac
+# Plain files only (no macOS metadata). No pipe: a failed tar must fail the build.
 # shellcheck disable=SC2086 # $files is a fixed list of plain paths
-(cd "$stage" && COPYFILE_DISABLE=1 tar -czf "bundle.tar.gz" bundle.env $files)
+if tar --version 2>/dev/null | grep -q 'GNU tar'; then
+  (cd "$stage" && tar --sort=name --owner=0 --group=0 --numeric-owner --mtime="@$epoch" --format=gnu \
+    -cf bundle.tar bundle.env $files)
+else
+  (cd "$stage" && COPYFILE_DISABLE=1 tar -cf bundle.tar bundle.env $files)
+fi
+gzip -n -9 "$stage/bundle.tar"
 mv "$stage/bundle.tar.gz" "$dest/yoda-$version.tar.gz"
 cp ops/install/install.sh "$dest/install.sh"
 

@@ -83,6 +83,9 @@ describe('.gitlab-ci.yml', () => {
       expect(job.rules).toEqual([{ if: '$CI_COMMIT_TAG' }])
       expect(script).toMatch(/case "\$CI_COMMIT_TAG" in/)
       expect(script).toContain('sh ops/install/bundle.sh "$CI_COMMIT_TAG" "$CI_REGISTRY_IMAGE" dist')
+      // Reproducible: the commit's time, with GNU tar and git from apk.
+      expect(script).toContain('export SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"')
+      expect(script).toMatch(/apk add --no-cache [^\n]*\btar\b[^\n]*\bgit\b/)
       expect(job.artifacts?.paths).toEqual(['dist/releases/'])
     })
 
@@ -99,6 +102,10 @@ describe('.gitlab-ci.yml', () => {
       expect(script).toContain('if [ -z "${YODA_RELEASE_UPLOAD_URL:-}" ]')
       expect(script).toMatch(/printf 'header = "Authorization: Bearer %s"\\n' "\$YODA_RELEASE_UPLOAD_TOKEN" \|\s*curl [^\n]*-K -/)
       expect(script).not.toMatch(/curl [^\n|]*\$YODA_RELEASE_UPLOAD_TOKEN/)
+      // An empty token, or one with quotes, spaces or newlines (it goes into a curl config line), is refused.
+      expect(script).toContain(`if [ -z "$YODA_RELEASE_UPLOAD_TOKEN" ] || printf '%s' "$YODA_RELEASE_UPLOAD_TOKEN" | tr -d 'A-Za-z0-9._~+/=-' | grep -q .; then`)
+      const guard = script.indexOf('if [ -z "$YODA_RELEASE_UPLOAD_TOKEN" ]')
+      expect(guard).toBeLessThan(script.indexOf('--upload-file'))
     })
   })
 
@@ -206,6 +213,13 @@ describe('ops/deploy/deploy.sh', () => {
     expect(code).toContain('yoda-admin setup-token')
   })
 
+  it('refuses to run without an image prefix (never Docker Hub), before changing anything', () => {
+    const refuse = order('YODA_IMAGE_PREFIX is not set')
+    expect(refuse).toBeLessThan(order('(umask 077'))
+    expect(refuse).toBeLessThan(order('release=release.env.next'))
+    expect(read('ops/install/install.sh')).toMatch(/printf 'YODA_IMAGE_PREFIX=%s\\n' "\$prefix" > "\$dir\/release\.env"/)
+  })
+
   it('never touches a volume (the bootstrap volume holds the master key)', () => {
     expect(code).not.toMatch(/\bvolume\b|\bdown\b|\s-v\b|--volumes/)
   })
@@ -230,7 +244,8 @@ describe('docker-compose.prod.yml images', () => {
 
   it.each(Object.entries(want))('%s uses the published %s image at a required version and still builds locally', (service, name) => {
     const s = prod.services[service]!
-    expect(s.image).toBe(`\${YODA_IMAGE_PREFIX:-yoda}/${name}:\${YODA_VERSION:?YODA_VERSION is required (see release.env)}`)
+    // No default prefix: a missing one must stop compose, never pull `yoda/...` from Docker Hub.
+    expect(s.image).toBe(`\${YODA_IMAGE_PREFIX:?YODA_IMAGE_PREFIX is required (the registry path; see release.env)}/${name}:\${YODA_VERSION:?YODA_VERSION is required (see release.env)}`)
     expect(s.build).toBeTruthy()
   })
 })
@@ -256,10 +271,11 @@ describe('docker-compose.prod.yml exposure', () => {
     expect(prod.services.postgres!.volumes).toEqual(['pgdata:/var/lib/postgresql/data', 'yoda-bootstrap:/var/lib/yoda:ro'])
   })
 
-  it('requires nothing but YODA_VERSION (installer proposal §13.3)', () => {
+  it('requires nothing but the image prefix and YODA_VERSION (installer proposal §13.3)', () => {
     const text = read('docker-compose.prod.yml')
     const required = [...text.matchAll(/\$\{([A-Z][A-Z0-9_]*):\?/g)].map((m) => m[1])
-    expect(new Set(required)).toEqual(new Set(['YODA_VERSION']))
+    expect(new Set(required)).toEqual(new Set(['YODA_IMAGE_PREFIX', 'YODA_VERSION']))
+    expect(text).not.toMatch(/YODA_IMAGE_PREFIX:-/)
     expect(prod.services.core!.environment?.PORTAL_URL).toBe('${PORTAL_URL:-}')
     expect(prod.services.core!.environment?.OIDC_ISSUER).toBe('${OIDC_ISSUER:-}')
   })
@@ -343,6 +359,15 @@ describe('docker-compose.yml (dev) keeps its throwaway credentials', () => {
 
 describe('.github/workflows/ci.yml', () => {
   const gh = parse(read('.github/workflows/ci.yml')) as { jobs: Record<string, { steps: { run?: string }[] }> }
+
+  it('installs minisign and shellcheck in the test job, before the tests', () => {
+    const steps = gh.jobs.test!.steps.map((s) => s.run ?? '')
+    const install = steps.findIndex((r) => /apt-get install -y [^\n]*\bminisign\b/.test(r))
+    expect(install).toBeGreaterThan(-1)
+    expect(steps[install]).toMatch(/\bshellcheck\b/)
+    expect(steps[install]).toMatch(/^sudo apt-get update && /)
+    expect(install).toBeLessThan(steps.indexOf('pnpm test'))
+  })
 
   it('builds every image and pushes none', () => {
     const runs = gh.jobs.build!.steps.map((s) => s.run ?? '').join('\n')

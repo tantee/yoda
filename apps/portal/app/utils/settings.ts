@@ -191,6 +191,11 @@ export function applyModes(views: SettingView[]): SettingView['apply'][] {
   return (['live', 'reconnect', 'restart'] as const).filter(m => editable.some(v => v.apply === m))
 }
 
+/** The hints a category shows: the backup container re-reads its settings every minute, so `live` reads `minute` there. */
+export function categoryApplyModes(category: string, views: SettingView[]): (SettingView['apply'] | 'minute')[] {
+  return applyModes(views).map(m => (category === 'backups' && m === 'live' ? 'minute' : m))
+}
+
 // --- Drafts ---------------------------------------------------------------------------------------------------
 
 /** What an input holds: text for text, numbers, lists and enums; a boolean for switches. */

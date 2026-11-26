@@ -102,9 +102,11 @@ release-bundle:
   interruptible: false
   before_script:
     - case "$CI_COMMIT_TAG" in '' | -* | *[!A-Za-z0-9._-]*) echo "invalid release tag" >&2; exit 1 ;; esac
-    - apk add --no-cache curl minisign tar
+    - apk add --no-cache curl minisign tar git
     - test -s "$YODA_RELEASE_SIGNING_KEY" || { echo "YODA_RELEASE_SIGNING_KEY (a File variable) is not set" >&2; exit 1; }
   script:
+    # Reproducible: every mtime is the tagged commit's time (GNU tar, gzip -n).
+    - export SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
     - sh ops/install/bundle.sh "$CI_COMMIT_TAG" "$CI_REGISTRY_IMAGE" dist
     - minisign -S -s "$YODA_RELEASE_SIGNING_KEY" -m "dist/releases/$CI_COMMIT_TAG/SHA256SUMS" -t "yoda release $CI_COMMIT_TAG"
     # Self-check against the public key install.sh embeds: a placeholder or a mismatched key fails the release.
@@ -114,6 +116,11 @@ release-bundle:
       if [ -z "${YODA_RELEASE_UPLOAD_URL:-}" ]; then
         echo "YODA_RELEASE_UPLOAD_URL is not set: the bundle stays a job artifact only"
         exit 0
+      fi
+      # The token goes into a curl config line: refuse an empty one, or one with quotes, spaces or newlines.
+      if [ -z "$YODA_RELEASE_UPLOAD_TOKEN" ] || printf '%s' "$YODA_RELEASE_UPLOAD_TOKEN" | tr -d 'A-Za-z0-9._~+/=-' | grep -q .; then
+        echo "YODA_RELEASE_UPLOAD_TOKEN is empty or holds characters a bearer token cannot" >&2
+        exit 1
       fi
       for f in "dist/releases/$CI_COMMIT_TAG"/*; do
         printf 'header = "Authorization: Bearer %s"\n' "$YODA_RELEASE_UPLOAD_TOKEN" |

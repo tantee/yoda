@@ -1,12 +1,13 @@
 # Overlay over docker-compose.yml. All values come from the environment (the host's .env and release.env, or
 # your shell). No secrets here.
-# Images: ${YODA_IMAGE_PREFIX}/<name>:${YODA_VERSION}. YODA_VERSION is required: a deploy host pulls that release
-# from the registry and ops/deploy/deploy.sh pins it in release.env (docs/operations.md). Locally, build and run
-# a prod-like stack under yoda/<name>:latest with:
-#   YODA_VERSION=latest docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
+# Images: ${YODA_IMAGE_PREFIX}/<name>:${YODA_VERSION}. Both are required (no default, so a missing prefix never
+# pulls a `yoda/...` image from Docker Hub): a deploy host pulls that release from the registry, and
+# ops/deploy/deploy.sh pins both in release.env (docs/operations.md). Locally, build and run a prod-like stack
+# under yoda/<name>:latest with:
+#   YODA_IMAGE_PREFIX=yoda YODA_VERSION=latest docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
 # Core and the portal publish on 127.0.0.1 by default (a reverse proxy goes in front); Postgres and RustFS
 # publish nothing (reach them with `docker compose exec`).
-# Nothing but YODA_VERSION is required: the one-shot `init` service generates the Postgres password, the RustFS
+# Nothing but YODA_IMAGE_PREFIX and YODA_VERSION is required: the one-shot `init` service generates the Postgres password, the RustFS
 # keys and the master key into the `yoda-bootstrap` volume (docs/design/installer-proposal.md §3.2). A value set
 # in .env wins and is copied into the volume, so an existing .env install upgrades unchanged.
 # Volume layout: shared files 0640 root:10500 (every reader gets `group_add: ['10500']`, postgres reads as root);
@@ -16,7 +17,7 @@ services:
     build:
       context: .
       dockerfile: apps/core/Dockerfile
-    image: ${YODA_IMAGE_PREFIX:-yoda}/core:${YODA_VERSION:?YODA_VERSION is required (see release.env)}
+    image: ${YODA_IMAGE_PREFIX:?YODA_IMAGE_PREFIX is required (the registry path; see release.env)}/core:${YODA_VERSION:?YODA_VERSION is required (see release.env)}
     command: ['node', 'dist/init.js']
     # Root: it sets the owners (root:10500, core/ for the node user) and reads the Postgres data directory.
     user: '0:0'
@@ -39,7 +40,7 @@ services:
     build:
       context: .
       dockerfile: apps/core/Dockerfile
-    image: ${YODA_IMAGE_PREFIX:-yoda}/core:${YODA_VERSION:?YODA_VERSION is required (see release.env)}
+    image: ${YODA_IMAGE_PREFIX:?YODA_IMAGE_PREFIX is required (the registry path; see release.env)}/core:${YODA_VERSION:?YODA_VERSION is required (see release.env)}
     command: ['node', 'dist/migrate.js']
     depends_on:
       init:
@@ -59,7 +60,7 @@ services:
     build:
       context: .
       dockerfile: apps/core/Dockerfile
-    image: ${YODA_IMAGE_PREFIX:-yoda}/core:${YODA_VERSION:?YODA_VERSION is required (see release.env)}
+    image: ${YODA_IMAGE_PREFIX:?YODA_IMAGE_PREFIX is required (the registry path; see release.env)}/core:${YODA_VERSION:?YODA_VERSION is required (see release.env)}
     depends_on:
       init:
         condition: service_completed_successfully
@@ -196,7 +197,7 @@ services:
     build:
       context: .
       dockerfile: apps/portal/Dockerfile
-    image: ${YODA_IMAGE_PREFIX:-yoda}/portal:${YODA_VERSION:?YODA_VERSION is required (see release.env)}
+    image: ${YODA_IMAGE_PREFIX:?YODA_IMAGE_PREFIX is required (the registry path; see release.env)}/portal:${YODA_VERSION:?YODA_VERSION is required (see release.env)}
     depends_on:
       core:
         condition: service_healthy
@@ -229,7 +230,7 @@ services:
   backup:
     build:
       context: ops/backup
-    image: ${YODA_IMAGE_PREFIX:-yoda}/backup:${YODA_VERSION:?YODA_VERSION is required (see release.env)}
+    image: ${YODA_IMAGE_PREFIX:?YODA_IMAGE_PREFIX is required (the registry path; see release.env)}/backup:${YODA_VERSION:?YODA_VERSION is required (see release.env)}
     depends_on:
       init:
         condition: service_completed_successfully
@@ -265,7 +266,7 @@ services:
     build:
       context: .
       dockerfile: apps/runner/Dockerfile
-    image: ${YODA_IMAGE_PREFIX:-yoda}/runner:${YODA_VERSION:?YODA_VERSION is required (see release.env)}
+    image: ${YODA_IMAGE_PREFIX:?YODA_IMAGE_PREFIX is required (the registry path; see release.env)}/runner:${YODA_VERSION:?YODA_VERSION is required (see release.env)}
     depends_on:
       - core
     environment:

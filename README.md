@@ -56,12 +56,13 @@ pnpm test            # uses TEST_DATABASE_URL, default postgres://yoda:yoda@loca
 ## Containers and production
 
 ```bash
-YODA_VERSION=latest docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
+YODA_IMAGE_PREFIX=yoda YODA_VERSION=latest docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
 ```
 
 Images: `core` (`node dist/server.js`), `portal` (`node .output/server/index.mjs`), `runner` and `backup`,
-named `${YODA_IMAGE_PREFIX:-yoda}/<name>:${YODA_VERSION}` by the overlay. `YODA_VERSION` is required (locally
-`latest`, giving `yoda/core:latest` and so on); a deploy host pulls the release from the registry and pins it in
+named `${YODA_IMAGE_PREFIX}/<name>:${YODA_VERSION}` by the overlay. Both are required (locally `yoda` and
+`latest`, giving `yoda/core:latest` and so on; there is no default prefix, so a deploy host never pulls a
+`yoda/...` image from Docker Hub by mistake); a deploy host pulls the release from the registry and pins both in
 `release.env` (see the runbook, `docs/operations.md`).
 The core server runs the migrations itself when `MIGRATE_ON_START=true` (the default, so a plain
 `docker run` works). The prod overlay sets it to `false` and runs a one-shot `migrate` service

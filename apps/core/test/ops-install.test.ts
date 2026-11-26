@@ -9,17 +9,28 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
 // ops/install/install.sh and ops/deploy/deploy.sh against a local fixture bundle, a minisign key generated here
 // (never committed) and a stub `docker` that records its calls. CI installs curl, minisign and shellcheck
-// (.gitlab-ci.yml test job); skip rather than fail where they are missing.
+// (.gitlab-ci.yml and .github/workflows/ci.yml test jobs): with CI set these tests run and fail without them; a
+// developer machine without them skips.
 const root = fileURLToPath(new URL('../../../', import.meta.url))
 const has = (cmd: string) => spawnSync('sh', ['-c', `command -v ${cmd}`]).status === 0
 const posix = process.platform !== 'win32'
+const ci = !!process.env.CI
 const canInstall = posix && has('minisign') && (has('curl') || has('wget'))
+const gnuTar = spawnSync('tar', ['--version'], { encoding: 'utf8' }).stdout?.includes('GNU tar') ?? false
+
+describe.runIf(ci)('CI has the installer test tools', () => {
+  it.each([['minisign'], ['shellcheck'], ['tar']])('%s', (cmd) => {
+    expect(has(cmd), `${cmd} is missing: install it in the CI test job`).toBe(true)
+  })
+  it('curl or wget', () => expect(has('curl') || has('wget')).toBe(true))
+})
 
 const DOCKER_STUB = `#!/bin/sh
 echo "$*" >> "$FAKE/docker-calls"
 case "$1" in
   version) [ -z "\${FAKE_NO_DAEMON:-}" ] || exit 1; echo "\${FAKE_ENGINE:-27.5.1}" ;;
-  login | image) ;;
+  login) ;;
+  image) [ -z "\${FAKE_NO_IMAGE:-}" ] || exit 1 ;;
   compose)
     shift
     case " $* " in
@@ -58,16 +69,17 @@ const mode = (path: string) => (statSync(path).mode & 0o777).toString(8)
 
 describe.skipIf(!posix)('ops/deploy/deploy.sh (stub docker)', () => {
   const deploy = join(root, 'ops/deploy/deploy.sh')
+  const PREFIX = { YODA_IMAGE_PREFIX: 'registry.example.org/group/yoda' }
 
   it('creates an empty .env (0600) when there is none, then init before migrate, and prints the setup hint', async () => {
     const s = sandbox()
     const work = join(s.dir, 'srv')
     mkdirSync(work)
-    const r = await run('sh', [deploy], { cwd: work, env: { ...s.env, YODA_VERSION: '1.2.0' } })
+    const r = await run('sh', [deploy], { cwd: work, env: { ...s.env, ...PREFIX, YODA_VERSION: '1.2.0' } })
     expect(r.code, r.out).toBe(0)
     expect(readFileSync(join(work, '.env'), 'utf8')).toBe('')
     expect(mode(join(work, '.env'))).toBe('600')
-    expect(readFileSync(join(work, 'release.env'), 'utf8')).toBe('YODA_VERSION=1.2.0\n')
+    expect(readFileSync(join(work, 'release.env'), 'utf8')).toBe('YODA_VERSION=1.2.0\nYODA_IMAGE_PREFIX=registry.example.org/group/yoda\n')
     const calls = s.calls()
     const at = (s: string) => calls.indexOf(s)
     expect(at('pull --quiet')).toBeGreaterThan(-1)
@@ -97,6 +109,27 @@ describe.skipIf(!posix)('ops/deploy/deploy.sh (stub docker)', () => {
     rmSync(s.dir, { recursive: true, force: true })
   })
 
+  it('refuses to run without an image prefix anywhere, before touching anything (never Docker Hub)', async () => {
+    const s = sandbox()
+    const r = await run('sh', [deploy], { cwd: s.dir, env: { ...s.env, YODA_VERSION: '1.2.0' } })
+    expect(r.code).toBe(2)
+    expect(r.out).toContain('YODA_IMAGE_PREFIX is not set')
+    expect(r.out).toContain('Refusing to fall back to Docker Hub')
+    expect(s.calls()).toBe('')
+    expect(existsSync(join(s.dir, '.env'))).toBe(false)
+    expect(existsSync(join(s.dir, 'release.env'))).toBe(false)
+    rmSync(s.dir, { recursive: true, force: true })
+  })
+
+  it('accepts the prefix of an older install kept in .env, without pinning it in release.env', async () => {
+    const s = sandbox()
+    writeFileSync(join(s.dir, '.env'), 'YODA_IMAGE_PREFIX=registry.example.org/old/yoda\n')
+    const r = await run('sh', [deploy], { cwd: s.dir, env: { ...s.env, YODA_VERSION: '1.2.0', FAKE_SETUP: 'done' } })
+    expect(r.code, r.out).toBe(0)
+    expect(readFileSync(join(s.dir, 'release.env'), 'utf8')).toBe('YODA_VERSION=1.2.0\n')
+    rmSync(s.dir, { recursive: true, force: true })
+  })
+
   it('uses PORTAL_PORT from .env in the hint and pins a given image prefix', async () => {
     const s = sandbox()
     writeFileSync(join(s.dir, '.env'), 'PORTAL_PORT=3100\n')
@@ -109,14 +142,14 @@ describe.skipIf(!posix)('ops/deploy/deploy.sh (stub docker)', () => {
 
   it.each([['latest;rm'], ['-x'], ['']])('refuses the version %j', async (v) => {
     const s = sandbox()
-    const r = await run('sh', [deploy], { cwd: s.dir, env: { ...s.env, YODA_VERSION: v } })
+    const r = await run('sh', [deploy], { cwd: s.dir, env: { ...s.env, ...PREFIX, YODA_VERSION: v } })
     expect(r.code).not.toBe(0)
     expect(s.calls()).toBe('')
     rmSync(s.dir, { recursive: true, force: true })
   })
 })
 
-describe.skipIf(!canInstall)('ops/install/install.sh (fixture bundle, test key)', () => {
+describe.skipIf(!ci && !canInstall)('ops/install/install.sh (fixture bundle, test key)', () => {
   const version = '1.2.0'
   let work: string
   let server: Server
@@ -257,6 +290,32 @@ describe.skipIf(!canInstall)('ops/install/install.sh (fixture bundle, test key)'
     rmSync(r.dir, { recursive: true, force: true })
   })
 
+  it('pins the image prefix in release.env before deploying, and names it when the deploy fails', async () => {
+    const r = await install(['--version', version], { FAKE_NO_IMAGE: '1' })
+    expect(r.code).not.toBe(0)
+    expect(r.out).toContain(`images: registry.example.org/group/yoda/<core|portal|runner|backup>:${version}`)
+    expect(r.out).toContain(`deploy of ${version} failed (images registry.example.org/group/yoda/<name>:${version}`)
+    // deploy.sh stopped before pinning its release: what is there is install.sh's pin.
+    expect(readFileSync(join(r.target, 'release.env'), 'utf8')).toBe('YODA_IMAGE_PREFIX=registry.example.org/group/yoda\n')
+    expect(r.calls()).not.toContain('run --rm init')
+    rmSync(r.dir, { recursive: true, force: true })
+  })
+
+  it('an --image-prefix wins over the bundle', async () => {
+    const r = await install(['--version', version, '--image-prefix', 'registry.example.org/mirror/yoda'])
+    expect(r.code, r.out).toBe(0)
+    expect(readFileSync(join(r.target, 'release.env'), 'utf8')).toBe(`YODA_VERSION=${version}\nYODA_IMAGE_PREFIX=registry.example.org/mirror/yoda\n`)
+    rmSync(r.dir, { recursive: true, force: true })
+  })
+
+  it('unpacks with this user\'s modes (no setuid or world-writable bits from the archive)', async () => {
+    const r = await install(['--version', version])
+    expect(r.code, r.out).toBe(0)
+    expect(statSync(join(r.target, 'ops/deploy/deploy.sh')).mode & 0o7022).toBe(0)
+    expect(statSync(join(r.target, 'docker-compose.prod.yml')).mode & 0o7022).toBe(0)
+    rmSync(r.dir, { recursive: true, force: true })
+  })
+
   it('refuses to install over an existing install', async () => {
     const s = sandbox()
     const target = join(s.dir, 'srv')
@@ -272,7 +331,27 @@ describe.skipIf(!canInstall)('ops/install/install.sh (fixture bundle, test key)'
   })
 })
 
-describe.skipIf(!posix || !has('shellcheck'))('shellcheck', () => {
+describe.skipIf(!posix || !gnuTar)('ops/install/bundle.sh reproducibility (GNU tar)', () => {
+  it('builds the same bytes twice for the same commit time, owned by 0:0', () => {
+    const out = mkdtempSync(join(tmpdir(), 'yoda-repro-'))
+    const build = (n: string) => {
+      const r = spawnSync('sh', ['ops/install/bundle.sh', '1.2.0', 'registry.example.org/group/yoda', join(out, n)], {
+        cwd: root,
+        encoding: 'utf8',
+        env: { ...process.env, SOURCE_DATE_EPOCH: '1767225600' },
+      })
+      expect(r.status, r.stderr).toBe(0)
+      return readFileSync(join(out, n, 'releases/1.2.0/yoda-1.2.0.tar.gz'))
+    }
+    const a = build('a')
+    expect(build('b').equals(a)).toBe(true)
+    const list = spawnSync('tar', ['-tvzf', join(out, 'a/releases/1.2.0/yoda-1.2.0.tar.gz'), '--numeric-owner'], { encoding: 'utf8' }).stdout
+    expect(list.split('\n').filter(Boolean).every((l) => / 0\/0 /.test(l) && l.includes('2026-01-01'))).toBe(true)
+    rmSync(out, { recursive: true, force: true })
+  })
+})
+
+describe.skipIf(!posix || (!ci && !has('shellcheck')))('shellcheck', () => {
   it.each([
     'ops/install/install.sh',
     'ops/install/bundle.sh',

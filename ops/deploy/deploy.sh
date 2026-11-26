@@ -6,7 +6,8 @@
 # 0. create an empty .env (0600) when there is none: nothing in it is required (the `init` service generates the
 #    bootstrap values, the setup wizard sets the rest); an existing .env is never changed;
 # 1. pull the release's images (nothing is built on the host), then pin the release in release.env
-#    (YODA_VERSION=<tag>, plus YODA_IMAGE_PREFIX when given or already pinned there), so every later
+#    (YODA_VERSION=<tag>, plus YODA_IMAGE_PREFIX when given or already pinned there; with no prefix in the
+#    environment, release.env or .env it refuses rather than pull from Docker Hub), so every later
 #    `docker compose --env-file .env --env-file release.env ...` on the host (backups, restores, restarts) runs
 #    the same images;
 # 2. fill the bootstrap volume (one-shot `init`: generated Postgres password, RustFS keys and master key, or the
@@ -38,6 +39,16 @@ case "$prefix" in
 esac
 if [ -z "$prefix" ] && [ -f release.env ]; then
   prefix=$(sed -n 's/^YODA_IMAGE_PREFIX=\([A-Za-z0-9._:/-]*\)$/\1/p' release.env | tail -n 1)
+fi
+# The prod compose has no default prefix: without one it would pull `yoda/...` from Docker Hub. An install from
+# before install.sh keeps its prefix in .env (release.env, when it holds one, wins over .env).
+if [ -z "$prefix" ] && ! { [ -f .env ] && grep -Eq '^YODA_IMAGE_PREFIX=[A-Za-z0-9._:/-]+$' .env; }; then
+  cat >&2 <<'EOF'
+deploy: YODA_IMAGE_PREFIX is not set: the registry path of the images (e.g. registry.example.org/group/yoda).
+  Pass it once, and it is pinned in release.env:  YODA_IMAGE_PREFIX=<path> YODA_VERSION=<tag> sh ops/deploy/deploy.sh
+  (or set it in .env). Refusing to fall back to Docker Hub images.
+EOF
+  exit 2
 fi
 READY_TIMEOUT="${READY_TIMEOUT:-120}"
 

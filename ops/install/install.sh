@@ -13,7 +13,7 @@
 #    and creates an empty .env (0600): nothing has to go in it;
 # 4. `docker login <registry>` when the images' registry has no saved login (interactive: the token is typed,
 #    never an argument);
-# 5. runs ops/deploy/deploy.sh (pull, pin release.env, init, migrate, up, wait for /api/ready), which prints the
+# 5. pins the image prefix in release.env (never Docker Hub), then runs ops/deploy/deploy.sh (pull, pin release.env, init, migrate, up, wait for /api/ready), which prints the
 #    setup wizard's address and the setup-token command while setup is not finished.
 #
 # Env (the options win): YODA_VERSION, YODA_DIR, YODA_RELEASE_BASE_URL, YODA_IMAGE_PREFIX, and
@@ -186,7 +186,8 @@ done
 
 # --- unpack ---------------------------------------------------------------------------------------------------
 mkdir -p "$dir" || die "cannot create $dir (create it as root and give it to this user)"
-tar -xzf "$tmp/$bundle" -C "$dir" || die "cannot unpack into $dir"
+# The files belong to this user, with its umask: never the build machine's owners or modes.
+tar -xzf "$tmp/$bundle" -C "$dir" --no-same-owner --no-same-permissions || die "cannot unpack into $dir"
 if [ ! -e "$dir/.env" ]; then
   (umask 077 && : > "$dir/.env")
 fi
@@ -197,6 +198,10 @@ if [ -z "$prefix" ] && [ -f "$dir/bundle.env" ]; then
   prefix=$(sed -n 's/^YODA_IMAGE_PREFIX=\([A-Za-z0-9._:/-]*\)$/\1/p' "$dir/bundle.env" | tail -n 1)
 fi
 [ -n "$prefix" ] || die 'no image prefix: pass --image-prefix <registry path of the images>'
+# Pinned before the first deploy, so no compose command on this host can fall back to Docker Hub. release.env wins
+# over .env; deploy.sh keeps the prefix there on every later deploy.
+printf 'YODA_IMAGE_PREFIX=%s\n' "$prefix" > "$dir/release.env"
+say "images: $prefix/<core|portal|runner|backup>:$version"
 
 # --- registry login -------------------------------------------------------------------------------------------
 registry=${prefix%%/*}
@@ -219,7 +224,8 @@ fi
 # --- deploy ---------------------------------------------------------------------------------------------------
 say "deploying $version in $dir"
 cd "$dir"
-YODA_VERSION="$version" YODA_IMAGE_PREFIX="$prefix" sh ops/deploy/deploy.sh
+YODA_VERSION="$version" YODA_IMAGE_PREFIX="$prefix" sh ops/deploy/deploy.sh ||
+  die "deploy of $version failed (images $prefix/<name>:$version; registry login? see docs/operations.md, Troubleshooting). Fix it, then: cd $dir && YODA_VERSION=$version sh ops/deploy/deploy.sh"
 
 cat <<EOF
 install: Yoda $version is running in $dir.

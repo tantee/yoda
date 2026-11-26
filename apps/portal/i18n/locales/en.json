@@ -1619,7 +1619,8 @@
     "apply": {
       "live": "Applies at once",
       "reconnect": "Reconnects automatically",
-      "restart": "Needs a restart"
+      "restart": "Needs a restart",
+      "minute": "Applies within a minute"
     },
     "lock": {
       "env": "Set by environment · {name}",

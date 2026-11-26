@@ -12,6 +12,7 @@ import {
   LOCK_REASONS,
   SETTINGS_PAGES,
   applyModes,
+  categoryApplyModes,
   applyReauthStash,
   auditLine,
   DETAIL_MAX,
@@ -184,6 +185,8 @@ describe('fields by registry type', () => {
   })
   it('lists the apply modes of the editable settings', () => {
     expect(applyModes([view('a', { apply: 'restart' }), view('b', { apply: 'live' }), view('c', { apply: 'reconnect', locked: { reason: 'env' } })])).toEqual(['live', 'restart'])
+    expect(categoryApplyModes('backups', [view('backup.at', { apply: 'live' })])).toEqual(['minute'])
+    expect(categoryApplyModes('email', [view('smtp.from', { apply: 'live' })])).toEqual(['live'])
   })
 })
 
@@ -566,6 +569,8 @@ describe('TestResult, ApplyHint, RestartBanner', () => {
   })
   it('apply hints and the restart banner', async () => {
     expect(await render(ApplyHint, { mode: 'reconnect' })).toContain('settings.apply.reconnect')
+    // The backup settings: the backup container re-reads them every minute.
+    expect(await render(ApplyHint, { mode: 'minute' })).toContain('settings.apply.minute')
     expect(await render(RestartBanner, { keys: ['ai.workers'] })).toContain('settings.restart.text(keys=settings.field.ai.workers.label)')
     expect(await render(RestartBanner, { keys: [] })).not.toContain('restart-banner')
   })

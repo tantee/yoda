@@ -492,6 +492,15 @@ deploy job. Owner setup, once:
 
 **Upgrade notes.**
 
+- **Image prefix (the registry path).** The prod compose has no default prefix, so a host without one never
+  pulls `yoda/...` images from Docker Hub: compose stops with "YODA_IMAGE_PREFIX is required" and `deploy.sh`
+  refuses to start. `install.sh` pins the prefix in `release.env` (from the bundle, or `--image-prefix`), and
+  `deploy.sh` keeps it there on every deploy. Precedence: the `YODA_IMAGE_PREFIX` given to `deploy.sh`, then
+  `release.env`, then `.env` (an install from before `install.sh` keeps it in `.env`; `release.env` wins when both
+  hold one). **Change the registry** by logging in to the new one (`docker login`), then
+  `cd /srv/yoda && YODA_IMAGE_PREFIX=<new path> YODA_VERSION=<current tag> sh ops/deploy/deploy.sh`, which pulls
+  from there and pins the new prefix (editing `.env` alone has no effect while `release.env` holds one).
+
 - **From an env-based install** (a full `.env`, before the setup wizard existed): upgrade as usual with the same
   `deploy.sh`. `init` copies the Postgres password, the storage keys and `YODA_MASTER_KEY` from `.env` into the
   bootstrap volume, core imports the other values into System settings and marks setup done, and those values
@@ -515,9 +524,9 @@ on the host: `cd /srv/yoda && YODA_VERSION=<previous tag> sh ops/deploy/deploy.s
 forward: an older release usually runs on a newer schema, but if the changelog says a release changed data in a
 way the older one cannot read, restore the backup taken in step 2 of the upgrade instead (section 6).
 
-**Try a release locally.** The overlay needs `YODA_VERSION`; for a prod-like stack built from your checkout
+**Try a release locally.** The overlay needs `YODA_IMAGE_PREFIX` and `YODA_VERSION`; for a prod-like stack built from your checkout
 (images `yoda/<name>:latest`), with a local `.env` holding the overlay's required variables:
-`YODA_VERSION=latest docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d`.
+`YODA_IMAGE_PREFIX=yoda YODA_VERSION=latest docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d`.
 
 ## 6. Backups and restore
 
@@ -723,6 +732,8 @@ after it). For a value still in `.env`, the same holds with `dc up -d --no-build
     fingerprint; never turn host key checking off).
   - *image … is missing:* the host is not logged in to the registry, or the tag pipeline's build jobs did not
     finish.
+  - *YODA_IMAGE_PREFIX is not set:* neither `release.env` nor `.env` names the registry path; run `deploy.sh` once
+    with `YODA_IMAGE_PREFIX=<path>` (section 5, upgrade notes).
   - *migrate failed:* `dc logs migrate`. Nothing was replaced; the previous release is still running. Fix and
     deploy again, or restore (section 6).
   - *not ready after 120s:* `/ready` names the failing dependency; then `dc logs core`.
