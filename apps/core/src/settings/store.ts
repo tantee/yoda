@@ -256,6 +256,11 @@ export class SettingsStore {
     return this.status === 'ok' ? this.mk!.id : null
   }
 
+  /** Env secrets are copied into the database on boot (D4): a usable master key and YODA_SETTINGS_IMPORT not false. */
+  get importsSecrets(): boolean {
+    return this.envValues.get('security.settingsImport') !== false && this.status === 'ok'
+  }
+
   /** Stored secrets cannot be read or written (env secrets still work). */
   get secretsUnavailable(): boolean {
     return this.status !== 'ok'
@@ -615,7 +620,7 @@ export class SettingsStore {
    * Ends by reloading the snapshot, so the store reflects the database afterwards.
    */
   async importFromEnv(): Promise<SettingKey[]> {
-    const importSecrets = this.envValues.get('security.settingsImport') !== false && this.status === 'ok'
+    const importSecrets = this.importsSecrets
     const keys = SETTING_KEYS.filter((k) => {
       const d = settingDef(k)
       return this.envSet.has(k) && !d.bootstrapOnly && (!d.secret || importSecrets)

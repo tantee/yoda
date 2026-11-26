@@ -280,10 +280,10 @@ describe('live settings', () => {
     const sub = await pgClient(db).listen(channel, (p) => payloads.push(p))
     try {
       await store.set('smtp.password', 'smtp-placeholder-password', admin)
-      await store.set('smtp.port', 2525, admin)
-      await expect(store.set('smtp.port', 2526, admin, { expectedVersion: 0 })).rejects.toThrow()
+      await store.set('smtp.user', 'yoda', admin)
+      await expect(store.set('smtp.user', 'other', admin, { expectedVersion: 0 })).rejects.toThrow()
       await vi.waitFor(() => expect(payloads.length).toBe(2), { timeout: 5000, interval: 20 })
-      expect(payloads.map((p) => JSON.parse(p))).toEqual([['smtp.password'], ['smtp.port']])
+      expect(payloads.map((p) => JSON.parse(p))).toEqual([['smtp.password'], ['smtp.user']])
       expect(payloads.join()).not.toContain('placeholder')
     } finally {
       await sub.unlisten()

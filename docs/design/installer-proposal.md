@@ -652,14 +652,14 @@ Test buttons make core connect to an address a person typed, which is an SSRF ve
 URLs `LINE_API_URL` / `TELEGRAM_API_URL` (they exist for tests; editable, they would let someone send the bot
 token to their own host). The server runner's own variables stay on the runner (section 9, runner table).
 
-**Credential-bound endpoints.** A secret is bound to the endpoint it is sent to. Changing `smtp.host`,
-`gitlab.url` or `ai.openaiBaseUrl` **clears** the bound secret unless a new one is entered in the same save. A
+**Credential-bound endpoints.** A secret is bound to the endpoint it is sent to. Changing `smtp.host` (or
+`smtp.port` / `smtp.secure`), `gitlab.url` or `ai.openaiBaseUrl` **clears** the bound secret unless a new one is entered in the same save. A
 stolen admin session therefore cannot redirect an existing token to a host of its choosing.
 
 **Re-authentication.** Changing any secret, or any sign-in setting, needs a fresh OIDC sign-in (`auth_time`
 within 10 minutes; the portal re-prompts with `prompt=login`) or a recovery session.
 
-**OIDC issuer / client id change** — the one change that can lock everyone out:
+**OIDC issuer / client id change** — the one change that can lock everyone out (the JWKS URL is treated the same: a wrong one fails every token check):
 
 1. Only from a **recovery session** (break-glass re-auth), not from a normal admin session.
 2. The new values are saved as **pending**; the full OIDC test (discovery, JWKS, test sign-in popup with the
@@ -687,7 +687,7 @@ restart (5.1); "boot" = only at boot, not a setting. **Boot-only** = bootstrap-o
 | `MIGRATE_ON_START` | — | — | no | — | boot | yes | Prod overlay fixes `false`. |
 | `OIDC_ISSUER` | `oidc.issuer` | signin | no | ✓ (recovery session + test, 8.6) | reconnect | no | Portal's Keycloak URL/realm derive from it. |
 | `OIDC_CLIENT_ID` | `oidc.clientId` | signin | no | ✓ (recovery session + test) | reconnect | no | |
-| `OIDC_JWKS_URL` | `oidc.jwksUrl` | signin | no | ✓ | reconnect | no | |
+| `OIDC_JWKS_URL` | `oidc.jwksUrl` | signin | no | ✓ (recovery session + test) | reconnect | no | |
 | `STAFF_GROUP` | `oidc.staffGroup` | signin | no | ✓ | live | no | Test sign-in shows whether the tester is in it. |
 | `BOOTSTRAP_ADMINS` | — | signin | no | ro | live | no | Deprecated; replaced by the wizard's claim step. Still honoured from env. |
 | `ANTHROPIC_API_KEY` | `ai.anthropicApiKey` | ai | **yes** | ✓ | reconnect | no | |
@@ -710,7 +710,7 @@ restart (5.1); "boot" = only at boot, not a setting. **Boot-only** = bootstrap-o
 | `RUNNER_LEASE_SECONDS` | `runners.leaseSeconds` | runners | no | ✓ | live | no | New claims use the new value. |
 | `MCP_ENABLED` | `runners.mcpEnabled` | runners | no | ✓ | live (after guard rework, else restart) | no | 5.3. |
 | `SMTP_HOST` | `smtp.host` | email | no | ✓ | reconnect | no | Bound endpoint for the password. |
-| `SMTP_PORT` | `smtp.port` | email | no | ✓ | reconnect | no | |
+| `SMTP_PORT` | `smtp.port` | email | no | ✓ | reconnect | no | Bound endpoint (with host and TLS mode). |
 | `SMTP_SECURE` | `smtp.secure` | email | no | ✓ | reconnect | no | UI: "TLS from the start (465)" / "STARTTLS (587)". |
 | `SMTP_USER` | `smtp.user` | email | no | ✓ | reconnect | no | |
 | `SMTP_PASSWORD` | `smtp.password` | email | **yes** | ✓ | reconnect | no | |

@@ -13,9 +13,11 @@ export type SettingSourceView = z.infer<typeof SettingSourceView>
 /**
  * Why a setting cannot be changed here. `env`: set in the deploy host's env (`envName` names it);
  * `bootstrap`: env/bootstrap only (8.6); `readonly`: shown, never edited (filled by the system);
- * `recovery_only`: only from a recovery session (the OIDC issuer and client id, 8.6).
+ * `recovery_only`: only from a recovery session (the OIDC issuer, client id and JWKS URL, 8.6);
+ * `managed_on_host`: read by another container (portal, backup) that does not read the database yet, so it is
+ * set on the install host (`envName` on `container`).
  */
-export const SettingLockReason = z.enum(['env', 'bootstrap', 'readonly', 'recovery_only'])
+export const SettingLockReason = z.enum(['env', 'bootstrap', 'readonly', 'recovery_only', 'managed_on_host'])
 export type SettingLockReason = z.infer<typeof SettingLockReason>
 
 export const SettingActorView = z.object({ personId: z.string().nullable(), label: z.string().nullable() })
@@ -27,7 +29,15 @@ export const SettingView = z.object({
   apply: z.enum(['live', 'reconnect', 'restart']),
   source: SettingSourceView,
   envName: z.string().optional(),
-  locked: z.object({ reason: SettingLockReason, envName: z.string().optional() }).nullable(),
+  locked: z.object({ reason: SettingLockReason, envName: z.string().optional(), container: z.string().optional() }).nullable(),
+  /**
+   * Env-locked settings only. `importable`: the env value is copied into the database on boot (D4), so removing
+   * the variable keeps it; false for a secret when the master key is not usable or YODA_SETTINGS_IMPORT=false
+   * (removing it then disconnects the service). `composeDefault`: the prod compose file passes the variable with
+   * a default (or requires it), so it stays set in env until the install uses generated settings.
+   */
+  importable: z.boolean().optional(),
+  composeDefault: z.boolean().optional(),
   /** Non-secrets only (absent when unset). */
   value: z.unknown().optional(),
   /** Secrets only. `unavailable`: stored, but the master key cannot decrypt it (recovery). */

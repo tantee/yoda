@@ -156,7 +156,8 @@ const DEFS = [
   def(
     'smtp.password',
     text,
-    { category: 'email', envName: 'SMTP_PASSWORD', test: 'smtp', boundTo: ['smtp.host'] },
+    // Bound to the whole server address: a new port or TLS mode can be another listener (8.6).
+    { category: 'email', envName: 'SMTP_PASSWORD', test: 'smtp', boundTo: ['smtp.host', 'smtp.port', 'smtp.secure'] },
     { secret: true, apply: 'reconnect' },
   ),
   def('smtp.from', text, { category: 'email', envName: 'MAIL_FROM', test: 'smtp' }),
@@ -244,6 +245,20 @@ export function byEnvName(envName: string): SettingDef | undefined {
 
 /** Every env variable the registry knows, in registry order. */
 export const SETTING_ENV_NAMES: readonly string[] = [...BY_ENV.keys()]
+
+/**
+ * Variables the prod compose file passes to core with a default or as required (`${NAME:-value}`, `${NAME:?...}`,
+ * or a fixed value), so they are always set in core's env there. Removing one from the host's `.env` does not
+ * unlock it in the UI. A core test keeps this list in sync with `docker-compose.prod.yml`.
+ */
+export const PROD_COMPOSE_CORE_ENV: readonly string[] = [
+  'PORT', 'DATABASE_URL', 'OIDC_ISSUER', 'OIDC_CLIENT_ID', 'MIGRATE_ON_START', 'STAFF_GROUP', 'S3_ENDPOINT', 'S3_REGION',
+  'S3_BUCKET', 'S3_ACCESS_KEY', 'S3_SECRET_KEY', 'AI_MODEL_DRAFT', 'AI_MODEL_FAST', 'AI_WORKERS', 'DAILY_TASK_CAP',
+  'PORTAL_URL', 'RUNNER_LEASE_SECONDS', 'MCP_ENABLED', 'SMTP_PORT', 'SMTP_SECURE', 'LINE_API_URL', 'TELEGRAM_API_URL',
+]
+
+/** The container that reads a setting of a scope other than core (shown in the "managed on the host" lock). */
+export const SCOPE_CONTAINER: Partial<Record<SettingScope, string>> = { portal: 'portal', backup: 'backup' }
 
 /** Secrets of 20+ characters show their last 4 after saving; shorter ones show nothing (5.2). */
 export function secretHint(value: string): string | null {

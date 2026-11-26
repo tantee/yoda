@@ -31,7 +31,7 @@ describe('settings registry', () => {
     expect(secrets.sort()).toEqual(
       ['ai.anthropicApiKey', 'ai.openaiApiKey', 'gitlab.token', 'gitlab.webhookSecret', 'smtp.password', 'line.accessToken', 'line.channelSecret', 'telegram.botToken', 'telegram.webhookSecret'].sort(),
     )
-    expect(settingDef('smtp.password').boundTo).toEqual(['smtp.host'])
+    expect(settingDef('smtp.password').boundTo).toEqual(['smtp.host', 'smtp.port', 'smtp.secure'])
     expect(settingDef('gitlab.token').boundTo).toEqual(['gitlab.url'])
     expect(settingDef('ai.openaiApiKey').boundTo).toEqual(['ai.openaiBaseUrl'])
   })

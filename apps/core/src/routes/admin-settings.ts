@@ -1,5 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import {
+  PROD_COMPOSE_CORE_ENV,
+  SCOPE_CONTAINER,
   SETTING_KEYS,
   SettingCategory,
   SettingsAuditQuery,
@@ -55,12 +57,16 @@ import { registerTelegramWebhook, runSettingsTest, type TestContext } from '../s
 
 /** Seconds since the last interactive sign-in that still count as recent (8.6). */
 export const REAUTH_WINDOW_S = 600
-/** The OIDC issuer and client id change only from a recovery session, staged and tested (8.6, Task 10). */
-const RECOVERY_ONLY = new Set<SettingKey>(['oidc.issuer', 'oidc.clientId'])
+/**
+ * The OIDC issuer, client id and JWKS URL change only from a recovery session, staged and tested (8.6, Task 10):
+ * a wrong JWKS URL fails every token check, as a wrong issuer does.
+ */
+const RECOVERY_ONLY = new Set<SettingKey>(['oidc.issuer', 'oidc.clientId', 'oidc.jwksUrl'])
+const COMPOSE_ENV = new Set(PROD_COMPOSE_CORE_ENV)
 /** Secrets an admin may have generated (shown once). */
 const GENERATED = new Set<SettingKey>(['gitlab.webhookSecret', 'telegram.webhookSecret'])
 /** Keys that choose which server a test talks to. */
-const DRAFT_ENDPOINTS = new Set<SettingKey>(['oidc.issuer', 'oidc.jwksUrl', 'gitlab.url', 'smtp.host', 'ai.openaiBaseUrl'])
+const DRAFT_ENDPOINTS = new Set<SettingKey>(['oidc.issuer', 'oidc.jwksUrl', 'gitlab.url', 'smtp.host', 'smtp.port', 'smtp.secure', 'ai.openaiBaseUrl'])
 
 function booleansOnly(r: SettingsTestResult): SettingsTestResult {
   return {
@@ -107,7 +113,16 @@ function safeGet(store: SettingsStore, key: SettingKey): unknown {
   }
 }
 
-function lockOf(store: SettingsStore, info: SettingInfo): { reason: SettingLockReason; envName?: string } | null {
+type Lock = { reason: SettingLockReason; envName?: string; container?: string }
+
+function lockOf(store: SettingsStore, info: SettingInfo): Lock | null {
+  const d = settingDef(info.key)
+  if (info.lock === 'bootstrap') return { reason: 'bootstrap' }
+  // TODO(Task 6 and later): portal and backup settings are read from their containers' env only. They unlock
+  // once a consumer reads the stored value: /public-config for the portal ones (Task 6), the backup container
+  // reading the database for backup.at / backup.keepDays (later). Until then a save here would change nothing.
+  const container = SCOPE_CONTAINER[d.scope]
+  if (container) return { reason: 'managed_on_host', container, ...(d.envName ? { envName: d.envName } : {}) }
   if (info.lock === 'env') return { reason: 'env', ...(info.envName ? { envName: info.envName } : {}) }
   if (info.lock) return { reason: info.lock }
   if (RECOVERY_ONLY.has(info.key)) return { reason: 'recovery_only' }
@@ -135,6 +150,11 @@ function view(store: SettingsStore, info: SettingInfo, restart: Set<SettingKey>)
     restartRequired: restart.has(info.key),
     ...(d.test ? { test: d.test } : {}),
     ...(BOUND_SECRETS.has(info.key) ? { boundSecrets: BOUND_SECRETS.get(info.key) } : {}),
+  }
+  if (v.locked?.reason === 'env') {
+    // What removing the variable from the host's .env would do (the lock help wording depends on it).
+    v.importable = !info.secret || store.importsSecrets
+    v.composeDefault = !!info.envName && COMPOSE_ENV.has(info.envName)
   }
   if (info.secret) {
     // The store never keeps the master key, so its state comes from the key check (keyStatus / keyId).

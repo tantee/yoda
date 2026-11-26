@@ -125,12 +125,38 @@ describe('GET /admin/settings', () => {
     expect(find(body, 'storage.s3Bucket')).toMatchObject({ locked: { reason: 'bootstrap' } })
     expect(find(body, 'telegram.botUsername')).toMatchObject({ locked: { reason: 'readonly' } })
     expect(find(body, 'oidc.issuer')).toMatchObject({ locked: { reason: 'recovery_only' } })
+    expect(find(body, 'oidc.jwksUrl')).toMatchObject({ locked: { reason: 'recovery_only' } })
+    // Read by the portal or the backup container from their own env (unlocked with Task 6 and later).
+    expect(find(body, 'org.name')).toMatchObject({ locked: { reason: 'managed_on_host', container: 'portal' } })
+    expect(find(body, 'org.line')).toMatchObject({ locked: { reason: 'managed_on_host', container: 'portal', envName: 'NUXT_PUBLIC_ORG_LINE' } })
+    expect(find(body, 'backup.keepDays')).toMatchObject({ locked: { reason: 'managed_on_host', container: 'backup', envName: 'BACKUP_KEEP_DAYS' } })
+    expect(find(body, 'smtp.from')).toMatchObject({ importable: true, composeDefault: false })
+    expect(find(body, 'smtp.host').importable).toBeUndefined()
     expect(find(body, 'ai.workers')).toMatchObject({ apply: 'restart', restartRequired: false })
     expect(body.categories.find((c: { category: string }) => c.category === 'email').test).toBe('smtp')
 
     const one = await app.inject({ url: '/admin/settings?category=email', headers: h(boss) })
     expect(one.json().categories.map((c: { category: string }) => c.category)).toEqual(['email'])
     expect((await app.inject({ url: '/admin/settings?category=nope', headers: h(boss) })).statusCode).toBe(404)
+  })
+
+  it('tells per env-locked key what removing the variable would do (kept by the import, prod compose default)', async () => {
+    const env = { SMTP_PORT: '465', SMTP_PASSWORD, GITLAB_TOKEN }
+    await boot(env)
+    let body = (await app.inject({ url: '/admin/settings?category=email', headers: h(boss) })).json()
+    expect(find(body, 'smtp.port')).toMatchObject({ locked: { reason: 'env', envName: 'SMTP_PORT' }, importable: true, composeDefault: true })
+    expect(find(body, 'smtp.password')).toMatchObject({ locked: { reason: 'env' }, importable: true, composeDefault: false })
+    expect(find(body, 'smtp.password').writeSource).toBe('import')
+    await app.close()
+    // Import off: env secrets are not copied, so removing one disconnects the service.
+    await boot({ ...env, YODA_SETTINGS_IMPORT: 'false' })
+    body = (await app.inject({ url: '/admin/settings?category=email', headers: h(boss) })).json()
+    expect(find(body, 'smtp.password')).toMatchObject({ importable: false })
+    expect(find(body, 'smtp.port')).toMatchObject({ importable: true })
+    await app.close()
+    await boot(env, {}, { status: 'missing', reason: 'not set' })
+    body = (await app.inject({ url: '/admin/settings?category=gitlab', headers: h(boss) })).json()
+    expect(find(body, 'gitlab.token')).toMatchObject({ importable: false })
   })
 
   it('reports the master key from the key check, not from env (the key is taken out of env at boot)', async () => {
@@ -146,7 +172,7 @@ describe('GET /admin/settings', () => {
     const res = await put(boss, 'email', { changes: { 'smtp.password': SMTP_PASSWORD } })
     expect(res.statusCode).toBe(409)
     expect(res.json()).toEqual({ error: 'secrets_unavailable', key: 'smtp.password' })
-    expect((await put(boss, 'email', { changes: { 'smtp.port': 2525 } })).statusCode).toBe(200)
+    expect((await put(boss, 'email', { changes: { 'smtp.from': 'yoda@example.org' } })).statusCode).toBe(200)
   })
 
   it('flags restart-mode changes and warns about unpriced models in effect', async () => {
@@ -175,7 +201,7 @@ describe('PUT /admin/settings/:category', () => {
     expect(rows[0]!.ip).toBeTruthy()
 
     // null clears back to the default.
-    const clear = await put(boss, 'email', { changes: { 'smtp.port': null } })
+    const clear = await put(boss, 'email', { changes: { 'smtp.port': null }, versions: { 'smtp.port': 1 } })
     expect(clear.statusCode).toBe(200)
     expect(store.info('smtp.port')).toMatchObject({ source: 'default', version: null })
   })
@@ -188,6 +214,10 @@ describe('PUT /admin/settings/:category', () => {
       ['line', { 'line.apiUrl': 'https://evil.example.org' }, { key: 'line.apiUrl', reason: 'bootstrap' }],
       ['telegram', { 'telegram.botUsername': 'other_bot' }, { key: 'telegram.botUsername', reason: 'readonly' }],
       ['signin', { 'oidc.issuer': 'https://sso.example.org/realms/x' }, { key: 'oidc.issuer', reason: 'recovery_only' }],
+      ['signin', { 'oidc.jwksUrl': 'https://sso.example.org/certs' }, { key: 'oidc.jwksUrl', reason: 'recovery_only' }],
+      ['general', { 'org.name': 'Example hospital' }, { key: 'org.name', reason: 'managed_on_host' }],
+      ['general', { 'org.runnerDocsUrl': 'https://docs.example.org' }, { key: 'org.runnerDocsUrl', reason: 'managed_on_host', envName: 'NUXT_PUBLIC_RUNNER_DOCS_URL' }],
+      ['backups', { 'backup.at': '03:00' }, { key: 'backup.at', reason: 'managed_on_host', envName: 'BACKUP_AT' }],
     ]
     for (const [category, changes, expected] of cases) {
       const res = await put(boss, category, { changes })
@@ -234,7 +264,7 @@ describe('PUT /admin/settings/:category', () => {
       }
       expect(store.info('smtp.password').isSet).toBe(false)
       // A non-secret change in the same category does not need it.
-      expect((await put(old, 'email', { changes: { 'smtp.port': 2525 } })).statusCode).toBe(200)
+      expect((await put(old, 'email', { changes: { 'smtp.from': 'yoda@example.org' } })).statusCode).toBe(200)
 
       const fresh = await signIn(app, 'boss', { authAgoS: 60 })
       expect((await put(fresh, 'email', { changes: { 'smtp.password': SMTP_PASSWORD } })).statusCode).toBe(200)
@@ -308,6 +338,27 @@ describe('PUT /admin/settings/:category', () => {
       expect((await put(old, 'email', { changes: { 'smtp.host': 'evil.example.org' }, versions: { 'smtp.host': 1 } })).statusCode).toBe(401)
       expect(store.get('smtp.host')).toBe('mail.example.org')
       expect(store.get('smtp.password')).toBe(SMTP_PASSWORD)
+    })
+
+    it('the SMTP port and TLS mode are bound like the host: re-auth, version, and the password cleared unless retyped', async () => {
+      await boot()
+      await store.set('smtp.host', 'mail.example.org', system)
+      await store.set('smtp.password', SMTP_PASSWORD, system)
+      const old = await signIn(app, 'boss', { authAgoS: 3600 })
+      expect((await put(boss, 'email', { changes: { 'smtp.port': 465 } })).json()).toEqual({ error: 'invalid_settings', issues: [{ key: 'smtp.port', message: 'version_required' }] })
+      expect((await put(old, 'email', { changes: { 'smtp.secure': true }, versions: { 'smtp.secure': 0 } })).statusCode).toBe(401)
+      expect(store.get('smtp.password')).toBe(SMTP_PASSWORD)
+
+      const port = await put(boss, 'email', { changes: { 'smtp.port': 465 }, versions: { 'smtp.port': 0 } })
+      expect(port.statusCode).toBe(200)
+      expect(port.json()).toMatchObject({ applied: ['smtp.port'], cleared: ['smtp.password'] })
+      expect(store.info('smtp.password').isSet).toBe(false)
+
+      // TLS mode and a retyped password in one save: kept.
+      const secure = await put(boss, 'email', { changes: { 'smtp.secure': true, 'smtp.password': SMTP_PASSWORD }, versions: { 'smtp.secure': 0 } })
+      expect(secure.json()).toMatchObject({ cleared: [] })
+      expect(store.get('smtp.password')).toBe(SMTP_PASSWORD)
+      expect(find((await app.inject({ url: '/admin/settings?category=email', headers: h(boss) })).json(), 'smtp.port').boundSecrets).toEqual(['smtp.password'])
     })
 
     it('refuses to move an endpoint whose secret is set in env', async () => {
@@ -586,6 +637,10 @@ describe('POST /admin/settings/:category/test', () => {
       // A draft host never gets the saved password.
       const moved = (await test(boss, 'email', { values: { 'smtp.host': 'localhost' } })).json()
       expect(moved.checks[0]).toMatchObject({ ok: false, code: 'secret_required' })
+      // Nor a draft port or TLS mode (another listener).
+      for (const values of [{ 'smtp.port': 2525 }, { 'smtp.secure': true }]) {
+        expect((await test(boss, 'email', { values })).json().checks[0]).toMatchObject({ ok: false, code: 'secret_required' })
+      }
       // Not an SMTP port on a non-loopback host: refused before connecting.
       const port = (await test(boss, 'email', { values: { 'smtp.host': '10.255.255.1', 'smtp.port': 5432, 'smtp.password': 'x-placeholder' } })).json()
       expect(port.checks[0]).toMatchObject({ ok: false, code: 'blocked_port' })

@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { SETTING_KEYS, settingDef } from '@yoda/shared'
+import { PROD_COMPOSE_CORE_ENV, SETTING_KEYS, settingDef } from '@yoda/shared'
 import { describe, expect, it } from 'vitest'
 import { envSchema } from '../src/config.js'
 
@@ -86,6 +86,17 @@ describe('settings registry (installer proposal §5.1, §9)', () => {
 
   it('lists every registry env var in the runbook table', () => {
     expect(envOf(() => true).filter((k) => !tableNames.has(k) && !NOT_IN_RUNBOOK.includes(k))).toEqual([])
+  })
+
+  it('knows which core variables the prod compose always sets (a default, required, or fixed)', () => {
+    const src = read('docker-compose.prod.yml')
+    const service = /^  core:\n([\s\S]*?)(?=^  \S)/m.exec(src)?.[1] ?? ''
+    const env = /^    environment:\n((?:^      .*\n)+)/m.exec(service)?.[1] ?? ''
+    const always = [...env.matchAll(/^\s+([A-Z][A-Z0-9_]*):\s*(.*)$/gm)]
+      .filter(([, name, value]) => value !== `\${${name}:-}`)
+      .map(([, name]) => name!)
+    expect(always.length).toBeGreaterThan(10)
+    expect([...PROD_COMPOSE_CORE_ENV].sort()).toEqual(always.sort())
   })
 
   it('has a row for every runbook variable but the server runner ones', () => {
