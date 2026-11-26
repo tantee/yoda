@@ -20,13 +20,18 @@ describe('parseSse', () => {
 })
 
 describe('streamStep', () => {
-  it('signs in again when the token cannot be refreshed', () => {
-    expect(streamStep({ tokenOk: false, retriedAuth: false })).toBe('login')
-    expect(streamStep({ tokenOk: false, retriedAuth: true })).toBe('login')
+  it('signs in again when a refresh fails only if the session ended, else reconnects', () => {
+    expect(streamStep({ tokenOk: false, sessionEnded: true, retriedAuth: false })).toBe('login')
+    expect(streamStep({ tokenOk: false, sessionEnded: true, retriedAuth: true })).toBe('login')
+    expect(streamStep({ tokenOk: false, sessionEnded: false, retriedAuth: false })).toBe('reconnect')
+    expect(streamStep({ tokenOk: false, sessionEnded: false, retriedAuth: true })).toBe('reconnect')
+    expect(streamStep({ tokenOk: false, retriedAuth: false })).toBe('reconnect')
   })
-  it('on a 401 forces a token refresh and retries once, then signs in again', () => {
+  it('on a 401 forces a token refresh and retries once, then signs in again while online', () => {
     expect(streamStep({ tokenOk: true, status: 401, retriedAuth: false })).toBe('refresh-retry')
     expect(streamStep({ tokenOk: true, status: 401, retriedAuth: true })).toBe('login')
+    expect(streamStep({ tokenOk: true, status: 401, retriedAuth: true, online: true })).toBe('login')
+    expect(streamStep({ tokenOk: true, status: 401, retriedAuth: true, online: false })).toBe('reconnect')
   })
   it('streams on success and reconnects with backoff on other failures', () => {
     expect(streamStep({ tokenOk: true, status: 200, retriedAuth: false })).toBe('stream')
