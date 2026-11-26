@@ -86,9 +86,31 @@ export function missingSteps(states: Record<SetupStepId, SetupStepState>): Setup
   return REQUIRED_FOR_COMPLETION.filter((s) => states[s] !== 'done')
 }
 
+/** The bootstrap values a recovery kit carries besides the master key (from core's resolved env). */
+export type KitBootstrap = { postgresUser: string | null; postgresPassword: string | null; s3AccessKey: string | null; s3SecretKey: string | null }
+
 /**
- * The recovery kit (D7): one text file, the master key and the break-glass recovery codes, with what to do with
- * them. Plain text so it prints and opens anywhere; the portal offers it as a download and shows the codes.
+ * The Postgres user and password (from DATABASE_URL, which init derives from the bootstrap volume or an external
+ * database sets) and the storage keys, for the kit: with them a lost bootstrap volume next to a surviving database
+ * volume is rebuilt (`.env` → init). A URL that does not parse gives nulls, never an error.
+ */
+export function kitBootstrapValues(c: { databaseUrl?: string; s3AccessKey?: string; s3SecretKey?: string }): KitBootstrap {
+  let postgresUser: string | null = null
+  let postgresPassword: string | null = null
+  try {
+    const u = new URL(c.databaseUrl ?? '')
+    postgresUser = decodeURIComponent(u.username) || null
+    postgresPassword = decodeURIComponent(u.password) || null
+  } catch {
+    // Not a URL: leave both out.
+  }
+  return { postgresUser, postgresPassword, s3AccessKey: c.s3AccessKey || null, s3SecretKey: c.s3SecretKey || null }
+}
+
+/**
+ * The recovery kit (D7): one text file, the master key and the break-glass recovery codes, plus the bootstrap
+ * values (the Postgres password and the storage keys), with what to do with them. Plain text so it prints and
+ * opens anywhere; the portal offers it as a download and shows the codes.
  */
 export function recoveryKitText(k: {
   installId: string
@@ -98,7 +120,27 @@ export function recoveryKitText(k: {
   username: string
   codes: string[]
   at: Date
+  bootstrap?: KitBootstrap
 }): string {
+  const b = k.bootstrap
+  const bootstrapLines = !b || (!b.postgresPassword && !b.s3AccessKey && !b.s3SecretKey)
+    ? []
+    : [
+      '',
+      '3. BOOTSTRAP VALUES (the bootstrap volume /var/lib/yoda) / ค่าในโวลุ่ม bootstrap',
+      '--------------------------------------------------------------------',
+      'As they were when this kit was made. Secret: anyone holding them and the',
+      'database can sign in to it. If the bootstrap volume is lost but the',
+      'database volume survives, put them in .env with the master key, then',
+      'run dc up -d: init writes them back (docs/operations.md, section 4a).',
+      'หากโวลุ่ม bootstrap หาย แต่ฐานข้อมูลยังอยู่ ให้ใส่ค่าเหล่านี้และกุญแจหลักใน .env แล้ว dc up -d',
+      '',
+      ...(b.postgresPassword ? [`POSTGRES_PASSWORD=${b.postgresPassword}`] : []),
+      ...(b.postgresUser && b.postgresUser !== 'yoda' ? [`POSTGRES_USER=${b.postgresUser}`] : []),
+      ...(b.s3AccessKey ? [`S3_ACCESS_KEY=${b.s3AccessKey}`] : []),
+      ...(b.s3SecretKey ? [`S3_SECRET_KEY=${b.s3SecretKey}`] : []),
+      `YODA_MASTER_KEY=${k.masterKey}`,
+    ]
   const lines = [
     'YODA RECOVERY KIT / ชุดกู้คืนระบบ Yoda',
     '====================================================================',
@@ -133,6 +175,7 @@ export function recoveryKitText(k: {
     '',
     'Lost password: on the install host run',
     '  docker compose exec core yoda-admin reset-break-glass',
+    ...bootstrapLines,
     '====================================================================',
   ]
   return `${lines.join('\n')}\n`

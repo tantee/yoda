@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from 'node:crypto'
+import { randomBytes } from 'node:crypto'
 import { chmodSync, chownSync, closeSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -11,14 +11,16 @@ import { fileURLToPath } from 'node:url'
  *     postgres-password            0640 root:10500  postgres (POSTGRES_PASSWORD_FILE, read as root)
  *     s3-access-key, s3-secret-key 0640 root:10500  rustfs (RUSTFS_*_FILE, group_add 10500)
  *     bootstrap.env                0640 root:10500  core, migrate, backup: DATABASE_URL and S3_* (no master key)
- *     install-id                   0644
  *     core/                        0700 1000:1000   core only
  *       master-key                 0600 1000:1000
  *
  * Per value: env set → written to the file (env wins; existing `.env` installs flow through unchanged); file
  * exists → kept; neither → generated. An env value that replaces a different stored one keeps the old value in
- * `<file>.prev` (the latest only), so a mistyped .env value never destroys the only copy of a key. bootstrap.env is derived again on every run. It refuses (exit 1) when the
- * Postgres data directory already holds a database but its password is unknown. Never prints a value.
+ * `<file>.prev`, so a mistyped .env value never destroys the only copy of a key. A second, different replacement
+ * is refused while `<file>.prev` holds a third value (it would be lost); swapping back to the `.prev` value is
+ * allowed (both stay). bootstrap.env is derived again on every run. It refuses (exit 1) when the Postgres data
+ * directory already holds a database but its password is unknown. Never prints a value. The install id lives in
+ * the database (`setup_state.install_id`), not here.
  */
 
 export const BOOTSTRAP_GID = 10500
@@ -48,7 +50,7 @@ export type InitOptions = {
   /** Ownership changes; a no-op unless running as root (tests record the calls). */
   chown?: (path: string, uid: number, gid: number) => void
   log?: (line: string) => void
-  random?: { alnum(n: number): string; key(): string; uuid(): string }
+  random?: { alnum(n: number): string; key(): string }
 }
 
 export class InitRefusedError extends Error {}
@@ -135,7 +137,7 @@ export function runInit(opts: InitOptions): { generated: string[]; fromEnv: stri
   const { dir, env } = opts
   const chown = opts.chown ?? defaultChown
   const log = opts.log ?? ((l: string) => console.log(l))
-  const random = opts.random ?? { alnum: (n: number) => randomAlnum(n), key: () => randomBytes(32).toString('base64'), uuid: randomUUID }
+  const random = opts.random ?? { alnum: (n: number) => randomAlnum(n), key: () => randomBytes(32).toString('base64') }
   const core = join(dir, 'core')
   const result = { generated: [] as string[], fromEnv: [] as string[], kept: [] as string[] }
 
@@ -145,7 +147,9 @@ export function runInit(opts: InitOptions): { generated: string[]; fromEnv: stri
   const pgPasswordFile = join(dir, 'postgres-password')
   if (opts.pgdata && kind(join(opts.pgdata, 'PG_VERSION')) !== null && !env.POSTGRES_PASSWORD?.trim() && !readValue(pgPasswordFile, 'postgres-password')) {
     throw new InitRefusedError(
-      'init: an existing database was found but its password is unknown; restore /var/lib/yoda from your recovery kit or set POSTGRES_PASSWORD',
+      'init: an existing database was found but its password is unknown (the bootstrap volume is new or lost). Put POSTGRES_PASSWORD, ' +
+        'S3_ACCESS_KEY, S3_SECRET_KEY and YODA_MASTER_KEY from section 3 of your recovery kit in .env and deploy again; without a kit, ' +
+        'reset the Postgres password (docs/operations.md, section 4a, "Lost bootstrap volume")',
     )
   }
 
@@ -173,6 +177,21 @@ export function runInit(opts: InitOptions): { generated: string[]; fromEnv: stri
     { file: 's3-secret-key', envName: 'S3_SECRET_KEY', generate: () => random.alnum(40), ...shared },
     { file: 'core/master-key', envName: 'YODA_MASTER_KEY', generate: () => random.key(), uid: CORE_UID, gid: CORE_UID, mode: 0o600 },
   ]
+  // Before anything is written: a .prev that holds a third value is never overwritten (that would destroy it);
+  // going back to the .prev value swaps the two, so both stay.
+  for (const s of secrets) {
+    const path = join(dir, s.file)
+    checkFile(`${path}.prev`, `${s.file}.prev`)
+    const current = readValue(path, s.file)
+    const fromEnv = env[s.envName]?.trim()
+    const prev = readValue(`${path}.prev`, `${s.file}.prev`)
+    if (fromEnv && current && current !== fromEnv && prev && prev !== current && prev !== fromEnv) {
+      throw new InitRefusedError(
+        `init: ${s.envName} would replace ${s.file}, but ${s.file}.prev already keeps an earlier replaced value. Check which value is right; ` +
+          `once ${s.file}.prev is no longer needed (for the master key: after yoda-admin rotate-master-key --finish, and when no backup needs it), remove it and deploy again`,
+      )
+    }
+  }
   const values: Record<string, string> = {}
   for (const s of secrets) {
     const path = join(dir, s.file)
@@ -182,7 +201,7 @@ export function runInit(opts: InitOptions): { generated: string[]; fromEnv: stri
     const fromEnv = env[s.envName]?.trim()
     if (fromEnv) {
       if (current && current !== fromEnv) {
-        // Keep what is being replaced (the latest only): a wrong .env value must not destroy the only copy.
+        // Keep what is being replaced: a wrong .env value must not destroy the only copy (checked above).
         writeValue(`${path}.prev`, current, s.mode, own)
         log(`init: ${s.file} replaced by ${s.envName}; the previous value is kept in ${s.file}.prev`)
       }
@@ -202,12 +221,6 @@ export function runInit(opts: InitOptions): { generated: string[]; fromEnv: stri
     // Repair modes and owners on every run (a restored volume, a hand edit).
     chmodSync(path, s.mode)
     own(path)
-  }
-
-  const idPath = join(dir, 'install-id')
-  if (!readValue(idPath, 'install-id')) {
-    writeValue(idPath, random.uuid(), 0o644, (p) => chown(p, 0, 0))
-    log('init: generated install-id')
   }
 
   // Derived again on every run, so a changed POSTGRES_USER / POSTGRES_DB or env value applies.

@@ -36,7 +36,8 @@ describe('init (bootstrap volume)', () => {
     expect(read('s3-access-key')).toMatch(/^[A-Za-z0-9]{20}$/)
     expect(read('s3-secret-key')).toMatch(/^[A-Za-z0-9]{40}$/)
     expect(Buffer.from(read('core/master-key'), 'base64')).toHaveLength(32)
-    expect(read('install-id')).toMatch(/^[0-9a-f-]{36}$/)
+    // The install id lives in the database (setup_state), not in the volume.
+    expect(existsSync(join(dir, 'install-id'))).toBe(false)
     expect(statSync(dir).mode & 0o777).toBe(0o750)
     expect(mode('core')).toBe(0o700)
     for (const f of ['postgres-password', 's3-access-key', 's3-secret-key', 'bootstrap.env']) {
@@ -47,7 +48,6 @@ describe('init (bootstrap volume)', () => {
     expect(owners.get('core/master-key')).toBe(`${CORE_UID}:${CORE_UID}`)
     expect(owners.get('core')).toBe(`${CORE_UID}:${CORE_UID}`)
     expect(owners.get(dir)).toBe(`0:${BOOTSTRAP_GID}`)
-    expect(mode('install-id')).toBe(0o644)
   })
 
   it('writes bootstrap.env with DATABASE_URL and the S3 keys, never the master key', () => {
@@ -61,12 +61,12 @@ describe('init (bootstrap volume)', () => {
 
   it('is idempotent: a second run keeps every value', () => {
     run()
-    const before = ['postgres-password', 's3-access-key', 's3-secret-key', 'core/master-key', 'install-id', 'bootstrap.env'].map(read)
+    const before = ['postgres-password', 's3-access-key', 's3-secret-key', 'core/master-key', 'bootstrap.env'].map(read)
     logs = []
     const r = run()
     expect(r.generated).toEqual([])
     expect(r.kept).toEqual(['postgres-password', 's3-access-key', 's3-secret-key', 'core/master-key'])
-    expect(['postgres-password', 's3-access-key', 's3-secret-key', 'core/master-key', 'install-id', 'bootstrap.env'].map(read)).toEqual(before)
+    expect(['postgres-password', 's3-access-key', 's3-secret-key', 'core/master-key', 'bootstrap.env'].map(read)).toEqual(before)
     expect(logs).toEqual(['init: bootstrap volume ready'])
   })
 
@@ -86,7 +86,7 @@ describe('init (bootstrap volume)', () => {
     expect(mode('postgres-password')).toBe(0o640)
   })
 
-  it('keeps a replaced value in <file>.prev (latest only, same mode and owner) and says so without the value', () => {
+  it('keeps a replaced value in <file>.prev (same mode and owner), never overwriting a third value, and says so without the value', () => {
     run()
     const firstKey = read('core/master-key')
     const firstPg = read('postgres-password')
@@ -102,13 +102,24 @@ describe('init (bootstrap volume)', () => {
     expect(owners.get('postgres-password.prev')).toBe(`0:${BOOTSTRAP_GID}`)
     expect(logs).toContain('init: core/master-key replaced by YODA_MASTER_KEY; the previous value is kept in core/master-key.prev')
     for (const v of [firstKey, k2, firstPg, 'pg-two']) expect(logs.join('\n')).not.toContain(v)
-    // Same env again: nothing replaced, the prev stays. A third value keeps only the latest prev.
+    // Same env again: nothing replaced, the prev stays.
     logs = []
     run({ YODA_MASTER_KEY: k2, POSTGRES_PASSWORD: 'pg-two' })
     expect(logs.some((l) => l.includes('replaced'))).toBe(false)
     expect(read('core/master-key.prev')).toBe(firstKey)
-    run({ YODA_MASTER_KEY: k2, POSTGRES_PASSWORD: 'pg-three' })
-    expect(read('postgres-password.prev')).toBe('pg-two')
+    // A third value would overwrite the .prev that keeps the first one: refused, and nothing is written.
+    expect(() => run({ YODA_MASTER_KEY: Buffer.alloc(32, 3).toString('base64'), POSTGRES_PASSWORD: 'pg-two' })).toThrow(
+      /YODA_MASTER_KEY would replace core\/master-key, but core\/master-key.prev already keeps an earlier replaced value/,
+    )
+    expect(() => run({ YODA_MASTER_KEY: k2, POSTGRES_PASSWORD: 'pg-three' })).toThrow(/postgres-password.prev already keeps/)
+    expect([read('core/master-key'), read('core/master-key.prev'), read('postgres-password'), read('postgres-password.prev')]).toEqual([k2, firstKey, 'pg-two', firstPg])
+    // Going back to the .prev value swaps the two (a stale .env after a rotation): both values stay.
+    run({ YODA_MASTER_KEY: firstKey })
+    expect([read('core/master-key'), read('core/master-key.prev')]).toEqual([firstKey, k2])
+    // Once the .prev is removed, a new replacement works again.
+    rmSync(join(dir, 'postgres-password.prev'))
+    run({ POSTGRES_PASSWORD: 'pg-three' })
+    expect([read('postgres-password'), read('postgres-password.prev')]).toEqual(['pg-three', 'pg-two'])
     // Nothing to keep on a fresh install from env.
     rmSync(dir, { recursive: true })
     run({ POSTGRES_PASSWORD: 'pg-env' })
@@ -151,6 +162,9 @@ describe('init (bootstrap volume)', () => {
     writeFileSync(join(pgdata, 'PG_VERSION'), '17\n')
     expect(() => run()).toThrow(InitRefusedError)
     expect(() => run()).toThrow(/existing database was found but its password is unknown/)
+    // It points to the kit's bootstrap values and to the reset procedure.
+    expect(() => run()).toThrow(/POSTGRES_PASSWORD, S3_ACCESS_KEY, S3_SECRET_KEY and YODA_MASTER_KEY from section 3 of your recovery kit/)
+    expect(() => run()).toThrow(/reset the Postgres password \(docs\/operations.md, section 4a, "Lost bootstrap volume"\)/)
     expect(() => statSync(dir)).toThrow()
   })
 

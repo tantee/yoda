@@ -7,7 +7,7 @@ import { checkCanary, encodeMasterKey, makeCanary, rewrapBlob, rewrapEnvelope, S
 import type { SettingsStore } from '../settings/store.js'
 import { MasterKeyUnavailable, RECOVERY_CODE_COUNT, totpAad, type AdminRow } from './break-glass.js'
 import { newRecoveryCode, recoveryCodeHash } from './codes.js'
-import { recoveryKitText } from './setup-progress.js'
+import { recoveryKitText, type KitBootstrap } from './setup-progress.js'
 
 /**
  * Master key rotation and the lost-key reset (installer proposal §3.5, §7.4), for `yoda-admin`. Host access is the
@@ -61,20 +61,24 @@ async function newCodes(tx: Tx, mk: MasterKey, adminId: string): Promise<string[
   return codes
 }
 
-/** What must hold before a rotation touches any file: a usable key, setup done, the key file current. */
-export function rotationPreflight(store: SettingsStore): void {
+/**
+ * What must hold before a rotation touches any file: a usable key, setup done, the key file current. `setupDone`
+ * is the caller's `setupState()` (an env-based install counts as done without the wizard); the default reads the
+ * store the same way, without the dev skip.
+ */
+export function rotationPreflight(store: SettingsStore, setupDone: boolean = store.setupDone || store.fromEnv('oidc.issuer')): void {
   if (!store.withKeyring(() => true)) throw new RotationRefused('key_unavailable')
-  if (!store.setupDone) throw new RotationRefused('setup_required')
+  if (!setupDone) throw new RotationRefused('setup_required')
   if (store.runsOnPreviousKey) throw new RotationRefused('stale_key_file')
 }
 
 /** Re-wraps everything under `to` (see the module comment). `dryRun` does every step, then rolls back. */
 export async function rotateMasterKey(
   deps: { db: Db; settings: SettingsStore },
-  opts: { to: MasterKey; dryRun?: boolean; actor: ActorLike },
+  opts: { to: MasterKey; dryRun?: boolean; actor: ActorLike; setupDone?: boolean },
 ): Promise<RotationResult> {
   const store = deps.settings
-  rotationPreflight(store)
+  rotationPreflight(store, opts.setupDone)
   const { current, all } = store.withKeyring((current, all) => ({ current, all }))!
   const to = opts.to
   try {
@@ -232,7 +236,7 @@ export async function resetLostMasterKey(
  */
 export async function issueRecoveryKit(
   deps: { db: Db; settings: SettingsStore },
-  opts: { admin: AdminRow; publicUrl: string; at: Date; codes?: string[]; key?: MasterKey; audit?: (tx: Tx, keyId: string) => Promise<void> },
+  opts: { admin: AdminRow; publicUrl: string; at: Date; codes?: string[]; key?: MasterKey; bootstrap?: KitBootstrap; audit?: (tx: Tx, keyId: string) => Promise<void> },
 ): Promise<{ text: string; keyId: string; codes: string[] }> {
   const mk = opts.key ?? deps.settings.withKey((k) => k)
   if (!mk) throw new MasterKeyUnavailable()
@@ -252,6 +256,7 @@ export async function issueRecoveryKit(
     username: opts.admin.username,
     codes,
     at: opts.at,
+    bootstrap: opts.bootstrap,
   })
   return { text, keyId: mk.id, codes }
 }

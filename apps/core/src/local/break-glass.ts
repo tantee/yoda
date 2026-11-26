@@ -310,6 +310,27 @@ export async function setTotp(db: Db, settings: SettingsStore, adminId: string, 
 }
 
 /**
+ * `yoda-admin create-break-glass` (an env-based install, which never ran the wizard): the account with a temporary
+ * password that must be changed at the first /recovery sign-in, where TOTP is enrolled and the recovery codes are
+ * given. Refuses (null) when a break-glass account exists, in the same transaction that inserts it.
+ */
+export async function createBreakGlass(db: Db, username: string, now: Date): Promise<{ admin: AdminRow; password: string } | null> {
+  const password = newRecoveryCode() + '-' + newRecoveryCode()
+  const passwordHash = await hashPassword(password)
+  return db.transaction(async (tx) => {
+    // One at a time (the setup wizard's admin step takes the same lock).
+    await tx.execute(sql`SELECT 1 FROM setup_state WHERE id = 1 FOR UPDATE`)
+    const [existing] = await tx.select({ id: localAdmins.id }).from(localAdmins).limit(1)
+    if (existing) return null
+    const [admin] = await tx
+      .insert(localAdmins)
+      .values({ username, passwordHash, mustChangePassword: true, createdAt: now, passwordChangedAt: now })
+      .returning()
+    return { admin: admin!, password }
+  })
+}
+
+/**
  * `yoda-admin reset-break-glass` (§7.4; host access is the root of trust): a new temporary password that must be
  * changed at the next sign-in, TOTP removed (enrolled again after sign-in), failures and lockout cleared. The
  * caller ends the admin's sessions, audits and notifies.

@@ -4,7 +4,8 @@ import type { Config } from './config.js'
 import type { Db } from './db/client.js'
 import { setupState as setupStateTable } from './db/schema.js'
 import type { JobQueue } from './jobs/queue.js'
-import { adminView, findAdmin, firstAdmin, MasterKeyUnavailable, notifyAdmins, resetAdmin } from './local/break-glass.js'
+import { BreakGlassUsername } from '@yoda/shared'
+import { adminView, createBreakGlass, findAdmin, firstAdmin, MasterKeyUnavailable, notifyAdmins, resetAdmin } from './local/break-glass.js'
 import {
   dropNextKey,
   dropPreviousKey,
@@ -18,6 +19,7 @@ import {
   writeNextKey,
 } from './local/master-key.js'
 import { currentOidc, readOidcState } from './local/oidc-change.js'
+import { kitBootstrapValues } from './local/setup-progress.js'
 import { revokeSessions } from './local/session.js'
 import { issueSetupToken, liveTokenFromFile, setupTokenBanner } from './local/setup-token.js'
 import { LiveBus } from './live/bus.js'
@@ -32,6 +34,9 @@ import { setupState } from './setup-state.js'
  *
  * - `setup-token [--new]`: prints the current setup token (from the 0600 file), or issues a new one when there is
  *   none, it expired, or `--new` is given. Only while setup is not done.
+ * - `create-break-glass [--username <name>]`: an env-based install (setup done without the wizard) has no
+ *   break-glass account; this creates it with a temporary password (printed once). The first /recovery sign-in
+ *   sets a new password and enrols TOTP (and gives the recovery codes); then `recovery-kit` makes the kit.
  * - `reset-break-glass [--username <name>]`: a new temporary password (printed once); TOTP is removed and must be
  *   enrolled again after signing in; sessions end; portal admins are notified.
  * - `status`: setup state, master key state, break-glass account, setup token and sign-in settings.
@@ -66,6 +71,7 @@ export type AdminCliDeps = {
 
 const USAGE = `usage: yoda-admin <command>
   setup-token [--new]                 print the setup token (a new one with --new, or when none is valid)
+  create-break-glass [--username <u>] create the break-glass account on an install set up without the wizard
   reset-break-glass [--username <u>]  new temporary break-glass password; TOTP is enrolled again after sign-in
   status                              setup, master key, break-glass account and sign-in state
   rotate-master-key [--dry-run]       new master key; the new recovery kit goes to stdout (redirect it to a file)
@@ -98,6 +104,8 @@ export async function runAdmin(argv: string[], deps: AdminCliDeps): Promise<numb
       await deps.settings.audit({ action: 'setup.token_issued', actor: CLI })
       return 0
     }
+    case 'create-break-glass':
+      return createBreakGlassCommand(deps, args, state, now)
     case 'reset-break-glass': {
       const i = args.indexOf('--username')
       const admin = i >= 0 && args[i + 1] ? await findAdmin(deps.db, args[i + 1]!) : await firstAdmin(deps.db)
@@ -176,7 +184,7 @@ export async function runAdmin(argv: string[], deps: AdminCliDeps): Promise<numb
 }
 
 // Entry: `node dist/yoda-admin.js <command>` (the image's /usr/local/bin/yoda-admin wraps it).
-const COMMANDS = new Set(['setup-token', 'reset-break-glass', 'status', 'rotate-master-key', 'recovery-kit', 'reset-master-key', 'recovery'])
+const COMMANDS = new Set(['setup-token', 'create-break-glass', 'reset-break-glass', 'status', 'rotate-master-key', 'recovery-kit', 'reset-master-key', 'recovery'])
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1] && !COMMANDS.has(process.argv[2] ?? '')) {
   // No database needed to say how to use it.
@@ -201,7 +209,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const config = resolveConfig(base, settings)
   // Only to queue notification deliveries (no workers here); without it the feed entries are still stored.
   let jobs: Pick<JobQueue, 'send'> & { stop?: () => Promise<void> } = { send: async () => {} }
-  if (['reset-break-glass', 'rotate-master-key', 'recovery-kit', 'reset-master-key', 'recovery'].includes(process.argv[2] ?? '')) {
+  if (['create-break-glass', 'reset-break-glass', 'rotate-master-key', 'recovery-kit', 'reset-master-key', 'recovery'].includes(process.argv[2] ?? '')) {
     try {
       jobs = await createPgBossQueue(base.databaseUrl, 1)
     } catch {
@@ -271,7 +279,7 @@ async function rotateCommand(deps: AdminCliDeps, opts: { dryRun: boolean; allowE
   const file = deps.keySource === 'file' ? (deps.keyFile ?? null) : null
   // Nothing touches a file before these hold.
   try {
-    rotationPreflight(deps.settings)
+    rotationPreflight(deps.settings, setupState(deps.config, deps.settings) === 'done')
   } catch (err) {
     return refused(deps, err)
   }
@@ -294,7 +302,7 @@ async function rotateCommand(deps: AdminCliDeps, opts: { dryRun: boolean; allowE
   }
   let r
   try {
-    r = await rotateMasterKey(deps, { to, dryRun: opts.dryRun, actor: CLI })
+    r = await rotateMasterKey(deps, { to, dryRun: opts.dryRun, actor: CLI, setupDone: setupState(deps.config, deps.settings) === 'done' })
   } catch (err) {
     if (file && !opts.dryRun) dropNextKey(file)
     return refused(deps, err)
@@ -306,7 +314,7 @@ async function rotateCommand(deps: AdminCliDeps, opts: { dryRun: boolean; allowE
   // The kit first: whatever happens to the files now, the operator holds the new key.
   if (r.admin) {
     const admin = (await firstAdmin(deps.db))!
-    const kit = await issueRecoveryKit(deps, { admin, publicUrl: publicUrlOf(deps.settings), at: opts.now, codes: r.admin.codes, key: to })
+    const kit = await issueRecoveryKit(deps, { admin, publicUrl: publicUrlOf(deps.settings), at: opts.now, codes: r.admin.codes, key: to, bootstrap: kitBootstrapValues(deps.config) })
     deps.out(kit.text.trimEnd())
   } else {
     deps.out(`YODA MASTER KEY (key id ${to.id}): ${to.key.toString('base64')}`)
@@ -348,13 +356,13 @@ async function finishCommand(deps: AdminCliDeps): Promise<number> {
 }
 
 async function kitCommand(deps: AdminCliDeps, now: Date): Promise<number> {
-  if (!deps.settings.setupDone) {
+  if (setupState(deps.config, deps.settings) !== 'done') {
     deps.err('Setup is not finished; the wizard gives the recovery kit.')
     return 1
   }
   const admin = await firstAdmin(deps.db)
   if (!admin) {
-    deps.err('No break-glass account exists.')
+    deps.err('No break-glass account exists. Create it first: yoda-admin create-break-glass')
     return 1
   }
   let kit
@@ -363,6 +371,7 @@ async function kitCommand(deps: AdminCliDeps, now: Date): Promise<number> {
       admin,
       publicUrl: publicUrlOf(deps.settings),
       at: now,
+      bootstrap: kitBootstrapValues(deps.config),
       audit: (tx, keyId) => deps.settings.audit({ action: 'break_glass.recovery_kit', actor: CLI, newValue: { keyId, username: admin.username }, result: 'ok' }, tx),
     })
   } catch (err) {
@@ -373,6 +382,38 @@ async function kitCommand(deps: AdminCliDeps, now: Date): Promise<number> {
   deps.out(kit.text.trimEnd())
   deps.err('New recovery kit above (stdout): the old recovery codes no longer work. Store it offline now.')
   await notifyCli(deps, 'สร้างชุดกู้คืน (recovery kit) ใหม่จากเครื่องที่ติดตั้ง', 'break_glass.recovery_kit', now, admin.username)
+  return 0
+}
+
+async function createBreakGlassCommand(deps: AdminCliDeps, args: string[], state: 'required' | 'done', now: Date): Promise<number> {
+  if (state !== 'done') {
+    deps.err('Setup is not finished: the setup wizard creates the break-glass account (yoda-admin setup-token).')
+    return 1
+  }
+  const i = args.indexOf('--username')
+  const parsed = BreakGlassUsername.safeParse(i >= 0 ? (args[i + 1] ?? '') : 'admin')
+  if (!parsed.success) {
+    deps.err(`Invalid username: ${parsed.error.issues.map((x) => x.message).join(', ')}`)
+    return 1
+  }
+  if (!deps.settings.withKey(() => true)) {
+    // The TOTP seed and the recovery codes are sealed with the master key.
+    deps.err(refusal.key_unavailable)
+    return 1
+  }
+  const made = await createBreakGlass(deps.db, parsed.data, now)
+  if (!made) {
+    const existing = await firstAdmin(deps.db)
+    deps.err(`A break-glass account already exists (${existing?.username ?? '?'}). Forgotten password: yoda-admin reset-break-glass`)
+    return 1
+  }
+  await deps.settings.audit({ action: 'break_glass.created', actor: CLI, newValue: { username: made.admin.username } })
+  await notifyCli(deps, 'สร้างบัญชีฉุกเฉิน (break-glass) จากเครื่องที่ติดตั้ง (yoda-admin create-break-glass)', 'break_glass.created', now, made.admin.username)
+  deps.out(`Break-glass account ${made.admin.username} created. Temporary password (shown once):`)
+  deps.out(`  ${made.password}`)
+  deps.out('Next: sign in at /recovery (through the SSH tunnel or the public URL), choose a new password and enrol')
+  deps.out('TOTP (the recovery codes are shown then). Then make the recovery kit on this host and store it offline:')
+  deps.out('  (umask 077; dc exec -T core yoda-admin recovery-kit > yoda-recovery-kit.txt)   (dc: docs/operations.md, section 4)')
   return 0
 }
 

@@ -5,7 +5,7 @@ import { buildApp, outerProxyHint, trustProxy, type AppDeps } from '../src/app.j
 import { isHttps, originAllowed } from '../src/local/session.js'
 import type { Db } from '../src/db/client.js'
 import { finishTestSignIn, startTestSignIn } from '../src/local/oidc-change.js'
-import { claimHash, missingSteps, oidcHash, parseProgress, recoveryKitFilename, recoveryKitText, stepStates, type ProgressFacts } from '../src/local/setup-progress.js'
+import { claimHash, kitBootstrapValues, missingSteps, oidcHash, parseProgress, recoveryKitFilename, recoveryKitText, stepStates, type ProgressFacts } from '../src/local/setup-progress.js'
 import type { SettingsStore } from '../src/settings/store.js'
 import { startFakeOidc, type FakeOidc } from './fake-oidc.js'
 import { testConfig } from './helpers.js'
@@ -98,6 +98,24 @@ describe('recovery kit file (D7)', () => {
     expect(text).toContain('yoda-admin reset-break-glass')
     expect(text).toContain('https://portal.example.org')
     expect(recoveryKitFilename('3f2a9c41-0000-4000-8000-000000000000')).toBe('yoda-recovery-kit-3f2a9c41.txt')
+    // No bootstrap values given: no section 3.
+    expect(text).not.toContain('3. BOOTSTRAP VALUES')
+  })
+
+  it('carries the Postgres password and the storage keys, labelled, for a lost bootstrap volume (I2)', () => {
+    const bootstrap = kitBootstrapValues({ databaseUrl: 'postgres://yoda:pg%2Fplaceholder@postgres:5432/yoda', s3AccessKey: 'access-placeholder', s3SecretKey: 'secret-placeholder' })
+    expect(bootstrap).toEqual({ postgresUser: 'yoda', postgresPassword: 'pg/placeholder', s3AccessKey: 'access-placeholder', s3SecretKey: 'secret-placeholder' })
+    const text = recoveryKitText({ installId: 'i', publicUrl: '', keyId: 'k', masterKey: 'placeholder-master-key', username: 'admin', codes: [], at: new Date(0), bootstrap })
+    const section = text.slice(text.indexOf('3. BOOTSTRAP VALUES'))
+    expect(section).toContain('POSTGRES_PASSWORD=pg/placeholder\n')
+    expect(section).toContain('S3_ACCESS_KEY=access-placeholder\n')
+    expect(section).toContain('S3_SECRET_KEY=secret-placeholder\n')
+    expect(section).toContain('YODA_MASTER_KEY=placeholder-master-key\n')
+    expect(section).toContain('section 4a')
+    // The default user is not repeated; another one is.
+    expect(section).not.toContain('POSTGRES_USER=')
+    expect(recoveryKitText({ installId: 'i', publicUrl: '', keyId: 'k', masterKey: 'm', username: 'a', codes: [], at: new Date(0), bootstrap: kitBootstrapValues({ databaseUrl: 'postgres://hosp:x@db.example.org/yoda' }) })).toContain('POSTGRES_USER=hosp\n')
+    expect(kitBootstrapValues({ databaseUrl: 'not a url' })).toEqual({ postgresUser: null, postgresPassword: null, s3AccessKey: null, s3SecretKey: null })
   })
 })
 

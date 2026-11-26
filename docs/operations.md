@@ -348,17 +348,26 @@ in your shell overrides `release.env`, so leave it unset.
    (section 1). The wizard asks for the setup token: `dc exec core yoda-admin setup-token` prints it (it is also
    in the "Yoda setup" banner of `dc logs core`; it is valid 24 hours, single use, and changes when core
    restarts). Behind a reverse proxy, set `YODA_TRUSTED_PROXY_HOPS=2` first (section 5, upgrade notes), so the
-   wizard detects the public URL and the client addresses correctly.
+   wizard detects the public URL and the client addresses correctly. **Tunnel or public URL:** through the SSH
+   tunnel the wizard detects `http://127.0.0.1:3000` as the public URL; replace it with the real one
+   (`https://portal.example.org`) in the organisation step, or the portal links, the TOTP rule (D3: TOTP is
+   skipped only for a localhost URL) and the Keycloak redirect will be wrong. The claim (the last step) signs in
+   through Keycloak, which sends the browser back to `<public URL>/setup`, where the setup session cookie of the
+   tunnel address does not exist. So do the claim on the public URL: once the reverse proxy works, open
+   `https://portal.example.org/setup`, enter a new token (`dc exec core yoda-admin setup-token --new`; the steps
+   done so far are kept) and finish there.
 4. **The wizard** (Thai by default, switchable): organisation and public URL, the break-glass admin (password
    and, unless the URL is localhost, TOTP), sign-in (Keycloak, section 2, with a test), a system check, then the
    optional email, LINE, Telegram, GitLab, AI and backup settings (each can be skipped and set later in System
    settings), and the claim: you sign in through Keycloak and become the first admin.
-5. **Store the recovery kit.** The last step gives one file, `yoda-recovery-<install-id>.txt`: the master key,
-   the break-glass username and its recovery codes. It is shown once. Print it or put it in the organisation's
+5. **Store the recovery kit.** The last step gives one file, `yoda-recovery-kit-<first 8 characters of the
+   install id>.txt` (the install id is the one the wizard shows): the master key, the break-glass username and
+   its recovery codes, and the bootstrap values (the Postgres password and the storage keys, section 4a). It is
+   shown once. Print it or put it in the organisation's
    password vault, **off this host and apart from the backups**: anyone with it and a database backup can read
    every secret. Setup finishes only once you confirm you stored it; a new kit can be made later on the host
-   with `dc exec -T core yoda-admin recovery-kit > yoda-recovery-kit.txt` (it replaces the recovery codes;
-   section 10).
+   with `(umask 077; dc exec -T core yoda-admin recovery-kit > yoda-recovery-kit.txt)` (it replaces the
+   recovery codes; section 10). The `umask` keeps the file readable by you only.
 6. Finish the services around it:
    - [ ] **AI budgets.** In Admin → AI budget set the department's monthly budget, and on each project's AI
          settings tab its budget or no-AI. A model that is not in `apps/core/src/ai/prices.json` is logged at
@@ -387,16 +396,42 @@ volume `yoda-bootstrap`, mounted at `/var/lib/yoda`:
 | `postgres-password` | `0640 root:10500` | postgres (`POSTGRES_PASSWORD_FILE`) |
 | `s3-access-key`, `s3-secret-key` | `0640 root:10500` | rustfs (`RUSTFS_*_FILE`) |
 | `bootstrap.env` | `0640 root:10500` | core, `migrate`, `backup`: `DATABASE_URL` and the S3 keys, never the master key |
-| `install-id` | `0644` | (names this install and its recovery kit) |
 | `core/master-key` | `0600`, in `core/` (`0700`, the core image's user) | core only |
 | `core/setup-token` | `0600` | core, while setup is not finished |
 
-For each value: set in `.env` → written to the file (`.env` wins, so an existing install upgrades unchanged; a
-replaced value is kept once as `<file>.prev`); already in the volume → kept; neither → generated. `init` prints
-the file names, never a value. When the database volume already holds a database but neither the volume nor
-`.env` knows its password, `init` stops with "an existing database was found but its password is unknown":
-restore `/var/lib/yoda` from your recovery kit or set `POSTGRES_PASSWORD`. Read a value on the host with
-`dc run --rm --entrypoint cat init /var/lib/yoda/<file>`.
+For each value: set in `.env` → written to the file (`.env` wins, so an existing install upgrades unchanged; the
+replaced value is kept as `<file>.prev`); already in the volume → kept; neither → generated. While a
+`<file>.prev` holds an earlier replaced value, `init` refuses a second, different replacement (it would destroy
+that value) and says so: check which value is right, remove the `.prev` once nothing needs it, and deploy again.
+Going back to the `.prev` value is allowed (the two swap). `init` prints the file names, never a value. Read a
+value on the host with `dc run --rm --entrypoint cat init /var/lib/yoda/<file>`. The install id (in the kit's
+name) is kept in the database, not in this volume.
+
+**Lost bootstrap volume.** When the database volume already holds a database but neither the volume nor `.env`
+knows its password (the bootstrap volume was deleted or is new), `init` stops with "an existing database was
+found but its password is unknown". Never let it generate a new one:
+
+1. **With the recovery kit:** put the values of its section 3 in `.env` (`POSTGRES_PASSWORD`, `S3_ACCESS_KEY`,
+   `S3_SECRET_KEY`, and `YODA_MASTER_KEY` from section 1; `POSTGRES_USER` if the kit lists one), then
+   `dc up -d --no-build`. `init` writes them back into the volume; you may delete the lines afterwards. A kit made
+   before the Postgres password or the storage keys were changed holds the old values: use the newest kit.
+2. **Without a kit, reset the Postgres password** (host access is the root of trust). The database is
+   untouched; only the role's password changes. Postgres must not be running (it is not while `init` fails):
+
+   ```bash
+   dc stop postgres
+   NEW=$(openssl rand -hex 24)
+   printf 'ALTER ROLE "yoda" WITH PASSWORD '"'"'%s'"'"';\n' "$NEW" |
+     dc run --rm -T --no-deps -u postgres --entrypoint postgres postgres --single -D /var/lib/postgresql/data postgres
+   (umask 077; printf 'POSTGRES_PASSWORD=%s\n' "$NEW" >> .env)
+   dc up -d --no-build
+   ```
+
+   (Use your `POSTGRES_USER` in place of `yoda` if you set one.) New storage keys are generated (RustFS
+   accepts them, but a bucket written under the old keys may refuse them: set the old `S3_ACCESS_KEY` /
+   `S3_SECRET_KEY` in `.env` if you know them). A new master key is generated too, so core starts in recovery
+   mode: put the old key back if you have it, else `yoda-admin reset-master-key --yes` and enter the secrets
+   again (section 11).
 
 - **Never delete this volume.** `deploy.sh` never touches it, and no `dc down -v`. It is deliberately not in the
   `backups` volume (section 6).
@@ -409,7 +444,8 @@ restore `/var/lib/yoda` from your recovery kit or set `POSTGRES_PASSWORD`. Read 
   afterwards if you like, the volume keeps it), then restore the backup (section 6). Without the key the secrets
   must be re-entered.
 - **Rotating the master key:** see section 10 ("Master key rotation"). A rotation keeps the replaced key as
-  `core/master-key.prev` (decrypt-only) until `yoda-admin rotate-master-key --finish` deletes it.
+  `core/master-key.prev` (decrypt-only) until `yoda-admin rotate-master-key --finish` deletes it. Backups taken
+  before the rotation need the old key: keep the old kit until they have all aged out (section 6).
 
 ## 5. Upgrade and rollback
 
@@ -506,16 +542,27 @@ deploy job. Owner setup, once:
 - **From an env-based install** (a full `.env`, before the setup wizard existed): upgrade as usual with the same
   `deploy.sh`. `init` copies the Postgres password, the storage keys and `YODA_MASTER_KEY` from `.env` into the
   bootstrap volume, core imports the other values into System settings and marks setup done, and those values
-  show **Set by environment** until you delete their lines from `.env` (section 3). Nothing else changes. Make a
-  recovery kit afterwards: `dc exec -T core yoda-admin recovery-kit > yoda-recovery-kit.txt` (section 10).
+  show **Set by environment** until you delete their lines from `.env` (section 3). Nothing else changes. Such an
+  install has no break-glass account yet, so `/recovery` cannot help in a lockout until you create one, right
+  after the upgrade:
+  1. `dc exec core yoda-admin create-break-glass` prints a temporary password once (`--username <name>`
+     chooses the name; `admin` by default).
+  2. Sign in at `/recovery` with it (through the SSH tunnel or the public URL), choose a new password and enrol
+     the authenticator (TOTP); the recovery codes are shown then.
+  3. Make the recovery kit and store it off the host (section 4 step 5):
+     `(umask 077; dc exec -T core yoda-admin recovery-kit > yoda-recovery-kit.txt)`.
+  `yoda-admin rotate-master-key` works on such an install too.
+- **Refresh the runbook and `.env.example`.** The deploy job and `deploy.sh` update only the compose files and
+  `deploy.sh`; copy `docs/operations.md` and `.env.example` from the new release bundle (or the release tag) into
+  the deploy directory after an upgrade, so the runbook on the host matches the release it runs.
 - **Backups:** the prod compose no longer passes `BACKUP_AT=02:00` / `BACKUP_KEEP_DAYS=14` by default; the
   `backup` container reads System settings → Backups (same defaults). A value in `.env` still wins.
 
 - **A reverse proxy in front of the portal** (nginx, Caddy, a load balancer, usually where TLS ends): set
   `YODA_TRUSTED_PROXY_HOPS=2` in the host's `.env`, and have the proxy send `X-Forwarded-For`,
-  `X-Forwarded-Proto` and `X-Forwarded-Host` (nginx: `proxy_set_header X-Forwarded-For
-  $proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $scheme; proxy_set_header X-Forwarded-Host
-  $host;`). With the default `1`, the portal still honours the proxy's `https` (so the setup and recovery cookies
+  `X-Forwarded-Proto` and `X-Forwarded-Host`, and keep the browser's `Host` (nginx: `proxy_set_header Host $host;
+  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $scheme;
+  proxy_set_header X-Forwarded-Host $host;`). With the default `1`, the portal still honours the proxy's `https` (so the setup and recovery cookies
   stay `Secure`), but every client shows as the proxy's address in rate limits, the audit log and break-glass
   alerts, and the setup wizard detects the portal's own `Host` as the public URL. Core logs a warning once when it
   sees a proxy in front of the portal while the value is `1`.
@@ -545,7 +592,9 @@ While the database cannot be read it keeps the last values and logs that once. A
 **The master key is not in the backups.** Database dumps hold the System settings secrets encrypted, so a copy of
 the backups alone does not expose them; but a restore on a new host needs the master key from the recovery kit
 (section 4a), or the secrets must be entered again. Keep the recovery kit with your backups, but not in the same
-place.
+place. **After a master key rotation, keep the old kit as well** (or at least its key): every backup taken before
+the rotation needs the old key, so keep it until the last pre-rotation backup (including the off-host copies) has
+aged out, then destroy it.
 
 **Watch it.** The container turns **unhealthy** when the last backup is older than 26 hours. Alert on that
 (`docker inspect -f '{{.State.Health.Status}}' <backup container>`), and read `dc logs backup` after a
@@ -576,12 +625,16 @@ tables created by a newer release in place.
 3. If the backup is only on the off-host copy, copy its `pg-<stamp>.dump`, `storage-<stamp>/` and (for `latest`)
    the `latest` marker back into the `backups` volume.
 4. Restore the database and the bucket:
-   `dc run --rm -e RESTORE_CONFIRM=yes --entrypoint restore.sh backup <YYYYMMDD-HHMM|latest>`.
+   `dc run --rm -e RESTORE_CONFIRM=yes --entrypoint restore.sh backup <YYYYMMDD-HHMM|latest>`. It ends by
+   printing the master key id the restored database needs (`key id …`); compare it with the `Key id:` line of
+   your kits (and `yoda-admin status`) to know which kit's key to put back.
 5. Bring the schema up to the running release and start again: `dc run --rm migrate`, then
    `dc up -d --no-build`.
 6. Check `/api/ready` (section 11) and a few recent items in the portal. On a new host, or after the
    bootstrap volume was lost, core starts in recovery mode if the master key does not match the restored
-   database: put the recovery kit's key back (section 4a) or re-enter the secrets (section 11).
+   database (a backup from before a rotation needs the old key): put the key of the kit whose key id matches
+   back (section 4a), or re-enter the secrets (section 11). A lost bootstrap volume also needs the Postgres
+   password (section 4a, "Lost bootstrap volume").
 
 `ops/backup/restore-check.sh` (dev only) runs the whole round trip against the dev stack and prints
 `restore ok`.
@@ -706,8 +759,8 @@ environment changed). Rotate on a schedule, when a person with access leaves, an
 | LINE token / secret | Issue a new long-lived token (or reissue the channel secret) in LINE Developers, enter it in System settings → LINE, then revoke the old token. |
 | Telegram token | Save first, revoke after: BotFather `/revoke` gives the new token at once, so enter it in System settings → Telegram straight away and press **Register webhook**. |
 | Telegram webhook secret | Generate a new one in System settings → Telegram and press **Register webhook**. |
-| Master key | `dc exec -T core yoda-admin rotate-master-key > yoda-recovery-kit.txt`, then store the new kit (see "Master key rotation" below). After a leak, also rotate every secret above: whoever had the old key and a database copy could read them. |
-| Break-glass admin | Change its password (and the authenticator) at `/recovery`. `dc exec -T core yoda-admin recovery-kit > yoda-recovery-kit.txt` makes a new recovery kit, which replaces the recovery codes. Lost password or authenticator: `dc exec core yoda-admin reset-break-glass` prints a temporary password (section 11). |
+| Master key | `(umask 077; dc exec -T core yoda-admin rotate-master-key > yoda-recovery-kit.txt)`, then store the new kit (see "Master key rotation" below). After a leak, also rotate every secret above: whoever had the old key and a database copy could read them. |
+| Break-glass admin | Change its password (and the authenticator) at `/recovery`. `(umask 077; dc exec -T core yoda-admin recovery-kit > yoda-recovery-kit.txt)` makes a new recovery kit, which replaces the recovery codes. Lost password or authenticator: `dc exec core yoda-admin reset-break-glass` prints a temporary password (section 11). |
 | Runner tokens | Revoke and re-create in the Runners page; update the runner's config or `YODA_RUNNER_TOKEN`. |
 | Deploy SSH key | New key pair, add the public key to `authorized_keys`, update `DEPLOY_SSH_KEY`, remove the old public key. |
 | Registry deploy token | Create a new `read_registry` token, `docker login registry.example.org` on the host, revoke the old one. |
@@ -720,7 +773,7 @@ The master key wraps the data key of every secret in System settings and the bre
 
 1. **Try it:** `dc exec core yoda-admin rotate-master-key --dry-run` does every step inside a transaction that is
    rolled back and prints what it would change (how many secrets and seeds). Nothing is written.
-2. **Rotate:** `dc exec -T core yoda-admin rotate-master-key > yoda-recovery-kit.txt`. In one database
+2. **Rotate:** `(umask 077; dc exec -T core yoda-admin rotate-master-key > yoda-recovery-kit.txt)`. In one database
    transaction it re-wraps every data key and the TOTP seed under a new random key (the ciphertexts stay), replaces
    the break-glass recovery codes (they are keyed by the master key and cannot be carried over), ends every
    setup and recovery session, writes the key canary with the new key id and records `master_key.rotated` in the
@@ -732,8 +785,9 @@ The master key wraps the data key of every secret in System settings and the bre
    process's environment (not the key file), the command refuses unless `--allow-env-key` is given, because core
    cannot use the new key until the environment changes and core restarts.
 3. **Store the new kit.** Standard output carries only the new recovery kit (the new key and the new recovery
-   codes); messages go to standard error. The old kit and its codes no longer work. Move the file off the host
-   as in section 4 step 5, then delete it there.
+   codes); messages go to standard error. The old kit's recovery codes no longer work, but **keep the old kit**
+   (its key) until every backup taken before the rotation has aged out, on the host and off it: restoring one
+   needs the old key (section 6). Move the new file off the host as in section 4 step 5, then delete it there.
 4. **Running cores switch by themselves** on the change notification (they read the key file again and keep the
    old key, decrypt-only). If `.env` sets `YODA_MASTER_KEY`, replace it with the new key now or remove the line:
    `init` copies `.env` over the key file on every start. (If it is forgotten, core notices that the key in
@@ -781,17 +835,28 @@ after it). For a value still in `.env`, the same holds with `dc up -d --no-build
     deploy again, or restore (section 6).
   - *not ready after 120s:* `/ready` names the failing dependency; then `dc logs core`.
   - *init: an existing database was found but its password is unknown:* the bootstrap volume is empty or new
-    while the database volume is not (section 4a): restore `/var/lib/yoda` or set `POSTGRES_PASSWORD`.
+    while the database volume is not: put section 3 of the recovery kit in `.env`, or reset the Postgres password
+    (section 4a, "Lost bootstrap volume").
+  - *init: … would replace …, but ….prev already keeps an earlier replaced value:* `.env` holds a third value for
+    a key or password that was replaced before (section 4a). Check which value is right; remove the `.prev` only
+    when nothing needs it (for the master key: no backup from before that change).
 - **install.sh refused.** *signature check FAILED* or *checksum MISMATCH*: the download does not match what the
   release job signed (a changed or partial file, the wrong base URL, or an `install.sh` with another release
   key); download again and never bypass it. *no release public key yet*: this `install.sh` still has the
   placeholder key (section 5). *already holds an install*: upgrade with `deploy.sh` instead.
+- **The wizard says "csrf_failed" (or "the request was refused") on every step.** The portal checks that each
+  request comes from the address the wizard is open on. Behind a reverse proxy that does not pass the browser's
+  `Host` (nginx sends the upstream address by default), the portal sees another host and refuses. Add
+  `proxy_set_header Host $host;` (and the `X-Forwarded-*` headers, section 5), reload the proxy, then reload the
+  wizard. Through the SSH tunnel, open exactly `http://127.0.0.1:3000/setup` (not `localhost` on one tab and
+  `127.0.0.1` on another), and finish in the same tab.
 - **Setup token lost or expired.** `dc exec core yoda-admin setup-token` prints the current one, or a new one
   when it was used or is older than 24 hours (`--new` always makes a new one); a restart of core also makes a new
   one (in the "Yoda setup" banner of `dc logs core`). Once setup is done there is no token: the command says so.
 - **Locked out of Keycloak** (a wrong issuer or client, Keycloak down, no admin left): open `/recovery` on the
   portal and sign in with the break-glass account from setup (password plus authenticator code or a recovery
-  code from the kit). Every portal admin is notified. There you can stage new sign-in values, check them, test a
+  code from the kit). An install set up from `.env` (no wizard) has none until `yoda-admin create-break-glass`
+  (section 5, upgrade notes). Every portal admin is notified. There you can stage new sign-in values, check them, test a
   real sign-in, apply them, or roll back to the last working ones. Lost the break-glass password or
   authenticator: `dc exec core yoda-admin reset-break-glass` (on the host) prints a temporary password once;
   the next sign-in must set a new password and authenticator first. `dc exec core yoda-admin status` shows the

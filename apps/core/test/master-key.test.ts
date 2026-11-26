@@ -46,7 +46,8 @@ async function cli(store: SettingsStore, argv: string[], over: Partial<Parameter
   const code = await runAdmin(argv, {
     db: await testDb(),
     settings: store,
-    config: testConfig(),
+    // As in production: setup counts as done only from the store (the wizard, or OIDC_ISSUER in env).
+    config: { ...testConfig(), devSkipSetup: false },
     tokenFile: null,
     jobs: { send: async () => {} },
     keyFile,
@@ -286,6 +287,59 @@ describe('yoda-admin recovery-kit', () => {
     expect((await (await testDb()).select().from(localRecoveryCodes)).map((c) => c.id).sort()).toEqual(before.map((c) => c.id).sort())
     expect(fresh.code).toBe(0)
     expect(JSON.stringify(audit)).not.toContain(encodeMasterKey(OLD))
+  })
+})
+
+describe('yoda-admin create-break-glass (an env-based install, I1)', () => {
+  /** Set up from env: OIDC_ISSUER in env, the wizard never ran (setup_state not completed). */
+  const envInstall = async () => {
+    const store = await SettingsStore.open({ db: await testDb(), env: { OIDC_ISSUER: 'https://sso.example.org/realms/hospital' }, masterKey: ok(OLD), log: quiet(), channel })
+    expect(store.setupDone).toBe(false)
+    return store
+  }
+
+  it('creates the account with a temporary password; then the kit and rotation work there', async () => {
+    const store = await envInstall()
+    // Before: no account, so no kit (the gate is setupState, not the wizard's marker).
+    const none = await cli(store, ['recovery-kit'])
+    expect(none.code).toBe(1)
+    expect(none.err).toContain('yoda-admin create-break-glass')
+
+    const r = await cli(store, ['create-break-glass'])
+    expect(r.code, r.err).toBe(0)
+    const password = /^ {2}(\S+)$/m.exec(r.out)![1]!
+    expect(r.out).toContain('Break-glass account admin created')
+    expect(r.out).toContain('recovery-kit')
+    const admin = (await findAdmin(await testDb(), 'admin'))!
+    expect(admin).toMatchObject({ mustChangePassword: true, totpEnabled: false })
+    expect(JSON.stringify(admin)).not.toContain(password)
+    const [audit] = await (await testDb()).select().from(settingsAudit).where(eq(settingsAudit.action, 'break_glass.created'))
+    expect(audit).toMatchObject({ source: 'cli', newValue: { username: 'admin' } })
+    expect(JSON.stringify(audit)).not.toContain(password)
+    // The temporary password signs in to /recovery, restricted to the password change and TOTP enrolment.
+    const signed = await signIn({ db: await testDb(), settings: store }, new UnknownUserGuard(), { username: 'admin', password, now: clock })
+    expect(signed).toMatchObject({ ok: true })
+
+    // Only one.
+    const again = await cli(store, ['create-break-glass', '--username', 'other'])
+    expect(again.code).toBe(1)
+    expect(again.err).toContain('already exists (admin)')
+
+    const kit = await cli(store, ['recovery-kit'])
+    expect(kit.code, kit.err).toBe(0)
+    expect(kit.out).toContain(encodeMasterKey(OLD))
+    const dry = await cli(store, ['rotate-master-key', '--dry-run'])
+    expect(dry.code, dry.err).toBe(0)
+  })
+
+  it('refuses before setup is done, a bad username, and an unusable key', async () => {
+    const pending = await open(OLD)
+    expect((await cli(pending, ['create-break-glass'])).err).toContain('the setup wizard creates the break-glass account')
+    const store = await envInstall()
+    expect((await cli(store, ['create-break-glass', '--username', 'A B'])).err).toContain('Invalid username')
+    const keyless = await SettingsStore.open({ db: await testDb(), env: { OIDC_ISSUER: 'https://sso.example.org/realms/hospital' }, masterKey: { status: 'missing', reason: 'not set' }, log: quiet(), channel })
+    expect((await cli(keyless, ['create-break-glass'])).code).toBe(1)
+    expect(await findAdmin(await testDb(), 'admin')).toBeUndefined()
   })
 })
 

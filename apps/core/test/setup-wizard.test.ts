@@ -211,6 +211,10 @@ describe('recovery kit (D7)', () => {
     expect(kit.content).toContain(KEY_BYTES.toString('base64'))
     expect(kit.recoveryCodes).toHaveLength(10)
     for (const c of kit.recoveryCodes) expect(kit.content).toContain(c)
+    // The bootstrap values, for a lost bootstrap volume (I2): core's own Postgres password and storage keys.
+    const cfg = (await testDeps()).config
+    expect(kit.content).toContain(`POSTGRES_PASSWORD=${decodeURIComponent(new URL(cfg.databaseUrl).password)}\n`)
+    expect(kit.content).toContain(`S3_SECRET_KEY=${cfg.s3SecretKey}\n`)
     // The kit's codes are the ones that work (the set from the admin step is replaced).
     const rows = await (await db()).select().from(localRecoveryCodes)
     expect(rows).toHaveLength(10)

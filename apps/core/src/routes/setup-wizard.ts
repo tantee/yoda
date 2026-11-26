@@ -32,7 +32,7 @@ import { MasterKeyUnavailable, replaceRecoveryCodes, totpRequired } from '../loc
 import { nowOf, secretsUnavailable, storeOf, takeLimit, whereFrom } from '../local/http.js'
 import { currentOidc, finishTestSignIn, OidcChangeFailed, startTestSignIn } from '../local/oidc-change.js'
 import { clearSessionCookie, isHttps, requireSession, revokeSessions, updateSessionData, type ActiveSession, type SessionData } from '../local/session.js'
-import { claimHash, KIT_REISSUE_MS, missingSteps, oidcHash, parseProgress, recoveryKitFilename, recoveryKitText, stepStates, type ProgressRecord } from '../local/setup-progress.js'
+import { claimHash, KIT_REISSUE_MS, kitBootstrapValues, missingSteps, oidcHash, parseProgress, recoveryKitFilename, recoveryKitText, stepStates, type ProgressRecord } from '../local/setup-progress.js'
 import { clearSetupToken } from '../local/setup-token.js'
 import { readiness } from '../readiness.js'
 import { RateLimiter } from '../settings/rate-limit.js'
@@ -394,6 +394,7 @@ export function setupWizardRoutes(app: FastifyInstance): void {
         username: out.username,
         codes: out.codes,
         at: now,
+        bootstrap: kitBootstrapValues(app.deps.config),
       }),
       recoveryCodes: out.codes,
       downloadedAt: out.downloadedAt,
