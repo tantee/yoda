@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import type { Proposal, TaskWithContext, Todo, TodoWorkItem, WorkItem } from '@yoda/shared'
+import { ProposalKind, type Proposal, type TaskWithContext, type Todo, type TodoWorkItem, type WorkItem } from '@yoda/shared'
 import {
+  DECISION_KINDS,
   byPriority,
   filterTodo,
   priorityChange,
@@ -175,5 +176,15 @@ describe('taskCrumbs', () => {
   })
   it('staff in the requester view go back to their to-do', () => {
     expect(taskCrumbs(tk, { requesterView: true, isStaff: true }, t)).toEqual([{ label: '[nav.todo]', to: '/todo' }, { label: 'ตรวจโค้ด' }])
+  })
+})
+
+describe('DECISION_KINDS', () => {
+  it('has an icon, label and both verbs for every proposal kind', () => {
+    for (const k of ProposalKind.options) {
+      const d = DECISION_KINDS[k]
+      expect(d.icon).toMatch(/^mdi-/)
+      expect(d.label && d.confirm && d.dismiss).toBeTruthy()
+    }
   })
 })

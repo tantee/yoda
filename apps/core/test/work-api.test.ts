@@ -1,8 +1,8 @@
 import type { FastifyInstance } from 'fastify'
-import type { ProjectDetail, Task, TaskWithContext, Todo, WorkItemDetail } from '@yoda/shared'
+import type { ProjectDetail, Task, TaskWithContext, Todo, WorkItemDetail, WorkItemEventsPage } from '@yoda/shared'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { eq } from 'drizzle-orm'
-import { attachments } from '../src/db/schema.js'
+import { attachments, events } from '../src/db/schema.js'
 import { resetDb, testDb } from './helpers.js'
 import { acceptStepAdvance, auth, login, makeApp, type Who } from './support.js'
 
@@ -368,6 +368,67 @@ describe('work API', () => {
     const wi = await createItem(pm, p)
     expect(wi.events.length).toBeGreaterThan(0)
     expect(wi.events.every((e) => e.actorKind === 'person')).toBe(true)
+  })
+
+  describe('GET /work-items/:id/events', () => {
+    /** Adds `n` plain events to the item (oldest first), so paging has something to walk. */
+    async function addEvents(wi: WorkItemDetail, n: number) {
+      const db = await testDb()
+      for (let i = 0; i < n; i++) {
+        await db.insert(events).values({ projectId: wi.projectId, workItemId: wi.id, type: 'knowledge.created', actorId: pm.id, payload: { i } })
+      }
+    }
+    const page = async (who: Who, id: string, query = '') => call(who, 'GET', `/work-items/${id}/events${query}`)
+
+    it('pages newest first by seq with a cursor until the oldest event', async () => {
+      const p = await project([[pm, ['PM']], [dev, ['DEV']]])
+      const wi = await createItem(pm, p)
+      await addEvents(wi, 40)
+      const all = (await detail(pm, wi.id)).events
+      const total = all.length
+
+      const first = await page(dev, wi.id)
+      expect(first.statusCode).toBe(200)
+      const a = first.json() as WorkItemEventsPage
+      expect(a.events).toHaveLength(30)
+      expect(a.events[0]!.id).toBe(all.at(-1)!.id)
+      const seqs = a.events.map((e) => e.seq)
+      expect(seqs).toEqual([...seqs].sort((x, y) => y - x))
+      expect(a.nextBefore).toBe(seqs.at(-1))
+      expect(a.events[0]).toMatchObject({ type: 'knowledge.created', actorName: 'สมศรี', payload: { i: 39 } })
+
+      const b = (await page(dev, wi.id, `?before=${a.nextBefore}&limit=30`)).json() as WorkItemEventsPage
+      expect(b.events).toHaveLength(total - 30)
+      expect(b.nextBefore).toBeNull()
+      expect([...a.events, ...b.events].map((e) => e.id)).toEqual([...all].reverse().map((e) => e.id))
+    })
+
+    it('limits are 1..100 (default 30); the cursor must be a positive integer', async () => {
+      const p = await project([[pm, ['PM']]])
+      const wi = await createItem(pm, p)
+      await addEvents(wi, 3)
+      const one = (await page(pm, wi.id, '?limit=1')).json() as WorkItemEventsPage
+      expect(one.events).toHaveLength(1)
+      expect(one.nextBefore).toBe(one.events[0]!.seq)
+      expect((await page(pm, wi.id, '?limit=100')).statusCode).toBe(200)
+      expect((await page(pm, wi.id, '?limit=0')).statusCode).toBe(400)
+      expect((await page(pm, wi.id, '?limit=101')).statusCode).toBe(400)
+      expect((await page(pm, wi.id, '?before=abc')).statusCode).toBe(400)
+      expect((await page(pm, wi.id, '?before=0')).statusCode).toBe(400)
+      const last = (await page(pm, wi.id, `?before=${one.events[0]!.seq}&limit=100`)).json() as WorkItemEventsPage
+      expect(last.nextBefore).toBeNull()
+      expect(last.events.every((e) => e.seq < one.events[0]!.seq)).toBe(true)
+    })
+
+    it('staff with visibility only: non-members and unknown ids 404, requesters 404 like the detail', async () => {
+      const p = await project([[pm, ['PM']]])
+      const wi = await createItem(pm, p, { requesterId: nurse.id })
+      expect((await page(outsider, wi.id)).statusCode).toBe(404)
+      expect((await page(pm, NO_ID)).statusCode).toBe(404)
+      expect((await call(nurse, 'GET', `/work-items/${wi.id}`)).statusCode).toBe(404)
+      expect((await page(nurse, wi.id)).statusCode).toBe(404)
+      expect((await page(admin, wi.id)).statusCode).toBe(200)
+    })
   })
 
   it('a submit never moves files off other tasks; project-level files join the work item', async () => {

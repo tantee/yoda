@@ -10,6 +10,7 @@ import {
   WorkflowTemplateSummary,
   WorkItem,
   WorkItemDetail,
+  WorkItemEventsPage,
   type Attachment,
   type Me,
   type RequestStatus,
@@ -18,7 +19,7 @@ import {
   type TemplateTask,
   type WorkItemStep,
 } from '@yoda/shared'
-import { and, asc, desc, eq, inArray, isNull, or, sql, type SQL } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, isNull, lt, or, sql, type SQL } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/pg-core'
 import { forbidden, notFound } from '../auth/plugin.js'
 import { attachmentsByTask } from '../attachments/service.js'
@@ -532,19 +533,47 @@ export async function getWorkItemDetail(db: Conn, me: Me, id: string): Promise<W
     ...toWorkItem(r, await advanceState(db, [r])),
     steps,
     tasks: taskRows.map((t) => ({ ...toTask(t, def, who, ai), run: runs.get(t.id) ?? null, parked: parked.has(t.id) })),
-    events: eventRows.map(({ e, actorName }) =>
-      EventEntry.parse({
-        id: e.id,
-        type: e.type,
-        actorKind: e.actorKind,
-        actorId: e.actorId,
-        actorName: actorName ?? null,
-        taskId: e.taskId,
-        reason: e.reason,
-        payload: e.payload,
-        createdAt: e.createdAt.toISOString(),
-      }),
-    ),
+    events: eventRows.map(({ e, actorName }) => EventEntry.parse(eventEntry(e, actorName))),
+  })
+}
+
+function eventEntry(e: typeof events.$inferSelect, actorName: string | null) {
+  return {
+    id: e.id,
+    type: e.type,
+    actorKind: e.actorKind,
+    actorId: e.actorId,
+    actorName: actorName ?? null,
+    taskId: e.taskId,
+    reason: e.reason,
+    payload: e.payload,
+    createdAt: e.createdAt.toISOString(),
+  }
+}
+
+/**
+ * One page of a work item's timeline, newest first by seq (staff who see the item; 404 otherwise). `before` is
+ * the seq cursor from the previous page; `nextBefore` is null once the oldest event is on the page.
+ */
+export async function listWorkItemEvents(
+  db: Conn,
+  me: Me,
+  id: string,
+  { before, limit }: { before?: number; limit: number },
+): Promise<WorkItemEventsPage> {
+  await requireWorkItemVisible(db, me, id)
+  const rows = await db
+    .select({ e: events, actorName: people.displayName })
+    .from(events)
+    .leftJoin(people, eq(people.id, events.actorId))
+    .where(and(eq(events.workItemId, id), before === undefined ? undefined : lt(events.seq, before)))
+    .orderBy(desc(events.seq))
+    .limit(limit + 1)
+  const more = rows.length > limit
+  const shown = rows.slice(0, limit)
+  return WorkItemEventsPage.parse({
+    events: shown.map(({ e, actorName }) => ({ ...eventEntry(e, actorName), seq: e.seq })),
+    nextBefore: more ? shown.at(-1)!.e.seq : null,
   })
 }
 

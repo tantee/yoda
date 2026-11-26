@@ -3,7 +3,7 @@ import type { TodoWorkItem } from '@yoda/shared'
 import { localized } from '~/utils/localized'
 import { guardOf } from '~/utils/guards'
 import { proposalFallbackKey } from '~/utils/requests'
-import { priorityChange, stepChange, type Decision } from '~/utils/todo'
+import { DECISION_KINDS, priorityChange, stepChange, type Decision } from '~/utils/todo'
 
 /**
  * One "waiting for your decision" card (proposal §8.2 To-do): what kind of decision, the work item, the
@@ -19,16 +19,9 @@ const emit = defineEmits<{ advance: [string]; decided: [] }>()
 const { t, locale } = useI18n()
 const { dateTime } = useDateFormat()
 
-const KINDS = {
-  advance: { icon: 'mdi-debug-step-over', label: 'todo.kind.advance', confirm: 'todo.verb.advance', dismiss: 'todo.verb.notYet' },
-  step_advance: { icon: 'mdi-debug-step-over', label: 'todo.kind.advance', confirm: 'todo.verb.advance', dismiss: 'todo.verb.notYet' },
-  priority_change: { icon: 'mdi-flag-outline', label: 'todo.kind.priority', confirm: 'todo.verb.confirm', dismiss: 'todo.verb.reject' },
-  create_work_item: { icon: 'mdi-inbox-arrow-down-outline', label: 'todo.kind.intake', confirm: 'todo.verb.accept', dismiss: 'todo.verb.reject' },
-  raise_discussion: { icon: 'mdi-forum-outline', label: 'todo.kind.discussion', confirm: 'todo.verb.raise', dismiss: 'todo.verb.reject' },
-} as const
 
 const p = computed(() => (props.decision.type === 'proposal' ? props.decision.proposal : null))
-const kind = computed(() => KINDS[p.value ? p.value.kind : 'advance'])
+const kind = computed(() => DECISION_KINDS[p.value ? p.value.kind : 'advance'])
 const workItemId = computed(() => (props.decision.type === 'advance' ? props.decision.item.id : p.value?.workItemId ?? null))
 
 const title = computed(() => {

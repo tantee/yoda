@@ -10,7 +10,8 @@
     "comingSoon": "เร็ว ๆ นี้",
     "save": "บันทึก",
     "cancel": "ยกเลิก",
-    "error": "เกิดข้อผิดพลาด กรุณาลองใหม่"
+    "error": "เกิดข้อผิดพลาด กรุณาลองใหม่",
+    "close": "ปิด"
   },
   "nav": {
     "chat": "แชท",
@@ -274,7 +275,31 @@
     "targetDateHint": "ไม่บังคับ เลยกำหนดเมื่อผ่านวันนี้ไปแล้ว (เวลากรุงเทพฯ)",
     "clearTargetDate": "ล้าง",
     "saveTargetDate": "บันทึกวันที่",
-    "noTargetDate": "ไม่มีวันที่กำหนด"
+    "noTargetDate": "ไม่มีวันที่กำหนด",
+    "more": "การทำงานอื่น",
+    "reopenEllipsis": "ย้อนกลับขั้นตอน…",
+    "cancelEllipsis": "ยกเลิกงาน…",
+    "reopenTo": "ย้อนกลับไป {step}",
+    "cancelTitleNamed": "ยกเลิกงาน “{title}” หรือไม่",
+    "stepNotStarted": "ยังไม่เริ่ม",
+    "stepProgress": "เสร็จ {done} จาก {total}",
+    "stepTasks": "{n} งานย่อย",
+    "timelineFailed": "โหลดไทม์ไลน์ไม่สำเร็จ",
+    "timelineEmpty": "ยังไม่มีเหตุการณ์",
+    "timelineMore": "แสดงเหตุการณ์ก่อน {date}",
+    "side": {
+      "label": "รายละเอียดงาน",
+      "details": "รายละเอียด",
+      "created": "สร้างเมื่อ",
+      "runs": "กำลังรัน",
+      "discussions": "ประเด็นหารือ"
+    },
+    "daysLeft": "อีก {n} วัน",
+    "daysLate": "เลยมา {n} วัน",
+    "notFound": "ไม่พบงานนี้",
+    "notFoundHint": "งานนี้อาจถูกลบ หรือคุณไม่ได้เป็นสมาชิกของโครงการ",
+    "toProjects": "ไปที่โครงการ",
+    "editTargetDate": "แก้วันที่กำหนดเสร็จ"
   },
   "steps": {
     "done": "เสร็จสิ้น",
@@ -453,7 +478,7 @@
     "intake": "ผู้ช่วยของฉัน",
     "empty": "ยังไม่มีข้อความ",
     "select": "เลือกการสนทนา",
-    "placeholder": "พิมพ์ข้อความ (Enter เพื่อส่ง, Shift+Enter ขึ้นบรรทัดใหม่)",
+    "placeholder": "พิมพ์ข้อความ…",
     "send": "ส่ง",
     "attach": "แนบไฟล์",
     "typing": "ผู้ช่วยกำลังพิมพ์…",
@@ -474,11 +499,16 @@
         "pending": "รอการตัดสินใจ",
         "accepted": "ยืนยันแล้ว",
         "rejected": "ปฏิเสธแล้ว",
-        "superseded": "ใช้ไม่ได้แล้ว"
+        "superseded": "ใช้ไม่ได้แล้ว",
+        "sentToTeam": "ส่งถึงทีมแล้ว รอรับเรื่อง"
       },
       "project": "โครงการ",
       "chooseProject": "เลือกโครงการ",
-      "requester": "ผู้ขอ"
+      "requester": "ผู้ขอ",
+      "openWorkItem": "เปิดงาน",
+      "openRequest": "ดูคำขอ",
+      "requestSent": "ส่งคำขอถึงทีม IT แล้ว",
+      "myRequests": "ดูคำขอของฉัน"
     },
     "textRequired": "พิมพ์ข้อความเพื่อส่งไฟล์ที่แนบ",
     "marker": {
@@ -490,6 +520,23 @@
         "ai_unavailable": "ผู้ช่วยยังใช้งานไม่ได้ในตอนนี้ เพราะยังไม่ได้ตั้งค่า AI กรุณาแจ้งผู้ดูแลระบบ",
         "ai_failed": "ผู้ช่วยตอบไม่สำเร็จในครั้งนี้ กรุณาลองใหม่อีกครั้ง"
       }
+    },
+    "enterHint": "Enter เพื่อส่ง, Shift+Enter ขึ้นบรรทัดใหม่",
+    "newMessages": "ข้อความใหม่",
+    "unread": "ยังไม่ได้อ่าน {n} ข้อความ",
+    "kind": {
+      "personal": "ผู้ช่วยส่วนตัว",
+      "intake": "ผู้ช่วย",
+      "project": "ห้องโครงการ",
+      "work_item": "ห้องของงาน"
+    },
+    "emptyAssistant": "เริ่มคุยกับผู้ช่วย",
+    "emptyAssistantHint": "พิมพ์คำถามหรือเรื่องที่ต้องการในช่องด้านล่าง",
+    "suggest": {
+      "myWork": "ลองถาม: งานของฉันวันนี้มีอะไรบ้าง",
+      "status": "ลองถาม: สถานะโครงการของฉัน",
+      "newRequest": "ลองพิมพ์: ขอเพิ่มรายงานใหม่…",
+      "myRequests": "ลองถาม: คำขอของฉันถึงไหนแล้ว"
     }
   },
   "notifications": {
@@ -777,7 +824,8 @@
       "noIssue": "ยังไม่มี issue (จะสร้างเมื่อเริ่มพัฒนา)",
       "mergeRequests": "Merge requests",
       "noMrs": "ยังไม่มี merge request",
-      "closesHint": "ใส่ {hint} ในคำอธิบาย merge request"
+      "closesHint": "ใส่ {hint} ในคำอธิบาย merge request",
+      "manage": "จัดการ"
     },
     "admin": {
       "title": "การเชื่อมต่อ GitLab",
@@ -1156,5 +1204,9 @@
     },
     "close": "ปิด",
     "skipToContent": "ข้ามไปยังเนื้อหาหลัก"
+  },
+  "timeline": {
+    "today": "วันนี้ {date}",
+    "yesterday": "เมื่อวาน {date}"
   }
 }

@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import type { Attachment, Message } from '@yoda/shared'
+import { useDisplay } from 'vuetify'
 
 const props = defineProps<{ conversationId: string }>()
 const emit = defineEmits<{ sent: [message: Message] }>()
 const { t } = useI18n()
 const api = useApi()
 const { uploadToConversation } = useUpload()
+const { mdAndUp } = useDisplay()
 
 const text = ref('')
 const pending = ref<Attachment[]>([])
@@ -91,7 +93,7 @@ function onKeydown(e: KeyboardEvent) {
 
 <template>
   <div
-    class="composer pa-2"
+    class="composer"
     :class="{ dragging }"
     data-testid="composer"
     @dragover.prevent="dragging = true"
@@ -112,27 +114,43 @@ function onKeydown(e: KeyboardEvent) {
       >{{ a.fileName }}</v-chip>
       <v-progress-circular v-if="uploading" indeterminate size="20" />
     </div>
-    <div class="d-flex align-end ga-2">
+    <div class="composer__row">
       <input ref="fileInput" type="file" hidden multiple data-testid="file-input" @change="onPick">
-      <v-btn icon="mdi-paperclip" variant="text" :title="t('chat.attach')" @click="fileInput?.click()" />
+      <v-btn icon="mdi-paperclip" variant="text" density="comfortable" :aria-label="t('chat.attach')" :title="t('chat.attach')" @click="fileInput?.click()" />
       <v-textarea
         v-model="text"
         :placeholder="t('chat.placeholder')"
+        :aria-label="t('chat.placeholder')"
         rows="1"
         max-rows="6"
         auto-grow
         hide-details
         density="compact"
         variant="outlined"
+        bg-color="surface"
         data-testid="composer-text"
         @keydown="onKeydown"
         @paste="onPaste"
       />
-      <v-btn icon="mdi-send" color="primary" :disabled="!canSend" :loading="busy" :title="t('chat.send')" data-testid="composer-send" @click="send" />
+      <v-btn
+        icon="mdi-send"
+        color="primary"
+        :variant="canSend ? 'flat' : 'outlined'"
+        :aria-disabled="!canSend"
+        :loading="busy"
+        :aria-label="t('chat.send')"
+        :title="t('chat.send')"
+        data-testid="composer-send"
+        @click="send"
+      />
     </div>
+    <div v-if="mdAndUp" class="composer__hint text-caption text-medium-emphasis">{{ t('chat.enterHint') }}</div>
   </div>
 </template>
 
 <style scoped>
+.composer { padding: 8px 12px; background: rgb(var(--v-theme-surface)); border-top: 1px solid rgba(var(--v-border-color), var(--v-border-opacity)); }
+.composer__row { display: flex; align-items: flex-end; gap: 8px; }
+.composer__hint { padding: 2px 0 0 48px; }
 .composer.dragging { outline: 2px dashed rgb(var(--v-theme-primary)); outline-offset: -4px; }
 </style>

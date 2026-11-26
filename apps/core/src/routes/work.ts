@@ -1,4 +1,4 @@
-import { TaskAssign, TaskDiscussionCreate, TaskResult, WorkItemCreate, WorkItemPatch, WorkItemReopen, type Me } from '@yoda/shared'
+import { TaskAssign, TaskDiscussionCreate, TaskResult, WorkItemCreate, WorkItemEventsQuery, WorkItemPatch, WorkItemReopen, type Me } from '@yoda/shared'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { notFound, requireSignedIn, requireStaff } from '../auth/plugin.js'
@@ -22,6 +22,7 @@ import {
   getTodo,
   getWorkItemDetail,
   listTemplates,
+  listWorkItemEvents,
   listWorkItems,
   requireTaskVisible,
   requireWorkItemVisible,
@@ -58,6 +59,14 @@ export function workRoutes(app: FastifyInstance): void {
     if (!request.me.isStaff) throw notFound()
     const { id } = IdParams.parse(request.params)
     return getWorkItemDetail(db(), request.me, id)
+  })
+
+  /** The timeline, paged newest first. Staff who see the item; requesters get the same 404 as the detail. */
+  app.get('/work-items/:id/events', async (request) => {
+    if (!request.me.isStaff) throw notFound()
+    const { id } = IdParams.parse(request.params)
+    const query = WorkItemEventsQuery.parse(request.query ?? {})
+    return listWorkItemEvents(db(), request.me, id, query)
   })
 
   /** The PM (or admin) or the owner: set or clear the target date. */

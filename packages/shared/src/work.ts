@@ -306,6 +306,24 @@ export const EventEntry = z.object({
 })
 export type EventEntry = z.infer<typeof EventEntry>
 
+/** `GET /work-items/:id/events` (staff who see the item): `before` = a seq cursor, `limit` 1..100 (default 30). */
+export const WorkItemEventsQuery = z.object({
+  before: z.coerce.number().int().positive().optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(30),
+})
+export type WorkItemEventsQuery = z.infer<typeof WorkItemEventsQuery>
+
+/** A timeline event with its position (`seq`, ascending in time), the paging cursor. */
+export const SeqEventEntry = EventEntry.extend({ seq: z.number().int() })
+export type SeqEventEntry = z.infer<typeof SeqEventEntry>
+
+/** One page of a work item's timeline, newest first; `nextBefore` loads the older page (null at the start). */
+export const WorkItemEventsPage = z.object({
+  events: z.array(SeqEventEntry),
+  nextBefore: z.number().int().nullable(),
+})
+export type WorkItemEventsPage = z.infer<typeof WorkItemEventsPage>
+
 export const WorkItemDetail = WorkItem.extend({
   steps: z.array(WorkItemStep),
   tasks: z.array(Task),

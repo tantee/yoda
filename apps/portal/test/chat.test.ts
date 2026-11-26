@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Message } from '@yoda/shared'
-import { applySent, groupMessages, isSecretaryTyping, mergeLatest, mergeMessages, systemMarkerKey } from '../app/utils/chat'
+import { applySent, groupMessages, isNearBottom, isSecretaryTyping, mergeLatest, mergeMessages, scrollPlan, systemMarkerKey, threadIcon } from '../app/utils/chat'
 
 let n = 0
 function msg(over: Partial<Message> & { createdAt: string }): Message {
@@ -123,5 +123,35 @@ describe('systemMarkerKey', () => {
     expect(systemMarkerKey(msg({ authorKind: 'system', text: 'hello', createdAt: at }))).toBeNull()
     expect(systemMarkerKey(msg({ authorKind: 'person', text: '[[secretary.not_ready]]', createdAt: at }))).toBeNull()
     expect(systemMarkerKey(msg({ authorKind: 'ai', text: '[[secretary.not_ready]]', createdAt: at }))).toBeNull()
+  })
+})
+
+describe('isNearBottom / scrollPlan', () => {
+  it('is near the bottom within the threshold', () => {
+    expect(isNearBottom({ scrollHeight: 1000, scrollTop: 600, clientHeight: 380 })).toBe(true)
+    expect(isNearBottom({ scrollHeight: 1000, scrollTop: 400, clientHeight: 380 })).toBe(false)
+  })
+  it('jumps to the bottom on switching threads, for own messages and when already near the bottom', () => {
+    expect(scrollPlan({ switched: true, prepended: false, appended: false, nearBottom: false, lastMine: false })).toBe('bottom')
+    expect(scrollPlan({ switched: false, prepended: false, appended: true, nearBottom: false, lastMine: true })).toBe('bottom')
+    expect(scrollPlan({ switched: false, prepended: false, appended: true, nearBottom: true, lastMine: false })).toBe('bottom')
+  })
+  it('holds the position when older messages are prepended', () => {
+    expect(scrollPlan({ switched: false, prepended: true, appended: false, nearBottom: false, lastMine: false })).toBe('hold')
+  })
+  it('shows the new-messages pill when someone else posts while the reader scrolled up', () => {
+    expect(scrollPlan({ switched: false, prepended: false, appended: true, nearBottom: false, lastMine: false })).toBe('pill')
+  })
+  it('does nothing otherwise (e.g. the typing line changed while scrolled up)', () => {
+    expect(scrollPlan({ switched: false, prepended: false, appended: false, nearBottom: false, lastMine: false })).toBe('none')
+    expect(scrollPlan({ switched: false, prepended: false, appended: false, nearBottom: true, lastMine: false })).toBe('bottom')
+  })
+})
+
+describe('threadIcon', () => {
+  it('uses the assistant icon for personal threads and a kind icon otherwise', () => {
+    expect(threadIcon('personal')).toBe('mdi-robot-outline')
+    expect(threadIcon('project')).toBe('mdi-folder-outline')
+    expect(threadIcon('work_item')).toBe('mdi-clipboard-text-outline')
   })
 })

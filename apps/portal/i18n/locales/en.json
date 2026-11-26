@@ -10,7 +10,8 @@
     "comingSoon": "Coming soon",
     "save": "Save",
     "cancel": "Cancel",
-    "error": "Something went wrong. Please try again."
+    "error": "Something went wrong. Please try again.",
+    "close": "Close"
   },
   "nav": {
     "chat": "Chat",
@@ -274,7 +275,31 @@
     "targetDateHint": "Optional; overdue once this day has passed (Bangkok time)",
     "clearTargetDate": "Clear",
     "saveTargetDate": "Save date",
-    "noTargetDate": "No target date"
+    "noTargetDate": "No target date",
+    "more": "More actions",
+    "reopenEllipsis": "Reopen a step…",
+    "cancelEllipsis": "Cancel work item…",
+    "reopenTo": "Back to {step}",
+    "cancelTitleNamed": "Cancel “{title}”?",
+    "stepNotStarted": "Not started",
+    "stepProgress": "{done} of {total} done",
+    "stepTasks": "{n} task | {n} tasks",
+    "timelineFailed": "Couldn't load the timeline",
+    "timelineEmpty": "No events yet",
+    "timelineMore": "Show events before {date}",
+    "side": {
+      "label": "Work item details",
+      "details": "Details",
+      "created": "Created",
+      "runs": "Running now",
+      "discussions": "Discussions"
+    },
+    "daysLeft": "in {n} days",
+    "daysLate": "{n} days late",
+    "notFound": "Work item not found",
+    "notFoundHint": "It may have been removed, or you aren't a member of its project.",
+    "toProjects": "Go to projects",
+    "editTargetDate": "Edit target date"
   },
   "steps": {
     "done": "Done",
@@ -453,7 +478,7 @@
     "intake": "My assistant",
     "empty": "No messages yet",
     "select": "Select a conversation",
-    "placeholder": "Type a message (Enter to send, Shift+Enter for a new line)",
+    "placeholder": "Type a message…",
     "send": "Send",
     "attach": "Attach a file",
     "typing": "The secretary is typing…",
@@ -474,11 +499,16 @@
         "pending": "Waiting for a decision",
         "accepted": "Confirmed",
         "rejected": "Dismissed",
-        "superseded": "No longer applies"
+        "superseded": "No longer applies",
+        "sentToTeam": "Sent to the team"
       },
       "project": "Project",
       "chooseProject": "Choose a project",
-      "requester": "Requester"
+      "requester": "Requester",
+      "openWorkItem": "Open work item",
+      "openRequest": "View request",
+      "requestSent": "Request sent to the IT team",
+      "myRequests": "My requests"
     },
     "textRequired": "Add a message to send the attached files",
     "marker": {
@@ -490,6 +520,23 @@
         "ai_unavailable": "The assistant isn't available right now: AI is not set up. Please ask an administrator.",
         "ai_failed": "The assistant couldn't answer this time. Please try again in a moment."
       }
+    },
+    "enterHint": "Enter to send, Shift+Enter for a new line",
+    "newMessages": "New messages",
+    "unread": "{n} unread",
+    "kind": {
+      "personal": "Personal assistant",
+      "intake": "Assistant",
+      "project": "Project thread",
+      "work_item": "Work item thread"
+    },
+    "emptyAssistant": "Start a conversation",
+    "emptyAssistantHint": "Type a question or a request below.",
+    "suggest": {
+      "myWork": "Try: what's on my plate today?",
+      "status": "Try: how are my projects doing?",
+      "newRequest": "Try: I need a new report…",
+      "myRequests": "Try: where are my requests?"
     }
   },
   "notifications": {
@@ -777,7 +824,8 @@
       "noIssue": "No issue yet (created when development starts)",
       "mergeRequests": "Merge requests",
       "noMrs": "No merge requests yet",
-      "closesHint": "Include {hint} in your merge request"
+      "closesHint": "Include {hint} in your merge request",
+      "manage": "Manage"
     },
     "admin": {
       "title": "GitLab connection",
@@ -1156,5 +1204,9 @@
     },
     "close": "Close",
     "skipToContent": "Skip to main content"
+  },
+  "timeline": {
+    "today": "Today, {date}",
+    "yesterday": "Yesterday, {date}"
   }
 }

@@ -1,4 +1,4 @@
-import { Priority, type LocalizedText, type Proposal, type TaskWithContext, type Todo, type TodoWorkItem, type WorkItem } from '@yoda/shared'
+import { Priority, type LocalizedText, type Proposal, type ProposalKind, type TaskWithContext, type Todo, type TodoWorkItem, type WorkItem } from '@yoda/shared'
 import { waitingFor } from './runners'
 
 export type TodoTab = 'all' | 'decisions' | 'confirmations' | 'mine'
@@ -126,3 +126,12 @@ export function taskCrumbs(
     { label: task.title },
   ]
 }
+
+/** Icon, kind label and specific verbs of a decision, shared by To-do decision cards and chat proposal cards. */
+export const DECISION_KINDS = {
+  advance: { icon: 'mdi-debug-step-over', label: 'todo.kind.advance', confirm: 'todo.verb.advance', dismiss: 'todo.verb.notYet' },
+  step_advance: { icon: 'mdi-debug-step-over', label: 'todo.kind.advance', confirm: 'todo.verb.advance', dismiss: 'todo.verb.notYet' },
+  priority_change: { icon: 'mdi-flag-outline', label: 'todo.kind.priority', confirm: 'todo.verb.confirm', dismiss: 'todo.verb.reject' },
+  create_work_item: { icon: 'mdi-inbox-arrow-down-outline', label: 'todo.kind.intake', confirm: 'todo.verb.accept', dismiss: 'todo.verb.reject' },
+  raise_discussion: { icon: 'mdi-forum-outline', label: 'todo.kind.discussion', confirm: 'todo.verb.raise', dismiss: 'todo.verb.reject' },
+} as const satisfies Record<ProposalKind | 'advance', { icon: string; label: string; confirm: string; dismiss: string }>
