@@ -167,6 +167,13 @@ A setting saved in the database applies without a restart, on every core instanc
 any reconnect. That needs a session-pinned database connection, so a `DATABASE_URL` through PgBouncer in
 transaction mode breaks it. `AI_WORKERS` and `MCP_ENABLED` still need a restart: a change to either is flagged as restart-required.
 
+Saving a secret (or a sign-in setting) in the admin settings needs a sign-in within the last 10 minutes: core
+reads the access token's `auth_time` claim, and the portal signs in again when it is older. Keycloak puts
+`auth_time` in access tokens through the realm's default **basic** client scope (Keycloak 25 and later); keep that
+scope on the `yoda-portal` client, or every secret save is refused with `reauth_required`. The settings **Test**
+buttons connect only through core's outbound guard: private addresses are allowed, cloud metadata, link-local and
+loopback addresses and the compose service names are not, and redirects are not followed.
+
 Sign-in (section 2):
 
 | Variable | Purpose | Required | Example |

@@ -57,6 +57,7 @@ export class FakeLine {
           this.fails.count--
           return send(this.fails.status, { message: 'injected failure' })
         }
+        if (req.method === 'GET' && path === '/v2/bot/info') return send(200, { userId: 'U0000', basicId: '@yoda-test', displayName: 'Yoda' })
         if (req.method !== 'POST' || (path !== '/v2/bot/message/push' && path !== '/v2/bot/message/reply')) return send(404, { message: 'Not found' })
         const b = (body ?? {}) as { messages?: LineText[] }
         if (!Array.isArray(b.messages) || b.messages.some((m) => m.type !== 'text' || m.text.length > 5000)) {

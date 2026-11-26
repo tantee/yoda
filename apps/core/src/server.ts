@@ -46,7 +46,10 @@ const ai = new AiGateway({
     return live.config
   },
 })
-const deps = live.attach({ db, bus, storage, ai, jobs, settings })
+// Settings tests may reach loopback only outside production (the dev fakes on 127.0.0.1); the image sets
+// NODE_ENV=production.
+const outbound = { allowLoopback: process.env.NODE_ENV !== 'production' }
+const deps = live.attach({ db, bus, storage, ai, jobs, settings, outbound })
 const app = await buildApp(deps)
 await registerJobHandlers(app.deps)
 

@@ -10,7 +10,7 @@ import {
   type SettingValue,
   type SettingWriteSource,
 } from '@yoda/shared'
-import { and, eq, isNotNull, isNull, ne, sql } from 'drizzle-orm'
+import { and, desc, eq, inArray, isNotNull, isNull, lt, ne, or, sql } from 'drizzle-orm'
 import { ZodError } from 'zod'
 import type { Db, Tx } from '../db/client.js'
 import { settings, settingsAudit, setupState } from '../db/schema.js'
@@ -114,6 +114,13 @@ export class SettingConflictError extends Error {
 }
 
 type Row = typeof settings.$inferSelect
+export type AuditRow = typeof settingsAudit.$inferSelect
+
+/** One write in `apply`: a new value, or null to clear the stored one; `expectedVersion` 0 = nothing stored. */
+export type SettingChange = { key: SettingKey; value: unknown; expectedVersion?: number }
+
+/** Read-only settings the system fills itself (`setDerived`). */
+const DERIVED_KEYS = new Set<SettingKey>(['telegram.botUsername'])
 
 type Stored = {
   value?: unknown
@@ -312,41 +319,93 @@ export class SettingsStore {
 
   /** Validates, writes and audits one setting; refuses env-locked, bootstrap-only and read-only settings. */
   async set(key: SettingKey, input: unknown, actor: SettingActor, opts: { expectedVersion?: number } = {}): Promise<SettingInfo> {
-    const d = this.writable(key)
-    // Every secret schema is a string schema, so a non-string secret is a ZodError (400) here.
-    const value: unknown = d.schema.parse(input)
-    if (d.secret && typeof value !== 'string') {
-      throw new ZodError([{ code: 'custom', path: [], message: 'secret must be a string' }])
-    }
-    const mk = d.secret ? this.requireKey(key) : null
-    await this.db.transaction(async (tx) => {
-      const cur = await this.lockRow(tx, key, opts.expectedVersion)
-      await this.write(tx, d, value, actor, 'set', cur, mk)
-      await this.notify(tx, [key])
-    })
-    await this.reload(key)
+    await this.apply([{ key, value: input, expectedVersion: opts.expectedVersion }], actor)
     return this.info(key)
   }
 
   /** Removes the stored value (back to the default) and audits it. */
   async clear(key: SettingKey, actor: SettingActor, opts: { expectedVersion?: number } = {}): Promise<SettingInfo> {
-    const d = this.writable(key)
-    await this.db.transaction(async (tx) => {
-      const cur = await this.lockRow(tx, key, opts.expectedVersion)
-      if (!cur) return
-      await tx.delete(settings).where(eq(settings.key, key))
-      await tx.insert(settingsAudit).values({
-        ...this.auditActor(actor),
-        action: 'clear',
-        key,
-        ...this.oldOf(d, cur),
-        newValue: null,
-        newFp: null,
-      })
-      await this.notify(tx, [key])
-    })
-    await this.reload(key)
+    await this.apply([{ key, value: null, expectedVersion: opts.expectedVersion }], actor)
     return this.info(key)
+  }
+
+  /**
+   * The internal write path for a read-only value the system derives (the Telegram bot username from `getMe`):
+   * the UI lock does not apply, env and bootstrap locks still do. Audited as `system`.
+   */
+  async setDerived(key: SettingKey, value: unknown, actor: Omit<SettingActor, 'label' | 'personId'>): Promise<SettingInfo> {
+    if (!DERIVED_KEYS.has(key)) throw new SettingLockedError(key, this.lockOf(settingDef(key)) ?? 'readonly')
+    await this.apply([{ key, value }], { ...actor, personId: null, label: 'system' }, { derived: true })
+    return this.info(key)
+  }
+
+  /**
+   * Validates every change, then writes them all in one transaction (rows locked in key order, so two saves
+   * cannot deadlock), each with its audit row, and one NOTIFY. `value: null` clears the stored value (a clear of
+   * nothing stored writes nothing). Any refusal (lock, stale version, validation) writes nothing.
+   */
+  async apply(changes: SettingChange[], actor: SettingActor, opts: { derived?: boolean } = {}): Promise<SettingKey[]> {
+    const plan = changes.map((c) => {
+      const d = this.writable(c.key, opts.derived === true)
+      if (c.value === null) return { d, c, value: null }
+      // Every secret schema is a string schema, so a non-string secret is a ZodError (400) here.
+      const value: unknown = d.schema.parse(c.value)
+      if (d.secret && typeof value !== 'string') {
+        throw new ZodError([{ code: 'custom', path: [c.key], message: 'secret must be a string' }])
+      }
+      return { d, c, value }
+    })
+    if (new Set(plan.map((p) => p.c.key)).size !== plan.length) throw new Error('duplicate setting in one change')
+    const mk = plan.some((p) => p.d.secret && p.value !== null) ? this.requireKey(plan.find((p) => p.d.secret && p.value !== null)!.c.key) : null
+    plan.sort((a, b) => (a.c.key < b.c.key ? -1 : a.c.key > b.c.key ? 1 : 0))
+    const keys = plan.map((p) => p.c.key)
+    await this.db.transaction(async (tx) => {
+      let wrote = false
+      for (const { d, c, value } of plan) {
+        const cur = await this.lockRow(tx, c.key, c.expectedVersion)
+        if (value === null) {
+          if (!cur) continue
+          await tx.delete(settings).where(eq(settings.key, c.key))
+          await tx.insert(settingsAudit).values({ ...this.auditActor(actor), action: 'clear', key: c.key, ...this.oldOf(d, cur), newValue: null, newFp: null })
+        } else {
+          await this.write(tx, d, value, actor, opts.derived ? 'derived' : 'set', cur, d.secret ? mk : null)
+        }
+        wrote = true
+      }
+      if (wrote) await this.notify(tx, keys)
+    })
+    for (const key of keys) await this.reload(key)
+    return keys
+  }
+
+  /** A test run (§5.4): who, which action, the result code; never a value. */
+  async recordTest(category: SettingCategory, action: string, result: string, actor: SettingActor): Promise<void> {
+    await this.db.insert(settingsAudit).values({ ...this.auditActor(actor), action: 'test', key: null, newValue: { test: action, category }, result })
+  }
+
+  /** The audit log, newest first, `limit` rows before `cursor` (an id). Secret rows carry fingerprints only. */
+  async auditPage(q: { category?: SettingCategory; key?: string; cursor?: number; limit: number }): Promise<{ rows: AuditRow[]; nextCursor: number | null }> {
+    const where = []
+    if (q.key) where.push(eq(settingsAudit.key, q.key))
+    if (q.category) {
+      const keys = SETTING_KEYS.filter((k) => settingDef(k).category === q.category)
+      where.push(
+        or(
+          inArray(settingsAudit.key, keys as SettingKey[]),
+          and(eq(settingsAudit.action, 'test'), sql`${settingsAudit.newValue}->>'category' = ${q.category}`),
+        )!,
+      )
+    }
+    if (q.cursor) where.push(lt(settingsAudit.id, q.cursor))
+    const rows = await this.db
+      .select()
+      .from(settingsAudit)
+      .where(where.length ? and(...where) : undefined)
+      .orderBy(desc(settingsAudit.id))
+      .limit(q.limit + 1)
+    const more = rows.length > q.limit
+    const page = more ? rows.slice(0, q.limit) : rows
+    return { rows: page, nextCursor: more ? page[page.length - 1]!.id : null }
   }
 
   /**
@@ -553,11 +612,11 @@ export class SettingsStore {
     this.state = { ...this.state, setupDone: true }
   }
 
-  private writable(key: SettingKey): SettingDef {
+  private writable(key: SettingKey, derived = false): SettingDef {
     if (!isSettingKey(key)) throw new UnknownSettingError(key)
     const d = settingDef(key)
     const lock = this.lockOf(d)
-    if (lock) throw new SettingLockedError(key, lock)
+    if (lock && !(derived && lock === 'readonly' && DERIVED_KEYS.has(key))) throw new SettingLockedError(key, lock)
     return d
   }
 
@@ -602,7 +661,7 @@ export class SettingsStore {
     d: SettingDef,
     value: unknown,
     actor: { personId?: string | null; label: string; source: SettingWriteSource; ip?: string | null; requestId?: string | null },
-    action: 'set' | 'import',
+    action: 'set' | 'import' | 'derived',
     cur: Row | undefined,
     mk: MasterKey | null,
   ): Promise<void> {

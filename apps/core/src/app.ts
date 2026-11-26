@@ -13,6 +13,7 @@ import type { JobQueue } from './jobs/queue.js'
 import type { GitLabClient } from './gitlab/client.js'
 import type { MailTransport } from './notifications/channels/email.js'
 import type { SettingsStore } from './settings/store.js'
+import type { OutboundPolicy } from './settings/outbound.js'
 import { createAttachmentEntry } from './knowledge/service.js'
 import { knowledgeRoutes } from './routes/knowledge.js'
 import { aiRoutes } from './routes/ai.js'
@@ -29,6 +30,7 @@ import { proposalRoutes } from './routes/proposals.js'
 import { discussionRoutes } from './routes/discussions.js'
 import { notificationRoutes } from './routes/notifications.js'
 import { adminRoutes } from './routes/admin.js'
+import { adminSettingsRoutes } from './routes/admin-settings.js'
 import { gitlabRoutes } from './routes/gitlab.js'
 import { runnerRoutes } from './routes/runners.js'
 import { statusRoutes } from './routes/status.js'
@@ -60,6 +62,10 @@ export type AppDeps = {
    * its snapshot. Optional so tests without it are unchanged.
    */
   settings?: SettingsStore
+  /** The settings tests' outbound rules (`safeOutbound`); server.ts allows loopback outside production (dev fakes). */
+  outbound?: OutboundPolicy
+  /** The Anthropic API base for the AI settings test; tests point it at a fake. */
+  anthropicUrl?: string
   /** Replaces the default upload hook (create the attachment's knowledge entry); tests use it to observe calls. */
   onAttachmentStored?: AttachmentStoredHook
 }
@@ -82,6 +88,10 @@ export const LOGGER_OPTIONS = {
       'headers["x-telegram-bot-api-secret-token"]',
       'headers["x-line-signature"]',
       'headers.cookie',
+      // Settings saves and tests carry secrets in their bodies; bodies are not logged, and never should be.
+      'req.body',
+      'body.changes',
+      'body.values',
     ],
     censor: '[redacted]',
   },
@@ -138,6 +148,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   notificationChannelRoutes(app)
   channelWebhookRoutes(app)
   adminRoutes(app)
+  adminSettingsRoutes(app)
   gitlabRoutes(app)
   runnerRoutes(app)
   statusRoutes(app)

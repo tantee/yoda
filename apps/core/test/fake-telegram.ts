@@ -10,6 +10,10 @@ export class FakeTelegram {
   private fails: { status: number; count: number; description: string } | null = null
   private token: string | null = null
   url = ''
+  /** What `getMe` answers. */
+  username = 'yoda_test_bot'
+  /** The last `setWebhook` body. */
+  webhook: { url: string; secret_token?: string } | null = null
 
   /** Messages sent through `sendMessage`: `{ chatId, text }`. */
   get messages(): { chatId: string; text: string; parseMode?: string }[] {
@@ -44,6 +48,13 @@ export class FakeTelegram {
         if (this.fails && this.fails.count > 0) {
           this.fails.count--
           return send(this.fails.status, { ok: false, error_code: this.fails.status, description: this.fails.description })
+        }
+        // The settings test (getMe, getWebhookInfo) and webhook registration (setWebhook).
+        if (m[2] === 'getMe') return send(200, { ok: true, result: { id: 1001, is_bot: true, first_name: 'Yoda', username: this.username } })
+        if (m[2] === 'getWebhookInfo') return send(200, { ok: true, result: { url: this.webhook?.url ?? '', pending_update_count: 0 } })
+        if (m[2] === 'setWebhook' && req.method === 'POST') {
+          this.webhook = body as { url: string; secret_token?: string }
+          return send(200, { ok: true, result: true, description: 'Webhook was set' })
         }
         if (req.method !== 'POST' || m[2] !== 'sendMessage') return send(404, { ok: false, error_code: 404, description: 'Not Found' })
         const b = (body ?? {}) as { chat_id?: unknown; text?: string }
