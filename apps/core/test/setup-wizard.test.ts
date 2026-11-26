@@ -103,7 +103,10 @@ describe('setup settings: only through the setup session', () => {
     const h = await setupSession()
     const noCsrf = await app.inject({ method: 'PUT', url: '/setup/settings/general', headers: { ...UA, cookie: h.cookie }, payload: { changes: { 'org.name': 'x' } } })
     expect(noCsrf.json()).toEqual({ error: 'csrf_failed' })
-    expect((await app.inject({ url: '/setup/settings/security', headers: h })).statusCode).toBe(404)
+    // Categories outside the wizard: 404 from the route. (A path with no route at all is not a setup route, so the
+    // setup-mode gate answers it 503 setup_required, like any other.)
+    expect((await app.inject({ url: '/setup/settings?category=security', headers: h })).statusCode).toBe(404)
+    expect((await app.inject({ url: '/setup/settings/security', headers: h })).json()).toEqual({ error: 'setup_required' })
     expect((await put(h, 'runners', { 'runners.leaseSeconds': 900 })).statusCode).toBe(404)
   })
 
