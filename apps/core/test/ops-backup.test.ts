@@ -202,3 +202,32 @@ describe.skipIf(noBash || !hasFlock)('ops/backup lock and retry (fake pg_dump an
     expect(r.stdout).toContain('has-latest')
   })
 })
+
+describe.skipIf(noBash)('ops/backup bootstrap file', () => {
+  const file = `F=$(mktemp); printf '# init\\nDATABASE_URL=postgres://yoda:gen%%3Apw@postgres:5432/yoda\\nS3_ACCESS_KEY=gen-ak\\nS3_SECRET_KEY=gen-sk\\nOTHER=$(touch /tmp/x)\\n' >"$F"; export YODA_BOOTSTRAP_FILE=$F`
+
+  it('fills the database URL and S3 keys from the bootstrap volume, decoding as before', () => {
+    const r = bash(`${file}; source "${lib}"; setup_pg; S3_ENDPOINT=http://s3.example.org S3_BUCKET=b setup_store
+      printf '%s|%s|%s|%s|%s\\n' "$PGUSER" "$PGPASSWORD" "$PGHOST" "$RCLONE_CONFIG_STORE_ACCESS_KEY_ID" "$RCLONE_CONFIG_STORE_SECRET_ACCESS_KEY"
+      [ -z "\${OTHER:-}" ] && echo no-other`)
+    expect(r).toMatchObject({ code: 0, stdout: 'yoda|gen:pw|postgres|gen-ak|gen-sk\nno-other\n' })
+  })
+
+  it('lets env win', () => {
+    const r = bash(`${file}; export DATABASE_URL=postgres://ext:pw@db.example.org/yoda S3_SECRET_KEY=env-sk; source "${lib}"; load_bootstrap_file
+      printf '%s|%s|%s\\n' "$DATABASE_URL" "$S3_ACCESS_KEY" "$S3_SECRET_KEY"`)
+    expect(r).toMatchObject({ code: 0, stdout: 'postgres://ext:pw@db.example.org/yoda|gen-ak|env-sk\n' })
+  })
+
+  it('fails on an unreadable file without printing a value', () => {
+    const r = bash(`export YODA_BOOTSTRAP_FILE=/nonexistent/bootstrap.env S3_SECRET_KEY=hunter2; source "${lib}"; load_bootstrap_file; echo reached`)
+    expect(r.code).not.toBe(0)
+    expect(r.stdout).not.toContain('reached')
+    expect(r.stderr).toContain('did the init service run?')
+    expect(r.stderr).not.toContain('hunter2')
+  })
+
+  it('does nothing without YODA_BOOTSTRAP_FILE', () => {
+    expect(bash(`source "${lib}"; load_bootstrap_file; echo "[\${DATABASE_URL:-}]"`)).toMatchObject({ code: 0, stdout: '[]\n' })
+  })
+})

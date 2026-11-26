@@ -1,0 +1,94 @@
+import { createHash } from 'node:crypto'
+import { PublicConfig, settingDef, type SettingKey } from '@yoda/shared'
+import type { FastifyInstance } from 'fastify'
+import type { AppDeps } from '../app.js'
+import type { Config } from '../config.js'
+import { VERSION } from '../version.js'
+import { funMode } from './admin.js'
+
+/** `<url>/realms/<realm>`, the Keycloak issuer form; any other issuer gives null (keycloak-js needs url + realm). */
+export function keycloakFromIssuer(issuer: string | undefined): { url: string; realm: string } | null {
+  const m = issuer ? /^(https?:\/\/[^?#]+?)\/realms\/([^/?#]+)\/*$/.exec(issuer) : null
+  return m ? { url: m[1]!, realm: decodeURIComponent(m[2]!) } : null
+}
+
+/**
+ * Setup is done once the wizard finished (or an env install was marked done on upgrade, §6.5), when the OIDC
+ * issuer comes from env (an env-based install, even with no data yet), or in dev with YODA_DEV_SKIP_SETUP=true.
+ * Without a settings store (tests), a configured issuer counts as done.
+ */
+export function setupState(config: Pick<Config, 'oidcIssuer' | 'devSkipSetup'>, settings: AppDeps['settings']): 'required' | 'done' {
+  if (config.devSkipSetup) return 'done'
+  if (!settings) return config.oidcIssuer ? 'done' : 'required'
+  return settings.setupDone || settings.fromEnv('oidc.issuer') ? 'done' : 'required'
+}
+
+const trim = (s: string) => s.replace(/\/+$/, '')
+
+/**
+ * §6.4: the deprecated NUXT_PUBLIC_KEYCLOAK_* (still honoured by the portal) against core's issuer and client id.
+ * Returns the variables that disagree; a disagreement means the portal signs in at one realm while core checks
+ * tokens against another (a sign-in loop). Unset variables are not compared.
+ */
+export function keycloakMismatch(env: NodeJS.ProcessEnv, config: Pick<Config, 'oidcIssuer' | 'oidcClientId'>): string[] {
+  if (!config.oidcIssuer) return []
+  const kc = keycloakFromIssuer(config.oidcIssuer)
+  const out: string[] = []
+  const url = env.NUXT_PUBLIC_KEYCLOAK_URL
+  const realm = env.NUXT_PUBLIC_KEYCLOAK_REALM
+  if (url && (!kc || trim(url) !== kc.url)) out.push('NUXT_PUBLIC_KEYCLOAK_URL')
+  if (realm && (!kc || realm !== kc.realm)) out.push('NUXT_PUBLIC_KEYCLOAK_REALM')
+  const clientId = env.NUXT_PUBLIC_KEYCLOAK_CLIENT_ID
+  if (clientId && clientId !== config.oidcClientId) out.push('NUXT_PUBLIC_KEYCLOAK_CLIENT_ID')
+  return out
+}
+
+/** A portal setting (env > database > default); unset or empty is null. These are never secret. */
+function value(settings: AppDeps['settings'], key: PortalKey): string | null {
+  const v: unknown = settings ? settings.get(key) : settingDef(key).default
+  return typeof v === 'string' && v !== '' ? v : null
+}
+
+type PortalKey = Extract<SettingKey, 'org.name' | 'org.nameEn' | 'org.line' | 'org.defaultLocale' | 'org.runnerDocsUrl' | 'line.addFriendUrl'>
+
+/** The public config from the current settings snapshot. Fun mode unknown (database down) counts as off. */
+export async function buildPublicConfig(deps: Pick<AppDeps, 'config' | 'settings' | 'db'>): Promise<PublicConfig> {
+  const config = deps.config
+  const kc = keycloakFromIssuer(config.oidcIssuer)
+  let fun = false
+  try {
+    fun = await funMode(deps.db)
+  } catch {
+    // off
+  }
+  const s = deps.settings
+  return PublicConfig.parse({
+    oidc: kc ? { ...kc, clientId: config.oidcClientId } : null,
+    org: {
+      name: value(s, 'org.name'),
+      nameEn: value(s, 'org.nameEn'),
+      line: value(s, 'org.line'),
+      defaultLocale: value(s, 'org.defaultLocale') ?? 'th',
+    },
+    runnerDocsUrl: value(s, 'org.runnerDocsUrl'),
+    line: { addFriendUrl: value(s, 'line.addFriendUrl') },
+    funMode: fun,
+    setup: setupState(config, s),
+    recovery: s?.recovery ?? false,
+    version: VERSION,
+  })
+}
+
+/**
+ * `GET /public-config` (§5.6): public, so the portal can read it before keycloak-js starts. Revalidated on every
+ * use (`no-cache` with an ETag), so a just-finished setup is never hidden behind a cached `setup: 'required'`.
+ */
+export function publicConfigRoutes(app: FastifyInstance): void {
+  app.get('/public-config', { config: { public: true } }, async (request, reply) => {
+    const body = JSON.stringify(await buildPublicConfig(app.deps))
+    const etag = `"${createHash('sha256').update(body).digest('base64url').slice(0, 27)}"`
+    reply.header('cache-control', 'no-cache').header('etag', etag)
+    if (request.headers['if-none-match'] === etag) return reply.status(304).send()
+    return reply.type('application/json; charset=utf-8').send(body)
+  })
+}

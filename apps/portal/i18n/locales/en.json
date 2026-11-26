@@ -1880,6 +1880,12 @@
         "masterKeyFile": {
           "label": "Master key file"
         },
+        "bootstrapFile": {
+          "label": "Bootstrap file"
+        },
+        "devSkipSetup": {
+          "label": "Skip the setup wizard (development only)"
+        },
         "settingsImport": {
           "label": "Import env values on start"
         },
@@ -2097,5 +2103,12 @@
         }
       }
     }
+  },
+  "boot": {
+    "configUnavailableTitle": "Cannot start Yoda",
+    "configUnavailable": "The portal could not read its settings from the server. The server may be restarting; try again in a moment.",
+    "notConfiguredTitle": "Sign-in is not set up",
+    "notConfigured": "This install has no Keycloak sign-in configured. An administrator can fix it from the recovery page.",
+    "retry": "Try again"
   }
 }

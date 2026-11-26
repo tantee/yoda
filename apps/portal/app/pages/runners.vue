@@ -6,7 +6,7 @@ import { runnerStatus, sortRunners, withinHours } from '~/utils/runners'
 const { t } = useI18n()
 const { me } = useMe()
 const api = useApi()
-const docsUrl = useRuntimeConfig().public.runnerDocsUrl as string
+const docsUrl = usePublicConfig().values().runnerDocsUrl
 const { width } = useDisplay()
 const stacked = computed(() => width.value < 1024)
 

@@ -34,12 +34,14 @@ export default defineNuxtConfig({
   runtimeConfig: {
     // Server-only; override at runtime with NUXT_CORE_URL (used by server/routes/api proxy).
     coreUrl: process.env.CORE_URL ?? 'http://localhost:4000',
+    // Deprecated overrides, all '' by default: the portal reads sign-in, the org line and its links from core's
+    // GET /api/public-config (settings, §5.6). A non-empty NUXT_PUBLIC_* value still wins (dev keeps its .env).
     public: {
-      keycloakUrl: 'http://localhost:8080',
-      keycloakRealm: 'yoda',
-      keycloakClientId: 'yoda-portal',
-      // The README's Runners section, linked from the Runners page (NUXT_PUBLIC_RUNNER_DOCS_URL).
-      runnerDocsUrl: 'https://github.com/tantee/yoda#runners',
+      keycloakUrl: '',
+      keycloakRealm: '',
+      keycloakClientId: '',
+      // Setup docs linked from the Runners page (NUXT_PUBLIC_RUNNER_DOCS_URL; core's default: the README's Runners).
+      runnerDocsUrl: '',
       // The LINE Official Account's add-friend link, shown when linking LINE (NUXT_PUBLIC_LINE_ADD_FRIEND_URL).
       lineAddFriendUrl: '',
       // A line at the foot of the side menu, e.g. the department or hospital name (NUXT_PUBLIC_ORG_LINE).

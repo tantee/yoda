@@ -6,8 +6,10 @@
 # 1. pull the release's images (nothing is built on the host), then pin the release in release.env
 #    (YODA_VERSION=<tag>), so every later `docker compose --env-file .env --env-file release.env ...` on the host
 #    (backups, restores, restarts) runs the same images;
-# 2. run the database migrations once, in the one-shot `migrate` container; a failed migration stops here,
-#    before any running container is replaced;
+# 2. fill the bootstrap volume (one-shot `init`: generated Postgres password, RustFS keys and master key, or the
+#    .env values when set; it refuses an existing database whose password is unknown), then run the database
+#    migrations once, in the one-shot `migrate` container; a failure stops here, before any running container is
+#    replaced;
 # 3. start or replace the services;
 # 4. wait up to READY_TIMEOUT seconds (120) for the portal's /api/ready (portal -> core: database, storage,
 #    job queue); exit 1 otherwise.
@@ -43,6 +45,7 @@ done
 mv "$release" release.env
 release=release.env
 
+dc run --rm init
 dc run --rm migrate
 dc up -d --no-build --remove-orphans
 

@@ -118,9 +118,8 @@ type Lock = { reason: SettingLockReason; envName?: string; container?: string }
 function lockOf(store: SettingsStore, info: SettingInfo): Lock | null {
   const d = settingDef(info.key)
   if (info.lock === 'bootstrap') return { reason: 'bootstrap' }
-  // TODO(Task 6 and later): portal and backup settings are read from their containers' env only. They unlock
-  // once a consumer reads the stored value: /public-config for the portal ones (Task 6), the backup container
-  // reading the database for backup.at / backup.keepDays (later). Until then a save here would change nothing.
+  // TODO(Task 9): backup.at / backup.keepDays are read from the backup container's env only; they unlock once it
+  // reads the database. The portal settings are served by /public-config, so they follow the usual env lock.
   const container = SCOPE_CONTAINER[d.scope]
   if (container) return { reason: 'managed_on_host', container, ...(d.envName ? { envName: d.envName } : {}) }
   if (info.lock === 'env') return { reason: 'env', ...(info.envName ? { envName: info.envName } : {}) }

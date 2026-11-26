@@ -142,15 +142,15 @@ Database and storage:
 | Variable | Purpose | Required | Example |
 | --- | --- | --- | --- |
 | `POSTGRES_USER` | Database owner created on a fresh volume | optional (`yoda`) | `yoda` |
-| `POSTGRES_PASSWORD` | Its password; only applied when the volume is created | yes | `<random 32 chars>` |
+| `POSTGRES_PASSWORD` | Its password; only applied when the volume is created. Empty: generated into the bootstrap volume (section 4a); set, it is copied there | optional | `<random 32 chars>` |
 | `POSTGRES_DB` | Database name | optional (`yoda`) | `yoda` |
-| `DATABASE_URL` | Core, `migrate` and `backup` connection; same credentials, host `postgres` | yes | `postgres://yoda:<password>@postgres:5432/yoda` |
+| `DATABASE_URL` | Core, `migrate` and `backup` connection. Empty: derived from the bootstrap volume (host `postgres`); set it for an external Postgres | optional | `postgres://yoda:<password>@postgres:5432/yoda` |
 | `MIGRATE_ON_START` | Core migrates on start; production runs the `migrate` service instead | fixed (`false`) | `false` |
 | `S3_ENDPOINT` | Object storage endpoint | fixed (`http://rustfs:9000`) | `http://rustfs:9000` |
 | `S3_REGION` | Storage region | optional (`us-east-1`) | `us-east-1` |
 | `S3_BUCKET` | Bucket for uploaded files, created on start | optional (`yoda`) | `yoda` |
-| `S3_ACCESS_KEY` | Storage access key; also RustFS's own credentials | yes | `<random 20 chars>` |
-| `S3_SECRET_KEY` | Storage secret key | yes | `<random 40 chars>` |
+| `S3_ACCESS_KEY` | Storage access key; also RustFS's own credentials. Empty: generated into the bootstrap volume; set, it is copied there | optional | `<random 20 chars>` |
+| `S3_SECRET_KEY` | Storage secret key (as `S3_ACCESS_KEY`) | optional | `<random 40 chars>` |
 | `BACKUP_AT` | Daily backup time, Asia/Bangkok | optional (`02:00`) | `02:00` |
 | `BACKUP_KEEP_DAYS` | Days of backups kept on the `backups` volume | optional (`14`) | `14` |
 
@@ -159,15 +159,16 @@ Settings and secrets (installer proposal §3.5, §6):
 | Variable | Purpose | Required | Example |
 | --- | --- | --- | --- |
 | `YODA_MASTER_KEY` | Master key for secrets saved in the admin settings, base64 of 32 bytes; never stored in the database. Empty: no secrets stored there (env secrets still work); a wrong key starts core in recovery | optional | `<openssl rand -base64 32>` |
-| `YODA_MASTER_KEY_FILE` | File holding the master key instead (the bootstrap volume); `YODA_MASTER_KEY` wins when both are set | optional | `/run/yoda/core/master-key` |
+| `YODA_MASTER_KEY_FILE` | File holding the master key instead; `YODA_MASTER_KEY` wins when both are set | fixed (`/var/lib/yoda/core/master-key`) | `/var/lib/yoda/core/master-key` |
+| `YODA_BOOTSTRAP_FILE` | The bootstrap volume's `bootstrap.env`: fills `DATABASE_URL` and the S3 keys when env leaves them empty (core, `migrate`, `backup`) | fixed (`/var/lib/yoda/bootstrap.env`) | `/var/lib/yoda/bootstrap.env` |
+| `YODA_DEV_SKIP_SETUP` | Dev only: setup counts as done without the setup wizard. Never set in production | optional (`false`) | `true` |
 | `YODA_SETTINGS_IMPORT` | `false` = env secrets are not copied into the database on start (other values still are) | optional (`true`) | `true` |
 | `YODA_OUTBOUND_ALLOW_LOOPBACK` | Dev only: the admin settings tests may connect to loopback (the dev fakes). Never set in production | optional (`false`) | `false` |
 
-`YODA_MASTER_KEY`, `YODA_MASTER_KEY_FILE` and `YODA_SETTINGS_IMPORT` take effect once they reach core's
-environment. The prod compose file does not pass them to the `core` service yet: that wiring (with the bootstrap
-volume for the key file) arrives with the installer update. Until then a production core runs without a master
-key: secrets set in env work, System settings shows an information note, and secrets cannot be saved there. In
-development core reads the repository's `.env` (`pnpm dev` or `pnpm --filter @yoda/core dev`), so set them there.
+In production core reads the master key from the bootstrap volume (section 4a): the `init` service generates it,
+or copies `YODA_MASTER_KEY` there when `.env` sets it (so core itself never gets the key in its environment).
+In development core reads the repository's `.env` (`pnpm dev` or `pnpm --filter @yoda/core dev`), so set
+`YODA_MASTER_KEY` there.
 
 On start core copies every env value it reads into the database (D4; secrets too, with a usable master key and
 `YODA_SETTINGS_IMPORT` not `false`). In System settings such a value shows **Imported from environment**. So
@@ -177,9 +178,10 @@ variable and restart, then clear the value in System settings (for a secret, **R
 off there. With `YODA_SETTINGS_IMPORT=false` (or no usable master key) env secrets are not copied, so removing one
 disconnects that service until it is entered in System settings. Variables the prod compose file passes with a
 default (such as `SMTP_PORT`, `AI_WORKERS`) stay set in env, and so locked in the UI, until the install uses the
-generated settings of the installer update. The settings read by the portal and the backup container (the
-`NUXT_PUBLIC_*` values, `BACKUP_AT`, `BACKUP_KEEP_DAYS`, the organisation name) are shown read-only for now:
-they are set on those containers' environment on the install host.
+generated settings of the installer update. The portal reads the organisation name and line, its links and
+where to sign in from core's `GET /api/public-config`, so those are edited in System settings (a
+`NUXT_PUBLIC_*` value in `.env` still wins and locks it). `BACKUP_AT` and `BACKUP_KEEP_DAYS` are shown read-only
+for now: the backup container reads them from its own environment on the install host.
 
 A setting saved in the database applies without a restart, on every core instance: each one listens for
 `NOTIFY settings_changed` (key names only, never values) and reloads its settings, and reloads them again after
@@ -200,7 +202,7 @@ Sign-in (section 2):
 
 | Variable | Purpose | Required | Example |
 | --- | --- | --- | --- |
-| `OIDC_ISSUER` | Keycloak realm issuer, as in the token's `iss` | yes | `https://sso.example.org/realms/yoda` |
+| `OIDC_ISSUER` | Keycloak realm issuer, as in the token's `iss`. Empty: core starts in setup mode and refuses every sign-in with `503 not_configured` until it is set | optional | `https://sso.example.org/realms/yoda` |
 | `OIDC_CLIENT_ID` | Client id; tokens' `azp` must match | optional (`yoda-portal`) | `yoda-portal` |
 | `OIDC_JWKS_URL` | Internal URL for the signing keys, when core cannot reach the issuer | optional | `http://keycloak.internal.example.org/realms/yoda/protocol/openid-connect/certs` |
 | `STAFF_GROUP` | Full path of the staff group | optional (`/it-dev`) | `/it-dev` |
@@ -211,13 +213,13 @@ Portal:
 | Variable | Purpose | Required | Example |
 | --- | --- | --- | --- |
 | `NUXT_CORE_URL` | Where the portal's `/api` proxy sends requests | fixed (`http://core:4000`) | `http://core:4000` |
-| `NUXT_PUBLIC_KEYCLOAK_URL` | Browser-facing Keycloak base URL | yes | `https://sso.example.org` |
-| `NUXT_PUBLIC_KEYCLOAK_REALM` | Realm | optional (`yoda`) | `yoda` |
-| `NUXT_PUBLIC_KEYCLOAK_CLIENT_ID` | Public client | optional (`yoda-portal`) | `yoda-portal` |
+| `NUXT_PUBLIC_KEYCLOAK_URL` | Deprecated: browser-facing Keycloak base URL. Empty: derived from `OIDC_ISSUER` (`<url>/realms/<realm>`) via `/public-config`; set, it wins, and core logs loudly at start when it disagrees with `OIDC_ISSUER` | optional | `https://sso.example.org` |
+| `NUXT_PUBLIC_KEYCLOAK_REALM` | Deprecated: realm (as `NUXT_PUBLIC_KEYCLOAK_URL`) | optional | `yoda` |
+| `NUXT_PUBLIC_KEYCLOAK_CLIENT_ID` | Deprecated: public client; empty = `OIDC_CLIENT_ID` | optional | `yoda-portal` |
 | `NUXT_PUBLIC_RUNNER_DOCS_URL` | Setup docs linked from the Runners page | optional (README "Runners") | `https://portal.example.org/docs/runners` |
 | `NUXT_PUBLIC_LINE_ADD_FRIEND_URL` | The LINE Official Account's add-friend link, shown when linking LINE | optional | `https://line.me/R/ti/p/@example` |
 | `NUXT_PUBLIC_ORG_LINE` | Organisation line at the foot of the side menu, e.g. the department or hospital name | optional (empty: no line) | `ฝ่ายเทคโนโลยีสารสนเทศ` |
-| `PORTAL_URL` | The portal's public base URL, used in links in emails, chats and GitLab issues (compose refuses to start without it) | yes | `https://portal.example.org` |
+| `PORTAL_URL` | The portal's public base URL, used in links in emails, chats and GitLab issues; also System settings → General | optional (`http://localhost:3000`) | `https://portal.example.org` |
 
 AI:
 
@@ -295,10 +297,11 @@ leave it unset.
 1. Create the deploy directory (this is `DEPLOY_PATH`, e.g. `/srv/yoda`) and copy into it, from the release
    tag: `docker-compose.yml`, `docker-compose.prod.yml` and `ops/deploy/deploy.sh` (keep the paths). The
    deploy job refreshes these files on every deploy.
-2. Create `.env` there (`chmod 600 .env`) with every required variable from section 3. Start from
-   `.env.example` and replace each dev value; in particular `DATABASE_URL` must use host `postgres` and the
-   same password as `POSTGRES_PASSWORD`. To run the server runner too, add `COMPOSE_PROFILES=runner` (and
-   create `runner-config.json`, section 8).
+2. Create `.env` there (`chmod 600 .env`). Nothing in it is required: the Postgres password, the storage keys
+   and the master key are generated into the bootstrap volume (section 4a). Add the values you want to fix from
+   section 3 (sign-in, `PORTAL_URL`, the channels...), starting from `.env.example` and replacing each dev
+   value; an external Postgres sets `DATABASE_URL`. To run the server runner too, add `COMPOSE_PROFILES=runner`
+   (and create `runner-config.json`, section 8).
 3. Log in to the registry (section 1), then deploy the first release:
    `cd /srv/yoda && YODA_VERSION=1.0.0 sh ops/deploy/deploy.sh`. It pulls the images, writes `release.env`,
    runs the migrations, starts everything and waits until `/api/ready` answers. Later releases go through the
@@ -315,6 +318,27 @@ leave it unset.
    - [ ] **Email, LINE and Telegram** (section 9), then enable each channel in System settings → Notification channels.
    - [ ] **Backups** copied off the host (section 6), and a test restore.
    - [ ] **Monitoring:** alert on the `core`, `portal` and `backup` containers turning unhealthy (section 11).
+
+## 4a. Bootstrap volume and master key
+
+The one-shot `init` service (in the core image, run by `deploy.sh` and before every start) fills the named
+volume `yoda-bootstrap`, mounted at `/var/lib/yoda`:
+
+| File | Mode | Read by |
+| --- | --- | --- |
+| `postgres-password` | `0640 root:10500` | postgres (`POSTGRES_PASSWORD_FILE`) |
+| `s3-access-key`, `s3-secret-key` | `0640 root:10500` | rustfs (`RUSTFS_*_FILE`) |
+| `bootstrap.env` | `0640 root:10500` | core, `migrate`, `backup`: `DATABASE_URL` and the S3 keys, never the master key |
+| `install-id` | `0644` | (names this install) |
+| `core/master-key` | `0600`, in `core/` (`0700`, the core image's user) | core only |
+
+For each value: set in `.env` → written to the file (`.env` wins, so an existing install upgrades unchanged);
+already in the volume → kept; neither → generated. `init` prints the file names, never a value. When the
+database volume already holds a database but neither the volume nor `.env` knows its password, `init` stops
+with "an existing database was found but its password is unknown": restore `/var/lib/yoda` from your recovery
+kit or set `POSTGRES_PASSWORD`. **Never delete this volume**: it is not in the `backups` volume (section 6), and
+a restore on a new host needs the master key (keep the recovery kit with your backups, but not in the same
+place). Read a value on the host with `dc run --rm --entrypoint cat init /var/lib/yoda/<file>`.
 
 ## 5. Upgrade and rollback
 

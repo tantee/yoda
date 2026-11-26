@@ -1,4 +1,5 @@
 import { fileURLToPath } from 'node:url'
+import { applyBootstrapFile } from '../config.js'
 import { createDb } from './client.js'
 import { runMigrations } from './migrations.js'
 
@@ -7,6 +8,8 @@ export { runMigrations }
 // CLI entry: `pnpm --filter @yoda/core db:migrate`, or `node dist/migrate.js` (the production `migrate` service).
 // The server imports ./migrations.js instead, so bundling never pulls this entry check into dist/server.js.
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  // The bundled stack's DATABASE_URL is in the bootstrap volume (the `init` service) unless env sets one.
+  applyBootstrapFile(process.env)
   const url = process.env.DATABASE_URL
   if (!url) throw new Error('DATABASE_URL is required')
   const db = createDb(url)

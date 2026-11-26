@@ -5,7 +5,8 @@
 #                     retried BACKUP_RETRIES (3) times, BACKUP_RETRY_DELAY (900) seconds apart, before it
 #                     waits for the next day
 #   backup.sh --now   one backup, then exit (non-zero on failure)
-# Env: DATABASE_URL (or PG*), S3_ENDPOINT, S3_BUCKET, S3_ACCESS_KEY, S3_SECRET_KEY, S3_REGION,
+# Env: DATABASE_URL (or PG*), S3_ENDPOINT, S3_BUCKET, S3_ACCESS_KEY, S3_SECRET_KEY, S3_REGION (DATABASE_URL and
+#      the S3 keys default to YODA_BOOTSTRAP_FILE's, the bootstrap volume),
 #      BACKUP_DIR (/backups), BACKUP_KEEP_DAYS (14), BACKUP_AT (02:00), TZ (Asia/Bangkok).
 # Writes pg-<YYYYMMDD-HHMM>.dump, storage-<YYYYMMDD-HHMM>/ and a `latest` marker holding the stamp.
 # Only one backup or restore runs at a time (flock on BACKUP_DIR/.lock); a second one exits non-zero.

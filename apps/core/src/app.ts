@@ -38,6 +38,7 @@ import { shellRoutes } from './routes/shell.js'
 import { mcpRoutes } from './routes/mcp.js'
 import { notificationChannelRoutes } from './routes/notification-channels.js'
 import { channelWebhookRoutes } from './routes/channel-webhooks.js'
+import { publicConfigRoutes } from './routes/public-config.js'
 import { readiness } from './readiness.js'
 import { VERSION } from './version.js'
 
@@ -136,6 +137,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     const r = await readiness(app.deps)
     return reply.status(r.ok ? 200 : 503).send({ status: r.ok ? 'ok' : 'unavailable', checks: r.checks })
   })
+  publicConfigRoutes(app)
   meRoutes(app)
   peopleRoutes(app)
   projectRoutes(app)

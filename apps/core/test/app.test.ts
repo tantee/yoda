@@ -22,7 +22,18 @@ const baseEnv = {
 
 describe('loadConfig', () => {
   it('lists every missing variable', () => {
-    expect(() => loadConfig({})).toThrow(/DATABASE_URL[\s\S]*OIDC_ISSUER/)
+    expect(() => loadConfig({})).toThrow(/DATABASE_URL[\s\S]*S3_ACCESS_KEY[\s\S]*S3_SECRET_KEY/)
+  })
+  it('starts without sign-in configured (setup mode): OIDC_ISSUER is optional, the client id defaults', () => {
+    const { OIDC_ISSUER: _i, OIDC_CLIENT_ID: _c, ...rest } = baseEnv
+    expect(loadConfig(rest)).toMatchObject({ oidcIssuer: undefined, oidcClientId: 'yoda-portal' })
+    expect(loadConfig({ ...rest, OIDC_ISSUER: '', OIDC_CLIENT_ID: '', PORTAL_URL: '' })).toMatchObject({ oidcIssuer: undefined, oidcClientId: 'yoda-portal', portalUrl: 'http://localhost:3000' })
+    expect(() => loadConfig({ ...rest, OIDC_ISSUER: 'not a url' })).toThrow(/OIDC_ISSUER/)
+  })
+  it('reads YODA_DEV_SKIP_SETUP', () => {
+    expect(loadConfig(baseEnv).devSkipSetup).toBe(false)
+    expect(loadConfig({ ...baseEnv, YODA_DEV_SKIP_SETUP: 'true' }).devSkipSetup).toBe(true)
+    expect(() => loadConfig({ ...baseEnv, YODA_DEV_SKIP_SETUP: 'yes' })).toThrow(/YODA_DEV_SKIP_SETUP/)
   })
   it('parses bootstrap admins and defaults', () => {
     const c = loadConfig({
@@ -157,9 +168,12 @@ describe('readiness', () => {
 })
 
 describe('OIDC_JWKS_URL', () => {
-  it('defaults to the issuer certs endpoint', () => {
-    expect(jwksUrl({ oidcIssuer: 'http://kc.test/realms/r' }).href).toBe('http://kc.test/realms/r/protocol/openid-connect/certs')
-    expect(jwksUrl({ oidcIssuer: 'http://kc.test/realms/r', oidcJwksUrl: 'http://kc.internal.test/certs' }).href).toBe('http://kc.internal.test/certs')
+  it('defaults to the issuer certs endpoint', async () => {
+    expect(jwksUrl({ oidcIssuer: 'http://kc.test/realms/r' })?.href).toBe('http://kc.test/realms/r/protocol/openid-connect/certs')
+    expect(jwksUrl({ oidcIssuer: 'http://kc.test/realms/r', oidcJwksUrl: 'http://kc.internal.test/certs' })?.href).toBe('http://kc.internal.test/certs')
+    // Setup mode: no issuer, no key source; every lookup fails.
+    expect(jwksUrl({})).toBeNull()
+    await expect(remoteJwks({})({ alg: 'RS256' }, {} as never)).rejects.toThrow(/not configured/)
   })
   it('keys come from the JWKS URL while the issuer is still checked against OIDC_ISSUER', async () => {
     const doc = JSON.stringify(await testJwksDocument())

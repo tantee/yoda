@@ -9,7 +9,7 @@ const { me } = useMe()
 const { counts, refreshIfStale: refreshCounts } = useCounts()
 const { t } = useI18n()
 const route = useRoute()
-const orgLine = useRuntimeConfig().public.orgLine as string
+const orgLine = usePublicConfig().values().orgLine
 const meError = useState<string>('meError', () => '')
 const pageCrumbs = usePageCrumbs()
 

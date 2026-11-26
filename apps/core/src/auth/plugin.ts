@@ -41,6 +41,7 @@ export class HttpError extends Error {
         | 'secrets_unavailable'
         | 'settings_unavailable'
         | 'rate_limited'
+        | 'not_configured'
       /** Machine-readable detail for some errors (runner claims: why `invalid_state`; a setting's lock reason). */
       reason?: string
       /** The setting an error is about (settings API). */
@@ -59,6 +60,8 @@ export class HttpError extends Error {
 }
 
 const unauthorized = () => new HttpError(401, { error: 'unauthorized' })
+/** Sign-in is not configured yet (no OIDC issuer: setup mode); no bearer token can be checked. */
+export const notConfigured = () => new HttpError(503, { error: 'not_configured' })
 export const notFound = () => new HttpError(404, { error: 'not_found' })
 export const lastAdmin = () => new HttpError(409, { error: 'last_admin' })
 export const lastPm = () => new HttpError(409, { error: 'last_pm' })
@@ -92,6 +95,7 @@ export const gitlabUnavailable = () => new HttpError(502, { error: 'gitlab_unava
  * (missing header, bad signature, expired, wrong issuer, wrong client, missing claims).
  */
 async function verifyRequest(request: FastifyRequest, deps: Pick<AppDeps, 'jwks'>, config: Config): Promise<TokenClaims | null> {
+  if (!config.oidcIssuer) return null
   const header = request.headers.authorization
   const match = header?.match(/^Bearer\s+(\S+)$/i)
   if (!match) return null
@@ -125,6 +129,7 @@ export function registerAuth(app: FastifyInstance): void {
     const { deps } = app
     // One snapshot of the settings for the whole check (the issuer, client id and JWKS are swapped together).
     const config = deps.config
+    if (!config.oidcIssuer) throw notConfigured()
     const claims = await verifyRequest(request, { jwks: deps.jwks }, config)
     if (!claims) throw unauthorized()
     const person = await upsertPersonFromClaims(deps.db, claims, config)

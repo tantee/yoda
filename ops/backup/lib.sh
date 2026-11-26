@@ -131,8 +131,28 @@ pg_env_from_url() {
   export PGUSER PGPASSWORD PGHOST PGPORT PGDATABASE
 }
 
+# Fills DATABASE_URL, S3_ACCESS_KEY and S3_SECRET_KEY from YODA_BOOTSTRAP_FILE (the bootstrap volume's
+# bootstrap.env, written by the `init` service) when they are unset or empty; a value set in env wins. The file is
+# read as KEY=value lines, never sourced, and only those three keys are taken. Prints no value.
+load_bootstrap_file() {
+  local file=${YODA_BOOTSTRAP_FILE:-} line key value
+  [[ -n $file ]] || return 0
+  [[ -z ${DATABASE_URL:-} || -z ${S3_ACCESS_KEY:-} || -z ${S3_SECRET_KEY:-} ]] || return 0
+  [[ -r $file ]] || die "YODA_BOOTSTRAP_FILE: cannot read $file (did the init service run?)"
+  while IFS= read -r line || [[ -n $line ]]; do
+    [[ $line =~ ^(DATABASE_URL|S3_ACCESS_KEY|S3_SECRET_KEY)=(.*)$ ]] || continue
+    key=${BASH_REMATCH[1]}
+    value=${BASH_REMATCH[2]}
+    if [[ -z ${!key:-} && -n $value ]]; then
+      printf -v "$key" '%s' "$value"
+      export "${key?}"
+    fi
+  done <"$file"
+}
+
 # Database connection from DATABASE_URL, unless libpq's PG* variables are already set.
 setup_pg() {
+  load_bootstrap_file
   if [[ -z ${PGHOST:-} ]]; then
     [[ -n ${DATABASE_URL:-} ]] || die 'DATABASE_URL (or PGHOST, PGUSER, PGPASSWORD, PGDATABASE) is required'
     pg_env_from_url "$DATABASE_URL" || exit 1
@@ -143,6 +163,7 @@ setup_pg() {
 # The S3 store as rclone remote `store:`, configured only through environment variables.
 setup_store() {
   local v
+  load_bootstrap_file
   for v in S3_ENDPOINT S3_BUCKET S3_ACCESS_KEY S3_SECRET_KEY; do
     [[ -n ${!v:-} ]] || die "$v is required"
   done

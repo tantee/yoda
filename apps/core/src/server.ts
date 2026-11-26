@@ -1,5 +1,5 @@
 import { buildApp } from './app.js'
-import { loadConfig } from './config.js'
+import { applyBootstrapFile, loadConfig } from './config.js'
 import { createDb, pgClient } from './db/client.js'
 import { runMigrations } from './db/migrations.js'
 import { createS3Storage } from './storage/s3.js'
@@ -12,6 +12,11 @@ import { takeMasterKey } from './settings/crypto.js'
 import { LiveSettings } from './settings/live.js'
 import { SettingsStore } from './settings/store.js'
 import { internalAddresses } from './settings/outbound.js'
+import { keycloakMismatch } from './routes/public-config.js'
+
+// The bundled stack's DATABASE_URL and S3 keys come from the bootstrap volume (the `init` service) when env leaves
+// them empty; env always wins.
+applyBootstrapFile(process.env)
 
 // Read the master key first and drop YODA_MASTER_KEY from process.env, so it does not linger there.
 const masterKey = takeMasterKey(process.env)
@@ -32,6 +37,15 @@ if (settings.recovery) console.warn(`settings: recovery state (master key ${sett
 // every change, here or on another instance (NOTIFY), without a restart. Bootstrap-only values stay from env.
 const live = new LiveSettings({ store: settings, base: config, client: pgClient(db) })
 await live.listen()
+// §6.4: the portal still prefers NUXT_PUBLIC_KEYCLOAK_* when set; if they disagree with the issuer core checks
+// tokens against, every sign-in loops. Say so loudly (URLs and names only; nothing here is secret).
+const mismatch = keycloakMismatch(process.env, live.config)
+if (mismatch.length) {
+  console.error(
+    `config: ${mismatch.join(', ')} disagree with OIDC_ISSUER / OIDC_CLIENT_ID (${live.config.oidcIssuer}, ${live.config.oidcClientId}). ` +
+      'The portal signs in with the NUXT_PUBLIC_* values and core rejects the tokens: remove them (the portal reads /public-config) or fix them.',
+  )
+}
 const storage = await createS3Storage(config)
 const bus = new LiveBus()
 // Restart-mode: the worker count is read once, here (the store flags a later change as restart-required).

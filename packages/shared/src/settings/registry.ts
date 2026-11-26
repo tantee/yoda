@@ -105,6 +105,10 @@ const DEFS = [
   def('storage.s3SecretKey', text, { category: 'storage', envName: 'S3_SECRET_KEY' }, { ...boot, secret: true }),
   def('security.masterKey', text, { category: 'security', envName: 'YODA_MASTER_KEY' }, { ...boot, secret: true }),
   def('security.masterKeyFile', text, { category: 'security', envName: 'YODA_MASTER_KEY_FILE' }, boot),
+  // The bootstrap volume's aggregate file (DATABASE_URL and the S3 keys, written by the `init` service, §3.2).
+  def('security.bootstrapFile', text, { category: 'security', envName: 'YODA_BOOTSTRAP_FILE' }, boot),
+  // Dev only: setup counts as done without the wizard (§13.3).
+  def('security.devSkipSetup', bool, { category: 'security', envName: 'YODA_DEV_SKIP_SETUP' }, { ...boot, default: false }),
   def('security.settingsImport', bool, { category: 'security', envName: 'YODA_SETTINGS_IMPORT' }, { ...boot, default: true }),
   // Dev only: the settings tests may connect to loopback (the fakes on 127.0.0.1).
   def('security.outboundAllowLoopback', bool, { category: 'security', envName: 'YODA_OUTBOUND_ALLOW_LOOPBACK' }, { ...boot, default: false }),
@@ -188,7 +192,7 @@ const DEFS = [
   def('portal.keycloakUrl', url, { category: 'signin', envName: 'NUXT_PUBLIC_KEYCLOAK_URL' }, { ...boot, scope: 'portal', apply: 'live' }),
   def('portal.keycloakRealm', text, { category: 'signin', envName: 'NUXT_PUBLIC_KEYCLOAK_REALM' }, { ...boot, scope: 'portal', apply: 'live' }),
   def('portal.keycloakClientId', text, { category: 'signin', envName: 'NUXT_PUBLIC_KEYCLOAK_CLIENT_ID' }, { ...boot, scope: 'portal', apply: 'live' }),
-  def('org.runnerDocsUrl', z.string().url(), { category: 'general', envName: 'NUXT_PUBLIC_RUNNER_DOCS_URL' }, { scope: 'portal' }),
+  def('org.runnerDocsUrl', z.string().url(), { category: 'general', envName: 'NUXT_PUBLIC_RUNNER_DOCS_URL' }, { scope: 'portal', default: 'https://github.com/tantee/yoda#runners' }),
   def('line.addFriendUrl', z.string().url(), { category: 'line', envName: 'NUXT_PUBLIC_LINE_ADD_FRIEND_URL' }, { scope: 'portal' }),
   def('org.line', z.string().max(200), { category: 'general', envName: 'NUXT_PUBLIC_ORG_LINE' }, { scope: 'portal' }),
   def('org.name', z.string().min(1).max(200), { category: 'general' }, { scope: 'portal' }),
@@ -252,13 +256,17 @@ export const SETTING_ENV_NAMES: readonly string[] = [...BY_ENV.keys()]
  * unlock it in the UI. A core test keeps this list in sync with `docker-compose.prod.yml`.
  */
 export const PROD_COMPOSE_CORE_ENV: readonly string[] = [
-  'PORT', 'DATABASE_URL', 'OIDC_ISSUER', 'OIDC_CLIENT_ID', 'MIGRATE_ON_START', 'STAFF_GROUP', 'S3_ENDPOINT', 'S3_REGION',
-  'S3_BUCKET', 'S3_ACCESS_KEY', 'S3_SECRET_KEY', 'AI_MODEL_DRAFT', 'AI_MODEL_FAST', 'AI_WORKERS', 'DAILY_TASK_CAP',
-  'PORTAL_URL', 'RUNNER_LEASE_SECONDS', 'MCP_ENABLED', 'SMTP_PORT', 'SMTP_SECURE', 'LINE_API_URL', 'TELEGRAM_API_URL',
+  'PORT', 'YODA_BOOTSTRAP_FILE', 'YODA_MASTER_KEY_FILE', 'OIDC_CLIENT_ID', 'MIGRATE_ON_START', 'STAFF_GROUP', 'S3_ENDPOINT',
+  'S3_REGION', 'S3_BUCKET', 'AI_MODEL_DRAFT', 'AI_MODEL_FAST', 'AI_WORKERS', 'DAILY_TASK_CAP', 'RUNNER_LEASE_SECONDS',
+  'MCP_ENABLED', 'SMTP_PORT', 'SMTP_SECURE', 'LINE_API_URL', 'TELEGRAM_API_URL',
 ]
 
-/** The container that reads a setting of a scope other than core (shown in the "managed on the host" lock). */
-export const SCOPE_CONTAINER: Partial<Record<SettingScope, string>> = { portal: 'portal', backup: 'backup' }
+/**
+ * The container that reads a setting of a scope other than core from its own env (shown in the "managed on the
+ * host" lock). The portal reads its settings from core's `/public-config` (§5.6), so they are editable; the backup
+ * container does not read the database yet.
+ */
+export const SCOPE_CONTAINER: Partial<Record<SettingScope, string>> = { backup: 'backup' }
 
 /** Secrets of 20+ characters show their last 4 after saving; shorter ones show nothing (5.2). */
 export function secretHint(value: string): string | null {

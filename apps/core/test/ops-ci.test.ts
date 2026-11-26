@@ -130,9 +130,12 @@ describe('ops/deploy/deploy.sh', () => {
     return i
   }
 
-  it('pulls, migrates once, starts, then waits for /ready', () => {
+  it('pulls, fills the bootstrap volume, migrates once, starts, then waits for /ready', () => {
     const pull = order(' pull')
+    const init = order(' run --rm init')
     const migrate = order(' run --rm migrate')
+    expect(pull).toBeLessThan(init)
+    expect(init).toBeLessThan(migrate)
     const up = order(' up -d --no-build')
     const ready = order('/api/ready')
     expect(pull).toBeLessThan(migrate)
@@ -165,15 +168,19 @@ describe('ops/deploy/deploy.sh', () => {
 type Service = {
   image?: string
   build?: unknown
+  command?: string[]
+  user?: string
   ports?: string[]
   volumes?: string[]
-  environment?: Record<string, string>
+  group_add?: string[]
+  depends_on?: Record<string, { condition: string }>
+  environment?: Record<string, string | null>
 }
 // `!reset` / `!override` are compose merge tags; the yaml parser keeps the value and only warns about them.
 const prod = parse(read('docker-compose.prod.yml'), { logLevel: 'error' }) as { services: Record<string, Service> }
 
 describe('docker-compose.prod.yml images', () => {
-  const want: Record<string, string> = { migrate: 'core', core: 'core', portal: 'portal', backup: 'backup', runner: 'runner' }
+  const want: Record<string, string> = { init: 'core', migrate: 'core', core: 'core', portal: 'portal', backup: 'backup', runner: 'runner' }
 
   it.each(Object.entries(want))('%s uses the published %s image at a required version and still builds locally', (service, name) => {
     const s = prod.services[service]!
@@ -198,13 +205,93 @@ describe('docker-compose.prod.yml exposure', () => {
     expect(prod.services.rustfs!.environment?.RUSTFS_CONSOLE_ENABLE).toBe('false')
   })
 
-  it('mounts only the database volume into postgres (no dev init.sql)', () => {
+  it('mounts only the database and bootstrap volumes into postgres (no dev init.sql)', () => {
     expect(text).toMatch(/^ {4}volumes: !override$/m)
-    expect(prod.services.postgres!.volumes).toEqual(['pgdata:/var/lib/postgresql/data'])
+    expect(prod.services.postgres!.volumes).toEqual(['pgdata:/var/lib/postgresql/data', 'yoda-bootstrap:/var/lib/yoda:ro'])
   })
 
-  it('requires PORTAL_URL', () => {
-    expect(prod.services.core!.environment?.PORTAL_URL).toBe('${PORTAL_URL:?PORTAL_URL is required}')
+  it('requires nothing but YODA_VERSION (installer proposal §13.3)', () => {
+    const text = read('docker-compose.prod.yml')
+    const required = [...text.matchAll(/\$\{([A-Z][A-Z0-9_]*):\?/g)].map((m) => m[1])
+    expect(new Set(required)).toEqual(new Set(['YODA_VERSION']))
+    expect(prod.services.core!.environment?.PORTAL_URL).toBe('${PORTAL_URL:-}')
+    expect(prod.services.core!.environment?.OIDC_ISSUER).toBe('${OIDC_ISSUER:-}')
+  })
+})
+
+describe('docker-compose.prod.yml bootstrap volume (installer proposal §3.2, spike R3)', () => {
+  const s = prod.services
+  const mount = 'yoda-bootstrap:/var/lib/yoda'
+  const afterInit = (name: string) => expect(s[name]!.depends_on?.init, name).toEqual({ condition: 'service_completed_successfully' })
+
+  it('runs init once, as root, from the core image, writing the volume and probing the database read-only', () => {
+    const init = s.init!
+    expect(init.command).toEqual(['node', 'dist/init.js'])
+    expect(init.user).toBe('0:0')
+    expect(init.volumes).toEqual([mount, 'pgdata:/probe/pgdata:ro'])
+    expect((init as { restart?: string }).restart).toBe('no')
+    // Every value is optional: env overrides generation, never required.
+    for (const k of ['POSTGRES_PASSWORD', 'S3_ACCESS_KEY', 'S3_SECRET_KEY', 'YODA_MASTER_KEY']) expect(init.environment?.[k], k).toBe(`\${${k}:-}`)
+    expect((parse(read('docker-compose.prod.yml'), { logLevel: 'error' }) as { volumes: Record<string, unknown> }).volumes).toHaveProperty('yoda-bootstrap')
+  })
+
+  it('starts everything that reads the volume after init', () => {
+    for (const name of ['postgres', 'rustfs', 'migrate', 'core', 'backup']) afterInit(name)
+  })
+
+  it('mounts it read-only everywhere but core (the setup token), with the shared group except for postgres', () => {
+    for (const name of ['postgres', 'rustfs', 'migrate', 'backup']) expect(s[name]!.volumes, name).toContain(`${mount}:ro`)
+    expect(s.core!.volumes).toContain(mount)
+    for (const name of ['rustfs', 'migrate', 'core', 'backup']) expect(s[name]!.group_add, name).toEqual(['10500'])
+    expect(s.postgres!.group_add).toBeUndefined()
+    expect(s.portal!.volumes ?? []).not.toContain(mount)
+    expect(s.portal!.volumes ?? []).not.toContain(`${mount}:ro`)
+  })
+
+  it('gives postgres and RustFS the files, removing the plain variables (the images refuse both forms)', () => {
+    // The parser keeps a scalar `!reset null` as null or 'null' (it only warns about the compose tag); the text
+    // checks below pin the tag itself.
+    const reset = (v: unknown) => v === null || v === 'null'
+    expect(s.postgres!.environment).toMatchObject({ POSTGRES_PASSWORD_FILE: '/var/lib/yoda/postgres-password' })
+    expect(reset(s.postgres!.environment?.POSTGRES_PASSWORD)).toBe(true)
+    expect(reset(s.rustfs!.environment?.RUSTFS_ACCESS_KEY) && reset(s.rustfs!.environment?.RUSTFS_SECRET_KEY)).toBe(true)
+    expect(read('docker-compose.prod.yml')).toMatch(/^ {6}POSTGRES_PASSWORD: !reset null$/m)
+    expect(s.rustfs!.environment).toMatchObject({
+      RUSTFS_ACCESS_KEY_FILE: '/var/lib/yoda/s3-access-key',
+      RUSTFS_SECRET_KEY_FILE: '/var/lib/yoda/s3-secret-key',
+    })
+    expect(read('docker-compose.prod.yml')).toMatch(/^ {6}RUSTFS_ACCESS_KEY: !reset null\n {6}RUSTFS_SECRET_KEY: !reset null$/m)
+  })
+
+  it('lets core, migrate and backup derive DATABASE_URL and the S3 keys from bootstrap.env, env first', () => {
+    for (const name of ['core', 'migrate', 'backup']) {
+      const env = s[name]!.environment!
+      expect(env.DATABASE_URL, name).toBe('${DATABASE_URL:-}')
+      expect(env.YODA_BOOTSTRAP_FILE, name).toBe('/var/lib/yoda/bootstrap.env')
+    }
+    for (const name of ['core', 'backup']) for (const k of ['S3_ACCESS_KEY', 'S3_SECRET_KEY']) expect(s[name]!.environment?.[k], `${name} ${k}`).toBe(`\${${k}:-}`)
+    expect(s.core!.environment?.YODA_MASTER_KEY_FILE).toBe('/var/lib/yoda/core/master-key')
+    // The master key never reaches core's env from compose; init copies an env key into the core-only file.
+    expect(s.core!.environment).not.toHaveProperty('YODA_MASTER_KEY')
+    expect(s.backup!.environment).not.toHaveProperty('YODA_MASTER_KEY_FILE')
+  })
+
+  it('no longer requires the Keycloak variables in the portal (it reads /public-config)', () => {
+    for (const k of ['NUXT_PUBLIC_KEYCLOAK_URL', 'NUXT_PUBLIC_KEYCLOAK_REALM', 'NUXT_PUBLIC_KEYCLOAK_CLIENT_ID']) {
+      expect(s.portal!.environment?.[k], k).toBe(`\${${k}:-}`)
+      // Core sees them too, to log a mismatch with OIDC_ISSUER (§6.4).
+      expect(s.core!.environment?.[k], k).toBe(`\${${k}:-}`)
+    }
+  })
+})
+
+describe('docker-compose.yml (dev) keeps its throwaway credentials', () => {
+  const dev = parse(read('docker-compose.yml')) as { services: Record<string, Service> }
+
+  it('has no init service and no bootstrap volume (dev core runs on the host with .env)', () => {
+    expect(dev.services.init).toBeUndefined()
+    expect(dev.services.postgres!.environment?.POSTGRES_PASSWORD).toBe('yoda')
+    expect(dev.services.rustfs!.environment?.RUSTFS_ACCESS_KEY).toBe('${S3_ACCESS_KEY:-yoda}')
   })
 })
 
