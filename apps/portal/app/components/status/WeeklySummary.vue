@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { WeeklySummaryOutcome, type LiveEvent, type WeeklySummary } from '@yoda/shared'
+import { formatWeekRange } from '~/utils/projects'
 import { outcomeMessageKey } from '~/utils/status'
 
 /** A safety net only: every run announces its outcome, so this fires just when the job never ran. */
@@ -17,8 +18,9 @@ const props = defineProps<{
   canManage: boolean
 }>()
 const emit = defineEmits<{ refresh: [] }>()
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const api = useApi()
+const weekRange = (week: string) => formatWeekRange(week, locale.value)
 
 const confirmOpen = ref(false)
 const busy = ref(false)
@@ -87,64 +89,99 @@ function onLive(e: LiveEvent) {
 }
 defineExpose({ onLive })
 
+/** PM or admin: confirm the draft (a new confirmed version of the knowledge entry). */
+const publishing = ref(false)
+async function publish(entryId: string) {
+  error.value = ''
+  publishing.value = true
+  try {
+    await api(`/knowledge/${entryId}/confirm`, { method: 'POST' })
+    emit('refresh')
+  } catch (e) {
+    error.value = t(errorKey(e))
+  } finally {
+    publishing.value = false
+  }
+}
+
 const { dateTime: fmt } = useDateFormat()
 </script>
 
 <template>
-  <v-card variant="outlined" data-testid="weekly-summary">
-    <v-card-item>
-      <v-card-title class="d-flex align-center flex-wrap ga-2">
-        <span>{{ t('status.weekly.title') }}</span>
-        <template v-if="summary">
-          <span class="text-body-2 text-medium-emphasis">{{ t('status.weekly.week', { week: summary.week }) }}</span>
-          <StatusChip v-if="summary.status === 'draft'" kind="knowledge" value="draft" :label="t('status.weekly.draft')" size="x-small" data-testid="weekly-draft" />
-        </template>
-        <v-spacer />
-        <v-btn
-          v-if="canManage && !noAi && aiConfigured"
-          size="small"
-          variant="outlined"
-          prepend-icon="mdi-refresh"
-          :disabled="generating"
-          data-testid="weekly-regenerate"
-          @click="confirmOpen = true"
-        >{{ t('status.weekly.regenerate') }}</v-btn>
-      </v-card-title>
-      <v-card-subtitle v-if="summary">{{ fmt(summary.createdAt) }}</v-card-subtitle>
-    </v-card-item>
-    <v-card-text>
-      <v-alert v-if="error" type="error" density="compact" class="mb-3" data-testid="weekly-error">{{ error }}</v-alert>
+  <v-card data-testid="weekly-summary">
+    <div class="card-head">
+      <h2>{{ t('status.weekly.title') }}</h2>
+      <span v-if="summary" class="text-body-2 text-medium-emphasis tabular-nums" :title="summary.week" data-testid="weekly-week">{{ weekRange(summary.week) }}</span>
+    </div>
+    <div class="card-body">
+      <v-alert v-if="error" type="error" variant="tonal" density="compact" class="mb-3" data-testid="weekly-error">{{ error }}</v-alert>
       <div v-if="generating" class="d-flex align-center ga-2 mb-3" data-testid="weekly-generating">
         <v-progress-circular indeterminate size="18" width="2" />
         <span class="text-body-2">{{ t('status.weekly.generating') }}</span>
       </div>
       <v-alert v-if="outcomeKey" type="info" variant="tonal" density="compact" class="mb-3" data-testid="weekly-outcome">{{ t(outcomeKey) }}</v-alert>
       <v-alert v-if="!noAi && !aiConfigured" type="info" variant="tonal" density="compact" class="mb-3" data-testid="weekly-not-configured">{{ t('status.weekly.notConfigured') }}</v-alert>
-      <p v-if="noAi" class="text-medium-emphasis" data-testid="weekly-no-ai">{{ t('status.weekly.noAi') }}</p>
+      <p v-if="noAi" class="text-medium-emphasis mb-0" data-testid="weekly-no-ai">{{ t('status.weekly.noAi') }}</p>
       <template v-else>
-        <MarkdownView v-if="summary" :source="summary.body" data-testid="weekly-body" />
-        <p v-else-if="!inProgress" class="text-medium-emphasis" data-testid="weekly-empty">{{ t('status.weekly.empty') }}</p>
+        <template v-if="summary">
+          <div class="weekly-labels mb-3">
+            <span class="weekly-ai"><v-icon icon="mdi-creation-outline" size="16" aria-hidden="true" />{{ t('status.weekly.aiLabel') }}</span>
+            <StatusChip v-if="summary.status === 'draft'" kind="knowledge" value="draft" :label="t('status.weekly.draftPending')" size="x-small" data-testid="weekly-draft" />
+            <StatusChip v-else kind="knowledge" value="confirmed" :label="t('status.weekly.published')" size="x-small" />
+            <v-spacer />
+            <span class="text-caption text-medium-emphasis">{{ t('status.weekly.created', { time: fmt(summary.createdAt) }) }}</span>
+          </div>
+          <MarkdownView :source="summary.body" data-testid="weekly-body" />
+        </template>
+        <p v-else-if="!inProgress" class="text-medium-emphasis mb-0" data-testid="weekly-empty">{{ t('status.weekly.empty') }}</p>
         <section v-if="inProgress" :class="{ 'mt-4 pt-4 border-t': summary }" data-testid="weekly-in-progress">
-          <div class="d-flex align-center flex-wrap ga-2 mb-2">
+          <div class="weekly-labels mb-2">
             <span class="text-subtitle-2">{{ t('status.weekly.thisWeek') }}</span>
-            <span class="text-body-2 text-medium-emphasis">{{ t('status.weekly.week', { week: inProgress.week }) }}</span>
+            <span class="text-body-2 text-medium-emphasis tabular-nums" :title="inProgress.week">{{ weekRange(inProgress.week) }}</span>
             <StatusChip v-if="inProgress.status === 'draft'" kind="knowledge" value="draft" :label="t('status.weekly.draft')" size="x-small" />
+            <v-spacer />
             <span class="text-caption text-medium-emphasis">{{ fmt(inProgress.createdAt) }}</span>
           </div>
           <MarkdownView :source="inProgress.body" data-testid="weekly-in-progress-body" />
         </section>
       </template>
-    </v-card-text>
+      <div v-if="canManage && !noAi" class="weekly-actions mt-4">
+        <v-btn
+          v-if="aiConfigured"
+          variant="text"
+          color="primary"
+          size="small"
+          :disabled="generating"
+          data-testid="weekly-regenerate"
+          @click="confirmOpen = true"
+        >{{ t('status.weekly.regenerateEllipsis') }}</v-btn>
+        <v-btn
+          v-if="summary?.status === 'draft'"
+          variant="tonal"
+          color="primary"
+          size="small"
+          :loading="publishing"
+          data-testid="weekly-publish"
+          @click="publish(summary.entryId)"
+        >{{ t('status.weekly.publish') }}</v-btn>
+      </div>
+    </div>
 
-    <v-dialog v-model="confirmOpen" max-width="460">
+    <v-dialog v-model="confirmOpen" max-width="480">
       <v-card :title="t('status.weekly.confirmTitle')" data-testid="weekly-confirm-dialog">
-        <v-card-text>{{ t('status.weekly.confirm', { week: currentWeek }) }}</v-card-text>
+        <v-card-text>{{ t('status.weekly.confirm', { week: weekRange(currentWeek) }) }}</v-card-text>
         <v-card-actions>
           <v-spacer />
-          <v-btn @click="confirmOpen = false">{{ t('common.cancel') }}</v-btn>
-          <v-btn color="primary" :loading="busy" data-testid="weekly-confirm" @click="regenerate">{{ t('status.weekly.regenerate') }}</v-btn>
+          <v-btn variant="text" @click="confirmOpen = false">{{ t('common.cancel') }}</v-btn>
+          <v-btn color="primary" variant="flat" :loading="busy" data-testid="weekly-confirm" @click="regenerate">{{ t('status.weekly.regenerate') }}</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
   </v-card>
 </template>
+
+<style scoped>
+.weekly-labels { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.weekly-ai { display: inline-flex; align-items: center; gap: 4px; color: rgb(var(--v-theme-ai)); font-size: .8125rem; font-weight: 500; }
+.weekly-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
+</style>

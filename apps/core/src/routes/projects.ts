@@ -1,11 +1,11 @@
 import type { Me } from '@yoda/shared'
-import { MemberRolesPut, Project, ProjectCreate, ProjectDetail, ProjectPatch } from '@yoda/shared'
+import { MemberRolesPut, Project, ProjectCreate, ProjectDetail, ProjectListItem, ProjectPatch } from '@yoda/shared'
 import { and, asc, eq, sql } from 'drizzle-orm'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { forbidden, lastPm, notStaff, notFound, requireAdmin, requireStaff } from '../auth/plugin.js'
 import type { Db, Tx } from '../db/client.js'
-import { people, projectMembers, projects } from '../db/schema.js'
+import { events, people, projectMembers, projects } from '../db/schema.js'
 import { canManageProject, lockProject } from '../projects/access.js'
 import { runWork } from '../work/context.js'
 import { resumeProjectAi, unassignMemberTasks } from '../work/engine.js'
@@ -61,6 +61,36 @@ async function openTaskCounts(db: Db, personIds: string[]): Promise<Map<string, 
   return new Map(rows.map((r) => [r.person_id, r.n]))
 }
 
+/** PM names, member counts and newest event time of `rows`, for the projects list (three grouped queries). */
+async function listExtras(db: Db, rows: ProjectRow[]): Promise<ProjectListItem[]> {
+  const ids = rows.map((r) => r.id)
+  if (!ids.length) return []
+  const inIds = sql.join(ids.map((id) => sql`${id}::uuid`), sql`, `)
+  const [members, last] = await Promise.all([
+    db
+      .select({ projectId: projectMembers.projectId, name: people.displayName, roles: projectMembers.roles })
+      .from(projectMembers)
+      .innerJoin(people, eq(people.id, projectMembers.personId))
+      .where(sql`${projectMembers.projectId} in (${inIds})`)
+      .orderBy(asc(people.displayName), asc(people.id)),
+    db
+      .select({ projectId: events.projectId, at: sql<string>`max(${events.createdAt})` })
+      .from(events)
+      .where(sql`${events.projectId} in (${inIds})`)
+      .groupBy(events.projectId),
+  ])
+  const lastAt = new Map(last.map((r) => [r.projectId, new Date(r.at).toISOString()]))
+  return rows.map((row) => {
+    const mine = members.filter((m) => m.projectId === row.id)
+    return ProjectListItem.parse({
+      ...toProject(row),
+      pmNames: mine.filter((m) => m.roles.includes('PM')).map((m) => m.name),
+      memberCount: mine.length,
+      lastActivityAt: lastAt.get(row.id) ?? null,
+    })
+  })
+}
+
 const ProjectParams = z.object({ id: z.string().uuid() })
 const MemberParams = z.object({ id: z.string().uuid(), personId: z.string().uuid() })
 
@@ -89,7 +119,7 @@ export function projectRoutes(app: FastifyInstance): void {
           .where(eq(projectMembers.personId, me.id))
           .orderBy(asc(projects.name))
           .then((r) => r.map((x) => x.p))
-    return rows.map(toProject)
+    return listExtras(db(), rows)
   })
 
   app.post('/projects', async (request, reply) => {

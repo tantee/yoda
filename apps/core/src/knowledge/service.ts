@@ -116,21 +116,37 @@ export async function listVersions(db: Conn, me: Me, id: string): Promise<Knowle
 }
 
 /** Current versions, newest first. Callers check project / work item visibility for the filters. */
-export async function listEntries(
-  db: Conn,
-  me: Me,
-  f: { projectId?: string; workItemId?: string; type?: KnowledgeType; status?: KnowledgeStatus; limit?: number },
-): Promise<KnowledgeEntry[]> {
+export interface ListFilter {
+  projectId?: string
+  workItemId?: string
+  type?: KnowledgeType
+  status?: KnowledgeStatus
+  limit?: number
+  offset?: number
+}
+
+function listConds(me: Me, f: ListFilter): SQL | undefined {
   const conds: (SQL | undefined)[] = [isNull(knowledgeEntries.supersededAt), visibleTo(me)]
   if (f.projectId) conds.push(eq(knowledgeEntries.projectId, f.projectId))
   if (f.workItemId) conds.push(eq(knowledgeEntries.workItemId, f.workItemId))
   if (f.type) conds.push(eq(knowledgeEntries.type, f.type))
   if (f.status) conds.push(eq(knowledgeEntries.status, f.status))
+  return and(...conds)
+}
+
+export async function listEntries(db: Conn, me: Me, f: ListFilter): Promise<KnowledgeEntry[]> {
   const rows = await selectEntries(db)
-    .where(and(...conds))
+    .where(listConds(me, f))
     .orderBy(desc(knowledgeEntries.createdAt), desc(knowledgeEntries.id))
     .limit(f.limit ?? 200)
+    .offset(f.offset ?? 0)
   return rows.map(toEntry)
+}
+
+/** How many current versions match the list filter (limit and offset ignored). */
+export async function countEntries(db: Conn, me: Me, f: ListFilter): Promise<number> {
+  const [r] = await db.select({ n: sql<number>`count(*)::int` }).from(knowledgeEntries).where(listConds(me, f))
+  return r?.n ?? 0
 }
 
 /** Project of a work item, or null when it does not exist. */

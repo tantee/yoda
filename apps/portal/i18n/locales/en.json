@@ -60,13 +60,77 @@
     "propose": "Propose",
     "autonomyHint": "Propose: assignments wait for a PM to confirm. Auto-assign: assignments happen directly.",
     "tabs": {
-      "overview": "Overview",
+      "overview": "Members & settings",
       "items": "Work items",
       "knowledge": "Knowledge",
-      "ai": "AI settings",
-      "repos": "Repositories",
+      "ai": "AI budget",
+      "repos": "Repository",
       "status": "Status"
-    }
+    },
+    "list": {
+      "active": "Active",
+      "archived": "Archived",
+      "cols": {
+        "name": "Project",
+        "health": "Status",
+        "pm": "PM",
+        "active": "Active items",
+        "overdue": "Overdue",
+        "lastActivity": "Last activity"
+      },
+      "noActivity": "None yet",
+      "noPm": "No PM yet",
+      "emptyText": "An admin can create a project and add you as a member",
+      "emptyArchived": "No archived projects",
+      "createTitle": "Create a project"
+    },
+    "meta": {
+      "pm": "PM {names}",
+      "noPm": "No PM yet",
+      "members": "{n} members"
+    },
+    "archivedBanner": "This project is archived and cannot be edited",
+    "autonomyHelp": {
+      "propose": "AI proposes who should do each task; a PM confirms before it is assigned",
+      "autoAssign": "The proposed person is assigned straight away, without confirmation"
+    },
+    "settings": "Settings",
+    "membersCols": {
+      "name": "Name",
+      "roles": "Roles",
+      "load": "Open tasks",
+      "actions": "Actions"
+    },
+    "editRoles": "Edit roles",
+    "editRolesTitle": "Edit roles of {name}",
+    "rolesRequired": "Choose at least one role",
+    "personRequired": "Choose a person",
+    "memberMenu": "Options for {name}",
+    "removeEllipsis": "Remove from project…",
+    "removeTitle": "Remove {name} from the project?",
+    "removeText": "Tasks in this project assigned to {name} go back to waiting for assignment",
+    "removeConfirm": "Remove from project",
+    "noCandidates": "Every staff member is already a member",
+    "items": {
+      "search": "Search work items",
+      "state": "State",
+      "stateAll": "All states",
+      "step": "Step",
+      "priority": "Priority",
+      "owner": "Owner",
+      "overdue": "Overdue only",
+      "clear": "Clear filters",
+      "filterEmpty": "No work items match the filters",
+      "filterEmptyText": "Clear the filters or change the search",
+      "empty": "No work items in this project yet",
+      "emptyText": "Create a work item to start tracking it here",
+      "count": "{n} items",
+      "due": "Due",
+      "overdueOn": "Overdue {date}"
+    },
+    "notFound": "Project not found",
+    "notFoundHint": "It may have been removed, or you are not a member of this project",
+    "toProjects": "Go to my projects"
   },
   "people": {
     "name": "Name",
@@ -431,7 +495,8 @@
       "person": "Person",
       "ai": "AI",
       "upload": "Upload",
-      "task": "Task"
+      "task": "Task",
+      "gitlab": "GitLab"
     },
     "noAi": "No AI",
     "empty": "No knowledge yet",
@@ -455,7 +520,18 @@
     "dropHere": "Drag a file here or click to choose",
     "uploadNoAi": "Do not send this file to AI",
     "uploading": "Uploading...",
-    "uploaded": "Uploaded"
+    "uploaded": "Uploaded",
+    "groupDrafts": "Progress drafts",
+    "groupDraftsHint": "AI drafts nobody has confirmed yet",
+    "searchResults": "Search results",
+    "uploadTitle": "Upload a file to the project",
+    "attachmentsCols": {
+      "name": "File",
+      "size": "Size",
+      "by": "Uploaded by",
+      "noAi": "Keep from AI"
+    },
+    "pageLabel": "Pages of {type}"
   },
   "ai": {
     "title": "AI settings",
@@ -475,7 +551,12 @@
     "retry": "Retry AI",
     "deptTitle": "Department AI budget",
     "deptHint": "Monthly limit for all AI use in the department. Empty = no limit.",
-    "saved": "Saved"
+    "saved": "Saved",
+    "budgetSection": "AI budget and usage",
+    "noAiHelp": "Turn on when the project holds data that must not leave the organisation",
+    "spendOf": "{spend} of {budget}",
+    "spendNoBudget": "{spend} · no budget set",
+    "month": "Month {month}"
   },
   "chat": {
     "threads": "Conversations",
@@ -986,7 +1067,11 @@
       "aiSpend": "AI this month",
       "noBudget": "{amount} (no budget)",
       "ofBudget": "{spend} of {budget}",
-      "open": "Open status"
+      "open": "Open status",
+      "noBudgetShort": "{amount} · no budget set",
+      "moreReasons": "and {n} more",
+      "byStep": "Work by step",
+      "noReasons": "Nothing to watch"
     },
     "board": "Board",
     "boardEmpty": "No active work items",
@@ -997,7 +1082,8 @@
       "roles": "Roles",
       "openTasks": "Open tasks",
       "inProgress": "In progress",
-      "todayAssigned": "Assigned today"
+      "todayAssigned": "Assigned today",
+      "load": "Load"
     },
     "recentEvents": "Recent events",
     "eventsEmpty": "No events yet",
@@ -1027,8 +1113,33 @@
         "no_activity": "No summary was written: the project had no activity this week.",
         "budget_exceeded": "No summary was written: this month's AI budget is used up.",
         "ai_failed": "No summary was written: the AI call failed. Try again later."
-      }
-    }
+      },
+      "aiLabel": "AI draft",
+      "draftPending": "Draft, awaiting PM confirmation",
+      "published": "Published",
+      "created": "Created {time}",
+      "publish": "Confirm and publish",
+      "regenerateEllipsis": "Regenerate…"
+    },
+    "kpi": {
+      "overdueLink": "View items",
+      "ofBudget": "of {budget}",
+      "noBudget": "No budget set",
+      "discussionsLink": "View discussions"
+    },
+    "reasonsTitle": {
+      "at_risk": "Why this project is at risk",
+      "blocked": "Why this project is blocked",
+      "on_track": "Notes"
+    },
+    "boardHint": "Sorted by priority within each step",
+    "columnEmpty": "Nothing in this step",
+    "overdueOn": "Overdue {date}",
+    "stuckShort": "Idle {n} days",
+    "showAll": "View all",
+    "showLess": "Show less",
+    "openedOn": "Opened {date}",
+    "inactiveGroup": "No active work ({n})"
   },
   "chip": {
     "workItem": {

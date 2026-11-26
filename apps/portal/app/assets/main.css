@@ -32,3 +32,20 @@ body { font-family: 'IBM Plex Sans Thai', 'IBM Plex Sans', 'Leelawadee UI', 'Tho
 .v-chip.v-chip--variant-outlined:not(.text-primary):not(.text-error):not(.text-warning):not(.text-success):not(.text-info) {
   border-color: rgb(var(--v-theme-border-strong));
 }
+
+/* Card header row and body (proposal §6.2), and the small count pill used on tabs and section titles (§5.4). */
+.card-head {
+  display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; min-height: 48px; padding: 8px 16px;
+  border-bottom: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
+}
+.card-head h2, .card-head h3 { margin: 0; font-size: 1rem; font-weight: 600; }
+.card-body { padding: 16px; min-width: 0; overflow-wrap: anywhere; }
+.count-pill {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; padding: 0 6px;
+  border-radius: 10px; font-size: .75rem; font-weight: 600; font-variant-numeric: tabular-nums;
+  background: rgb(var(--v-theme-neutral-soft)); color: rgb(var(--v-theme-neutral));
+}
+.v-tab--selected .count-pill, .v-btn--active .count-pill { background: rgb(var(--v-theme-primary-soft)); color: rgb(var(--v-theme-on-primary-soft)); }
+/* Table title cell: 500 weight link, never underlined until hover (§6.3). */
+.row-link { color: inherit; font-weight: 500; text-decoration: none; overflow-wrap: anywhere; }
+.row-link:hover { text-decoration: underline; }

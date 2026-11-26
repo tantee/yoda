@@ -60,13 +60,77 @@
     "propose": "เสนอให้ยืนยัน",
     "autonomyHint": "เสนอให้ยืนยัน: การมอบหมายรอ PM ยืนยัน / มอบหมายอัตโนมัติ: มอบหมายทันที",
     "tabs": {
-      "overview": "ภาพรวม",
+      "overview": "สมาชิกและการตั้งค่า",
       "items": "งาน",
       "knowledge": "ความรู้",
-      "ai": "ตั้งค่า AI",
-      "repos": "Repositories",
+      "ai": "งบประมาณ AI",
+      "repos": "Repository",
       "status": "สถานะ"
-    }
+    },
+    "list": {
+      "active": "ใช้งานอยู่",
+      "archived": "เก็บถาวร",
+      "cols": {
+        "name": "โครงการ",
+        "health": "สถานะ",
+        "pm": "PM",
+        "active": "งานที่ดำเนินอยู่",
+        "overdue": "เลยกำหนด",
+        "lastActivity": "ความเคลื่อนไหวล่าสุด"
+      },
+      "noActivity": "ยังไม่มี",
+      "noPm": "ยังไม่มี PM",
+      "emptyText": "ผู้ดูแลระบบสร้างโครงการและเพิ่มคุณเป็นสมาชิกได้",
+      "emptyArchived": "ไม่มีโครงการที่เก็บถาวร",
+      "createTitle": "สร้างโครงการใหม่"
+    },
+    "meta": {
+      "pm": "PM {names}",
+      "noPm": "ยังไม่มี PM",
+      "members": "{n} สมาชิก"
+    },
+    "archivedBanner": "โครงการนี้เก็บถาวรแล้ว แก้ไขไม่ได้",
+    "autonomyHelp": {
+      "propose": "AI เสนอผู้รับผิดชอบ แล้วรอ PM ยืนยันก่อนมอบหมาย",
+      "autoAssign": "มอบหมายให้คนที่เสนอทันที ไม่ต้องรอยืนยัน"
+    },
+    "settings": "การตั้งค่า",
+    "membersCols": {
+      "name": "ชื่อ",
+      "roles": "บทบาท",
+      "load": "งานค้าง",
+      "actions": "การทำงาน"
+    },
+    "editRoles": "แก้ไขบทบาท",
+    "editRolesTitle": "แก้ไขบทบาทของ {name}",
+    "rolesRequired": "เลือกบทบาทอย่างน้อยหนึ่งบทบาท",
+    "personRequired": "เลือกบุคลากร",
+    "memberMenu": "ตัวเลือกของ {name}",
+    "removeEllipsis": "นำออกจากโครงการ…",
+    "removeTitle": "นำ {name} ออกจากโครงการ?",
+    "removeText": "งานในโครงการนี้ที่มอบหมายให้ {name} จะกลับไปรอมอบหมายใหม่",
+    "removeConfirm": "นำออกจากโครงการ",
+    "noCandidates": "ไม่มีเจ้าหน้าที่ที่ยังไม่ได้เป็นสมาชิก",
+    "items": {
+      "search": "ค้นหางาน",
+      "state": "สถานะ",
+      "stateAll": "ทุกสถานะ",
+      "step": "ขั้นตอน",
+      "priority": "ความสำคัญ",
+      "owner": "ผู้รับผิดชอบ",
+      "overdue": "เฉพาะที่เลยกำหนด",
+      "clear": "ล้างตัวกรอง",
+      "filterEmpty": "ไม่มีงานที่ตรงกับตัวกรอง",
+      "filterEmptyText": "ลองล้างตัวกรองหรือเปลี่ยนคำค้น",
+      "empty": "ยังไม่มีงานในโครงการนี้",
+      "emptyText": "สร้างงานใหม่เพื่อเริ่มติดตามในโครงการนี้",
+      "count": "{n} รายการ",
+      "due": "กำหนดเสร็จ",
+      "overdueOn": "เลยกำหนด {date}"
+    },
+    "notFound": "ไม่พบโครงการนี้",
+    "notFoundHint": "อาจถูกลบ หรือคุณไม่ได้เป็นสมาชิกโครงการ",
+    "toProjects": "ไปที่โครงการของฉัน"
   },
   "people": {
     "name": "ชื่อ",
@@ -431,7 +495,8 @@
       "person": "บุคคล",
       "ai": "AI",
       "upload": "อัปโหลด",
-      "task": "งาน"
+      "task": "งาน",
+      "gitlab": "GitLab"
     },
     "noAi": "ไม่ส่งให้ AI",
     "empty": "ยังไม่มีความรู้",
@@ -455,7 +520,18 @@
     "dropHere": "ลากไฟล์มาวางที่นี่ หรือคลิกเพื่อเลือก",
     "uploadNoAi": "ไม่ส่งไฟล์นี้ให้ AI",
     "uploading": "กำลังอัปโหลด...",
-    "uploaded": "อัปโหลดแล้ว"
+    "uploaded": "อัปโหลดแล้ว",
+    "groupDrafts": "ร่างความคืบหน้า",
+    "groupDraftsHint": "ร่างจาก AI ที่ยังไม่มีคนยืนยัน",
+    "searchResults": "ผลการค้นหา",
+    "uploadTitle": "อัปโหลดไฟล์เข้าโครงการ",
+    "attachmentsCols": {
+      "name": "ไฟล์",
+      "size": "ขนาด",
+      "by": "อัปโหลดโดย",
+      "noAi": "ไม่ส่งให้ AI"
+    },
+    "pageLabel": "หน้าของ {type}"
   },
   "ai": {
     "title": "ตั้งค่า AI",
@@ -475,7 +551,12 @@
     "retry": "ให้ AI ลองใหม่",
     "deptTitle": "งบประมาณ AI ของแผนก",
     "deptHint": "วงเงินรายเดือนสำหรับการใช้ AI ทั้งแผนก เว้นว่าง = ไม่จำกัด",
-    "saved": "บันทึกแล้ว"
+    "saved": "บันทึกแล้ว",
+    "budgetSection": "งบประมาณและการใช้ AI",
+    "noAiHelp": "เปิดเมื่อโครงการมีข้อมูลที่ห้ามส่งออกนอกหน่วยงาน",
+    "spendOf": "{spend} จาก {budget}",
+    "spendNoBudget": "{spend} · ไม่กำหนดงบ",
+    "month": "เดือน {month}"
   },
   "chat": {
     "threads": "การสนทนา",
@@ -986,7 +1067,11 @@
       "aiSpend": "AI เดือนนี้",
       "noBudget": "{amount} (ไม่จำกัดงบ)",
       "ofBudget": "{spend} จาก {budget}",
-      "open": "ดูสถานะ"
+      "open": "ดูสถานะ",
+      "noBudgetShort": "{amount} · ไม่กำหนดงบ",
+      "moreReasons": "และอีก {n} ข้อ",
+      "byStep": "งานตามขั้นตอน",
+      "noReasons": "ไม่มีประเด็นที่ต้องระวัง"
     },
     "board": "บอร์ด",
     "boardEmpty": "ไม่มีงานที่ดำเนินอยู่",
@@ -997,7 +1082,8 @@
       "roles": "บทบาท",
       "openTasks": "งานค้าง",
       "inProgress": "กำลังทำ",
-      "todayAssigned": "มอบหมายวันนี้"
+      "todayAssigned": "มอบหมายวันนี้",
+      "load": "ภาระ"
     },
     "recentEvents": "เหตุการณ์ล่าสุด",
     "eventsEmpty": "ยังไม่มีเหตุการณ์",
@@ -1027,8 +1113,33 @@
         "no_activity": "ไม่ได้สร้างสรุป: สัปดาห์นี้โครงการไม่มีความเคลื่อนไหว",
         "budget_exceeded": "ไม่ได้สร้างสรุป: งบ AI เดือนนี้หมดแล้ว",
         "ai_failed": "ไม่ได้สร้างสรุป: เรียก AI ไม่สำเร็จ กรุณาลองใหม่ภายหลัง"
-      }
-    }
+      },
+      "aiLabel": "ร่างโดย AI",
+      "draftPending": "ฉบับร่าง รอ PM ยืนยัน",
+      "published": "เผยแพร่แล้ว",
+      "created": "สร้าง {time}",
+      "publish": "ยืนยันและเผยแพร่",
+      "regenerateEllipsis": "สร้างใหม่…"
+    },
+    "kpi": {
+      "overdueLink": "ดูรายการ",
+      "ofBudget": "จาก {budget}",
+      "noBudget": "ไม่กำหนดงบ",
+      "discussionsLink": "ดูประเด็นหารือ"
+    },
+    "reasonsTitle": {
+      "at_risk": "ทำไมโครงการนี้มีความเสี่ยง",
+      "blocked": "ทำไมโครงการนี้ติดขัด",
+      "on_track": "ข้อสังเกต"
+    },
+    "boardHint": "เรียงตามความสำคัญในแต่ละขั้นตอน",
+    "columnEmpty": "ไม่มีงานในขั้นตอนนี้",
+    "overdueOn": "เลยกำหนด {date}",
+    "stuckShort": "นิ่ง {n} วัน",
+    "showAll": "ดูทั้งหมด",
+    "showLess": "แสดงน้อยลง",
+    "openedOn": "เปิดเมื่อ {date}",
+    "inactiveGroup": "ไม่มีงานที่ดำเนินอยู่ ({n})"
   },
   "chip": {
     "workItem": {
