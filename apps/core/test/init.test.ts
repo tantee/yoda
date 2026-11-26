@@ -1,9 +1,9 @@
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { applyBootstrapFile, parseBootstrapEnv } from '../src/config.js'
-import { BOOTSTRAP_GID, CORE_UID, InitRefusedError, randomAlnum, runInit } from '../src/init.js'
+import { BOOTSTRAP_GID, CORE_UID, InitRefusedError, randomAlnum, runInit, validMasterKey } from '../src/init.js'
 
 // The `init` service against a temp directory: never overwrites, env wins, refuses an unknown database password,
 // prints no value. Ownership is recorded (the test does not run as root).
@@ -84,6 +84,67 @@ describe('init (bootstrap volume)', () => {
       S3_SECRET_KEY: 'secret-from-env',
     })
     expect(mode('postgres-password')).toBe(0o640)
+  })
+
+  it('keeps a replaced value in <file>.prev (latest only, same mode and owner) and says so without the value', () => {
+    run()
+    const firstKey = read('core/master-key')
+    const firstPg = read('postgres-password')
+    const k2 = Buffer.alloc(32, 2).toString('base64')
+    logs = []
+    run({ YODA_MASTER_KEY: k2, POSTGRES_PASSWORD: 'pg-two' })
+    expect(read('core/master-key')).toBe(k2)
+    expect(read('core/master-key.prev')).toBe(firstKey)
+    expect(mode('core/master-key.prev')).toBe(0o600)
+    expect(owners.get('core/master-key.prev')).toBe(`${CORE_UID}:${CORE_UID}`)
+    expect(read('postgres-password.prev')).toBe(firstPg)
+    expect(mode('postgres-password.prev')).toBe(0o640)
+    expect(owners.get('postgres-password.prev')).toBe(`0:${BOOTSTRAP_GID}`)
+    expect(logs).toContain('init: core/master-key replaced by YODA_MASTER_KEY; the previous value is kept in core/master-key.prev')
+    for (const v of [firstKey, k2, firstPg, 'pg-two']) expect(logs.join('\n')).not.toContain(v)
+    // Same env again: nothing replaced, the prev stays. A third value keeps only the latest prev.
+    logs = []
+    run({ YODA_MASTER_KEY: k2, POSTGRES_PASSWORD: 'pg-two' })
+    expect(logs.some((l) => l.includes('replaced'))).toBe(false)
+    expect(read('core/master-key.prev')).toBe(firstKey)
+    run({ YODA_MASTER_KEY: k2, POSTGRES_PASSWORD: 'pg-three' })
+    expect(read('postgres-password.prev')).toBe('pg-two')
+    // Nothing to keep on a fresh install from env.
+    rmSync(dir, { recursive: true })
+    run({ POSTGRES_PASSWORD: 'pg-env' })
+    expect(existsSync(join(dir, 'postgres-password.prev'))).toBe(false)
+  })
+
+  it('treats a whitespace-only POSTGRES_PASSWORD as unset for the refusal', () => {
+    writeFileSync(join(pgdata, 'PG_VERSION'), '17\n')
+    expect(() => run({ POSTGRES_PASSWORD: '   ' })).toThrow(/password is unknown/)
+  })
+
+  it('refuses a symlink or a directory where a value file belongs', () => {
+    run()
+    const target = join(root, 'elsewhere')
+    writeFileSync(target, 'x')
+    rmSync(join(dir, 's3-secret-key'))
+    symlinkSync(target, join(dir, 's3-secret-key'))
+    expect(() => run()).toThrow('init: s3-secret-key is not a regular file; remove it and run init again')
+    expect(readFileSync(target, 'utf8')).toBe('x')
+    rmSync(join(dir, 's3-secret-key'))
+    symlinkSync(target, join(dir, 'core/master-key.prev'))
+    expect(() => run()).toThrow(/core\/master-key.prev is not a regular file/)
+  })
+
+  it('refuses a stored value of more than one line', () => {
+    run()
+    writeFileSync(join(dir, 's3-access-key'), 'ak\nDATABASE_URL=postgres://evil')
+    expect(() => run()).toThrow('init: s3-access-key holds more than one line; fix or remove it')
+  })
+
+  it('refuses a YODA_MASTER_KEY that is not base64 of 32 bytes, naming no value', () => {
+    for (const bad of ['not base64!', Buffer.alloc(16).toString('base64')]) {
+      expect(() => run({ YODA_MASTER_KEY: bad })).toThrow('init: YODA_MASTER_KEY must be base64 of 32 bytes (e.g. `openssl rand -base64 32`)')
+    }
+    expect(validMasterKey(Buffer.alloc(32, 9).toString('base64'))).toBe(true)
+    expect(validMasterKey(Buffer.alloc(32, 250).toString('base64url'))).toBe(true)
   })
 
   it('refuses when a database exists but its password is unknown, and writes nothing', () => {

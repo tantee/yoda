@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto'
-import { chmodSync, chownSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { chmodSync, chownSync, closeSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 /**
@@ -16,7 +16,8 @@ import { fileURLToPath } from 'node:url'
  *       master-key                 0600 1000:1000
  *
  * Per value: env set → written to the file (env wins; existing `.env` installs flow through unchanged); file
- * exists → kept; neither → generated. bootstrap.env is derived again on every run. It refuses (exit 1) when the
+ * exists → kept; neither → generated. An env value that replaces a different stored one keeps the old value in
+ * `<file>.prev` (the latest only), so a mistyped .env value never destroys the only copy of a key. bootstrap.env is derived again on every run. It refuses (exit 1) when the
  * Postgres data directory already holds a database but its password is unknown. Never prints a value.
  */
 
@@ -58,19 +59,76 @@ const defaultChown = (path: string, uid: number, gid: number) => {
   if (process.getuid?.() === 0) chownSync(path, uid, gid)
 }
 
-function readValue(path: string): string | null {
-  if (!existsSync(path)) return null
+/** The path's type without following a link: null when it does not exist. */
+function kind(path: string): 'file' | 'dir' | 'other' | null {
+  try {
+    const st = lstatSync(path)
+    return st.isFile() ? 'file' : st.isDirectory() ? 'dir' : 'other'
+  } catch (err) {
+    if ((err as { code?: string }).code === 'ENOENT') return null
+    throw err
+  }
+}
+
+/** A target must be a regular file (or absent): a symlink could point the root-run init anywhere. */
+function checkFile(path: string, name: string): void {
+  const k = kind(path)
+  if (k !== null && k !== 'file') throw new InitRefusedError(`init: ${name} is not a regular file; remove it and run init again`)
+}
+
+function checkDir(path: string, name: string): void {
+  const k = kind(path)
+  if (k !== null && k !== 'dir') throw new InitRefusedError(`init: ${name} is not a directory; remove it and run init again`)
+}
+
+/** A stored single-line value, trimmed; null when absent or empty. More than one line is refused. */
+function readValue(path: string, name: string): string | null {
+  checkFile(path, name)
+  if (kind(path) === null) return null
   const v = readFileSync(path, 'utf8').trim()
+  if (/[\r\n]/.test(v)) throw new InitRefusedError(`init: ${name} holds more than one line; fix or remove it`)
   return v || null
 }
 
-/** Atomic write (temp file + rename) with the mode and owner set before the file appears. */
+function fsyncDir(dir: string): void {
+  try {
+    const fd = openSync(dir, 'r')
+    try {
+      fsyncSync(fd)
+    } finally {
+      closeSync(fd)
+    }
+  } catch {
+    // Not every platform syncs a directory; the rename is still atomic.
+  }
+}
+
+/**
+ * Atomic, durable write: a temp file with the mode and owner set, flushed, renamed over the target, then the
+ * directory flushed, so a power cut leaves the old value or the new one, never an empty file.
+ */
 function writeValue(path: string, value: string, mode: number, own: (p: string) => void): void {
   const tmp = `${path}.tmp`
-  writeFileSync(tmp, value, { mode })
+  rmSync(tmp, { force: true })
+  const fd = openSync(tmp, 'wx', mode)
+  try {
+    writeSync(fd, value)
+    fsyncSync(fd)
+  } finally {
+    closeSync(fd)
+  }
   chmodSync(tmp, mode)
   own(tmp)
   renameSync(tmp, path)
+  fsyncDir(dirname(path))
+}
+
+const BASE64 = /^[A-Za-z0-9+/]+={0,2}$|^[A-Za-z0-9_-]+$/
+
+/** The master key as core reads it (settings/crypto.ts loadMasterKey): base64 or base64url of 32 bytes. */
+export function validMasterKey(raw: string): boolean {
+  if (!BASE64.test(raw)) return false
+  return Buffer.from(raw, raw.includes('-') || raw.includes('_') ? 'base64url' : 'base64').length === 32
 }
 
 export function runInit(opts: InitOptions): { generated: string[]; fromEnv: string[]; kept: string[] } {
@@ -82,8 +140,10 @@ export function runInit(opts: InitOptions): { generated: string[]; fromEnv: stri
   const result = { generated: [] as string[], fromEnv: [] as string[], kept: [] as string[] }
 
   // 3.3: a database whose password nobody knows. Generating one would lock core out of it for good.
+  checkDir(dir, dir)
+  checkDir(core, 'core/')
   const pgPasswordFile = join(dir, 'postgres-password')
-  if (opts.pgdata && existsSync(join(opts.pgdata, 'PG_VERSION')) && !env.POSTGRES_PASSWORD && !readValue(pgPasswordFile)) {
+  if (opts.pgdata && kind(join(opts.pgdata, 'PG_VERSION')) !== null && !env.POSTGRES_PASSWORD?.trim() && !readValue(pgPasswordFile, 'postgres-password')) {
     throw new InitRefusedError(
       'init: an existing database was found but its password is unknown; restore /var/lib/yoda from your recovery kit or set POSTGRES_PASSWORD',
     )
@@ -93,6 +153,10 @@ export function runInit(opts: InitOptions): { generated: string[]; fromEnv: stri
     if (['POSTGRES_PASSWORD', 'S3_ACCESS_KEY', 'S3_SECRET_KEY', 'YODA_MASTER_KEY', 'POSTGRES_USER', 'POSTGRES_DB'].includes(k) && v && /[\r\n]/.test(v)) {
       throw new InitRefusedError(`init: ${k} must be a single line`)
     }
+  }
+  const envKey = env.YODA_MASTER_KEY?.trim()
+  if (envKey && !validMasterKey(envKey)) {
+    throw new InitRefusedError('init: YODA_MASTER_KEY must be base64 of 32 bytes (e.g. `openssl rand -base64 32`)')
   }
 
   mkdirSync(dir, { recursive: true })
@@ -113,9 +177,15 @@ export function runInit(opts: InitOptions): { generated: string[]; fromEnv: stri
   for (const s of secrets) {
     const path = join(dir, s.file)
     const own = (p: string) => chown(p, s.uid, s.gid)
-    const current = readValue(path)
+    checkFile(`${path}.prev`, `${s.file}.prev`)
+    const current = readValue(path, s.file)
     const fromEnv = env[s.envName]?.trim()
     if (fromEnv) {
+      if (current && current !== fromEnv) {
+        // Keep what is being replaced (the latest only): a wrong .env value must not destroy the only copy.
+        writeValue(`${path}.prev`, current, s.mode, own)
+        log(`init: ${s.file} replaced by ${s.envName}; the previous value is kept in ${s.file}.prev`)
+      }
       if (current !== fromEnv) writeValue(path, fromEnv, s.mode, own)
       values[s.envName] = fromEnv
       result.fromEnv.push(s.file)
@@ -135,7 +205,7 @@ export function runInit(opts: InitOptions): { generated: string[]; fromEnv: stri
   }
 
   const idPath = join(dir, 'install-id')
-  if (!readValue(idPath)) {
+  if (!readValue(idPath, 'install-id')) {
     writeValue(idPath, random.uuid(), 0o644, (p) => chown(p, 0, 0))
     log('init: generated install-id')
   }
@@ -151,6 +221,7 @@ export function runInit(opts: InitOptions): { generated: string[]; fromEnv: stri
     `S3_SECRET_KEY=${values.S3_SECRET_KEY}`,
     '',
   ]
+  checkFile(join(dir, 'bootstrap.env'), 'bootstrap.env')
   writeValue(join(dir, 'bootstrap.env'), lines.join('\n'), 0o640, (p) => chown(p, 0, BOOTSTRAP_GID))
   log('init: bootstrap volume ready')
   return result

@@ -2,7 +2,7 @@ import { PublicConfig, type SettingKey } from '@yoda/shared'
 import { describe, expect, it } from 'vitest'
 import { buildApp, type AppDeps } from '../src/app.js'
 import type { Db } from '../src/db/client.js'
-import { buildPublicConfig, keycloakFromIssuer, keycloakMismatch, setupState } from '../src/routes/public-config.js'
+import { buildPublicConfig, etagMatches, funModeCache, keycloakFromIssuer, keycloakMismatch, setupState } from '../src/routes/public-config.js'
 import type { SettingsStore } from '../src/settings/store.js'
 import { localJwks, signToken } from './jwt.js'
 import { testConfig } from './helpers.js'
@@ -72,6 +72,40 @@ describe('public config helpers', () => {
   })
 })
 
+describe('public config caching', () => {
+  it('reads fun mode at most once per TTL, and does not cache a failure', async () => {
+    let t = 0
+    let calls = 0
+    let fail = false
+    const read = async () => {
+      calls++
+      if (fail) throw new Error('down')
+      return true
+    }
+    const fun = funModeCache(read, { ttlMs: 5000, now: () => t })
+    const db = {} as Db
+    expect(await fun(db)).toBe(true)
+    t = 4999
+    expect(await fun(db)).toBe(true)
+    expect(calls).toBe(1)
+    t = 5000
+    fail = true
+    expect(await fun(db)).toBe(false)
+    expect(await fun(db)).toBe(false)
+    expect(calls).toBe(3)
+  })
+
+  it('matches If-None-Match lists, weak tags and *', () => {
+    const tag = '"abc"'
+    expect(etagMatches('"abc"', tag)).toBe(true)
+    expect(etagMatches('W/"abc"', tag)).toBe(true)
+    expect(etagMatches('"x", W/"abc" ', tag)).toBe(true)
+    expect(etagMatches('*', tag)).toBe(true)
+    expect(etagMatches('"abcd"', tag)).toBe(false)
+    expect(etagMatches(undefined, tag)).toBe(false)
+  })
+})
+
 describe('buildPublicConfig', () => {
   it('serves the org, links, sign-in and setup state from the settings', async () => {
     const settings = fakeSettings(
@@ -116,7 +150,7 @@ describe('GET /public-config', () => {
     const body = PublicConfig.parse(res.json())
     expect(body).toMatchObject({ setup: 'done', org: { name: 'Example hospital' }, oidc: { realm: 'hospital' } })
     for (const v of [...Object.values(SECRETS), testConfig().s3SecretKey, testConfig().databaseUrl]) expect(res.body).not.toContain(v)
-    const again = await a.inject({ url: '/public-config', headers: { 'if-none-match': String(res.headers.etag) } })
+    const again = await a.inject({ url: '/public-config', headers: { 'if-none-match': `"other", W/${String(res.headers.etag)}` } })
     expect(again.statusCode).toBe(304)
     expect(again.body).toBe('')
     await a.close()

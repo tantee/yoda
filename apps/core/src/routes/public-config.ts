@@ -3,6 +3,7 @@ import { PublicConfig, settingDef, type SettingKey } from '@yoda/shared'
 import type { FastifyInstance } from 'fastify'
 import type { AppDeps } from '../app.js'
 import type { Config } from '../config.js'
+import type { Db } from '../db/client.js'
 import { VERSION } from '../version.js'
 import { funMode } from './admin.js'
 
@@ -17,6 +18,7 @@ export function keycloakFromIssuer(issuer: string | undefined): { url: string; r
  * issuer comes from env (an env-based install, even with no data yet), or in dev with YODA_DEV_SKIP_SETUP=true.
  * Without a settings store (tests), a configured issuer counts as done.
  */
+// Task 7: setup-mode gating (503 setup_required) must use this same function, so the portal and core agree.
 export function setupState(config: Pick<Config, 'oidcIssuer' | 'devSkipSetup'>, settings: AppDeps['settings']): 'required' | 'done' {
   if (config.devSkipSetup) return 'done'
   if (!settings) return config.oidcIssuer ? 'done' : 'required'
@@ -51,16 +53,40 @@ function value(settings: AppDeps['settings'], key: PortalKey): string | null {
 
 type PortalKey = Extract<SettingKey, 'org.name' | 'org.nameEn' | 'org.line' | 'org.defaultLocale' | 'org.runnerDocsUrl' | 'line.addFriendUrl'>
 
+/**
+ * Fun mode for an unauthenticated route, read from the database at most once per `ttlMs` (an anonymous caller
+ * cannot make every request a query). A failed read counts as off and is not cached.
+ */
+export function funModeCache(read: (db: Db) => Promise<boolean> = funMode, opts: { ttlMs?: number; now?: () => number } = {}) {
+  const ttl = opts.ttlMs ?? 5000
+  const now = opts.now ?? Date.now
+  let cached: { value: boolean; at: number } | null = null
+  return async (db: Db): Promise<boolean> => {
+    if (cached && now() - cached.at < ttl) return cached.value
+    try {
+      cached = { value: await read(db), at: now() }
+      return cached.value
+    } catch {
+      return false
+    }
+  }
+}
+
+/** True when an If-None-Match header (a list, weak or strong tags, or `*`) matches the entity tag. */
+export function etagMatches(header: string | undefined, etag: string): boolean {
+  if (!header) return false
+  const bare = (t: string) => t.trim().replace(/^W\//, '')
+  return header.split(',').some((t) => t.trim() === '*' || bare(t) === bare(etag))
+}
+
 /** The public config from the current settings snapshot. Fun mode unknown (database down) counts as off. */
-export async function buildPublicConfig(deps: Pick<AppDeps, 'config' | 'settings' | 'db'>): Promise<PublicConfig> {
+export async function buildPublicConfig(
+  deps: Pick<AppDeps, 'config' | 'settings' | 'db'>,
+  readFunMode: (db: Db) => Promise<boolean> = funModeCache(),
+): Promise<PublicConfig> {
   const config = deps.config
   const kc = keycloakFromIssuer(config.oidcIssuer)
-  let fun = false
-  try {
-    fun = await funMode(deps.db)
-  } catch {
-    // off
-  }
+  const fun = await readFunMode(deps.db)
   const s = deps.settings
   return PublicConfig.parse({
     oidc: kc ? { ...kc, clientId: config.oidcClientId } : null,
@@ -84,11 +110,12 @@ export async function buildPublicConfig(deps: Pick<AppDeps, 'config' | 'settings
  * use (`no-cache` with an ETag), so a just-finished setup is never hidden behind a cached `setup: 'required'`.
  */
 export function publicConfigRoutes(app: FastifyInstance): void {
+  const fun = funModeCache()
   app.get('/public-config', { config: { public: true } }, async (request, reply) => {
-    const body = JSON.stringify(await buildPublicConfig(app.deps))
+    const body = JSON.stringify(await buildPublicConfig(app.deps, fun))
     const etag = `"${createHash('sha256').update(body).digest('base64url').slice(0, 27)}"`
     reply.header('cache-control', 'no-cache').header('etag', etag)
-    if (request.headers['if-none-match'] === etag) return reply.status(304).send()
+    if (etagMatches(request.headers['if-none-match'], etag)) return reply.status(304).send()
     return reply.type('application/json; charset=utf-8').send(body)
   })
 }

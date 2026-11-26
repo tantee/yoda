@@ -19,3 +19,12 @@ export function sessionEnded(kc: SessionTokens, nowMs = Date.now()): boolean {
   if (!exp) return false
   return exp - Math.ceil(nowMs / 1000) + (kc.timeSkew ?? 0) < SKEW_SECONDS
 }
+
+/**
+ * The Keycloak client, or `not_signed_in` when there is none: /setup, /recovery, the setup redirect and the boot
+ * error screen run without one (plugins/keycloak.client.ts), and nothing there may call the signed-in API.
+ */
+export function requireKeycloak<T>(kc: T | null | undefined): T {
+  if (!kc) throw new Error('not_signed_in')
+  return kc
+}
