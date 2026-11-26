@@ -835,7 +835,9 @@ export const settings = pgTable(
 /**
  * Every settings write, test and security event, kept forever (D10). Append-only: a trigger (migration 0022)
  * rejects UPDATE and DELETE, except the `on delete set null` of `actor_person`. Secrets are never stored, only
- * HMAC fingerprints of the old and new value.
+ * HMAC fingerprints of the old and new value. TRUNCATE fires no row trigger, so it bypasses this (the tests'
+ * resetDb relies on that); it needs table ownership, which the app never uses for it. A database owner can
+ * always drop the trigger: append-only guards against the application, not against the DBA.
  */
 export const settingsAudit = pgTable(
   'settings_audit',

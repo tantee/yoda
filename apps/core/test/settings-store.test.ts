@@ -1,4 +1,5 @@
 import { SETTING_KEYS, byEnvName, settingDef } from '@yoda/shared'
+import { readFileSync } from 'node:fs'
 import { eq, sql } from 'drizzle-orm'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ZodError } from 'zod'
@@ -246,6 +247,44 @@ describe('SettingsStore', () => {
       }
     })
 
+    it('a key used once and then missing, with no stored secrets, is not recovery (a canary alone does not force it)', async () => {
+      await open()
+      const db = await testDb()
+      expect((await db.select().from(setupState))[0]!.keyCanary).toBeInstanceOf(Buffer)
+      expect((await open({}, NO_KEY)).recovery).toBe(false)
+      await (await open()).set('smtp.password', PASSWORD, admin)
+      expect((await open({}, NO_KEY)).recovery).toBe(true)
+    })
+
+    it('forced recovery mode is recovery whatever the key', async () => {
+      await open()
+      const db = await testDb()
+      await db.update(setupState).set({ recoveryMode: true })
+      expect((await open()).recovery).toBe(true)
+      expect((await open({}, NO_KEY)).recovery).toBe(true)
+    })
+
+    it('shows no hint for bootstrap-only secrets', async () => {
+      const s = await open({ S3_SECRET_KEY: 'placeholder-rustfs-secret-key-0123', DATABASE_URL: 'postgres://u:placeholder-password-1234@db/yoda' })
+      expect(s.info('storage.s3SecretKey')).toMatchObject({ isSet: true, hint: null })
+      expect(s.info('boot.databaseUrl')).toMatchObject({ isSet: true, hint: null })
+    })
+
+    it('a non-string secret is a validation error', async () => {
+      const s = await open()
+      await expect(s.set('smtp.password', 12345678 as never, admin)).rejects.toBeInstanceOf(ZodError)
+      await expect(s.set('smtp.password', { v: 'x' } as never, admin)).rejects.toBeInstanceOf(ZodError)
+    })
+
+    it('importFromEnv refreshes the snapshot', async () => {
+      const s = await open()
+      const db = await testDb()
+      await db.insert(settings).values({ key: 'smtp.from', value: 'old@example.org', source: 'ui' })
+      expect(s.get('smtp.from')).toBeUndefined()
+      await s.importFromEnv()
+      expect(s.get('smtp.from')).toBe('old@example.org')
+    })
+
     it('a malformed key is recovery', async () => {
       const s = await open({}, { status: 'malformed', reason: 'YODA_MASTER_KEY: not base64' })
       expect(s.keyStatus).toBe('malformed')
@@ -395,6 +434,49 @@ describe('SettingsStore', () => {
 
 describe('registry and envSchema agree', () => {
   const core = SETTING_KEYS.map(settingDef).filter((d) => d.scope === 'core' && d.envName)
+
+  it('the registry accepts every value envSchema accepts (.env.example and edge values)', () => {
+    const example = readFileSync(new URL('../../../.env.example', import.meta.url), 'utf8')
+    const samples: [string, string][] = [...example.matchAll(/^([A-Z][A-Z0-9_]*)=(.*)$/gm)].map((m) => [m[1]!, m[2]!])
+    samples.push(
+      ['BOOTSTRAP_ADMINS', ' somchai , dev1 ,, '],
+      ['BOOTSTRAP_ADMINS', ','],
+      ['OIDC_ISSUER', 'https://sso.example.org/realms/yoda/'],
+      ['GITLAB_URL', 'https://gitlab.example.org//'],
+      ['PORTAL_URL', 'http://10.0.0.5:3000/'],
+      ['OPENAI_BASE_URL', 'https://llm.example.org/v1/'],
+      ['TELEGRAM_BOT_USERNAME', '@yoda_demo_bot'],
+      ['TELEGRAM_BOT_USERNAME', 'yoda_demo_bot'],
+      ['STAFF_GROUP', ' /it-dev '],
+      ['SMTP_HOST', ' smtp.example.org'],
+      ['SMTP_USER', ' '],
+      ['MAIL_FROM', 'Yoda <yoda@example.org>'],
+      ['ANTHROPIC_API_KEY', ' x '],
+      ['SMTP_PORT', ' 465 '],
+      ['AI_WORKERS', '4.0'],
+      ['RUNNER_LEASE_SECONDS', '86400'],
+      ['PORT', '0'],
+      ['AI_EMBEDDING_MODEL', 'openai:text-embedding-3-small'],
+      ['GITLAB_WEBHOOK_SECRET', ' '.repeat(16)],
+      ['TELEGRAM_WEBHOOK_SECRET', 'a'.repeat(256)],
+      ['DATABASE_URL', 'postgres://yoda:yoda@localhost:5432/yoda'],
+      ['S3_ENDPOINT', 'http://rustfs:9000'],
+      ['YODA_SETTINGS_IMPORT', 'false'],
+      ['YODA_MASTER_KEY_FILE', '/run/yoda/core/master-key'],
+    )
+    const coreNames = new Set(core.map((d) => d.envName!))
+    const mismatches: string[] = []
+    let checked = 0
+    for (const [name, value] of samples) {
+      // Empty means unset to both (the store skips it; envSchema's optional() does too).
+      if (!coreNames.has(name) || value === '') continue
+      if (!envSchema.shape[name as keyof typeof envSchema.shape].safeParse(value).success) continue
+      checked++
+      if (!byEnvName(name)!.schema.safeParse(value).success) mismatches.push(`${name}=${JSON.stringify(value)}`)
+    }
+    expect(checked).toBeGreaterThan(40)
+    expect(mismatches).toEqual([])
+  })
 
   it('on every default', () => {
     for (const d of core) {

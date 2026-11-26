@@ -12,9 +12,11 @@ import { createPgBossQueue } from './jobs/queue.js'
 import { GitLabClient } from './gitlab/client.js'
 import { seedTemplates } from './workflow/seed.js'
 import { createMailTransport, emailConfigured } from './notifications/channels/email.js'
-import { loadMasterKey } from './settings/crypto.js'
+import { takeMasterKey } from './settings/crypto.js'
 import { SettingsStore } from './settings/store.js'
 
+// Read the master key first and drop YODA_MASTER_KEY from process.env, so it does not linger there.
+const masterKey = takeMasterKey(process.env)
 const config = loadConfig(process.env)
 const db = createDb(config.databaseUrl)
 // Dev and a plain `docker run` migrate here; production compose sets MIGRATE_ON_START=false and runs the
@@ -26,7 +28,7 @@ if (config.migrateOnStart) {
 await seedTemplates(db)
 // Imports env into the settings table (D4) and checks the master key; a missing or wrong key is a recovery
 // state shown on /health, not a crash. Consumers still read `config` for now.
-const settings = await SettingsStore.open({ db, env: process.env, masterKey: loadMasterKey(process.env) })
+const settings = await SettingsStore.open({ db, env: process.env, masterKey })
 if (settings.recovery) console.warn(`settings: recovery state (master key ${settings.keyStatus}); stored secrets unavailable`)
 const jwks = remoteJwks(config)
 const storage = await createS3Storage(config)

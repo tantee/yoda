@@ -1,10 +1,14 @@
 import { createCipheriv, createDecipheriv, createHash, createHmac, hkdfSync, randomBytes } from 'node:crypto'
-import { readFileSync } from 'node:fs'
+import { readFileSync, statSync } from 'node:fs'
 
 /**
  * Envelope encryption for secret settings (installer proposal §3.5). Each secret is AES-256-GCM encrypted under
  * its own random data key; the data key is wrapped with the master key (AES-256-GCM, its own nonce). The setting
  * key is the AAD of both, so a ciphertext copied onto another key does not decrypt. Errors name the key id only.
+ *
+ * The row version is deliberately not in the AAD: someone with write access to the database could put back an
+ * older ciphertext of the same key (a rollback to a previous value) undetected. Database write access is trusted
+ * here (it could equally rewrite non-secret settings); the AAD only stops moving a secret onto another key.
  */
 
 export type MasterKey = { id: string; key: Buffer }
@@ -123,7 +127,8 @@ export function fingerprint(mk: MasterKey, settingKey: string, value: string): s
 }
 
 export type MasterKeyLoad =
-  | { status: 'ok'; key: MasterKey }
+  /** `warning`: the key file is readable by group or others (it should be 0600 or 0400). */
+  | { status: 'ok'; key: MasterKey; warning?: string }
   | { status: 'missing' | 'malformed'; reason: string }
 
 const BASE64 = /^[A-Za-z0-9+/]+={0,2}$|^[A-Za-z0-9_-]+$/
@@ -135,10 +140,14 @@ const BASE64 = /^[A-Za-z0-9+/]+={0,2}$|^[A-Za-z0-9_-]+$/
 export function loadMasterKey(env: NodeJS.ProcessEnv, readFile: (path: string) => string = (p) => readFileSync(p, 'utf8')): MasterKeyLoad {
   let raw = env.YODA_MASTER_KEY?.trim()
   let from = 'YODA_MASTER_KEY'
+  let warning: string | undefined
   if (!raw && env.YODA_MASTER_KEY_FILE) {
     from = 'YODA_MASTER_KEY_FILE'
     try {
       raw = readFile(env.YODA_MASTER_KEY_FILE).trim()
+      if ((statSync(env.YODA_MASTER_KEY_FILE).mode & 0o077) !== 0) {
+        warning = 'YODA_MASTER_KEY_FILE is readable by group or others; make it 0600'
+      }
     } catch (err) {
       const code = (err as { code?: string }).code ?? 'read_error'
       return { status: 'missing', reason: `${from}: ${code}` }
@@ -148,5 +157,15 @@ export function loadMasterKey(env: NodeJS.ProcessEnv, readFile: (path: string) =
   if (!BASE64.test(raw)) return { status: 'malformed', reason: `${from}: not base64` }
   const bytes = Buffer.from(raw, raw.includes('-') || raw.includes('_') ? 'base64url' : 'base64')
   if (bytes.length !== 32) return { status: 'malformed', reason: `${from}: must decode to 32 bytes` }
-  return { status: 'ok', key: masterKey(bytes) }
+  return { status: 'ok', key: masterKey(bytes), ...(warning ? { warning } : {}) }
+}
+
+/**
+ * `loadMasterKey`, then removes YODA_MASTER_KEY from `env` (server.ts passes process.env), so the key does not
+ * linger where child processes, crash reports or a later env dump could see it.
+ */
+export function takeMasterKey(env: NodeJS.ProcessEnv): MasterKeyLoad {
+  const r = loadMasterKey(env)
+  delete env.YODA_MASTER_KEY
+  return r
 }

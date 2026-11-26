@@ -11,6 +11,7 @@ import {
   type SettingWriteSource,
 } from '@yoda/shared'
 import { and, eq, isNotNull, isNull, ne, sql } from 'drizzle-orm'
+import { ZodError } from 'zod'
 import type { Db, Tx } from '../db/client.js'
 import { settings, settingsAudit, setupState } from '../db/schema.js'
 import {
@@ -143,7 +144,6 @@ export class SettingsStore {
   private rows = new Map<SettingKey, Stored>()
   private envValues = new Map<SettingKey, unknown>()
   private envSet = new Set<SettingKey>()
-  private hasCanary = false
   private recoveryMode = false
   private storedSecrets = 0
   private state: { installId: string; setupDone: boolean } = { installId: '', setupDone: false }
@@ -165,11 +165,11 @@ export class SettingsStore {
     const mk = opts.masterKey.status === 'ok' ? opts.masterKey.key : null
     const status: KeyStatus = opts.masterKey.status
     if (opts.masterKey.status !== 'ok') log.warn({ reason: opts.masterKey.reason }, `master key ${opts.masterKey.status}`)
+    else if (opts.masterKey.warning) log.warn({ keyId: opts.masterKey.key.id }, opts.masterKey.warning)
     const store = new SettingsStore(opts.db, opts.env, mk, status, log)
     store.parseEnv()
     await store.checkKey()
     await store.importFromEnv()
-    await store.load()
     await store.markUpgrade()
     return store
   }
@@ -188,12 +188,12 @@ export class SettingsStore {
   }
 
   /**
-   * Recovery state (7.4): the key is wrong or malformed, or missing while the database holds secrets or a
-   * canary, or an admin forced it.
+   * Recovery state (7.4): the key is wrong or malformed, or missing while the database holds secrets, or an
+   * admin forced it. A canary alone does not: with nothing encrypted, there is nothing to recover.
    */
   get recovery(): boolean {
     if (this.recoveryMode || this.status === 'mismatch' || this.status === 'malformed') return true
-    return this.status === 'missing' && (this.hasCanary || this.storedSecrets > 0)
+    return this.status === 'missing' && this.storedSecrets > 0
   }
 
   get setupDone(): boolean {
@@ -240,8 +240,9 @@ export class SettingsStore {
       writeSource: s?.source ?? null,
     }
     if (d.secret) {
+      // Bootstrap-only secrets (database URL, S3 keys, ...) never show even a hint.
       const env = this.envValues.get(key)
-      info.hint = inEnv ? (typeof env === 'string' ? secretHint(env) : null) : (s?.hint ?? null)
+      info.hint = d.bootstrapOnly ? null : inEnv ? (typeof env === 'string' ? secretHint(env) : null) : (s?.hint ?? null)
     } else if (source !== 'unset') {
       info.value = this.get(key)
     }
@@ -255,9 +256,12 @@ export class SettingsStore {
   /** Validates, writes and audits one setting; refuses env-locked, bootstrap-only and read-only settings. */
   async set(key: SettingKey, input: unknown, actor: SettingActor, opts: { expectedVersion?: number } = {}): Promise<SettingInfo> {
     const d = this.writable(key)
+    // Every secret schema is a string schema, so a non-string secret is a ZodError (400) here.
     const value: unknown = d.schema.parse(input)
+    if (d.secret && typeof value !== 'string') {
+      throw new ZodError([{ code: 'custom', path: [], message: 'secret must be a string' }])
+    }
     const mk = d.secret ? this.requireKey(key) : null
-    if (d.secret && typeof value !== 'string') throw new Error(`secret ${key} must be a string`)
     await this.db.transaction(async (tx) => {
       const cur = await this.lockRow(tx, key, opts.expectedVersion)
       await this.write(tx, d, value, actor, 'set', cur, mk)
@@ -301,7 +305,6 @@ export class SettingsStore {
     const [st] = await this.db.select().from(setupState).where(eq(setupState.id, 1))
     this.state = { installId: st?.installId ?? '', setupDone: !!st?.setupCompletedAt }
     this.recoveryMode = !!st?.recoveryMode
-    this.hasCanary = !!st?.keyCanary
   }
 
   private async reload(key: SettingKey): Promise<void> {
@@ -414,6 +417,7 @@ export class SettingsStore {
   /**
    * §6.2: every env value of a non-bootstrap setting is copied into the database (source `import`) when it
    * differs from the stored one. Secrets need a good master key and are skipped with YODA_SETTINGS_IMPORT=false.
+   * Ends by reloading the snapshot, so the store reflects the database afterwards.
    */
   async importFromEnv(): Promise<SettingKey[]> {
     const importSecrets = this.envValues.get('security.settingsImport') !== false && this.status === 'ok'
@@ -421,8 +425,11 @@ export class SettingsStore {
       const d = settingDef(k)
       return this.envSet.has(k) && !d.bootstrapOnly && (!d.secret || importSecrets)
     })
-    if (!keys.length) return []
     const changed: SettingKey[] = []
+    if (!keys.length) {
+      await this.load()
+      return changed
+    }
     await this.db.transaction(async (tx) => {
       await tx.execute(IMPORT_LOCK)
       for (const key of keys) {
@@ -435,6 +442,7 @@ export class SettingsStore {
       }
     })
     if (changed.length) this.log.info({ keys: changed }, 'imported from env')
+    await this.load()
     return changed
   }
 

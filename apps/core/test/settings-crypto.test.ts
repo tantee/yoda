@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -12,6 +12,7 @@ import {
   keyId,
   loadMasterKey,
   makeCanary,
+  takeMasterKey,
   masterKey,
 } from '../src/settings/crypto.js'
 
@@ -116,6 +117,25 @@ describe('loadMasterKey', () => {
     writeFileSync(file, `${b64}\n`)
     const r = loadMasterKey({ YODA_MASTER_KEY_FILE: file })
     expect(r.status).toBe('ok')
+  })
+
+  it('warns when the key file is readable by group or others', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'yoda-mk-'))
+    const file = join(dir, 'master-key')
+    writeFileSync(file, `${b64}\n`, { mode: 0o644 })
+    chmodSync(file, 0o644)
+    const loose = loadMasterKey({ YODA_MASTER_KEY_FILE: file })
+    expect(loose.status === 'ok' && loose.warning).toMatch(/readable by group or others/)
+    chmodSync(file, 0o600)
+    const tight = loadMasterKey({ YODA_MASTER_KEY_FILE: file })
+    expect(tight.status === 'ok' && tight.warning).toBeUndefined()
+  })
+
+  it('takeMasterKey removes YODA_MASTER_KEY from the environment after loading it', () => {
+    const env: NodeJS.ProcessEnv = { YODA_MASTER_KEY: b64, OTHER: 'x' }
+    const r = takeMasterKey(env)
+    expect(r.status).toBe('ok')
+    expect(env).toEqual({ OTHER: 'x' })
   })
 
   it('prefers YODA_MASTER_KEY over the file', () => {
