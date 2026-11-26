@@ -226,7 +226,7 @@ const source = (e: KnowledgeEntry) => t(`knowledge.sources.${e.sourceKind}`)
 
     <!-- Grouped by type, each group paged. -->
     <template v-else>
-      <v-card v-if="loadingAll && !shownGroups.length" class="mb-6"><SkeletonList :rows="4" /></v-card>
+      <v-card v-if="loadingAll && !shownGroups.length" class="mb-6"><SkeletonList :rows="4" quiet /></v-card>
       <EmptyState v-else-if="groupsEmpty" icon="mdi-book-open-page-variant-outline" :title="t('knowledge.empty')" data-testid="knowledge-empty">
         <v-btn color="primary" prepend-icon="mdi-plus" @click="open(null)">{{ t('knowledge.add') }}</v-btn>
       </EmptyState>

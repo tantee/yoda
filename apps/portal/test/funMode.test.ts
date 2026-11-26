@@ -227,6 +227,46 @@ describe('the gimmick stays on its own surfaces', () => {
       'app/pages/forbidden.vue forbidden': 'none',
     })
   })
+  it('skeleton captions only on whole-page loads: tabs and in-page sections are quiet', () => {
+    // Every SkeletonList / SkeletonDetail call site, by file (numbered when a file has several), quiet or not.
+    // A new call site fails here until it is classified.
+    const sites: Record<string, string> = {}
+    for (const f of files(join(root, 'app'), /\.vue$/)) {
+      const src = readFileSync(f, 'utf8')
+      let n = 0
+      for (const m of src.matchAll(/<(Skeleton(?:List|Detail))\b([^>]*)>/g)) {
+        n += 1
+        sites[`${f.slice(root.length)} ${m[1]}${n > 1 ? ` #${n}` : ''}`] = /(?:^|\s)quiet(?:\s|\/|=|$)/.test(m[2]!) ? 'quiet' : 'caption'
+      }
+    }
+    expect(sites).toEqual({
+      // whole-page loads: a caption in fun mode
+      'app/pages/todo/index.vue SkeletonList': 'caption',
+      'app/pages/todo/[id].vue SkeletonDetail': 'caption',
+      'app/pages/requests/index.vue SkeletonList': 'caption',
+      'app/pages/requests/[id].vue SkeletonDetail': 'caption',
+      'app/pages/projects/index.vue SkeletonList': 'caption',
+      'app/pages/projects/[id].vue SkeletonDetail': 'caption',
+      'app/pages/work-items/[id].vue SkeletonDetail': 'caption',
+      'app/pages/discussions/index.vue SkeletonList': 'caption',
+      'app/pages/discussions/[id].vue SkeletonDetail': 'caption',
+      'app/pages/agendas/index.vue SkeletonList': 'caption',
+      'app/pages/agendas/[id]/index.vue SkeletonDetail': 'caption',
+      'app/pages/answers.vue SkeletonList': 'caption',
+      'app/pages/chat.vue SkeletonList': 'caption',
+      'app/pages/runners.vue SkeletonList': 'caption',
+      'app/pages/settings/notifications.vue SkeletonList': 'caption',
+      'app/pages/admin/people.vue SkeletonList': 'caption',
+      'app/pages/admin/gitlab.vue SkeletonList': 'caption',
+      'app/pages/admin/notifications.vue SkeletonList': 'caption',
+      'app/pages/admin/ai.vue SkeletonList': 'caption',
+      // project tabs and in-page sections: quiet
+      'app/components/project/KnowledgeTab.vue SkeletonList': 'quiet',
+      'app/components/project/WorkItemsTab.vue SkeletonList': 'quiet',
+      'app/components/project/AiSettings.vue SkeletonList': 'quiet',
+      'app/pages/work-items/[id].vue SkeletonList #2': 'quiet',
+    })
+  })
   it('no fun line appears in core or shared code (notifications, emails, task data)', () => {
     const lines = ['th', 'en'].flatMap((l) => {
       const fun = locale(l).fun

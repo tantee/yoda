@@ -65,7 +65,7 @@ const steps = (w: WorkItem) => itemSteps(props.templates, w)
   <div data-testid="items-tab">
     <ErrorState v-if="error && !items" class="mb-4" data-testid="items-error" @retry="emit('retry')" />
     <v-alert v-else-if="error" type="error" variant="tonal" class="mb-4" data-testid="items-error">{{ error }}</v-alert>
-    <v-card v-if="!items && !error"><SkeletonList :rows="5" /></v-card>
+    <v-card v-if="!items && !error"><SkeletonList :rows="5" quiet /></v-card>
     <EmptyState
       v-else-if="items && !items.length"
       icon="mdi-clipboard-text-outline"
