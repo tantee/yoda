@@ -2,6 +2,7 @@ import type { Me } from '@yoda/shared'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { jwtVerify } from 'jose'
 import type { AppDeps } from '../app.js'
+import type { Config } from '../config.js'
 import { isStaff, TokenClaims, upsertPersonFromClaims } from './people.js'
 
 /** Thrown by guards / auth; mapped to `{ error }` bodies by the app error handler. */
@@ -74,17 +75,17 @@ export const gitlabUnavailable = () => new HttpError(502, { error: 'gitlab_unava
  * Verify the bearer token. Returns validated claims, or null for any failure
  * (missing header, bad signature, expired, wrong issuer, wrong client, missing claims).
  */
-async function verifyRequest(request: FastifyRequest, deps: AppDeps): Promise<TokenClaims | null> {
+async function verifyRequest(request: FastifyRequest, deps: Pick<AppDeps, 'jwks'>, config: Config): Promise<TokenClaims | null> {
   const header = request.headers.authorization
   const match = header?.match(/^Bearer\s+(\S+)$/i)
   if (!match) return null
   try {
     const { payload } = await jwtVerify(match[1], deps.jwks, {
-      issuer: deps.config.oidcIssuer,
+      issuer: config.oidcIssuer,
       algorithms: ['RS256'],
       requiredClaims: ['exp'],
     })
-    if (payload.azp !== deps.config.oidcClientId) return null
+    if (payload.azp !== config.oidcClientId) return null
     // Keycloak ID tokens share issuer/azp with access tokens; only accept access tokens.
     if (payload.typ !== undefined && payload.typ !== 'Bearer') return null
     const claims = TokenClaims.safeParse(payload)
@@ -105,9 +106,11 @@ export function registerAuth(app: FastifyInstance): void {
   app.addHook('onRequest', async (request) => {
     if (request.routeOptions.config?.public === true) return
     const { deps } = app
-    const claims = await verifyRequest(request, deps)
+    // One snapshot of the settings for the whole check (the issuer, client id and JWKS are swapped together).
+    const config = deps.config
+    const claims = await verifyRequest(request, { jwks: deps.jwks }, config)
     if (!claims) throw unauthorized()
-    const person = await upsertPersonFromClaims(deps.db, claims, deps.config)
+    const person = await upsertPersonFromClaims(deps.db, claims, config)
     request.tokenExp = claims.exp * 1000
     request.me = {
       id: person.id,
@@ -116,7 +119,7 @@ export function registerAuth(app: FastifyInstance): void {
       email: person.email,
       isAdmin: person.isAdmin,
       // Admins count as staff.
-      isStaff: person.isAdmin || isStaff(person, claims, deps.config.staffGroup),
+      isStaff: person.isAdmin || isStaff(person, claims, config.staffGroup),
     }
   })
 }

@@ -140,6 +140,12 @@ const consoleLog: SettingsLog = {
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 
+/** The NOTIFY channel other instances listen on (§5.3); tests pass their own, since NOTIFY is database-wide. */
+export const SETTINGS_CHANNEL = 'settings_changed'
+
+/** Restart-mode settings the database can change (bootstrap-only ones never come from it). */
+const RESTART_KEYS = SETTING_KEYS.filter((k) => settingDef(k).apply === 'restart' && !settingDef(k).bootstrapOnly)
+
 export class SettingsStore {
   private rows = new Map<SettingKey, Stored>()
   private envValues = new Map<SettingKey, unknown>()
@@ -147,31 +153,70 @@ export class SettingsStore {
   private recoveryMode = false
   private storedSecrets = 0
   private state: { installId: string; setupDone: boolean } = { installId: '', setupDone: false }
+  /** Restart-mode values as this process booted with them. */
+  private bootValues = new Map<SettingKey, unknown>()
+  private listeners = new Set<() => void>()
 
   private constructor(
-    private readonly db: Db,
+    /** Also the NOTIFY listener's connection (live.ts). */
+    readonly db: Db,
     private readonly env: NodeJS.ProcessEnv,
     private readonly mk: MasterKey | null,
     private status: KeyStatus,
     private readonly log: SettingsLog,
+    /** The NOTIFY channel; payloads carry key names only, never values. */
+    readonly channel: string,
   ) {}
 
   /**
    * Boot: check the master key against the canary (writing it on first use), parse env, import env into the
    * database (D4), load the snapshot, and mark an existing env-based install as set up (§6.5).
    */
-  static async open(opts: { db: Db; env: NodeJS.ProcessEnv; masterKey: MasterKeyLoad; log?: SettingsLog }): Promise<SettingsStore> {
+  static async open(opts: {
+    db: Db
+    env: NodeJS.ProcessEnv
+    masterKey: MasterKeyLoad
+    log?: SettingsLog
+    channel?: string
+  }): Promise<SettingsStore> {
     const log = opts.log ?? consoleLog
     const mk = opts.masterKey.status === 'ok' ? opts.masterKey.key : null
     const status: KeyStatus = opts.masterKey.status
     if (opts.masterKey.status !== 'ok') log.warn({ reason: opts.masterKey.reason }, `master key ${opts.masterKey.status}`)
     else if (opts.masterKey.warning) log.warn({ keyId: opts.masterKey.key.id }, opts.masterKey.warning)
-    const store = new SettingsStore(opts.db, opts.env, mk, status, log)
+    const store = new SettingsStore(opts.db, opts.env, mk, status, log, opts.channel ?? SETTINGS_CHANNEL)
     store.parseEnv()
     await store.checkKey()
     await store.importFromEnv()
     await store.markUpgrade()
+    for (const k of RESTART_KEYS) store.bootValues.set(k, store.get(k))
     return store
+  }
+
+  /** Called after every change to the snapshot (a write here, or a reload); returns the unsubscribe. */
+  onChange(fn: () => void): () => void {
+    this.listeners.add(fn)
+    return () => this.listeners.delete(fn)
+  }
+
+  private changed(): void {
+    for (const fn of this.listeners) {
+      try {
+        fn()
+      } catch (err) {
+        this.log.warn({ err: err instanceof Error ? err.name : 'error' }, 'settings change handler failed')
+      }
+    }
+  }
+
+  /** Restart-mode settings whose value differs from the one this process booted with (registry order). */
+  get restartRequiredKeys(): SettingKey[] {
+    return RESTART_KEYS.filter((k) => !same(this.bootValues.get(k), this.get(k)))
+  }
+
+  /** A restart-mode setting changed since boot: the running process still uses the old value (banner, §9). */
+  get restartRequired(): boolean {
+    return this.restartRequiredKeys.length > 0
   }
 
   get keyStatus(): KeyStatus {
@@ -202,6 +247,11 @@ export class SettingsStore {
 
   get installId(): string {
     return this.state.installId
+  }
+
+  /** The setting is set in env (and so locked there). */
+  fromEnv(key: SettingKey): boolean {
+    return this.envSet.has(key)
   }
 
   /** The resolved value; a stored secret that cannot be decrypted throws `SecretsUnavailableError`. */
@@ -265,6 +315,7 @@ export class SettingsStore {
     await this.db.transaction(async (tx) => {
       const cur = await this.lockRow(tx, key, opts.expectedVersion)
       await this.write(tx, d, value, actor, 'set', cur, mk)
+      await this.notify(tx, [key])
     })
     await this.reload(key)
     return this.info(key)
@@ -285,12 +336,22 @@ export class SettingsStore {
         newValue: null,
         newFp: null,
       })
+      await this.notify(tx, [key])
     })
     await this.reload(key)
     return this.info(key)
   }
 
-  /** Reads every row again (boot; Task 3's NOTIFY listener reloads through here). */
+  /**
+   * Tells every instance (this one too) which keys changed. Inside the write's transaction, so it is delivered on
+   * commit only and the listener reads committed rows. Key names only: the payload limit is ~8000 bytes, and a
+   * value (a secret above all) must never travel in it.
+   */
+  private async notify(tx: Tx, keys: SettingKey[]): Promise<void> {
+    await tx.execute(sql`select pg_notify(${this.channel}, ${JSON.stringify(keys)})`)
+  }
+
+  /** Reads every row again (boot, and the NOTIFY listener in live.ts on every notification and reconnect). */
   async load(): Promise<void> {
     const rows = await this.db.select().from(settings)
     const next = new Map<SettingKey, Stored>()
@@ -305,6 +366,7 @@ export class SettingsStore {
     const [st] = await this.db.select().from(setupState).where(eq(setupState.id, 1))
     this.state = { installId: st?.installId ?? '', setupDone: !!st?.setupCompletedAt }
     this.recoveryMode = !!st?.recoveryMode
+    this.changed()
   }
 
   private async reload(key: SettingKey): Promise<void> {
@@ -312,6 +374,7 @@ export class SettingsStore {
     const s = r ? this.decode(r) : undefined
     if (s) this.rows.set(key, s)
     else this.rows.delete(key)
+    this.changed()
   }
 
   /** A row as a snapshot entry; an unknown or invalid one is skipped with a warning (a newer release's row). */
@@ -440,6 +503,7 @@ export class SettingsStore {
         await this.write(tx, d, value, { ...SYSTEM, source: 'import' }, 'import', cur, d.secret ? this.mk : null)
         changed.push(key)
       }
+      if (changed.length) await this.notify(tx, changed)
     })
     if (changed.length) this.log.info({ keys: changed }, 'imported from env')
     await this.load()

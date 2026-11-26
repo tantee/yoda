@@ -162,6 +162,11 @@ Settings and secrets (installer proposal §3.5, §6):
 | `YODA_MASTER_KEY_FILE` | File holding the master key instead (the bootstrap volume); `YODA_MASTER_KEY` wins when both are set | optional | `/run/yoda/core/master-key` |
 | `YODA_SETTINGS_IMPORT` | `false` = env secrets are not copied into the database on start (other values still are) | optional (`true`) | `true` |
 
+A setting saved in the database applies without a restart, on every core instance: each one listens for
+`NOTIFY settings_changed` (key names only, never values) and reloads its settings, and reloads them again after
+any reconnect. That needs a session-pinned database connection, so a `DATABASE_URL` through PgBouncer in
+transaction mode breaks it. `AI_WORKERS` and `MCP_ENABLED` still need a restart: a change to either is flagged as restart-required.
+
 Sign-in (section 2):
 
 | Variable | Purpose | Required | Example |

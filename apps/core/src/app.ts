@@ -40,6 +40,10 @@ import { readiness } from './readiness.js'
 import { VERSION } from './version.js'
 
 export type AppDeps = {
+  /**
+   * The current settings, typed as Config. In server.ts this is a getter over the live snapshot (settings/live.ts),
+   * as are `jwks`, `gitlab` and `mailTransport`: read each once at the start of a call and keep the reference.
+   */
   config: Config
   db: Db
   jwks: JWTVerifyGetKey
@@ -52,8 +56,8 @@ export type AppDeps = {
   /** SMTP transport for the email channel (server.ts builds it when SMTP is configured; tests inject a fake). */
   mailTransport?: MailTransport
   /**
-   * Settings resolved env > database > default, with encrypted secrets (server.ts opens it at boot). Consumers
-   * still read `config`; the live switch-over is a later step. Optional so tests without it are unchanged.
+   * Settings resolved env > database > default, with encrypted secrets (server.ts opens it at boot); `config` is
+   * its snapshot. Optional so tests without it are unchanged.
    */
   settings?: SettingsStore
   /** Replaces the default upload hook (create the attachment's knowledge entry); tests use it to observe calls. */
