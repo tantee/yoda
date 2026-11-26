@@ -28,11 +28,11 @@ import { upsertPersonFromClaims } from '../auth/people.js'
 import { HttpError, invalidState, notFound } from '../auth/plugin.js'
 import type { Db, Tx } from '../db/client.js'
 import { localAdmins, people, setupState } from '../db/schema.js'
-import { firstAdmin, MasterKeyUnavailable, replaceRecoveryCodes, totpRequired } from '../local/break-glass.js'
+import { MasterKeyUnavailable, replaceRecoveryCodes, totpRequired } from '../local/break-glass.js'
 import { nowOf, secretsUnavailable, storeOf, takeLimit, whereFrom } from '../local/http.js'
 import { currentOidc, finishTestSignIn, OidcChangeFailed, startTestSignIn } from '../local/oidc-change.js'
 import { clearSessionCookie, isHttps, requireSession, revokeSessions, updateSessionData, type ActiveSession, type SessionData } from '../local/session.js'
-import { missingSteps, oidcHash, parseProgress, recoveryKitFilename, recoveryKitText, stepStates, type ProgressRecord } from '../local/setup-progress.js'
+import { claimHash, KIT_REISSUE_MS, missingSteps, oidcHash, parseProgress, recoveryKitFilename, recoveryKitText, stepStates, type ProgressRecord } from '../local/setup-progress.js'
 import { clearSetupToken } from '../local/setup-token.js'
 import { readiness } from '../readiness.js'
 import { RateLimiter } from '../settings/rate-limit.js'
@@ -123,6 +123,8 @@ export function setupWizardRoutes(app: FastifyInstance): void {
   }
 
   const oidcNow = (s: SettingsStore) => currentOidc(app.deps.config, s)
+  const staffGroupOf = (s: SettingsStore) => s.get('oidc.staffGroup') ?? app.deps.config.staffGroup
+  const sessionId = (sess: ActiveSession) => sess.row.idHash.toString('hex')
 
   async function readRecord(q: Db | Tx, forUpdate = false): Promise<{ installId: string; record: ProgressRecord }> {
     const base = q.select({ installId: setupState.installId, progress: setupState.setupProgress }).from(setupState).where(eq(setupState.id, 1))
@@ -144,20 +146,31 @@ export function setupWizardRoutes(app: FastifyInstance): void {
       organisation: s.info('org.name').isSet && (url === 'db' || url === 'env'),
       admin: !!admin,
       oidc: oidcHash(oidcNow(s)),
+      claim: claimHash(oidcNow(s), staffGroupOf(s)),
       claimedIsAdmin,
       record,
     })
     return { installId, record, admin, states }
   }
 
-  async function progress(request: FastifyRequest, s: SettingsStore): Promise<SetupProgress> {
+  /** Until when this session may have the kit issued again, or null. */
+  function reissueUntil(record: ProgressRecord, sess: ActiveSession): Date | null {
+    if (!record.kitDownloadedAt || record.kitSession !== sessionId(sess)) return null
+    const until = new Date(new Date(record.kitDownloadedAt).getTime() + KIT_REISSUE_MS)
+    return until > nowOf(app) ? until : null
+  }
+
+  async function progress(request: FastifyRequest, s: SettingsStore, sess: ActiveSession): Promise<SetupProgress> {
     const f = await facts(app.deps.db, s)
+    const totp = totpRequired(s, request.hostname)
     return {
       installId: f.installId,
       steps: f.states,
-      totpRequired: totpRequired(s, request.hostname),
+      totpRequired: totp,
       admin: f.admin ? { username: f.admin.username, totpEnabled: f.admin.totpEnabled } : null,
       kitDownloadedAt: f.record.kitDownloadedAt ?? null,
+      kitReissueUntil: reissueUntil(f.record, sess)?.toISOString() ?? null,
+      adminNeedsTotp: !!f.admin && !f.admin.totpEnabled && totp,
       claimed: f.record.claimed && f.states.claim === 'done' ? { username: f.record.claimed.username, at: f.record.claimed.at } : null,
       missing: missingSteps(f.states),
     }
@@ -174,17 +187,17 @@ export function setupWizardRoutes(app: FastifyInstance): void {
   // ── Progress ─────────────────────────────────────────────────────────────────────────────────────────────────
 
   app.get('/setup/progress', SETUP, async (request, reply): Promise<SetupProgress> => {
-    const { s } = await signed(request)
+    const { s, sess } = await signed(request)
     reply.header('cache-control', 'no-store')
-    return progress(request, s)
+    return progress(request, s, sess)
   })
 
   app.post('/setup/progress/step', SETUP, async (request): Promise<SetupProgress> => {
-    const { s } = await signed(request)
+    const { s, sess } = await signed(request)
     const body = SetupStepBody.parse(request.body)
     await patchProgress(app.deps.db, {}, { mark: { step: body.step, state: body.state } })
     await s.audit({ action: 'setup.step', actor: actorOf(request), newValue: { step: body.step, state: body.state } })
-    return progress(request, s)
+    return progress(request, s, sess)
   })
 
   // ── Settings (the admin settings API's rules, through the setup session) ─────────────────────────────────────
@@ -326,58 +339,76 @@ export function setupWizardRoutes(app: FastifyInstance): void {
   // ── Recovery kit (§4.2 step 9, D7) ───────────────────────────────────────────────────────────────────────────
 
   /**
-   * The master key and fresh break-glass recovery codes in one file, once per install: the download marker is set
-   * in the same transaction that replaces the codes, and a second call is refused (409 `kit_downloaded`). After
-   * setup the route is gone (404). Audited with the key id only.
+   * The master key and fresh break-glass recovery codes in one file, once per install. Under the `setup_state` row
+   * lock (the admin step takes it too): the first call sets the download marker and the session that made it; that
+   * same session may have the kit issued again for 10 minutes (a lost download, a reload), with new codes and the
+   * same key; anyone else, or later, gets 409 `kit_downloaded`. After setup the route is gone (404). The codes, the
+   * marker and the audit row (key id only) commit together.
    */
   app.post('/setup/recovery-kit', SETUP, async (request, reply): Promise<RecoveryKit> => {
-    const { s } = await signed(request)
-    const admin = await firstAdmin(app.deps.db)
-    if (!admin) throw invalidState('no_admin')
+    const { s, sess } = await signed(request)
     const masterKey = s.withKey((mk) => ({ id: mk.id, value: mk.key.toString('base64') }))
     if (!masterKey) throw secretsUnavailable()
     const now = nowOf(app)
-    let codes: string[]
+    let out: { codes: string[]; downloadedAt: string; reissued: boolean; installId: string; username: string }
     try {
-      codes = await app.deps.db.transaction(async (tx) => {
-        const claimed = await tx
-          .update(setupState)
-          .set({ setupProgress: sql`coalesce(${setupState.setupProgress}, '{}'::jsonb) || ${JSON.stringify({ kitDownloadedAt: now.toISOString() })}::jsonb` })
-          .where(and(eq(setupState.id, 1), isNull(setupState.setupCompletedAt), sql`${setupState.setupProgress}->>'kitDownloadedAt' is null`))
-          .returning({ id: setupState.id })
-        if (!claimed.length) throw invalidState('kit_downloaded')
-        return replaceRecoveryCodes(tx, s, admin.id)
+      out = await app.deps.db.transaction(async (tx) => {
+        const [row] = await tx
+          .select({ installId: setupState.installId, progress: setupState.setupProgress, completedAt: setupState.setupCompletedAt })
+          .from(setupState)
+          .where(eq(setupState.id, 1))
+          .for('update')
+        if (!row || row.completedAt) throw notFound()
+        // Read under the lock: an admin replaced meanwhile (it takes the same lock) is the one the codes are for.
+        const [admin] = await tx.select().from(localAdmins).orderBy(localAdmins.createdAt).limit(1)
+        if (!admin) throw invalidState('no_admin')
+        const record = parseProgress(row.progress)
+        let downloadedAt = now.toISOString()
+        const reissued = !!record.kitDownloadedAt
+        if (reissued) {
+          if (!reissueUntil(record, sess)) throw invalidState('kit_downloaded')
+          downloadedAt = record.kitDownloadedAt!
+        } else {
+          await patchProgress(tx, { kitDownloadedAt: downloadedAt, kitSession: sessionId(sess) })
+        }
+        const codes = await replaceRecoveryCodes(tx, s, admin.id)
+        await s.audit({ action: 'setup.recovery_kit', actor: actorOf(request), newValue: { keyId: masterKey.id, username: admin.username, reissue: reissued } }, tx)
+        return { codes, downloadedAt, reissued, installId: row.installId, username: admin.username }
       })
     } catch (err) {
       if (err instanceof MasterKeyUnavailable) throw secretsUnavailable()
       throw err
     }
-    const { installId } = await readRecord(app.deps.db)
-    await s.audit({ action: 'setup.recovery_kit', actor: actorOf(request), newValue: { keyId: masterKey.id, username: admin.username } })
     reply.header('cache-control', 'no-store')
+    reply.header('pragma', 'no-cache')
+    reply.header('x-content-type-options', 'nosniff')
     return {
-      filename: recoveryKitFilename(installId),
+      filename: recoveryKitFilename(out.installId),
       content: recoveryKitText({
-        installId,
+        installId: out.installId,
         publicUrl: publicUrlOf(s) ?? '',
         keyId: masterKey.id,
         masterKey: masterKey.value,
-        username: admin.username,
-        codes,
+        username: out.username,
+        codes: out.codes,
         at: now,
       }),
-      recoveryCodes: codes,
-      downloadedAt: now.toISOString(),
+      recoveryCodes: out.codes,
+      downloadedAt: out.downloadedAt,
+      reissued: out.reissued,
     }
   })
 
   // ── Claim (§4.2 step 10, §7.2): the first portal admin is an OIDC identity ───────────────────────────────────
 
+  /** The sign-in values and staff group in effect; `stagedAt` carries their hash, so a change mid-flight fails. */
   function claimValues(s: SettingsStore) {
     const cur = oidcNow(s)
-    const hash = oidcHash(cur)
-    if (!cur.issuer || !hash) throw invalidState('no_issuer')
-    return { target: claimTarget({ issuer: cur.issuer, clientId: cur.clientId, jwksUrl: cur.jwksUrl }, hash), hash }
+    const staffGroup = staffGroupOf(s)
+    const hash = claimHash(cur, staffGroup)
+    const tested = oidcHash(cur)
+    if (!cur.issuer || !hash || !tested) throw invalidState('no_issuer')
+    return { target: claimTarget({ issuer: cur.issuer, clientId: cur.clientId, jwksUrl: cur.jwksUrl }, hash), hash, tested, staffGroup }
   }
 
   app.post('/setup/claim/start', SETUP, async (request, reply): Promise<OidcSignInStart> => {
@@ -406,21 +437,32 @@ export function setupWizardRoutes(app: FastifyInstance): void {
     // Single use: the flow is dropped before anything else.
     const { claim: flow, ...rest } = data
     await updateSessionData(app.deps.db, sess.row.idHash, rest)
-    const { target, hash } = claimValues(s)
+    const { target, hash, tested, staffGroup } = claimValues(s)
     const now = nowOf(app)
-    const r = await finishTestSignIn({ db: app.deps.db, policy: policy() }, target, flow, { ...body, now }, {
-      requireAdmin: false,
-      staffGroup: s.get('oidc.staffGroup') ?? app.deps.config.staffGroup,
-    })
+    const r = await finishTestSignIn({ db: app.deps.db, policy: policy() }, target, flow, { ...body, now }, { requireAdmin: false, staffGroup })
     await s.recordTest('signin', 'setup.claim', r.ok ? 'ok' : (r.checks.find((c) => !c.ok)?.code ?? 'failed'), actorOf(request))
     if (!r.ok || !r.claims) return { ok: false, checks: r.checks, username: null }
-    const person = await upsertPersonFromClaims(app.deps.db, r.claims, app.deps.config)
-    await app.deps.db.update(people).set({ isAdmin: true }).where(eq(people.id, person.id))
-    await patchProgress(app.deps.db, {
-      claimed: { personId: person.id, username: person.username, hash, at: now.toISOString() },
-      oidcTested: { hash, at: now.toISOString() },
+    const claims = r.claims
+    // One transaction: the person, the admin flag, the progress record and the audit row. A claim by someone else
+    // takes back the admin flag an earlier claim gave (not one the person had already).
+    const person = await app.deps.db.transaction(async (tx) => {
+      const { record } = await readRecord(tx, true)
+      const p = await upsertPersonFromClaims(tx, claims, app.deps.config)
+      const prior = record.claimed
+      const samePerson = prior?.personId === p.id
+      const granted = samePerson ? prior!.grantedAdmin || !p.isAdmin : !p.isAdmin
+      if (prior && !samePerson && prior.grantedAdmin) {
+        await tx.update(people).set({ isAdmin: false }).where(eq(people.id, prior.personId))
+        await s.audit({ action: 'setup.unclaimed', actor: actorOf(request), newValue: { username: prior.username } }, tx)
+      }
+      await tx.update(people).set({ isAdmin: true }).where(eq(people.id, p.id))
+      await patchProgress(tx, {
+        claimed: { personId: p.id, username: p.username, hash, at: now.toISOString(), grantedAdmin: granted },
+        oidcTested: { hash: tested, at: now.toISOString() },
+      })
+      await s.audit({ action: 'setup.claimed', actor: actorOf(request), newValue: { username: p.username } }, tx)
+      return p
     })
-    await s.audit({ action: 'setup.claimed', actor: actorOf(request), newValue: { username: person.username } })
     return { ok: true, checks: r.checks, username: person.username }
   })
 
@@ -443,10 +485,13 @@ export function setupWizardRoutes(app: FastifyInstance): void {
         .set({ setupCompletedAt: nowOf(app), setupCompletedBy: f.record.claimed!.personId, setupCompletedSource: 'setup', setupTokenHash: null, setupTokenExpires: null })
         .where(and(eq(setupState.id, 1), isNull(setupState.setupCompletedAt)))
         .returning({ id: setupState.id })
-      return rows.length > 0 ? f.record.claimed!.username : null
+      if (!rows.length) return null
+      await s.audit({ action: 'setup.completed', actor: actorOf(request), newValue: { admin: f.record.claimed!.username } }, tx)
+      // Other core instances reload their snapshot (and so `setupDone`) on any notification, delivered on commit.
+      await tx.execute(sql`select pg_notify(${s.channel}, '[]')`)
+      return f.record.claimed!.username
     })
     if (!done) throw notFound()
-    await s.audit({ action: 'setup.completed', actor: actorOf(request), newValue: { admin: done } })
     await s.load()
     await clearSetupToken(app.deps.db, app.deps.setupTokenFile ?? null)
     await revokeSessions(app.deps.db, { kind: 'setup' })

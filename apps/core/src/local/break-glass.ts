@@ -124,9 +124,12 @@ export class MasterKeyUnavailable extends Error {
 export async function createAdmin(
   deps: Pick<AppDeps, 'db'> & { settings: SettingsStore },
   input: { username: string; password: string; totp: { seed: string; step: number } | null; now: Date },
+  /** Runs first in the same transaction (the setup route locks `setup_state` and refuses after the kit, 8.1). */
+  guard?: (tx: Tx) => Promise<void>,
 ): Promise<{ admin: AdminRow; codes: string[] }> {
   const passwordHash = await hashPassword(input.password)
   return deps.db.transaction(async (tx) => {
+    if (guard) await guard(tx)
     await tx.delete(localAdmins)
     const [admin] = await tx
       .insert(localAdmins)

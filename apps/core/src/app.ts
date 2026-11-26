@@ -119,9 +119,29 @@ export function trustProxy(hops = 1): (address: string, hop: number) => boolean 
   return (address, hop) => (hop === 0 ? isInternalAddress(address) : hop < hops)
 }
 
+/**
+ * A proxy in front of the portal while YODA_TRUSTED_PROXY_HOPS is 1: the request came from the portal (an internal
+ * peer) with more than one X-Forwarded-For entry, so something before the portal added one (or a browser sent its
+ * own). Core then sees every client as the reverse proxy's address; the admin should set the variable to 2.
+ */
+export function outerProxyHint(peer: string, forwardedFor: string | string[] | undefined, hops: number): boolean {
+  if (hops !== 1 || !isInternalAddress(peer)) return false
+  const xff = Array.isArray(forwardedFor) ? forwardedFor.join(',') : (forwardedFor ?? '')
+  return xff.split(',').filter((e) => e.trim()).length > 1
+}
+
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
-  const app = Fastify({ logger: process.env.VITEST ? false : LOGGER_OPTIONS, trustProxy: trustProxy(deps.config.trustedProxyHops ?? 1) })
+  const hops = deps.config.trustedProxyHops ?? 1
+  const app = Fastify({ logger: process.env.VITEST ? false : LOGGER_OPTIONS, trustProxy: trustProxy(hops) })
   app.decorate('deps', deps)
+  let proxyWarned = false
+  app.addHook('onRequest', async (request) => {
+    if (proxyWarned || !outerProxyHint(request.socket.remoteAddress ?? '', request.headers['x-forwarded-for'], hops)) return
+    proxyWarned = true
+    request.log.warn(
+      'requests arrive through a proxy in front of the portal (more than one X-Forwarded-For entry) while YODA_TRUSTED_PROXY_HOPS=1: client addresses show as the proxy. Set YODA_TRUSTED_PROXY_HOPS=2 (docs/operations.md, upgrade notes).',
+    )
+  })
 
   app.setErrorHandler((err, _req, reply) => {
     if (err instanceof HttpError) {

@@ -139,9 +139,6 @@ export function setupRoutes(app: FastifyInstance): void {
   app.post('/setup/admin', SETUP, async (request, reply): Promise<SetupAdminResult> => {
     const s = open()
     const sess = await session(request)
-    // The recovery kit holds this admin's codes: once it is downloaded, the admin is not replaced (8.1).
-    const [st] = await app.deps.db.select({ progress: setupStateTable.setupProgress }).from(setupStateTable).where(eq(setupStateTable.id, 1))
-    if (parseProgress(st?.progress).kitDownloadedAt) throw invalidState('kit_downloaded')
     const body = SetupAdminBody.parse(request.body)
     const issue = passwordIssue(body.username, body.password)
     if (issue) throw weakPassword(issue)
@@ -159,7 +156,12 @@ export function setupRoutes(app: FastifyInstance): void {
     }
     let created
     try {
-      created = await createAdmin({ db: app.deps.db, settings: s }, { username: body.username, password: body.password, totp, now })
+      // The recovery kit holds this admin's codes: once it is downloaded, the admin is not replaced (8.1). Checked
+      // under the same row lock the kit download takes, so the two cannot interleave.
+      created = await createAdmin({ db: app.deps.db, settings: s }, { username: body.username, password: body.password, totp, now }, async (tx) => {
+        const [st] = await tx.select({ progress: setupStateTable.setupProgress }).from(setupStateTable).where(eq(setupStateTable.id, 1)).for('update')
+        if (parseProgress(st?.progress).kitDownloadedAt) throw invalidState('kit_downloaded')
+      })
     } catch (err) {
       if (err instanceof MasterKeyUnavailable) throw secretsUnavailable()
       throw err

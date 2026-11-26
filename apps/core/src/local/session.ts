@@ -116,7 +116,7 @@ export async function createSession(
 }
 
 /** The allowed `Origin`s of a state-changing call: the public URL's and the one the request came to. */
-function originAllowed(request: FastifyRequest, publicUrl: string | undefined): boolean {
+export function originAllowed(request: FastifyRequest, publicUrl: string | undefined): boolean {
   const origin = request.headers.origin
   if (!origin) return true
   const allowed = new Set<string>([`${request.protocol}://${request.host}`])

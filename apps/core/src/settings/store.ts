@@ -463,8 +463,12 @@ export class SettingsStore {
    * An audit row that is not a setting write (§5.4): break-glass sign-ins, setup steps, recovery actions. Never a
    * secret: callers pass names, codes and booleans only.
    */
-  async audit(entry: { action: string; actor: { personId?: string | null; label: string; source: string; ip?: string | null; requestId?: string | null }; key?: string | null; newValue?: object | null; result?: string | null }): Promise<void> {
-    await this.db.insert(settingsAudit).values({
+  async audit(
+    entry: { action: string; actor: { personId?: string | null; label: string; source: string; ip?: string | null; requestId?: string | null }; key?: string | null; newValue?: object | null; result?: string | null },
+    /** The caller's transaction, so the audit row commits (or not) with the change it records. */
+    q?: Tx,
+  ): Promise<void> {
+    await (q ?? this.db).insert(settingsAudit).values({
       ...this.auditActor(entry.actor),
       action: entry.action,
       key: entry.key ?? null,

@@ -6,7 +6,8 @@ import { eq } from 'drizzle-orm'
 import type { FastifyInstance, LightMyRequestResponse } from 'fastify'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildApp } from '../src/app.js'
-import { localRecoveryCodes, localSessions, people, settings, settingsAudit, setupState } from '../src/db/schema.js'
+import { pgClient } from '../src/db/client.js'
+import { localAdmins, localRecoveryCodes, localSessions, people, settings, settingsAudit, setupState } from '../src/db/schema.js'
 import { recoveryCodeHash } from '../src/local/codes.js'
 import { issueSetupToken } from '../src/local/setup-token.js'
 import { totpCodeAt } from '../src/local/totp.js'
@@ -215,17 +216,86 @@ describe('recovery kit (D7)', () => {
     expect(rows).toHaveLength(10)
     const hashes = new Set(rows.map((r) => r.codeHash.toString('hex')))
     for (const c of kit.recoveryCodes) expect(hashes.has(recoveryCodeHash(MK, c).toString('hex'))).toBe(true)
-    // Once only, in this session or any other.
-    expect((await app.inject({ method: 'POST', url: '/setup/recovery-kit', headers: h })).json()).toEqual({ error: 'invalid_state', reason: 'kit_downloaded' })
-    expect((await progress(h)).kitDownloadedAt).toBe(clock.toISOString())
+    expect(res.headers['pragma']).toBe('no-cache')
+    expect(res.headers['x-content-type-options']).toBe('nosniff')
+    expect(kit.reissued).toBe(false)
+    const downloadedAt = clock.toISOString()
+    expect(await progress(h)).toMatchObject({ kitDownloadedAt: downloadedAt, kitReissueUntil: new Date(clock.getTime() + 10 * 60_000).toISOString() })
     const audit = await (await db()).select().from(settingsAudit).where(eq(settingsAudit.action, 'setup.recovery_kit'))
     expect(audit).toHaveLength(1)
+    expect(audit[0]!.newValue).toEqual({ keyId: MK.id, username: 'admin', reissue: false })
     expect(JSON.stringify(audit)).not.toContain(KEY_BYTES.toString('base64'))
-    expect(JSON.stringify(audit)).toContain(MK.id)
     // The admin the kit was made for is not replaced during setup any more.
     const enrol = (await app.inject({ method: 'POST', url: '/setup/totp', headers: h })).json()
     const replace = await app.inject({ method: 'POST', url: '/setup/admin', headers: h, payload: { username: 'other', password: BG_LOGIN, totpCode: totpCodeAt(enrol.secret, clock.getTime()) } })
     expect(replace.json()).toEqual({ error: 'invalid_state', reason: 'kit_downloaded' })
+  })
+})
+
+describe('recovery kit re-issue (same session, 10 minutes)', () => {
+  it('the session that downloaded it gets it again (same key, new codes, audited reissue); others and later get 409', async () => {
+    await boot()
+    const h = await createAdmin(await setupSession())
+    const first = (await app.inject({ method: 'POST', url: '/setup/recovery-kit', headers: h })).json()
+    const downloadedAt = clock.toISOString()
+    clock = new Date(clock.getTime() + 9 * 60_000)
+    const again = await app.inject({ method: 'POST', url: '/setup/recovery-kit', headers: h })
+    expect(again.statusCode).toBe(200)
+    const kit = again.json()
+    expect(kit).toMatchObject({ reissued: true, downloadedAt })
+    expect(kit.content).toContain(KEY_BYTES.toString('base64'))
+    expect(kit.recoveryCodes).not.toEqual(first.recoveryCodes)
+    // Only the new codes work.
+    const hashes = new Set((await (await db()).select().from(localRecoveryCodes)).map((r) => r.codeHash.toString('hex')))
+    for (const c of kit.recoveryCodes) expect(hashes.has(recoveryCodeHash(MK, c).toString('hex'))).toBe(true)
+    for (const c of first.recoveryCodes) expect(hashes.has(recoveryCodeHash(MK, c).toString('hex'))).toBe(false)
+    const audit = await (await db()).select().from(settingsAudit).where(eq(settingsAudit.action, 'setup.recovery_kit'))
+    expect(audit.map((a) => (a.newValue as { reissue: boolean }).reissue)).toEqual([false, true])
+    // Another setup session: refused, and it sees no re-issue window.
+    const other = await setupSession()
+    expect((await app.inject({ method: 'POST', url: '/setup/recovery-kit', headers: other })).json()).toEqual({ error: 'invalid_state', reason: 'kit_downloaded' })
+    expect((await progress(other)).kitReissueUntil).toBeNull()
+    // After 10 minutes from the first download: refused for this session too.
+    clock = new Date(new Date(downloadedAt).getTime() + 10 * 60_000 + 1000)
+    expect((await app.inject({ method: 'POST', url: '/setup/recovery-kit', headers: h })).json()).toEqual({ error: 'invalid_state', reason: 'kit_downloaded' })
+    expect((await progress(h)).kitReissueUntil).toBeNull()
+  })
+
+  it('two sessions downloading at once: one gets the kit, the other 409', async () => {
+    await boot()
+    const a = await createAdmin(await setupSession())
+    const b = await setupSession()
+    const [r1, r2] = await Promise.all([
+      app.inject({ method: 'POST', url: '/setup/recovery-kit', headers: a }),
+      app.inject({ method: 'POST', url: '/setup/recovery-kit', headers: b }),
+    ])
+    expect([r1.statusCode, r2.statusCode].sort()).toEqual([200, 409])
+    expect([r1, r2].find((r) => r.statusCode === 409)!.json()).toEqual({ error: 'invalid_state', reason: 'kit_downloaded' })
+    expect(await (await db()).select().from(localRecoveryCodes)).toHaveLength(10)
+    expect(await (await db()).select().from(settingsAudit).where(eq(settingsAudit.action, 'setup.recovery_kit'))).toHaveLength(1)
+  })
+
+  it('the admin step and the kit download take the same lock: no admin replacement once the kit is out', async () => {
+    await boot()
+    const h = await createAdmin(await setupSession())
+    const enrol = (await app.inject({ method: 'POST', url: '/setup/totp', headers: h })).json()
+    const [kit, replace] = await Promise.all([
+      app.inject({ method: 'POST', url: '/setup/recovery-kit', headers: h }),
+      app.inject({ method: 'POST', url: '/setup/admin', headers: h, payload: { username: 'other', password: BG_LOGIN, totpCode: totpCodeAt(enrol.secret, clock.getTime()) } }),
+    ])
+    // Either the admin was replaced first (then the kit's codes are the new admin's) or the kit came first and the
+    // replacement is refused; never a kit whose codes belong to a deleted admin.
+    if (replace.statusCode === 200) {
+      // The kit call may also have lost its session to the rotation (401).
+      expect([200, 401]).toContain(kit.statusCode)
+    } else {
+      expect(replace.json()).toEqual({ error: 'invalid_state', reason: 'kit_downloaded' })
+    }
+    const admins = await (await db()).select().from(localAdmins)
+    expect(admins).toHaveLength(1)
+    const codes = await (await db()).select().from(localRecoveryCodes)
+    expect(codes).toHaveLength(10)
+    expect(codes.every((c) => c.adminId === admins[0]!.id)).toBe(true)
   })
 })
 
@@ -258,6 +328,24 @@ describe('claim and complete (8.1)', () => {
     expect((await app.inject({ method: 'POST', url: '/setup/claim/callback', headers: h, payload: back })).json()).toEqual({ error: 'invalid_state', reason: 'no_signin' })
   })
 
+  it('a claim by someone else takes back the admin flag the earlier claim gave; a staff group change reopens the claim', async () => {
+    const h = await ready()
+    await claimAs(h, { username: 'somchai' })
+    expect((await claimAs(h, { username: 'dev1' })).json()).toMatchObject({ ok: true, username: 'dev1' })
+    const rows = await (await db()).select({ username: people.username, isAdmin: people.isAdmin }).from(people)
+    expect(Object.fromEntries(rows.map((r) => [r.username, r.isAdmin]))).toEqual({ somchai: false, dev1: true })
+    expect((await (await db()).select().from(settingsAudit).where(eq(settingsAudit.action, 'setup.unclaimed')))[0]!.newValue).toEqual({ username: 'somchai' })
+    // Someone who was an admin already (not by this claim) keeps it when another person claims after them.
+    await (await db()).update(people).set({ isAdmin: true }).where(eq(people.username, 'somchai'))
+    await claimAs(h, { username: 'somchai' })
+    await claimAs(h, { username: 'dev1' })
+    const after = await (await db()).select({ username: people.username, isAdmin: people.isAdmin }).from(people)
+    expect(Object.fromEntries(after.map((r) => [r.username, r.isAdmin]))).toEqual({ somchai: true, dev1: true })
+    expect((await progress(h)).steps.claim).toBe('done')
+    await put(h, 'signin', { 'oidc.staffGroup': '/it-ops' })
+    expect((await progress(h)).steps.claim).toBe('todo')
+  })
+
   it('refuses to complete with a required step open, naming the steps', async () => {
     const h = await ready()
     const res = await app.inject({ method: 'POST', url: '/setup/complete', headers: h })
@@ -281,9 +369,14 @@ describe('claim and complete (8.1)', () => {
     const token = await signToken({ sub: 'sub-somchai', preferred_username: 'somchai' })
     expect((await app.inject({ url: '/me', headers: { authorization: `Bearer ${token}` } })).statusCode).toBe(503)
 
+    const notes: string[] = []
+    const listener = await pgClient(await db()).listen(store.channel, (payload) => void notes.push(payload))
     const res = await app.inject({ method: 'POST', url: '/setup/complete', headers: h })
     expect(res.statusCode).toBe(200)
     expect(res.json()).toEqual({ done: true })
+    // Other core instances hear of it and reload (`setupDone`).
+    await vi.waitFor(() => expect(notes).toContain('[]'))
+    await listener.unlisten()
     expect(String(res.headers['set-cookie'])).toMatch(/^yoda_setup=; Path=\/api\/setup; Max-Age=0/)
     const [st] = await (await db()).select().from(setupState)
     const [p] = await (await db()).select().from(people).where(eq(people.username, 'somchai'))

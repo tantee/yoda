@@ -1,9 +1,11 @@
 import { REQUIRED_FOR_COMPLETION, SETUP_STEPS, type SettingKey } from '@yoda/shared'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { buildApp, type AppDeps } from '../src/app.js'
+import Fastify from 'fastify'
+import { buildApp, outerProxyHint, trustProxy, type AppDeps } from '../src/app.js'
+import { isHttps, originAllowed } from '../src/local/session.js'
 import type { Db } from '../src/db/client.js'
 import { finishTestSignIn, startTestSignIn } from '../src/local/oidc-change.js'
-import { missingSteps, oidcHash, parseProgress, recoveryKitFilename, recoveryKitText, stepStates, type ProgressFacts } from '../src/local/setup-progress.js'
+import { claimHash, missingSteps, oidcHash, parseProgress, recoveryKitFilename, recoveryKitText, stepStates, type ProgressFacts } from '../src/local/setup-progress.js'
 import type { SettingsStore } from '../src/settings/store.js'
 import { startFakeOidc, type FakeOidc } from './fake-oidc.js'
 import { testConfig } from './helpers.js'
@@ -17,6 +19,7 @@ const facts = (over: Partial<ProgressFacts> = {}): ProgressFacts => ({
   organisation: false,
   admin: false,
   oidc: null,
+  claim: null,
   claimedIsAdmin: false,
   record: { marks: {} },
   ...over,
@@ -34,30 +37,35 @@ describe('setup progress', () => {
     expect(marked).toMatchObject({ organisation: 'done', admin: 'done', check: 'done', email: 'skipped', line: 'done', telegram: 'todo', kit: 'done' })
   })
 
-  it('counts a sign-in test or a claim only for the sign-in values it ran with', () => {
+  it('counts a sign-in test or a claim only for the sign-in values (and, for the claim, the staff group) it ran with', () => {
     const hash = oidcHash(OIDC)!
     const other = oidcHash({ ...OIDC, clientId: 'other' })!
     expect(hash).not.toBe(other)
     expect(oidcHash({ ...OIDC, issuer: null })).toBeNull()
     expect(stepStates(facts({ oidc: hash, record: { marks: {}, oidcTested: { hash, at: 'x' } } })).signin).toBe('done')
     expect(stepStates(facts({ oidc: hash, record: { marks: {}, oidcTested: { hash: other, at: 'x' } } })).signin).toBe('todo')
-    const claimed = { personId: 'p1', username: 'somchai', hash, at: 'x' }
-    expect(stepStates(facts({ oidc: hash, claimedIsAdmin: true, record: { marks: {}, claimed } }))).toMatchObject({ signin: 'done', claim: 'done' })
-    // Changed sign-in values, or an admin flag taken away since: claim again.
-    expect(stepStates(facts({ oidc: other, claimedIsAdmin: true, record: { marks: {}, claimed } })).claim).toBe('todo')
-    expect(stepStates(facts({ oidc: hash, claimedIsAdmin: false, record: { marks: {}, claimed } })).claim).toBe('todo')
+    const ch = claimHash(OIDC, '/it-dev')!
+    expect(ch).not.toBe(claimHash(OIDC, '/other-group'))
+    expect(claimHash({ ...OIDC, issuer: null }, '/it-dev')).toBeNull()
+    const claimed = { personId: 'p1', username: 'somchai', hash: ch, at: 'x', grantedAdmin: true }
+    expect(stepStates(facts({ oidc: hash, claim: ch, claimedIsAdmin: true, record: { marks: {}, claimed } }))).toMatchObject({ signin: 'done', claim: 'done' })
+    // Changed sign-in values or staff group, or an admin flag taken away since: claim again.
+    expect(stepStates(facts({ oidc: other, claim: claimHash({ ...OIDC, clientId: 'other' }, '/it-dev'), claimedIsAdmin: true, record: { marks: {}, claimed } })).claim).toBe('todo')
+    expect(stepStates(facts({ oidc: hash, claim: claimHash(OIDC, '/other-group'), claimedIsAdmin: true, record: { marks: {}, claimed } })).claim).toBe('todo')
+    expect(stepStates(facts({ oidc: hash, claim: ch, claimedIsAdmin: false, record: { marks: {}, claimed } })).claim).toBe('todo')
   })
 
   it('needs organisation, admin, kit and claim to complete (8.1); optional steps never block', () => {
     expect(REQUIRED_FOR_COMPLETION).toEqual(['organisation', 'admin', 'kit', 'claim'])
     expect(missingSteps(stepStates(facts()))).toEqual(['organisation', 'admin', 'kit', 'claim'])
-    const hash = oidcHash(OIDC)!
+    const hash = claimHash(OIDC, '/it-dev')!
     const all = facts({
       organisation: true,
       admin: true,
-      oidc: hash,
+      oidc: oidcHash(OIDC),
+      claim: hash,
       claimedIsAdmin: true,
-      record: { marks: {}, kitDownloadedAt: 'x', claimed: { personId: 'p', username: 'u', hash, at: 'x' } },
+      record: { marks: {}, kitDownloadedAt: 'x', claimed: { personId: 'p', username: 'u', hash, at: 'x', grantedAdmin: true } },
     })
     expect(missingSteps(stepStates(all))).toEqual([])
   })
@@ -66,6 +74,8 @@ describe('setup progress', () => {
     expect(parseProgress(null)).toEqual({ marks: {} })
     expect(parseProgress({ marks: { check: 'nope' } })).toEqual({ marks: {} })
     expect(parseProgress({ marks: { check: 'done' }, kitDownloadedAt: '2026-11-27' })).toEqual({ marks: { check: 'done' }, kitDownloadedAt: '2026-11-27' })
+    // Claims recorded before `grantedAdmin` existed count as granted by the claim.
+    expect(parseProgress({ claimed: { personId: 'p', username: 'u', hash: 'h', at: 'x' } }).claimed?.grantedAdmin).toBe(true)
   })
 })
 
@@ -146,5 +156,44 @@ describe('setup wizard routes without a database', () => {
       expect(res.statusCode, `${method} ${url}`).toBe(404)
     }
     await a.close()
+  })
+})
+
+describe('scheme and origin through the portal (Task 8 review)', () => {
+  async function probe() {
+    const a = Fastify({ trustProxy: trustProxy(1) })
+    a.get('/t', async (request) => ({ https: isHttps(request), origin: originAllowed(request, 'https://portal.example.org'), host: request.host }))
+    return a
+  }
+
+  it('reads https from the portal (an internal peer) and allows the https origin', async () => {
+    const a = await probe()
+    const res = await a.inject({ url: '/t', remoteAddress: '172.18.0.5', headers: { 'x-forwarded-proto': 'https', 'x-forwarded-host': 'portal.example.org', 'x-forwarded-for': '10.0.0.9', origin: 'https://portal.example.org' } })
+    expect(res.json()).toEqual({ https: true, origin: true, host: 'portal.example.org' })
+    // The public URL's origin is allowed even when the host the request names differs (a LAN name).
+    const lan = await a.inject({ url: '/t', remoteAddress: '172.18.0.5', headers: { 'x-forwarded-proto': 'https', 'x-forwarded-host': 'yoda.lan', 'x-forwarded-for': '10.0.0.9', origin: 'https://portal.example.org' } })
+    expect(lan.json()).toMatchObject({ https: true, origin: true })
+    const foreign = await a.inject({ url: '/t', remoteAddress: '172.18.0.5', headers: { 'x-forwarded-proto': 'https', 'x-forwarded-host': 'portal.example.org', origin: 'https://evil.example.org' } })
+    expect(foreign.json().origin).toBe(false)
+    // Plain http and an https origin do not match.
+    const plain = await a.inject({ url: '/t', remoteAddress: '172.18.0.5', headers: { 'x-forwarded-proto': 'http', 'x-forwarded-host': 'yoda.lan', origin: 'https://yoda.lan' } })
+    expect(plain.json()).toMatchObject({ https: false, origin: false })
+    await a.close()
+  })
+
+  it('ignores X-Forwarded-Proto from a peer that is not internal', async () => {
+    const a = await probe()
+    const res = await a.inject({ url: '/t', remoteAddress: '203.0.113.7', headers: { 'x-forwarded-proto': 'https' } })
+    expect(res.json().https).toBe(false)
+    await a.close()
+  })
+
+  it('spots a proxy in front of the portal while hops is 1', () => {
+    expect(outerProxyHint('172.18.0.5', '10.0.0.9', 1)).toBe(false)
+    expect(outerProxyHint('172.18.0.5', '10.0.0.9, 172.18.0.7', 1)).toBe(true)
+    expect(outerProxyHint('172.18.0.5', ['10.0.0.9', '172.18.0.7'], 1)).toBe(true)
+    expect(outerProxyHint('172.18.0.5', '10.0.0.9, 172.18.0.7', 2)).toBe(false)
+    expect(outerProxyHint('203.0.113.7', '10.0.0.9, 172.18.0.7', 1)).toBe(false)
+    expect(outerProxyHint('172.18.0.5', undefined, 1)).toBe(false)
   })
 })

@@ -218,8 +218,12 @@ export const SetupProgress = z.object({
   /** TOTP is required for the break-glass admin (D3, from the saved public URL and this request's host). */
   totpRequired: z.boolean(),
   admin: z.object({ username: z.string(), totpEnabled: z.boolean() }).nullable(),
-  /** The recovery kit was downloaded (once; the master key is never shown again). */
+  /** The recovery kit was downloaded (the master key is not shown again after the re-issue window). */
   kitDownloadedAt: z.string().nullable(),
+  /** This session downloaded the kit and may have it issued again (new codes, same key) until then; else null. */
+  kitReissueUntil: z.string().nullable(),
+  /** The break-glass admin has no TOTP, but the public URL saved since makes it required (D3). */
+  adminNeedsTotp: z.boolean(),
   /** The person who signed in through OIDC at the claim step and became the first portal admin. */
   claimed: z.object({ username: z.string(), at: z.string() }).nullable(),
   /** Required steps not done yet; empty: setup can be completed. */
@@ -237,6 +241,8 @@ export const RecoveryKit = z.object({
   content: z.string(),
   recoveryCodes: z.array(z.string()),
   downloadedAt: z.string(),
+  /** Issued again in the same session (fresh codes; the earlier file's codes no longer work). */
+  reissued: z.boolean(),
 })
 export type RecoveryKit = z.infer<typeof RecoveryKit>
 

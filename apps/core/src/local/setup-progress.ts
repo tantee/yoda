@@ -13,10 +13,16 @@ import { z } from 'zod'
 export const ProgressRecord = z.object({
   marks: z.record(z.string(), z.enum(['done', 'skipped'])).default({}),
   kitDownloadedAt: z.string().optional(),
+  /** The setup session (hex of its id hash) that downloaded the kit: only it may have it issued again, briefly. */
+  kitSession: z.string().optional(),
   /** The last passing connection test (discovery, JWKS, client) of the saved sign-in values. */
   oidcTested: z.object({ hash: z.string(), at: z.string() }).optional(),
-  /** The claim: who signed in through OIDC (and so became the first admin), with which sign-in values. */
-  claimed: z.object({ personId: z.string(), username: z.string(), hash: z.string(), at: z.string() }).optional(),
+  /**
+   * The claim: who signed in through OIDC (and so became the first admin), with which sign-in values and staff
+   * group (`claimHash`). `grantedAdmin`: the admin flag came from this claim (a later claim by someone else takes
+   * it back).
+   */
+  claimed: z.object({ personId: z.string(), username: z.string(), hash: z.string(), at: z.string(), grantedAdmin: z.boolean().default(true) }).optional(),
 })
 export type ProgressRecord = z.infer<typeof ProgressRecord>
 
@@ -31,6 +37,15 @@ export function oidcHash(v: Pick<OidcCurrent, 'issuer' | 'clientId' | 'jwksUrl'>
   return createHash('sha256').update(JSON.stringify([v.issuer, v.clientId, v.jwksUrl ?? null])).digest('base64url')
 }
 
+/** The claim's hash: the sign-in values plus the staff group the claimer was checked against. */
+export function claimHash(v: Pick<OidcCurrent, 'issuer' | 'clientId' | 'jwksUrl'>, staffGroup: string): string | null {
+  const base = oidcHash(v)
+  return base && createHash('sha256').update(JSON.stringify([base, staffGroup])).digest('base64url')
+}
+
+/** How long the session that downloaded the kit may have it issued again (a lost download, a reload). */
+export const KIT_REISSUE_MS = 10 * 60_000
+
 export type ProgressFacts = {
   /** This browser holds a setup session (the token step is behind it). */
   session: boolean
@@ -40,6 +55,8 @@ export type ProgressFacts = {
   admin: boolean
   /** `oidcHash` of the sign-in values in effect (null: no issuer). */
   oidc: string | null
+  /** `claimHash` of the sign-in values and staff group in effect. */
+  claim: string | null
   /** The claimed person still exists and is a portal admin. */
   claimedIsAdmin: boolean
   record: ProgressRecord
@@ -48,7 +65,7 @@ export type ProgressFacts = {
 /** Every step's state, in wizard order. */
 export function stepStates(f: ProgressFacts): Record<SetupStepId, SetupStepState> {
   const mark = (s: SetupStepId): SetupStepState => f.record.marks[s] ?? 'todo'
-  const claimed = !!f.record.claimed && f.oidc !== null && f.record.claimed.hash === f.oidc && f.claimedIsAdmin
+  const claimed = !!f.record.claimed && f.claim !== null && f.record.claimed.hash === f.claim && f.claimedIsAdmin
   const tested = f.oidc !== null && (f.record.oidcTested?.hash === f.oidc || claimed)
   const out = {} as Record<SetupStepId, SetupStepState>
   for (const s of SETUP_STEPS) {

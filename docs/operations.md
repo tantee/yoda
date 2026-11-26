@@ -163,7 +163,7 @@ Settings and secrets (installer proposal §3.5, §6):
 | `YODA_BOOTSTRAP_FILE` | The bootstrap volume's `bootstrap.env`: fills `DATABASE_URL` and the S3 keys when env leaves them empty (core, `migrate`, `backup`) | fixed (`/var/lib/yoda/bootstrap.env`) | `/var/lib/yoda/bootstrap.env` |
 | `YODA_DEV_SKIP_SETUP` | Dev only: setup counts as done without the setup wizard. Never set in production | optional (`false`) | `true` |
 | `YODA_SETTINGS_IMPORT` | `false` = env secrets are not copied into the database on start (other values still are) | optional (`true`) | `true` |
-| `YODA_TRUSTED_PROXY_HOPS` | How many proxies in front of core add a believed `X-Forwarded-For` entry; decides the client address in rate limits, the audit log and break-glass alerts. `1` = the portal only (the portal published directly, or reached through an SSH tunnel). Set `2` when a reverse proxy (nginx, Caddy, a load balancer) sits in front of the portal and adds `X-Forwarded-For`; otherwise every browser shows as the reverse proxy's address. Never higher than the proxies really there: a client could then choose its own address. The portal reads it too: with `1` it tells core its own scheme and `Host` (what the setup wizard detects as the public URL), ignoring any `X-Forwarded-Proto`/`-Host` a browser sent; with `2` it passes on the reverse proxy's, so the proxy must set them (nginx: `proxy_set_header X-Forwarded-Proto $scheme; proxy_set_header X-Forwarded-Host $host;`) | optional (`1`) | `2` |
+| `YODA_TRUSTED_PROXY_HOPS` | How many proxies in front of core add a believed `X-Forwarded-For` entry; decides the client address in rate limits, the audit log and break-glass alerts. `1` = the portal only (the portal published directly, or reached through an SSH tunnel). Set `2` when a reverse proxy (nginx, Caddy, a load balancer) sits in front of the portal and adds `X-Forwarded-For`; otherwise every browser shows as the reverse proxy's address. Never higher than the proxies really there: a client could then choose its own address. The portal reads it too: with `1` it tells core its own `Host` (what the setup wizard detects as the public URL) and honours an incoming `X-Forwarded-Proto: https` (upgrade only); with `2` it passes on the reverse proxy's scheme and host, so the proxy must set them (see the upgrade notes in section 5) | optional (`1`) | `2` |
 | `YODA_OUTBOUND_ALLOW_LOOPBACK` | Dev only: the admin settings tests may connect to loopback (the dev fakes). Never set in production | optional (`false`) | `false` |
 
 In production core reads the master key from the bootstrap volume (section 4a): the `init` service generates it,
@@ -390,6 +390,17 @@ Settings → Repository → Protected tags so only maintainers can create them):
    replaced), then `docker compose up -d --no-build`, then it polls the portal's `/api/ready`
    for up to 2 minutes and fails the job if it never answers 200. Only one deploy runs at a time.
 5. Check the portal, and the job log's last line, `deploy: <tag> ready`.
+
+**Upgrade notes.**
+
+- **A reverse proxy in front of the portal** (nginx, Caddy, a load balancer, usually where TLS ends): set
+  `YODA_TRUSTED_PROXY_HOPS=2` in the host's `.env`, and have the proxy send `X-Forwarded-For`,
+  `X-Forwarded-Proto` and `X-Forwarded-Host` (nginx: `proxy_set_header X-Forwarded-For
+  $proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $scheme; proxy_set_header X-Forwarded-Host
+  $host;`). With the default `1`, the portal still honours the proxy's `https` (so the setup and recovery cookies
+  stay `Secure`), but every client shows as the proxy's address in rate limits, the audit log and break-glass
+  alerts, and the setup wizard detects the portal's own `Host` as the public URL. Core logs a warning once when it
+  sees a proxy in front of the portal while the value is `1`.
 
 **Rollback.** Run the deploy job again in the **previous tag's** pipeline (CI/CD → Pipelines, filter by tag), or
 on the host: `cd /srv/yoda && YODA_VERSION=<previous tag> sh ops/deploy/deploy.sh` (it pins that tag in
