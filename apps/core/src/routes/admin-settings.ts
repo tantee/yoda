@@ -28,6 +28,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { ZodError } from 'zod'
 import { isPriced } from '../ai/gateway.js'
 import { parseModelId } from '../ai/models.js'
+import type { AppDeps } from '../app.js'
 import { HttpError, notFound, requireAdmin } from '../auth/plugin.js'
 import { knowledgeChunks } from '../db/schema.js'
 import { RateLimiter } from '../settings/rate-limit.js'
@@ -64,11 +65,11 @@ export const REAUTH_WINDOW_S = 600
 const RECOVERY_ONLY = new Set<SettingKey>(['oidc.issuer', 'oidc.clientId', 'oidc.jwksUrl'])
 const COMPOSE_ENV = new Set(PROD_COMPOSE_CORE_ENV)
 /** Secrets an admin may have generated (shown once). */
-const GENERATED = new Set<SettingKey>(['gitlab.webhookSecret', 'telegram.webhookSecret'])
+export const GENERATED = new Set<SettingKey>(['gitlab.webhookSecret', 'telegram.webhookSecret'])
 /** Keys that choose which server a test talks to. */
-const DRAFT_ENDPOINTS = new Set<SettingKey>(['oidc.issuer', 'oidc.jwksUrl', 'gitlab.url', 'smtp.host', 'smtp.port', 'smtp.secure', 'ai.openaiBaseUrl'])
+export const DRAFT_ENDPOINTS = new Set<SettingKey>(['oidc.issuer', 'oidc.jwksUrl', 'gitlab.url', 'smtp.host', 'smtp.port', 'smtp.secure', 'ai.openaiBaseUrl'])
 
-function booleansOnly(r: SettingsTestResult): SettingsTestResult {
+export function booleansOnly(r: SettingsTestResult): SettingsTestResult {
   return {
     ...r,
     checks: r.checks.map(({ detail, ...c }) => {
@@ -80,7 +81,7 @@ function booleansOnly(r: SettingsTestResult): SettingsTestResult {
 
 const MODEL_KEYS = ['ai.modelDraft', 'ai.modelFast', 'ai.embeddingModel'] as const
 
-const CATEGORY_TEST: Partial<Record<SettingCategory, SettingsTestAction>> = {
+export const CATEGORY_TEST: Partial<Record<SettingCategory, SettingsTestAction>> = {
   signin: 'oidc',
   email: 'smtp',
   line: 'line',
@@ -95,16 +96,16 @@ const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stri
 
 const settingsUnavailable = () => new HttpError(503, { error: 'settings_unavailable' })
 const reauthRequired = () => new HttpError(401, { error: 'reauth_required' })
-const locked = (key: string, reason: string, envName?: string) =>
+export const locked = (key: string, reason: string, envName?: string) =>
   new HttpError(409, { error: 'setting_locked', key, reason, ...(envName ? { envName } : {}) })
-const invalidSettings = (issues: { key: string; message: string }[]) => new HttpError(422, { error: 'invalid_settings', issues })
+export const invalidSettings = (issues: { key: string; message: string }[]) => new HttpError(422, { error: 'invalid_settings', issues })
 
 function rateLimited(retryAfter: number): HttpError {
   return new HttpError(429, { error: 'rate_limited', retryAfter })
 }
 
 /** A store value, or undefined for a stored secret the master key cannot read. */
-function safeGet(store: SettingsStore, key: SettingKey): unknown {
+export function safeGet(store: SettingsStore, key: SettingKey): unknown {
   try {
     return store.get(key)
   } catch (err) {
@@ -115,7 +116,10 @@ function safeGet(store: SettingsStore, key: SettingKey): unknown {
 
 type Lock = { reason: SettingLockReason; envName?: string; container?: string }
 
-function lockOf(store: SettingsStore, info: SettingInfo): Lock | null {
+/** Who is looking: an admin in the portal, or the setup wizard (where the sign-in settings are set first). */
+export type ViewOpts = { setup?: boolean }
+
+export function lockOf(store: SettingsStore, info: SettingInfo, opts: ViewOpts = {}): Lock | null {
   const d = settingDef(info.key)
   if (info.lock === 'bootstrap') return { reason: 'bootstrap' }
   // TODO(Task 9): backup.at / backup.keepDays are read from the backup container's env only; they unlock once it
@@ -124,14 +128,15 @@ function lockOf(store: SettingsStore, info: SettingInfo): Lock | null {
   if (container) return { reason: 'managed_on_host', container, ...(d.envName ? { envName: d.envName } : {}) }
   if (info.lock === 'env') return { reason: 'env', ...(info.envName ? { envName: info.envName } : {}) }
   if (info.lock) return { reason: info.lock }
-  if (RECOVERY_ONLY.has(info.key)) return { reason: 'recovery_only' }
+  // In setup there is nobody to lock out yet: the wizard sets them, and the claim's sign-in proves them.
+  if (RECOVERY_ONLY.has(info.key) && !opts.setup) return { reason: 'recovery_only' }
   return null
 }
 
-const BOUND_SECRETS = new Map<string, SettingKey[]>()
+export const BOUND_SECRETS = new Map<string, SettingKey[]>()
 for (const k of SETTING_KEYS) for (const b of settingDef(k).boundTo ?? []) BOUND_SECRETS.set(b, [...(BOUND_SECRETS.get(b) ?? []), k])
 
-function view(store: SettingsStore, info: SettingInfo, restart: Set<SettingKey>): SettingView {
+function view(store: SettingsStore, info: SettingInfo, restart: Set<SettingKey>, opts: ViewOpts): SettingView {
   const d = settingDef(info.key)
   const updatedBy = info.updatedBy || info.updatedByLabel ? { personId: info.updatedBy, label: info.updatedByLabel } : null
   const v: SettingView = {
@@ -141,7 +146,7 @@ function view(store: SettingsStore, info: SettingInfo, restart: Set<SettingKey>)
     apply: info.apply,
     source: info.source,
     ...(info.envName ? { envName: info.envName } : {}),
-    locked: lockOf(store, info),
+    locked: lockOf(store, info, opts),
     version: info.version ?? 0,
     updatedAt: info.updatedAt?.toISOString() ?? null,
     updatedBy,
@@ -165,13 +170,13 @@ function view(store: SettingsStore, info: SettingInfo, restart: Set<SettingKey>)
   return v
 }
 
-function categoryView(store: SettingsStore, category: SettingCategory): SettingsCategoryView {
+export function categoryView(store: SettingsStore, category: SettingCategory, opts: ViewOpts = {}): SettingsCategoryView {
   const restart = new Set(store.restartRequiredKeys)
-  return { category, settings: store.list(category).map((i) => view(store, i, restart)), test: CATEGORY_TEST[category] ?? null }
+  return { category, settings: store.list(category).map((i) => view(store, i, restart, opts)), test: CATEGORY_TEST[category] ?? null }
 }
 
 /** Models in effect that have no price: their calls cost null and are refused for budgeted projects. */
-function modelWarnings(store: SettingsStore): SettingWarning[] {
+export function modelWarnings(store: SettingsStore): SettingWarning[] {
   return MODEL_KEYS.flatMap((key) => {
     const spec = store.get(key)
     return spec && !isPriced(parseModelId(spec).model) ? [{ key, code: 'unpriced_model' }] : []
@@ -197,7 +202,7 @@ function parseCategory(params: unknown): SettingCategory {
 }
 
 /** Draft or new values: known keys of this category, each valid; otherwise 422 with every issue. */
-function parseValues(category: SettingCategory, input: Record<string, unknown>): Map<SettingKey, unknown> {
+export function parseValues(category: SettingCategory, input: Record<string, unknown>): Map<SettingKey, unknown> {
   const issues: { key: string; message: string }[] = []
   const out = new Map<SettingKey, unknown>()
   for (const [key, raw] of Object.entries(input)) {
@@ -225,6 +230,46 @@ function parseValues(category: SettingCategory, input: Record<string, unknown>):
   return out
 }
 
+/** The values a test runs with: draft values over the saved ones; locked settings keep their value in force. */
+export function settingsTestContext(
+  deps: Pick<AppDeps, 'outbound' | 'storage' | 'anthropicUrl'>,
+  s: SettingsStore,
+  draft: Map<SettingKey, unknown>,
+  where: { source: SettingActor['source']; ip: string; requestId: string },
+): TestContext {
+  for (const key of [...draft.keys()]) if (s.info(key).lock) draft.delete(key)
+  const get = ((key: SettingKey) => {
+    if (draft.has(key)) return draft.get(key) ?? undefined
+    const d = settingDef(key)
+    // A saved secret is never sent to an endpoint the draft changes (8.6): it must be entered again.
+    if (d.secret && d.boundTo?.some((b) => draft.has(b as SettingKey) && !same(draft.get(b as SettingKey), safeGet(s, b as SettingKey)))) return undefined
+    return safeGet(s, key)
+  }) as TestContext['get']
+  return {
+    get,
+    policy: deps.outbound ?? {},
+    storage: deps.storage,
+    ...(deps.anthropicUrl ? { anthropicUrl: deps.anthropicUrl } : {}),
+    onTelegramUsername: draft.has('telegram.botToken')
+      ? undefined
+      : async (username) => {
+          // The internal write path for a derived value; an env-set username stays as it is.
+          if (s.fromEnv('telegram.botUsername') || same(safeGet(s, 'telegram.botUsername'), username)) return
+          await s.setDerived('telegram.botUsername', username, where)
+        },
+  }
+}
+
+/** A store refusal as the API's answer (409 lock, version or key; 422 invalid); anything else is rethrown. */
+export function applyError(err: unknown): never {
+  if (err instanceof BoundSecretInEnvError) throw locked(err.key, 'bound_secret_in_env', settingDef(err.secret).envName)
+  if (err instanceof SettingConflictError) throw new HttpError(409, { error: 'version_conflict', key: err.key, version: err.version })
+  if (err instanceof SettingLockedError) throw locked(err.key, err.reason)
+  if (err instanceof SecretsUnavailableError) throw new HttpError(409, { error: 'secrets_unavailable', key: err.key })
+  if (err instanceof ZodError) throw invalidSettings(err.issues.map((i) => ({ key: String(i.path[0] ?? ''), message: i.message })))
+  throw err
+}
+
 export function adminSettingsRoutes(app: FastifyInstance): void {
   // Per admin, per app instance (§8.4): saves 30 / min; tests 10 / min and 60 / hour.
   const putLimit = new RateLimiter([{ max: 30, windowMs: 60_000 }])
@@ -243,30 +288,8 @@ export function adminSettingsRoutes(app: FastifyInstance): void {
     }
   }
 
-  /** The values a test runs with: draft values over the saved ones; locked settings keep their value in force. */
-  function testContext(s: SettingsStore, draft: Map<SettingKey, unknown>, request: FastifyRequest): TestContext {
-    for (const key of [...draft.keys()]) if (s.info(key).lock) draft.delete(key)
-    const get = ((key: SettingKey) => {
-      if (draft.has(key)) return draft.get(key) ?? undefined
-      const d = settingDef(key)
-      // A saved secret is never sent to an endpoint the draft changes (8.6): it must be entered again.
-      if (d.secret && d.boundTo?.some((b) => draft.has(b as SettingKey) && !same(draft.get(b as SettingKey), safeGet(s, b as SettingKey)))) return undefined
-      return safeGet(s, key)
-    }) as TestContext['get']
-    return {
-      get,
-      policy: app.deps.outbound ?? {},
-      storage: app.deps.storage,
-      ...(app.deps.anthropicUrl ? { anthropicUrl: app.deps.anthropicUrl } : {}),
-      onTelegramUsername: draft.has('telegram.botToken')
-        ? undefined
-        : async (username) => {
-            // The internal write path for a derived value; an env-set username stays as it is.
-            if (s.fromEnv('telegram.botUsername') || same(safeGet(s, 'telegram.botUsername'), username)) return
-            await s.setDerived('telegram.botUsername', username, { source: 'ui', ip: request.ip, requestId: String(request.id) })
-          },
-    }
-  }
+  const testContext = (s: SettingsStore, draft: Map<SettingKey, unknown>, request: FastifyRequest) =>
+    settingsTestContext(app.deps, s, draft, { source: 'ui', ip: request.ip, requestId: String(request.id) })
 
   app.get('/admin/settings', async (request): Promise<AdminSettingsResponse> => {
     requireAdmin(request)
@@ -315,12 +338,7 @@ export function adminSettingsRoutes(app: FastifyInstance): void {
     try {
       result = await s.apply(changes, actorOf(request))
     } catch (err) {
-      if (err instanceof BoundSecretInEnvError) throw locked(err.key, 'bound_secret_in_env', settingDef(err.secret).envName)
-      if (err instanceof SettingConflictError) throw new HttpError(409, { error: 'version_conflict', key: err.key, version: err.version })
-      if (err instanceof SettingLockedError) throw locked(err.key, err.reason)
-      if (err instanceof SecretsUnavailableError) throw new HttpError(409, { error: 'secrets_unavailable', key: err.key })
-      if (err instanceof ZodError) throw invalidSettings(err.issues.map((i) => ({ key: String(i.path[0] ?? ''), message: i.message })))
-      throw err
+      applyError(err)
     }
 
     const warnings: SettingWarning[] = modelWarnings(s).filter((w) => values.has(w.key as SettingKey))

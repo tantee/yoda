@@ -60,6 +60,8 @@ export class HttpError extends Error {
       issues?: { key: string; message: string }[]
       /** Seconds until a rate-limited call may be retried. */
       retryAfter?: number
+      /** The required setup steps still open (`invalid_state` reason `incomplete`, POST /setup/complete). */
+      missing?: string[]
     },
   ) {
     super(body.error)

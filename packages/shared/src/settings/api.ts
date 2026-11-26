@@ -189,5 +189,7 @@ export const SETTINGS_TEST_CODES = [
   // the /recovery test sign-in of a pending OIDC change (core local/oidc-change.ts)
   'state_mismatch', 'expired', 'pending_changed', 'code_rejected', 'token_invalid', 'nonce_mismatch', 'azp_mismatch',
   'typ_mismatch', 'claims_missing', 'groups_missing', 'not_admin',
+  // the setup wizard's system check and claim sign-in (core routes/setup-wizard.ts)
+  'no_pgvector', 'not_staff',
 ] as const
 export type SettingsTestCode = (typeof SETTINGS_TEST_CODES)[number]

@@ -26,6 +26,8 @@ export type SessionData = {
   stepUpFailures?: number
   /** `stagedAt`: the staging this sign-in tests; a restage (even of the same values) is another change. */
   oidc?: { state: string; nonce: string; verifier: string; redirectUri: string; startedAt: string; valuesHash: string; stagedAt: string }
+  /** The setup wizard's claim sign-in in flight (same shape; `stagedAt` names the sign-in values it started with). */
+  claim?: { state: string; nonce: string; verifier: string; redirectUri: string; startedAt: string; valuesHash: string; stagedAt: string }
 }
 
 export const COOKIE_NAME: Record<SessionKind, string> = { setup: 'yoda_setup', recovery: 'yoda_bg' }

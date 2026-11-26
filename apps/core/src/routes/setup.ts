@@ -8,7 +8,9 @@ import {
   type TotpEnrolment,
 } from '@yoda/shared'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
-import { notFound } from '../auth/plugin.js'
+import { eq } from 'drizzle-orm'
+import { invalidState, notFound } from '../auth/plugin.js'
+import { setupState as setupStateTable } from '../db/schema.js'
 import { createAdmin, firstAdmin, MasterKeyUnavailable, PENDING_TOTP_AAD, totpRequired } from '../local/break-glass.js'
 import { invalidCredentials, nowOf, secondFactorRequired, secretsUnavailable, storeOf, takeLimit, weakPassword, whereFrom, invalidCode } from '../local/http.js'
 import {
@@ -26,6 +28,7 @@ import {
   type SessionData,
 } from '../local/session.js'
 import { burnSetupToken, hasLiveSetupToken, issueSetupToken } from '../local/setup-token.js'
+import { parseProgress } from '../local/setup-progress.js'
 import { newTotpSecret, totpUri, verifyTotp } from '../local/totp.js'
 import { RateLimiter } from '../settings/rate-limit.js'
 import { setupState } from './public-config.js'
@@ -33,7 +36,7 @@ import { setupState } from './public-config.js'
 /**
  * The setup API, Task 7 part (installer proposal §4, §7.2, §8.1–8.4, §11): status, the token exchange for a setup
  * session, and the break-glass admin step. The wizard's other steps (organisation, checks, OIDC, kit, claim,
- * complete) build on the same session helpers. Every route is public to the bearer-token hook (its own cookie
+ * complete) are in setup-wizard.ts, on the same session helpers. Every route is public to the bearer-token hook (its own cookie
  * session instead), served in setup mode, and answers 404 once setup is done (8.1: nothing to probe).
  */
 
@@ -136,6 +139,9 @@ export function setupRoutes(app: FastifyInstance): void {
   app.post('/setup/admin', SETUP, async (request, reply): Promise<SetupAdminResult> => {
     const s = open()
     const sess = await session(request)
+    // The recovery kit holds this admin's codes: once it is downloaded, the admin is not replaced (8.1).
+    const [st] = await app.deps.db.select({ progress: setupStateTable.setupProgress }).from(setupStateTable).where(eq(setupStateTable.id, 1))
+    if (parseProgress(st?.progress).kitDownloadedAt) throw invalidState('kit_downloaded')
     const body = SetupAdminBody.parse(request.body)
     const issue = passwordIssue(body.username, body.password)
     if (issue) throw weakPassword(issue)

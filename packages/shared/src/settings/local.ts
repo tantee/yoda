@@ -190,3 +190,56 @@ export const TotpConfirmBody = z.object({
 export const RecoveryCodesBody = z.object({ totpCode: TotpCode.optional(), recoveryCode: RecoveryCodeInput.optional() })
 export const RecoveryCodesResult = z.object({ recoveryCodes: z.array(z.string()) })
 export type RecoveryCodesResult = z.infer<typeof RecoveryCodesResult>
+
+// ── Setup wizard (installer proposal §4.2, §8.1) ───────────────────────────────────────────────────────────────
+
+/**
+ * The wizard's steps in order (§4.2): 0 token, 1 organisation (with the default language), 2 break-glass admin,
+ * 3 system check, 4 sign-in (OIDC), 5–8 optional (email, LINE, Telegram; GitLab, AI and backups), 9 recovery
+ * kit, 10 claim admin and finish.
+ */
+export const SETUP_STEPS = ['token', 'organisation', 'admin', 'check', 'signin', 'email', 'line', 'telegram', 'more', 'kit', 'claim'] as const
+export const SetupStepId = z.enum(SETUP_STEPS)
+export type SetupStepId = z.infer<typeof SetupStepId>
+/** Steps that may be skipped (they say where to find the settings later). */
+export const OPTIONAL_SETUP_STEPS: readonly SetupStepId[] = ['email', 'line', 'telegram', 'more']
+/** What completing setup checks in one transaction (8.1); the sign-in test is the claim's sign-in. */
+export const REQUIRED_FOR_COMPLETION: readonly SetupStepId[] = ['organisation', 'admin', 'kit', 'claim']
+/** The settings categories the wizard reads, saves and tests through the setup session. */
+export const SETUP_CATEGORIES = ['general', 'signin', 'email', 'line', 'telegram', 'gitlab', 'ai', 'backups', 'storage'] as const
+
+export const SetupStepState = z.enum(['todo', 'done', 'skipped'])
+export type SetupStepState = z.infer<typeof SetupStepState>
+
+/** Where the wizard stands, kept server-side (the setting rows are real), so a reload or a new token resumes. */
+export const SetupProgress = z.object({
+  installId: z.string(),
+  steps: z.object(Object.fromEntries(SETUP_STEPS.map((s) => [s, SetupStepState])) as Record<SetupStepId, typeof SetupStepState>),
+  /** TOTP is required for the break-glass admin (D3, from the saved public URL and this request's host). */
+  totpRequired: z.boolean(),
+  admin: z.object({ username: z.string(), totpEnabled: z.boolean() }).nullable(),
+  /** The recovery kit was downloaded (once; the master key is never shown again). */
+  kitDownloadedAt: z.string().nullable(),
+  /** The person who signed in through OIDC at the claim step and became the first portal admin. */
+  claimed: z.object({ username: z.string(), at: z.string() }).nullable(),
+  /** Required steps not done yet; empty: setup can be completed. */
+  missing: z.array(SetupStepId),
+})
+export type SetupProgress = z.infer<typeof SetupProgress>
+
+/** Marks a step the server cannot see for itself: the system check viewed, an optional step done or skipped. */
+export const SetupStepBody = z.object({ step: z.enum(['check', 'email', 'line', 'telegram', 'more']), state: z.enum(['done', 'skipped']) })
+export type SetupStepBody = z.infer<typeof SetupStepBody>
+
+/** The recovery kit (D7): one text file with the master key and fresh break-glass recovery codes. Shown once. */
+export const RecoveryKit = z.object({
+  filename: z.string(),
+  content: z.string(),
+  recoveryCodes: z.array(z.string()),
+  downloadedAt: z.string(),
+})
+export type RecoveryKit = z.infer<typeof RecoveryKit>
+
+/** The claim sign-in's checks; `username` became the first portal admin when `ok`. */
+export const SetupClaimResult = OidcCheckResult.extend({ username: z.string().nullable() })
+export type SetupClaimResult = z.infer<typeof SetupClaimResult>

@@ -40,6 +40,7 @@ import { notificationChannelRoutes } from './routes/notification-channels.js'
 import { channelWebhookRoutes } from './routes/channel-webhooks.js'
 import { publicConfigRoutes } from './routes/public-config.js'
 import { setupRoutes } from './routes/setup.js'
+import { setupWizardRoutes } from './routes/setup-wizard.js'
 import { recoveryRoutes } from './routes/recovery.js'
 import { readiness } from './readiness.js'
 import { VERSION } from './version.js'
@@ -159,6 +160,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   })
   publicConfigRoutes(app)
   setupRoutes(app)
+  setupWizardRoutes(app)
   recoveryRoutes(app)
   meRoutes(app)
   peopleRoutes(app)

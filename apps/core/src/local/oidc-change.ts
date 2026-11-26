@@ -83,9 +83,9 @@ async function discover(values: OidcValues, policy: OutboundPolicy): Promise<{ a
   return { authorize: doc.authorization_endpoint as string, token: doc.token_endpoint as string }
 }
 
-/** The redirect URI of the test sign-in: the portal's /recovery page on the public URL. */
-export function recoveryRedirectUri(publicUrl: string): string {
-  return `${new URL(publicUrl).origin}/recovery`
+/** The redirect URI of the test sign-in: the portal's /recovery page (or /setup, the claim) on the public URL. */
+export function recoveryRedirectUri(publicUrl: string, path: '/recovery' | '/setup' = '/recovery'): string {
+  return `${new URL(publicUrl).origin}${path}`
 }
 
 /**
@@ -94,7 +94,7 @@ export function recoveryRedirectUri(publicUrl: string): string {
  */
 export async function startTestSignIn(
   pending: OidcPending,
-  opts: { publicUrl: string; policy: OutboundPolicy; now: Date },
+  opts: { publicUrl: string; policy: OutboundPolicy; now: Date; redirectPath?: '/recovery' | '/setup' },
 ): Promise<{ authorizeUrl: string; redirectUri: string; data: NonNullable<SessionData['oidc']> }> {
   let endpoints: { authorize: string }
   try {
@@ -107,7 +107,7 @@ export async function startTestSignIn(
     state: randomToken(24),
     nonce: randomToken(24),
     verifier,
-    redirectUri: recoveryRedirectUri(opts.publicUrl),
+    redirectUri: recoveryRedirectUri(opts.publicUrl, opts.redirectPath),
     startedAt: opts.now.toISOString(),
     valuesHash: valuesHash(pending.values),
     stagedAt: pending.stagedAt,
@@ -147,13 +147,18 @@ const jwksUrlOf = (v: OidcValues) => v.jwksUrl ?? `${v.issuer}/protocol/openid-c
 /**
  * Finishes the test sign-in: exchanges the code (PKCE), verifies both tokens and the person. Every check reports
  * a short code, never a token or a server's text. `ok` marks the pending change as tested.
+ *
+ * The setup wizard's claim (§4.2 step 10) uses the same sign-in with `requireAdmin: false` (nobody is an admin
+ * yet: the person signing in becomes the first) and `staffGroup` (the first admin must be in the staff group, so
+ * the group setting is proven too); it also needs the verified claims to create the person.
  */
 export async function finishTestSignIn(
   deps: { db: Db; policy: OutboundPolicy },
   pending: OidcPending,
   flow: NonNullable<SessionData['oidc']>,
   input: { code: string; state: string; now: Date },
-): Promise<{ ok: boolean; checks: SettingsTestCheck[]; username: string | null }> {
+  opts: { requireAdmin?: boolean; staffGroup?: string } = {},
+): Promise<{ ok: boolean; checks: SettingsTestCheck[]; username: string | null; claims: TokenClaims | null }> {
   const checks: SettingsTestCheck[] = []
   const v = pending.values
   const fresh = input.now.getTime() - new Date(flow.startedAt).getTime() <= SIGNIN_TTL_MS
@@ -164,7 +169,7 @@ export async function finishTestSignIn(
       if (flow.valuesHash !== valuesHash(v) || flow.stagedAt !== pending.stagedAt) throw new Failed('pending_changed')
     }),
   )
-  if (!checks[0]!.ok) return { ok: false, checks, username: null }
+  if (!checks[0]!.ok) return { ok: false, checks, username: null, claims: null }
 
   let tokens: { id_token?: unknown; access_token?: unknown } = {}
   checks.push(
@@ -193,7 +198,7 @@ export async function finishTestSignIn(
       if (typeof tokens.id_token !== 'string' || typeof tokens.access_token !== 'string') throw new Failed('invalid_response')
     }),
   )
-  if (!checks[1]!.ok) return { ok: false, checks, username: null }
+  if (!checks[1]!.ok) return { ok: false, checks, username: null, claims: null }
 
   let keys: ReturnType<typeof createLocalJWKSet> | null = null
   checks.push(
@@ -207,7 +212,7 @@ export async function finishTestSignIn(
       }
     }),
   )
-  if (!keys) return { ok: false, checks, username: null }
+  if (!keys) return { ok: false, checks, username: null, claims: null }
   const jwks = keys as ReturnType<typeof createLocalJWKSet>
 
   checks.push(
@@ -240,8 +245,17 @@ export async function finishTestSignIn(
       claims = parsed.data
     }),
   )
-  const username = (claims as TokenClaims | null)?.preferred_username ?? null
-  if (username) {
+  const verified = claims as TokenClaims | null
+  const username = verified?.preferred_username ?? null
+  if (verified && opts.staffGroup !== undefined) {
+    const group = opts.staffGroup
+    checks.push(
+      await check('staff', async () => {
+        if (!(verified.groups ?? []).includes(group)) throw new Failed('not_staff')
+      }),
+    )
+  }
+  if (username && opts.requireAdmin !== false) {
     checks.push(
       await check('admin', async () => {
         const [r] = await deps.db.execute<{ admin: boolean; any: boolean }>(
@@ -253,7 +267,7 @@ export async function finishTestSignIn(
     )
   }
   const ok = checks.every((c) => c.ok) && !!username
-  return { ok, checks, username }
+  return { ok, checks, username, claims: ok ? verified : null }
 }
 
 /**
