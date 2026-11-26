@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { ChannelName, NotificationKind, type MyNotificationPrefs } from '@yoda/shared'
-import { cellKey, channelColumns, channelKey, codeLeftPercent, columnNoteKey, countdown, isChecked, kindKey, msLeft, serialQueue, toggleChannel } from '../app/utils/notificationSettings'
+import { cellKey, channelColumns, channelKey, codeLeftPercent, columnNoteKey, countdown, isChecked, kindKey, msLeft, serialQueue, toggleChannel, withPendingPrefs } from '../app/utils/notificationSettings'
 import { errorKey } from '../app/utils/errors'
 import { navItemsFor } from '../app/utils/nav'
 
@@ -129,5 +129,23 @@ describe('grid saves', () => {
     await expect(failed).rejects.toThrow('500')
     expect(await next).toBe('ok')
     expect(q.pending).toBe(0)
+  })
+})
+
+describe('withPendingPrefs', () => {
+  it('takes a fresh load as is when no save is queued', () => {
+    const fresh = my({ linked: { email: true, line: true, telegram: false } })
+    expect(withPendingPrefs(fresh, my(), 0)).toBe(fresh)
+  })
+  it('keeps the grid the user just clicked while saves are queued, but takes the rest (channels) fresh', () => {
+    const current = { ...my(), prefs: { kinds: { request_update: [], secretary_message: ['email' as const] } } }
+    const fresh = my({ linked: { email: true, line: true, telegram: false } })
+    const merged = withPendingPrefs(fresh, current, 2)
+    expect(merged.prefs).toEqual(current.prefs)
+    expect(merged.channels).toEqual(fresh.channels)
+  })
+  it('takes the fresh load when there is nothing on screen yet', () => {
+    const fresh = my()
+    expect(withPendingPrefs(fresh, null, 1)).toBe(fresh)
   })
 })

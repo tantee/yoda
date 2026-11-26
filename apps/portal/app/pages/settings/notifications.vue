@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { ChannelLinkCode, ChannelName, LinkableChannel, MyNotificationPrefs, NotificationKind, NotificationPrefs } from '@yoda/shared'
-import { cellKey, channelColumns, channelKey, codeLeftPercent, columnNoteKey, countdown, isChecked, kindKey, msLeft, serialQueue, toggleChannel } from '~/utils/notificationSettings'
+import { cellKey, channelColumns, channelKey, codeLeftPercent, columnNoteKey, countdown, isChecked, kindKey, msLeft, serialQueue, toggleChannel, withPendingPrefs } from '~/utils/notificationSettings'
 
 const POLL_MS = 3000
 
@@ -16,6 +16,8 @@ const saved = ref(false)
 const savingCells = ref<string[]>([])
 const saving = computed(() => savingCells.value.length > 0)
 const saves = serialQueue()
+// "Saved" never shows next to an error.
+watch(error, (e) => { if (e) saved.value = false })
 /** A success message after linking or unlinking. */
 const notice = ref('')
 
@@ -32,7 +34,7 @@ const anyAvailable = computed(() => columns.value.some(c => c.available))
 
 async function load() {
   try {
-    my.value = await api<MyNotificationPrefs>('/me/notification-prefs')
+    my.value = withPendingPrefs(await api<MyNotificationPrefs>('/me/notification-prefs'), my.value, saves.pending)
     error.value = ''
   } catch (e) {
     error.value = t(errorKey(e))
@@ -116,7 +118,7 @@ async function tick() {
   try {
     const fresh = await api<MyNotificationPrefs>('/me/notification-prefs')
     if (linking.value !== l) return
-    my.value = fresh
+    my.value = withPendingPrefs(fresh, my.value, saves.pending)
     if (fresh.channels.linked[l.channel]) {
       closeLinking()
       notice.value = t('notifications.settings.linking.linked', { channel: t(channelKey(l.channel)) })

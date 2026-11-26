@@ -78,3 +78,11 @@ export function serialQueue() {
     get pending() { return pending },
   }
 }
+
+/**
+ * A reload (link poll, unlink) while saves are queued keeps the on-screen grid: those clicks are not on the server
+ * yet, so the fresh prefs would briefly undo them. Everything else (channels, kinds) is taken fresh.
+ */
+export function withPendingPrefs(fresh: MyNotificationPrefs, current: MyNotificationPrefs | null, pending: number): MyNotificationPrefs {
+  return pending > 0 && current ? { ...fresh, prefs: current.prefs } : fresh
+}

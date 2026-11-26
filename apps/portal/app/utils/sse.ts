@@ -21,3 +21,17 @@ export function parseSse(buffer: string): { events: SseEvent[]; rest: string } {
   }
   return { events, rest }
 }
+
+export type StreamStep = 'stream' | 'reconnect' | 'refresh-retry' | 'login'
+
+/**
+ * What the live stream does next. A token that cannot be refreshed (the session ended while idle) means signing
+ * in again; a 401 gets one forced refresh and retry, then signing in again; other failures (network, 5xx) reconnect
+ * with backoff. `status` is absent when the request itself failed.
+ */
+export function streamStep(o: { tokenOk: boolean; status?: number; retriedAuth: boolean }): StreamStep {
+  if (!o.tokenOk) return 'login'
+  if (o.status === 401) return o.retriedAuth ? 'login' : 'refresh-retry'
+  if (o.status !== undefined && o.status >= 200 && o.status < 300) return 'stream'
+  return 'reconnect'
+}
