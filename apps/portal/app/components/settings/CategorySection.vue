@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { GeneratedSecret, SettingCategory, SettingsCategoryView, SettingsPutResponse, SettingsTestResult, SettingWarning } from '@yoda/shared'
+import type { GeneratedSecret, MasterKeyView, SettingCategory, SettingsCategoryView, SettingsPutResponse, SettingsTestResult, SettingWarning } from '@yoda/shared'
 import {
   REAUTH_STASH_KEY,
   applyModes,
@@ -12,6 +12,8 @@ import {
   parseReauthStash,
   rebaseDraft,
   reauthStash,
+  replayChanges,
+  secretBlocked,
   saveError,
   testValues,
   visibleSettings,
@@ -40,6 +42,8 @@ const props = defineProps<{
   generate?: string[]
   /** Email: also send a test message to the admin's own address. */
   sendTest?: boolean
+  /** Secrets cannot be saved while the master key is not usable. */
+  keyStatus?: MasterKeyView['status'] | null
 }>()
 const emit = defineEmits<{ saved: [res: SettingsPutResponse | null]; generated: []; dirty: [dirty: boolean]; reload: []; tested: [] }>()
 const { t } = useI18n()
@@ -58,6 +62,7 @@ watch(() => props.view, (next, prev) => {
   else draft.value = rebaseDraft(visibleSettings(props.category, prev.settings), draft.value, nextViews)
   resetOnNextView = false
   serverErrors.value = {}
+  replay.value = null
 })
 onBeforeUnmount(() => emit('dirty', false))
 
@@ -84,6 +89,8 @@ const warnings = ref<string[]>([])
 const saving = ref(false)
 const reauthOpen = ref(false)
 const stash = ref<ReauthStash | null>(null)
+/** Back from re-authentication: the versions the form had before the redirect (sent with the replayed save). */
+const replay = ref<ReauthStash | null>(null)
 
 function warningText(w: SettingWarning): string {
   if (w.code === 'embedding_model_changed') return t('settings.warning.embedding_model_changed', { count: w.count ?? 0 })
@@ -126,7 +133,8 @@ async function save() {
   warnings.value = []
   serverErrors.value = {}
   try {
-    const res = await api<SettingsPutResponse>(`/admin/settings/${props.category}`, { method: 'PUT', body: changes.value })
+    const res = await api<SettingsPutResponse>(`/admin/settings/${props.category}`, { method: 'PUT', body: replayChanges(changes.value, replay.value) })
+    replay.value = null
     notice.value = { type: 'success', text: t('settings.save.saved') }
     resetOnNextView = true
     warnings.value = [
@@ -142,6 +150,7 @@ async function save() {
 }
 
 function reset() {
+  replay.value = null
   draft.value = initialDraft(views.value)
   serverErrors.value = {}
   notice.value = null
@@ -217,6 +226,7 @@ onMounted(async () => {
   }
   if (!s) return
   draft.value = applyReauthStash(views.value, s)
+  replay.value = s
   if (s.action === 'save' && !s.secretsToRetype.length && dirty.value > 0) {
     await save()
     return
@@ -248,6 +258,7 @@ onMounted(async () => {
             :error="errorOf(v.key)"
             :generatable="props.generate?.includes(v.key)"
             :busy="generating === v.key"
+            :key-blocked="secretBlocked(v, keyStatus)"
             @generate="generateSecret(v.key)"
           />
           <SettingField v-else v-model="draft.values[v.key]!" :view="v" :error="errorOf(v.key)" :note="notes[v.key]" />

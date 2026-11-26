@@ -1,16 +1,18 @@
 <script setup lang="ts">
 import { computed, useI18n } from '#imports'
+import { LOCK_REASONS, lockHowKey, lockNamed } from '~/utils/settings'
 
 /**
  * Why a setting cannot be changed here (proposal §5.2, 8.6): "กำหนดโดย environment · SMTP_HOST" for env, plus
- * bootstrap-only, read-only and recovery-only. The tooltip (and `title`) says how to change it.
+ * bootstrap-only, read-only, recovery-only and managed on the install host. The tooltip (and `title`) says how to
+ * change it; `howKey` (from `fieldRules`) picks the wording that fits the key's state.
  */
-const props = defineProps<{ reason: string; envName?: string | null }>()
+const props = defineProps<{ reason: string; envName?: string | null; container?: string | null; howKey?: string | null }>()
 const { t } = useI18n()
-const REASONS = ['env', 'bootstrap', 'readonly', 'recovery_only', 'bound_secret_in_env']
-const reasonKey = computed(() => (REASONS.includes(props.reason) ? props.reason : 'readonly'))
-const label = computed(() => t(`settings.lock.${reasonKey.value}`, { name: props.envName ?? '' }))
-const how = computed(() => t(`settings.lock.how.${reasonKey.value}`, { name: props.envName ?? '' }))
+const reasonKey = computed(() => (LOCK_REASONS.includes(props.reason) ? props.reason : 'readonly'))
+const named = computed(() => lockNamed(props))
+const label = computed(() => t(`settings.lock.${reasonKey.value}`, named.value))
+const how = computed(() => t(props.howKey ?? lockHowKey(reasonKey.value, { envName: props.envName }), named.value))
 </script>
 
 <template>

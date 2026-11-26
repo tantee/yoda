@@ -1,4 +1,4 @@
-import { SETTINGS, SETTINGS_TEST_CODES, isSettingKey, type SettingCategory, type SettingView, type SettingsAuditEntry, type SettingsTestCheck } from '@yoda/shared'
+import { SETTINGS, SETTINGS_TEST_CODES, isSettingKey, type MasterKeyView, type SettingCategory, type SettingView, type SettingsAuditEntry, type SettingsTestCheck } from '@yoda/shared'
 import type { ZodTypeAny } from 'zod'
 
 /**
@@ -107,18 +107,77 @@ export function visibleSettings(category: SettingCategory, views: SettingView[])
   return [...shown].sort((a, b) => rank(a.key) - rank(b.key))
 }
 
+export type FieldLock = {
+  reason: string
+  envName: string | null
+  /** The container that reads it (`managed_on_host`). */
+  container: string | null
+  /** i18n key of the "how to change it" text, which depends on the key's state. */
+  howKey: string
+}
+
 export type FieldRules = {
   /** The input takes changes. */
   editable: boolean
   /** The lock chip to show ("กำหนดโดย environment: VAR"), or null. */
-  lock: { reason: string; envName: string | null } | null
+  lock: FieldLock | null
 }
 
-/** Locked settings (env, bootstrap, read-only, recovery-only) never take input. */
+/** Locks whose "how to change it" text also shows under the field (the others say enough in the chip). */
+export const SHOW_HOW = ['env', 'managed_on_host']
+
+export const LOCK_REASONS = ['env', 'bootstrap', 'readonly', 'recovery_only', 'managed_on_host', 'bound_secret_in_env']
+
+/**
+ * How a locked setting is changed. An env lock depends on what removing the variable would do: the prod compose
+ * file may still pass it (a default), and a secret that was not imported (no usable master key, or
+ * YODA_SETTINGS_IMPORT=false) is lost, disconnecting the service. A host-managed setting without a variable is
+ * not read by anything yet.
+ */
+export function lockHowKey(reason: string, opts: { envName?: string | null; secret?: boolean; importable?: boolean; composeDefault?: boolean } = {}): string {
+  if (reason === 'env') {
+    if (opts.composeDefault) return 'settings.lock.how.envCompose'
+    if (opts.secret && opts.importable === false) return 'settings.lock.how.envNotKept'
+    return 'settings.lock.how.env'
+  }
+  if (reason === 'managed_on_host') return opts.envName ? 'settings.lock.how.managed_on_host' : 'settings.lock.how.managed_on_host_unused'
+  return `settings.lock.how.${LOCK_REASONS.includes(reason) ? reason : 'readonly'}`
+}
+
+/** The named values of a lock's texts: the variable, and the container when there is one. */
+export const lockNamed = (l: { envName?: string | null; container?: string | null }) => ({ name: l.envName ?? '', ...(l.container ? { container: l.container } : {}) })
+
+/** Locked settings (env, bootstrap, read-only, recovery-only, managed on the host) never take input. */
 export function fieldRules(v: SettingView): FieldRules {
   if (!v.locked) return { editable: true, lock: null }
-  const envName = v.locked.envName ?? v.envName ?? null
-  return { editable: false, lock: { reason: v.locked.reason, envName } }
+  const envName = v.locked.envName ?? (v.locked.reason === 'managed_on_host' ? null : v.envName) ?? null
+  const howKey = lockHowKey(v.locked.reason, { envName, secret: v.secret, importable: v.importable, composeDefault: v.composeDefault })
+  return { editable: false, lock: { reason: v.locked.reason, envName, container: v.locked.container ?? null, howKey } }
+}
+
+/** A secret that is not locked still cannot be saved, replaced or cleared here while the master key is unusable. */
+export const secretBlocked = (v: SettingView, keyStatus: MasterKeyView['status'] | null | undefined) =>
+  v.secret && !v.locked && !!keyStatus && keyStatus !== 'ok'
+
+/**
+ * The master key banner: none when the key is fine; information for an install that keeps every secret in env
+ * (no key, nothing stored: nothing is lost); an error in recovery (a wrong key, or stored secrets it cannot read).
+ */
+export function masterKeyAlert(mk: MasterKeyView | null | undefined): { type: 'info' | 'error'; key: string } | null {
+  if (!mk || mk.status === 'ok') return null
+  if (mk.status === 'missing' && !mk.recovery) return { type: 'info', key: 'settings.security.keyAlert.missingEnvOnly' }
+  return { type: 'error', key: `settings.security.keyAlert.${mk.status}` }
+}
+
+/**
+ * Where a value shown under the field came from: saved here, imported from env on boot (D4: it stays in effect
+ * after the variable is removed), or the default. Nothing for locked settings (the lock says it).
+ */
+export function sourceKind(v: SettingView): 'imported' | 'saved' | 'default' | null {
+  if (v.locked) return null
+  if (v.source === 'db' && v.updatedAt) return v.writeSource === 'import' ? 'imported' : 'saved'
+  if (v.source === 'default') return 'default'
+  return null
 }
 
 /** Env-locked settings in a page's categories, for the count next to the category name. */
@@ -292,6 +351,11 @@ export type ReauthStash = {
   values: Record<string, FormValue>
   clears: string[]
   secretsToRetype: string[]
+  /**
+   * The versions the form had loaded for the edited keys. The replay sends these, not the versions loaded after
+   * the redirect, so a change someone made meanwhile is a 409 conflict instead of being overwritten.
+   */
+  versions: Record<string, number>
   /** Saved automatically on return when nothing needs retyping. */
   action: 'save' | 'generate' | 'webhook'
   /** When it was kept (ms); a stash older than REAUTH_STASH_MAX_MS is dropped. */
@@ -310,7 +374,7 @@ export function reauthStash(
   action: ReauthStash['action'] = 'save',
   now = Date.now(),
 ): ReauthStash {
-  const { changes } = draftChanges(views, draft)
+  const { changes, versions } = draftChanges(views, draft)
   const values: Record<string, FormValue> = {}
   const clears: string[] = []
   const secretsToRetype: string[] = []
@@ -323,7 +387,7 @@ export function reauthStash(
       values[v.key] = draft.values[v.key] ?? null
     }
   }
-  return { category, path, values, clears, secretsToRetype, action, at: now }
+  return { category, path, values, clears, secretsToRetype, versions, action, at: now }
 }
 
 /**
@@ -335,6 +399,7 @@ export function parseReauthStash(raw: string | null, path: string, now = Date.no
   try {
     const s = JSON.parse(raw) as ReauthStash
     if (!s || typeof s.category !== 'string' || !s.values || typeof s.values !== 'object' || !Array.isArray(s.clears) || !Array.isArray(s.secretsToRetype)) return null
+    if (!s.versions || typeof s.versions !== 'object' || Object.values(s.versions).some(v => typeof v !== 'number')) return null
     if (typeof s.at !== 'number' || now - s.at > REAUTH_STASH_MAX_MS || s.at - now > 60_000) return null
     if (s.path !== path) return null
     return s
@@ -351,6 +416,18 @@ export function applyReauthStash(views: SettingView[], stash: ReauthStash): Sect
   for (const k of stash.clears) if (known.has(k) && draft.secrets[k]) draft.secrets[k] = { mode: 'clear', value: '' }
   for (const k of stash.secretsToRetype) if (known.has(k) && draft.secrets[k]) draft.secrets[k] = { mode: 'replace', value: '' }
   return draft
+}
+
+/**
+ * The save body of a replay: the edited keys carry the versions kept in the stash (what the admin saw before
+ * signing in again), so a concurrent change gets 409 `version_conflict`. Keys edited only after the return keep
+ * the versions loaded now.
+ */
+export function replayChanges(changes: DraftChanges, stash: Pick<ReauthStash, 'versions'> | null): DraftChanges {
+  if (!stash) return changes
+  const versions = { ...changes.versions }
+  for (const k of Object.keys(changes.changes)) if (Object.hasOwn(stash.versions, k)) versions[k] = stash.versions[k]!
+  return { changes: changes.changes, versions }
 }
 
 // --- Tests ------------------------------------------------------------------------------------------------------

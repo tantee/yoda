@@ -1624,20 +1624,26 @@
       "env": "Set by environment · {name}",
       "bootstrap": "Set at install only",
       "readonly": "Filled by the system",
-      "recovery_only": "Changed from recovery only",
+      "recovery_only": "Protected: not changed here",
       "bound_secret_in_env": "Its secret is set by environment · {name}",
       "how": {
         "env": "To manage it here, remove {name} from the .env on the install host and restart. The current value is kept.",
         "bootstrap": "This lives in the install host's configuration. Change it there and restart.",
         "readonly": "The system fills this in",
-        "recovery_only": "Changing the issuer or client can lock everyone out, so it is changed from the recovery page (/recovery), with a test, only",
-        "bound_secret_in_env": "Remove {name} from the .env before moving this endpoint"
-      }
+        "recovery_only": "Changing the issuer, client or JWKS URL can lock everyone out, so it is not changed here. A guarded way to change it, with a test, is coming in the setup update; until then ask the host administrator.",
+        "bound_secret_in_env": "Remove {name} from the .env before moving this endpoint",
+        "managed_on_host": "Set {name} on the {container} container on the install host, then restart that container. It becomes editable here in a later update.",
+        "managed_on_host_unused": "Nothing reads this yet. It becomes editable here with the setup update.",
+        "envCompose": "The prod compose file provides a default for {name}, so it stays set by environment until this install uses generated settings (coming in the setup update). Change it in the .env on the install host.",
+        "envNotKept": "This secret is not stored in the database (the master key is not usable, or YODA_SETTINGS_IMPORT=false). Removing {name} from the .env disconnects the service until the secret is entered here."
+      },
+      "managed_on_host": "Managed on the install host"
     },
     "source": {
       "savedBy": "Saved by {name} · {at}",
       "savedAt": "Saved {at}",
-      "default": "Default value"
+      "default": "Default value",
+      "imported": "Imported from environment · {at}"
     },
     "secret": {
       "placeholder": "Paste the new value",
@@ -1653,7 +1659,8 @@
       "writeOnly": "Once saved it shows as “Set” only. Nobody can read it back.",
       "generatedTitle": "New secret",
       "generatedOnce": "Copy it now. It will not be shown again.",
-      "generatedDone": "Done"
+      "generatedDone": "Done",
+      "keyBlocked": "Secrets cannot be saved or changed here until the master key is usable (see Security)."
     },
     "option": {
       "th": "Thai",
@@ -1805,7 +1812,7 @@
       }
     },
     "signin": {
-      "recoveryNote": "The issuer and client are not changed here, so nobody is locked out; use the recovery page (/recovery)",
+      "recoveryNote": "The issuer, client and JWKS URL are not changed here, so nobody is locked out. A guarded way to change them is coming in the setup update; until then ask the host administrator.",
       "loginFunNote": "The login page fun mode is set on the Keycloak host (YODA_LOGIN_FUN_MODE)"
     },
     "runners": {
@@ -1818,11 +1825,12 @@
       "keyStatus": "Master key",
       "keyId": "Key id",
       "recovery": "Recovery mode",
-      "keyHelp": "The master key lives on the install host and in the recovery kit. Rotate it with the yoda-admin command (see the runbook).",
+      "keyHelp": "The master key lives on the install host. Ask the host administrator to back it up or rotate it; tools for this are coming in the setup update.",
       "keyAlert": {
         "missing": "The master key is missing: stored secrets cannot be used and new ones cannot be saved",
         "malformed": "The master key is malformed: stored secrets cannot be used",
-        "mismatch": "The master key does not match: stored secrets cannot be used"
+        "mismatch": "The master key does not match: stored secrets cannot be used",
+        "missingEnvOnly": "No master key is set. Secrets come from the environment only; to save secrets here, the host administrator adds a master key (see the runbook)."
       }
     },
     "ai": {
@@ -1980,11 +1988,12 @@
           "help": "Changing it needs the password again"
         },
         "port": {
-          "label": "Port"
+          "label": "Port",
+          "help": "Changing it needs the password again"
         },
         "secure": {
           "label": "TLS from the start (port 465)",
-          "help": "Off uses STARTTLS"
+          "help": "Off uses STARTTLS. Changing it needs the password again"
         },
         "user": {
           "label": "User name"

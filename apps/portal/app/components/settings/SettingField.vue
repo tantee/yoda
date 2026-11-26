@@ -2,7 +2,7 @@
 import type { SettingView } from '@yoda/shared'
 import { computed, useI18n, useId } from '#imports'
 import { formatDateTime } from '~/utils/dates'
-import { enumOptions, fieldHelpKey, fieldKind, fieldLabelKey, fieldRules, type FormValue } from '~/utils/settings'
+import { SHOW_HOW, lockNamed, enumOptions, fieldHelpKey, fieldKind, fieldLabelKey, fieldRules, sourceKind, type FormValue } from '~/utils/settings'
 import EnvLockChip from './EnvLockChip.vue'
 
 /**
@@ -22,12 +22,12 @@ const options = computed(() => enumOptions(props.view.key).map(v => ({ value: v,
 const errors = computed(() => (props.error ? [props.error] : []))
 const source = computed(() => {
   const v = props.view
-  if (v.locked) return ''
-  if (v.source === 'db' && v.updatedAt) {
-    const at = formatDateTime(v.updatedAt, locale.value)
-    return v.updatedBy?.label ? t('settings.source.savedBy', { name: v.updatedBy.label, at }) : t('settings.source.savedAt', { at })
-  }
-  if (v.source === 'default') return t('settings.source.default')
+  const kind = sourceKind(v)
+  const at = v.updatedAt ? formatDateTime(v.updatedAt, locale.value) : ''
+  // Imported from env on boot (D4): it stays in effect after the variable is removed from the host's .env.
+  if (kind === 'imported') return t('settings.source.imported', { at })
+  if (kind === 'saved') return v.updatedBy?.label ? t('settings.source.savedBy', { name: v.updatedBy.label, at }) : t('settings.source.savedAt', { at })
+  if (kind === 'default') return t('settings.source.default')
   return ''
 })
 const inputType = computed(() => (kind.value === 'number' ? 'number' : kind.value === 'url' ? 'url' : 'text'))
@@ -80,11 +80,11 @@ const textValue = computed(() => (typeof props.modelValue === 'string' ? props.m
       />
     </template>
 
-    <div v-if="rules.lock" class="mt-1"><EnvLockChip :reason="rules.lock.reason" :env-name="rules.lock.envName" /></div>
-    <p v-if="rules.lock?.reason === 'env'" class="setting-meta" data-testid="setting-lock-how">{{ t('settings.lock.how.env', { name: rules.lock.envName ?? '' }) }}</p>
+    <div v-if="rules.lock" class="mt-1"><EnvLockChip :reason="rules.lock.reason" :env-name="rules.lock.envName" :container="rules.lock.container" :how-key="rules.lock.howKey" /></div>
+    <p v-if="rules.lock && SHOW_HOW.includes(rules.lock.reason)" class="setting-meta" data-testid="setting-lock-how">{{ t(rules.lock.howKey, lockNamed(rules.lock)) }}</p>
     <p v-if="note" class="setting-meta text-warning" role="note" data-testid="setting-note">{{ note }}</p>
     <p v-if="view.restartRequired" class="setting-meta text-warning" data-testid="setting-restart">{{ t('settings.restart.field') }}</p>
-    <p v-if="source" class="setting-meta" data-testid="setting-source">{{ source }}</p>
+    <p v-if="source" class="setting-meta" :data-source="sourceKind(view)" data-testid="setting-source">{{ source }}</p>
     <p v-if="kind === 'list' && rules.editable" class="setting-meta">{{ t('settings.listHint') }}</p>
     <p v-if="help" class="setting-meta">{{ help }}</p>
   </div>

@@ -14,6 +14,7 @@ import {
   SETTINGS_HOME,
   SETTINGS_PAGES,
   lockedCount,
+  masterKeyAlert,
   parseReauthStash,
   settingsPage,
   settingsPath,
@@ -94,6 +95,7 @@ function onSaved(res: SettingsPutResponse | null) {
 }
 
 const masterKey = computed(() => data.value?.masterKey ?? null)
+const keyAlert = computed(() => masterKeyAlert(masterKey.value))
 const origin = typeof window === 'undefined' ? '' : window.location.origin
 const publicUrl = computed(() => catView('general')?.settings.find(s => s.key === 'org.publicUrl')?.value)
 const hook = (path: string) => webhookUrl(publicUrl.value, origin, path)
@@ -189,8 +191,8 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload))
     </PageHeader>
 
     <RestartBanner :keys="data?.restartRequired ?? []" />
-    <v-alert v-if="masterKey && masterKey.status !== 'ok'" type="error" variant="tonal" density="compact" class="mb-4" data-testid="master-key-alert">
-      {{ t(`settings.security.keyAlert.${masterKey.status}`) }}
+    <v-alert v-if="keyAlert" :type="keyAlert.type" variant="tonal" density="compact" class="mb-4" :role="keyAlert.type === 'error' ? 'alert' : 'status'" :data-level="keyAlert.type" data-testid="master-key-alert">
+      {{ t(keyAlert.key) }}
     </v-alert>
 
     <div class="settings-layout" :class="{ 'settings-layout--full': page.id === 'audit' }">
@@ -231,6 +233,7 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload))
               :icon="CATEGORY_ICONS[c]"
               :generate="c === 'gitlab' ? ['gitlab.webhookSecret'] : c === 'telegram' ? ['telegram.webhookSecret'] : []"
               :send-test="c === 'email'"
+              :key-status="masterKey?.status ?? null"
               class="mb-4"
               @saved="page.id === 'channels' ? onChannelSaved($event) : onSaved($event)"
               @tested="auditRefresh++"

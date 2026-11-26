@@ -42,7 +42,7 @@ async function register() {
     confirmOpen.value = false
     const err = saveError(e)
     if (err.kind === 'reauth') {
-      stash.value = { category: 'telegram', path: route.path, values: {}, clears: [], secretsToRetype: [], action: 'webhook', at: Date.now() }
+      stash.value = { category: 'telegram', path: route.path, values: {}, clears: [], secretsToRetype: [], versions: {}, action: 'webhook', at: Date.now() }
       reauthOpen.value = true
     } else if (err.kind === 'rateLimited') error.value = t('settings.save.rateLimited', { s: err.retryAfter ?? 60 })
     else error.value = t(errorKey(e))

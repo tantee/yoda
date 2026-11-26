@@ -9,6 +9,7 @@ import ApplyHint from '../app/components/settings/ApplyHint.vue'
 import RestartBanner from '../app/components/settings/RestartBanner.vue'
 import {
   LEGACY_SETTINGS_ROUTES,
+  LOCK_REASONS,
   SETTINGS_PAGES,
   applyModes,
   applyReauthStash,
@@ -26,13 +27,18 @@ import {
   fieldRules,
   fromFormValue,
   initialDraft,
+  lockHowKey,
   lockedCount,
+  masterKeyAlert,
   pageForCategory,
   parseReauthStash,
   reauthStash,
   rebaseDraft,
+  replayChanges,
   saveError,
+  secretBlocked,
   settingsPage,
+  sourceKind,
   testCodeMessage,
   testValues,
   toFormValue,
@@ -64,8 +70,8 @@ const envLocked = (key: string, envName: string, value: unknown) => view(key, { 
 
 const EMAIL: SettingView[] = [
   view('smtp.host', { source: 'db', value: 'smtp.example.org', version: 2, boundSecrets: ['smtp.password'] }),
-  view('smtp.port', { value: 587 }),
-  view('smtp.secure', { value: false }),
+  view('smtp.port', { value: 587, boundSecrets: ['smtp.password'] }),
+  view('smtp.secure', { value: false, boundSecrets: ['smtp.password'] }),
   view('smtp.user', { source: 'db', value: 'yoda@example.org', version: 1 }),
   secret('smtp.password', true),
   view('smtp.from', { source: 'unset' }),
@@ -122,10 +128,50 @@ describe('fields by registry type', () => {
     expect(validateField('gitlab.url', '')).toBeNull()
   })
   it('locked settings never take input and carry their reason', () => {
-    expect(fieldRules(envLocked('smtp.host', 'SMTP_HOST', 'smtp.example.org'))).toEqual({ editable: false, lock: { reason: 'env', envName: 'SMTP_HOST' } })
-    expect(fieldRules(view('oidc.issuer', { locked: { reason: 'recovery_only' } }))).toEqual({ editable: false, lock: { reason: 'recovery_only', envName: null } })
+    expect(fieldRules(envLocked('smtp.host', 'SMTP_HOST', 'smtp.example.org'))).toEqual({ editable: false, lock: { reason: 'env', envName: 'SMTP_HOST', container: null, howKey: 'settings.lock.how.env' } })
+    expect(fieldRules(view('oidc.issuer', { locked: { reason: 'recovery_only' } }))).toEqual({ editable: false, lock: { reason: 'recovery_only', envName: null, container: null, howKey: 'settings.lock.how.recovery_only' } })
+    expect(fieldRules(view('oidc.jwksUrl', { envName: 'OIDC_JWKS_URL', locked: { reason: 'recovery_only' } })).lock).toMatchObject({ reason: 'recovery_only' })
+    expect(fieldRules(view('backup.at', { envName: 'BACKUP_AT', locked: { reason: 'managed_on_host', envName: 'BACKUP_AT', container: 'backup' } }))).toEqual({
+      editable: false,
+      lock: { reason: 'managed_on_host', envName: 'BACKUP_AT', container: 'backup', howKey: 'settings.lock.how.managed_on_host' },
+    })
+    expect(fieldRules(view('org.name', { locked: { reason: 'managed_on_host', container: 'portal' } })).lock).toMatchObject({ envName: null, howKey: 'settings.lock.how.managed_on_host_unused' })
     expect(fieldRules(EMAIL[0]!)).toEqual({ editable: true, lock: null })
     expect(lockedCount([envLocked('smtp.host', 'SMTP_HOST', 'x'), view('a', { locked: { reason: 'readonly' } }), EMAIL[1]!])).toBe(1)
+  })
+  it('the env lock help depends on what removing the variable would do', () => {
+    expect(lockHowKey('env', { importable: true })).toBe('settings.lock.how.env')
+    expect(lockHowKey('env', { secret: true, importable: true })).toBe('settings.lock.how.env')
+    // A secret the import did not copy (no usable key, or import off) is lost: the service disconnects.
+    expect(lockHowKey('env', { secret: true, importable: false })).toBe('settings.lock.how.envNotKept')
+    // The prod compose passes it anyway: removing it from .env does not unlock it.
+    expect(lockHowKey('env', { composeDefault: true, importable: true })).toBe('settings.lock.how.envCompose')
+    const port = view('smtp.port', { source: 'env', envName: 'SMTP_PORT', value: 465, locked: { reason: 'env', envName: 'SMTP_PORT' }, importable: true, composeDefault: true })
+    expect(fieldRules(port).lock!.howKey).toBe('settings.lock.how.envCompose')
+    const pw = secret('smtp.password', true, { source: 'env', locked: { reason: 'env', envName: 'SMTP_PASSWORD' }, importable: false, composeDefault: false })
+    expect(fieldRules(pw).lock!.howKey).toBe('settings.lock.how.envNotKept')
+    expect(lockHowKey('mystery')).toBe('settings.lock.how.readonly')
+  })
+  it('marks values imported from env, which stay in effect after the variable is removed (D4)', () => {
+    const at = '2026-11-24T03:02:00Z'
+    expect(sourceKind(view('smtp.user', { source: 'db', updatedAt: at, writeSource: 'import' }))).toBe('imported')
+    expect(sourceKind(view('smtp.user', { source: 'db', updatedAt: at, writeSource: 'ui' }))).toBe('saved')
+    expect(sourceKind(view('smtp.user'))).toBe('default')
+    expect(sourceKind(envLocked('smtp.user', 'SMTP_USER', 'x'))).toBeNull()
+  })
+  it('the master key banner: information without stored secrets, an error in recovery', () => {
+    expect(masterKeyAlert({ status: 'ok', keyId: 'k1', recovery: false })).toBeNull()
+    expect(masterKeyAlert(null)).toBeNull()
+    expect(masterKeyAlert({ status: 'missing', keyId: null, recovery: false })).toEqual({ type: 'info', key: 'settings.security.keyAlert.missingEnvOnly' })
+    expect(masterKeyAlert({ status: 'missing', keyId: null, recovery: true })).toEqual({ type: 'error', key: 'settings.security.keyAlert.missing' })
+    expect(masterKeyAlert({ status: 'mismatch', keyId: null, recovery: true })).toEqual({ type: 'error', key: 'settings.security.keyAlert.mismatch' })
+  })
+  it('secrets are blocked while the master key is not usable (locked ones carry their own lock)', () => {
+    expect(secretBlocked(secret('smtp.password', false), 'missing')).toBe(true)
+    expect(secretBlocked(secret('smtp.password', false), 'ok')).toBe(false)
+    expect(secretBlocked(secret('smtp.password', false), null)).toBe(false)
+    expect(secretBlocked(secret('smtp.password', true, { locked: { reason: 'env', envName: 'SMTP_PASSWORD' } }), 'missing')).toBe(false)
+    expect(secretBlocked(view('smtp.host'), 'missing')).toBe(false)
   })
   it('hides bootstrap-only settings outside the read-only pages and orders the general page', () => {
     const general = [view('boot.port', { category: 'general', locked: { reason: 'bootstrap' } }), view('org.publicUrl', { category: 'general' }), view('org.name', { category: 'general' })]
@@ -208,6 +254,13 @@ describe('form diff', () => {
     d.secrets['smtp.password'] = { mode: 'replace', value: 'pw' }
     expect(boundSecretNotes(EMAIL, d)).toEqual({})
   })
+  it('the SMTP port and TLS mode are bound to the password like the host', () => {
+    const d = initialDraft(EMAIL)
+    d.values['smtp.port'] = '465'
+    d.values['smtp.secure'] = true
+    expect(boundSecretNotes(EMAIL, d)).toEqual({ 'smtp.port': ['smtp.password'], 'smtp.secure': ['smtp.password'] })
+    expect(draftChanges(EMAIL, d).versions).toEqual({ 'smtp.port': 0, 'smtp.secure': 0 })
+  })
 })
 
 describe('save errors', () => {
@@ -234,7 +287,16 @@ describe('re-authentication stash', () => {
     const s = reauthStash('email', '/admin/settings/channels', EMAIL, d, 'save', NOW)
     const raw = JSON.stringify(s)
     expect(raw).not.toContain('super-secret-password')
-    expect(s).toEqual({ category: 'email', path: '/admin/settings/channels', values: { 'smtp.host': 'mail.example.org' }, clears: [], secretsToRetype: ['smtp.password'], action: 'save', at: NOW })
+    expect(s).toEqual({
+      category: 'email',
+      path: '/admin/settings/channels',
+      values: { 'smtp.host': 'mail.example.org' },
+      clears: [],
+      secretsToRetype: ['smtp.password'],
+      versions: { 'smtp.host': 2, 'smtp.password': 3 },
+      action: 'save',
+      at: NOW,
+    })
     const back = applyReauthStash(EMAIL, parseReauthStash(raw, '/admin/settings/channels', NOW + 60_000)!)
     expect(back.values['smtp.host']).toBe('mail.example.org')
     expect(back.secrets['smtp.password']).toEqual({ mode: 'replace', value: '' })
@@ -254,6 +316,24 @@ describe('re-authentication stash', () => {
     expect(parseReauthStash(null, '/x')).toBeNull()
     expect(parseReauthStash('{', '/x')).toBeNull()
     expect(parseReauthStash('{"category":"email"}', '/x')).toBeNull()
+    // A stash without the versions it was made at cannot be replayed safely.
+    const { versions: _v, ...noVersions } = reauthStash('email', '/x', EMAIL, initialDraft(EMAIL), 'save', NOW)
+    expect(parseReauthStash(JSON.stringify(noVersions), '/x', NOW)).toBeNull()
+    expect(parseReauthStash(JSON.stringify({ ...noVersions, versions: { 'smtp.host': 'x' } }), '/x', NOW)).toBeNull()
+  })
+  it('the replay sends the versions kept in the stash, so a change made meanwhile is a conflict', () => {
+    const d = initialDraft(EMAIL)
+    d.values['smtp.host'] = 'mail.example.org'
+    const s = reauthStash('email', '/x', EMAIL, d, 'save', NOW)
+    // Someone saved smtp.host (version 2 → 5) while this admin signed in again; the form loads version 5.
+    const reloaded = EMAIL.map(v => (v.key === 'smtp.host' ? { ...v, value: 'other.example.org', version: 5 } : v))
+    const back = applyReauthStash(reloaded, parseReauthStash(JSON.stringify(s), '/x', NOW + 1000)!)
+    back.values['smtp.user'] = 'new@example.org'
+    const body = replayChanges(draftChanges(reloaded, back), s)
+    expect(body.changes).toEqual({ 'smtp.host': 'mail.example.org', 'smtp.user': 'new@example.org' })
+    // The stash's version for the replayed key (core answers 409); the fresh one for a key edited after the return.
+    expect(body.versions).toEqual({ 'smtp.host': 2, 'smtp.user': 1 })
+    expect(replayChanges(draftChanges(reloaded, back), null).versions['smtp.host']).toBe(5)
   })
   it('is replayed only within 10 minutes and only on the page it came from', () => {
     const raw = JSON.stringify(reauthStash('email', '/admin/settings/channels', EMAIL, initialDraft(EMAIL), 'save', NOW))
@@ -335,10 +415,12 @@ describe('labels', () => {
     for (const c of SettingCategory.options) expect(hasText(`settings.category.${c}`), c).toBe(true)
     for (const p of SETTINGS_PAGES) expect(hasText(`settings.page.${p.id}`), p.id).toBe(true)
     for (const a of ['set', 'clear', 'import', 'derived', 'test', 'setup_completed', 'other']) expect(hasText(`settings.audit.action.${a}`), a).toBe(true)
-    for (const r of ['env', 'bootstrap', 'readonly', 'recovery_only', 'bound_secret_in_env']) {
+    for (const r of LOCK_REASONS) {
       expect(hasText(`settings.lock.${r}`), r).toBe(true)
       expect(hasText(`settings.lock.how.${r}`), r).toBe(true)
     }
+    for (const k of ['envCompose', 'envNotKept', 'managed_on_host_unused']) expect(hasText(`settings.lock.how.${k}`), k).toBe(true)
+    for (const k of ['settings.source.imported', 'settings.secret.keyBlocked', 'settings.security.keyAlert.missingEnvOnly']) expect(hasText(k), k).toBe(true)
     expect(hasText('nav.admin.settings')).toBe(true)
   })
   it('no message uses the vue-i18n special characters by accident', () => {
@@ -385,6 +467,18 @@ describe('SecretField', () => {
     expect(html).not.toContain('secret-clear')
     expect(html).toContain('settings.lock.env(name=SMTP_PASSWORD)')
   })
+  it('without a usable master key a secret has no actions and says why', async () => {
+    const html = await render(SecretField, { view: secret('smtp.password', true), modelValue: { mode: 'keep', value: '' }, keyBlocked: true })
+    expect(html).not.toContain('secret-replace')
+    expect(html).not.toContain('secret-clear')
+    expect(html).toContain('data-testid="secret-key-blocked"')
+    const unset = await render(SecretField, { view: secret('line.accessToken', false), modelValue: { mode: 'keep', value: '' }, keyBlocked: true })
+    expect(unset).not.toContain('type="password"')
+  })
+  it('an imported secret says it came from env', async () => {
+    const html = await render(SecretField, { view: secret('smtp.password', true, { writeSource: 'import' }), modelValue: { mode: 'keep', value: '' } })
+    expect(html).toContain('settings.source.imported(at=')
+  })
   it('generatable secrets offer generate; clear shows the pending removal', async () => {
     expect(await render(SecretField, { view: secret('gitlab.webhookSecret', true), modelValue: { mode: 'keep', value: '' }, generatable: true })).toContain('secret-generate-gitlab.webhookSecret')
     expect(await render(SecretField, { view: secret('smtp.password', true), modelValue: { mode: 'clear', value: '' } })).toContain('settings.secret.willClear')
@@ -396,6 +490,25 @@ describe('EnvLockChip and SettingField', () => {
     const html = await render(EnvLockChip, { reason: 'env', envName: 'SMTP_HOST' })
     expect(html).toContain('settings.lock.env(name=SMTP_HOST)')
     expect(html).toContain('title="settings.lock.how.env(name=SMTP_HOST)"')
+  })
+  it('a host-managed setting names the variable and its container', async () => {
+    const html = await render(EnvLockChip, { reason: 'managed_on_host', envName: 'BACKUP_AT', container: 'backup', howKey: 'settings.lock.how.managed_on_host' })
+    expect(html).toContain('settings.lock.managed_on_host(name=BACKUP_AT,container=backup)')
+    expect(html).toContain('title="settings.lock.how.managed_on_host(name=BACKUP_AT,container=backup)"')
+    const field = await render(SettingField, { view: view('backup.at', { envName: 'BACKUP_AT', value: '02:00', locked: { reason: 'managed_on_host', envName: 'BACKUP_AT', container: 'backup' } }), modelValue: '02:00' })
+    expect(/<input[^>]*>/.exec(field)![0]).toContain('disabled')
+    expect(field).toContain('data-testid="setting-lock-how"')
+  })
+  it('an env-locked field uses the help that fits its state', async () => {
+    const v = view('smtp.port', { source: 'env', envName: 'SMTP_PORT', value: 465, locked: { reason: 'env', envName: 'SMTP_PORT' }, importable: true, composeDefault: true })
+    const html = await render(SettingField, { view: v, modelValue: '465' })
+    expect(html).toContain('settings.lock.how.envCompose(name=SMTP_PORT)')
+    expect(html).not.toContain('settings.lock.how.env(name=SMTP_PORT)')
+  })
+  it('a value imported from env is marked', async () => {
+    const html = await render(SettingField, { view: view('smtp.user', { source: 'db', value: 'yoda@example.org', updatedAt: '2026-11-24T03:02:00Z', writeSource: 'import' }), modelValue: 'yoda@example.org' })
+    expect(html).toContain('settings.source.imported(at=')
+    expect(html).toContain('data-source="imported"')
   })
   it('an env-locked field is disabled and carries the chip and the how-to', async () => {
     const html = await render(SettingField, { view: envLocked('smtp.host', 'SMTP_HOST', 'smtp.example.org'), modelValue: 'smtp.example.org' })
