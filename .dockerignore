@@ -9,3 +9,5 @@
 .superpowers
 docs
 *.log
+# dev-only seed scripts (apps/core/scripts): never in an image
+apps/core/scripts

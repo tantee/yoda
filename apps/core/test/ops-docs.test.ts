@@ -102,6 +102,13 @@ describe('docs/operations.md commands', () => {
   })
 })
 
+describe('core image', () => {
+  it('leaves the dev-only scripts (demo seed) out of the build context, while typecheck covers them', () => {
+    expect(read('.dockerignore').split('\n')).toContain('apps/core/scripts')
+    expect(JSON.parse(read('apps/core/tsconfig.json')).include).toContain('scripts')
+  })
+})
+
 describe('docs consistency', () => {
   it('shows 8-character link codes everywhere', () => {
     for (const [name, text] of [['runbook', runbook], ['.env.example', envExample], ['README', read('README.md')]] as const) {
