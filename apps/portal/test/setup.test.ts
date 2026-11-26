@@ -23,6 +23,7 @@ import {
   tokenGroups,
   tokenValue,
   pastedInto,
+  pasteLikeText,
   typedInto,
 } from '../app/utils/setup'
 
@@ -116,6 +117,16 @@ describe('setup token boxes', () => {
     expect(pastedInto(['ABCD', '', '', '', ''], 1, 'efgh-jklm')).toEqual(['ABCD', 'EFGH', 'JKLM', '', ''])
     expect(pastedInto(full, 0, '2345-6789-ABCD-EFGH-JKLM')).toEqual(['2345', '6789', 'ABCD', 'EFGH', 'JKLM'])
     expect(pastedInto(full, 3, 'zz')).toEqual(['ABCD', 'EFGH', 'JKLM', 'ZZ', ''])
+  })
+
+  it('treats a drop or an autofill/replacement like a paste; typing is not', () => {
+    const dt = (text: string) => ({ getData: (t: string) => (t === 'text' || t === 'text/plain' ? text : '') })
+    expect(pasteLikeText({ inputType: 'insertFromDrop', data: null, dataTransfer: dt('abcd-efgh') })).toBe('abcd-efgh')
+    expect(pasteLikeText({ inputType: 'insertReplacementText', data: 'abcd-efgh-jklm', dataTransfer: null })).toBe('abcd-efgh-jklm')
+    expect(pasteLikeText({ inputType: 'insertReplacementText', data: null, dataTransfer: dt('wxyz') })).toBe('wxyz')
+    expect(pasteLikeText({ inputType: 'insertFromPaste', data: null, dataTransfer: dt('abcd') })).toBe('abcd')
+    expect(pasteLikeText({ inputType: 'insertText', data: 'a', dataTransfer: null })).toBeNull()
+    expect(pasteLikeText({ inputType: 'insertFromDrop', data: null, dataTransfer: null })).toBeNull()
   })
 })
 

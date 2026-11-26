@@ -112,6 +112,21 @@ export function pastedInto(groups: string[], i: number, text: string): string[] 
   return tokenGroups(groups.slice(0, i).join('') + text)
 }
 
+/** The bits of an InputEvent `pasteLikeText` reads (kept structural for tests). */
+export type InputLike = { inputType: string; data: string | null; dataTransfer: { getData(type: string): string } | null }
+
+const PASTE_LIKE = new Set(['insertFromPaste', 'insertFromDrop', 'insertReplacementText', 'insertFromYank'])
+
+/**
+ * The text of a `beforeinput` that puts in more than a keystroke (a drop, autofill or a spelling replacement, a
+ * paste the `paste` handler missed), so the box treats it as a paste; null for typing.
+ */
+export function pasteLikeText(e: InputLike): string | null {
+  if (!PASTE_LIKE.has(e.inputType)) return null
+  const text = e.data ?? e.dataTransfer?.getData('text/plain') ?? e.dataTransfer?.getData('text') ?? ''
+  return text ? text : null
+}
+
 export const tokenComplete = (groups: string[]) => groups.length === TOKEN_GROUPS && groups.every((g) => g.length === TOKEN_GROUP_LENGTH)
 export const tokenValue = (groups: string[]) => groups.join('-')
 

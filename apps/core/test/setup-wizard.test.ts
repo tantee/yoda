@@ -233,6 +233,15 @@ describe('recovery kit (D7)', () => {
 })
 
 describe('recovery kit re-issue (same session, 10 minutes)', () => {
+  it('is rate limited like the tests (10 a minute per address)', async () => {
+    await boot()
+    const h = await createAdmin(await setupSession())
+    for (let i = 0; i < 10; i++) expect((await app.inject({ method: 'POST', url: '/setup/recovery-kit', headers: h })).statusCode).toBe(200)
+    const limited = await app.inject({ method: 'POST', url: '/setup/recovery-kit', headers: h })
+    expect(limited.statusCode).toBe(429)
+    expect(limited.json()).toMatchObject({ error: 'rate_limited' })
+  })
+
   it('the session that downloaded it gets it again (same key, new codes, audited reissue); others and later get 409', async () => {
     await boot()
     const h = await createAdmin(await setupSession())

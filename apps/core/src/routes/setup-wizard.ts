@@ -342,11 +342,13 @@ export function setupWizardRoutes(app: FastifyInstance): void {
    * The master key and fresh break-glass recovery codes in one file, once per install. Under the `setup_state` row
    * lock (the admin step takes it too): the first call sets the download marker and the session that made it; that
    * same session may have the kit issued again for 10 minutes (a lost download, a reload), with new codes and the
-   * same key; anyone else, or later, gets 409 `kit_downloaded`. After setup the route is gone (404). The codes, the
+   * same key; anyone else, or later, gets 409 `kit_downloaded`. Rate limited like the tests (10 / min, 60 / h per address). After setup the route is gone (404). The codes, the
    * marker and the audit row (key id only) commit together.
    */
   app.post('/setup/recovery-kit', SETUP, async (request, reply): Promise<RecoveryKit> => {
     const { s, sess } = await signed(request)
+    // Each issue replaces the codes (argon2-free, but it writes and audits): the test limit keeps a loop slow.
+    takeLimit(testLimit, request.ip, reply)
     const masterKey = s.withKey((mk) => ({ id: mk.id, value: mk.key.toString('base64') }))
     if (!masterKey) throw secretsUnavailable()
     const now = nowOf(app)

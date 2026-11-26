@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { nextTick, ref, useI18n } from '#imports'
-import { TOKEN_GROUP_LENGTH, pastedInto, tokenGroups, typedInto } from '~/utils/setup'
+import { TOKEN_GROUP_LENGTH, pastedInto, pasteLikeText, tokenGroups, typedInto } from '~/utils/setup'
 
 /**
  * The setup token as 5 boxes of 4 (proposal §8.2, mockup `installer-token.html`). Typing fills one box (4 at most)
  * and moves on when it is full; a paste fills from that box onward and replaces the later boxes. Case, dashes and
- * spaces do not matter, and letters that are not in the token alphabet are dropped.
+ * spaces do not matter, and letters that are not in the token alphabet are dropped. A drop, autofill or a
+ * replacement text is a paste too (`beforeinput`, before `maxlength` cuts it to one box).
  */
 const model = defineModel<string[]>({ required: true })
 const emit = defineEmits<{ submit: [] }>()
@@ -24,13 +25,24 @@ function onInput(i: number, e: Event) {
   if (own.length === TOKEN_GROUP_LENGTH) focus(i + 1)
 }
 
+function pasted(i: number, text: string) {
+  model.value = pastedInto(model.value, i, text)
+  const open = model.value.findIndex((g) => g.length < TOKEN_GROUP_LENGTH)
+  focus(open === -1 ? model.value.length - 1 : open)
+}
+
 function onPaste(i: number, e: ClipboardEvent) {
   const text = e.clipboardData?.getData('text') ?? ''
   if (!text) return
   e.preventDefault()
-  model.value = pastedInto(model.value, i, text)
-  const open = model.value.findIndex((g) => g.length < TOKEN_GROUP_LENGTH)
-  focus(open === -1 ? model.value.length - 1 : open)
+  pasted(i, text)
+}
+
+function onBeforeInput(i: number, e: InputEvent) {
+  const text = pasteLikeText(e)
+  if (text === null) return
+  e.preventDefault()
+  pasted(i, text)
 }
 
 function onKey(i: number, e: KeyboardEvent) {
@@ -55,6 +67,7 @@ function onKey(i: number, e: KeyboardEvent) {
         :data-testid="`setup-token-${i}`"
         @input="onInput(i, $event)"
         @paste="onPaste(i, $event)"
+        @beforeinput="onBeforeInput(i, $event as InputEvent)"
         @keydown="onKey(i, $event)"
       >
       <span v-if="i < model.length - 1" class="token-box__dash" aria-hidden="true">–</span>
