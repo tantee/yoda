@@ -35,6 +35,8 @@ describe('recovery client', () => {
 
   it('words errors, with the wait for a lockout or a rate limit', () => {
     expect(recoveryError({ data: { error: 'invalid_credentials' } })).toEqual({ key: 'recovery.error.invalidCredentials' })
+    expect(recoveryError({ data: { error: 'invalid_settings', issues: [{ key: 'oidc.issuer', message: 'x' }] } })).toEqual({ key: 'recovery.error.notKeycloak' })
+    expect(recoveryError({ data: { error: 'invalid_settings', issues: [] } })).toEqual({ key: 'recovery.error.validation' })
     expect(recoveryError({ data: { error: 'rate_limited', reason: 'locked', retryAfter: 125 } })).toEqual({ key: 'recovery.error.locked', named: { minutes: 3 } })
     expect(recoveryError({ data: { error: 'rate_limited', retryAfter: 10 } })).toEqual({ key: 'recovery.error.rateLimited', named: { minutes: 1 } })
     expect(isLastAdmin({ data: { error: 'invalid_state', reason: 'last_admin' } })).toBe(true)

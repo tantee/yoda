@@ -89,6 +89,14 @@ export const SetupAdminResult = z.object({
 })
 export type SetupAdminResult = z.infer<typeof SetupAdminResult>
 
+/**
+ * TOTP for the existing break-glass admin (created without it while the public URL was localhost, D3): the seed
+ * from `POST /setup/totp`, confirmed with its current code and the admin's password.
+ */
+export const SetupTotpConfirmBody = z.object({ password: z.string().min(1).max(256), totpCode: TotpCode })
+export const SetupTotpConfirmResult = z.object({ username: z.string(), totpEnabled: z.boolean(), session: LocalSession })
+export type SetupTotpConfirmResult = z.infer<typeof SetupTotpConfirmResult>
+
 // ── Recovery ───────────────────────────────────────────────────────────────────────────────────────────────────
 
 export const RecoverySignInBody = z.object({

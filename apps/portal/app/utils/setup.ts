@@ -276,7 +276,7 @@ export function passwordAcceptable(username: string, password: string, score?: n
 const ERRORS: Record<string, string> = {
   invalid_credentials: 'setup.error.invalidToken',
   rate_limited: 'setup.error.rateLimited',
-  csrf_failed: 'setup.error.sessionExpired',
+  csrf_failed: 'setup.error.csrfFailed',
   unauthorized: 'setup.error.sessionExpired',
   weak_password: 'setup.error.weakPassword',
   second_factor_required: 'setup.error.totpRequired',
@@ -292,6 +292,7 @@ const STATES: Record<string, string> = {
   incomplete: 'setup.error.incomplete',
   no_issuer: 'setup.error.noIssuer',
   no_admin: 'setup.error.noAdmin',
+  totp_enabled: 'setup.error.totpEnabled',
 }
 
 /** The i18n key and values for a failed setup call. */

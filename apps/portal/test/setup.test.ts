@@ -196,6 +196,9 @@ describe('setup errors', () => {
     expect(setupError({ data: { error: 'invalid_state', reason: 'incomplete' } })).toEqual({ key: 'setup.error.incomplete' })
     expect(setupError({ data: { error: 'bad_request', reason: 'issuer_mismatch' } })).toEqual({ key: 'setup.error.provider' })
     expect(setupError(new Error('x'))).toEqual({ key: 'setup.error.generic' })
+    // A refused CSRF/origin check gets its own hint (the proxy's Host header, runbook section 11).
+    expect(setupError({ statusCode: 403, data: { error: 'csrf_failed' } })).toEqual({ key: 'setup.error.csrfFailed' })
+    expect(setupError({ data: { error: 'invalid_state', reason: 'totp_enabled' } })).toEqual({ key: 'setup.error.totpEnabled' })
     expect(setupSessionLost({ statusCode: 401, data: { error: 'unauthorized' } })).toBe(true)
     expect(setupSessionLost({ statusCode: 403, data: { error: 'csrf_failed' } })).toBe(true)
     expect(setupSessionLost({ statusCode: 401, data: { error: 'invalid_credentials' } })).toBe(false)

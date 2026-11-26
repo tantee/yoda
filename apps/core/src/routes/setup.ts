@@ -1,17 +1,20 @@
 import {
   SetupAdminBody,
   SetupSessionBody,
+  SetupTotpConfirmBody,
   passwordIssue,
   type LocalSession,
   type SetupAdminResult,
   type SetupStatus,
+  type SetupTotpConfirmResult,
   type TotpEnrolment,
 } from '@yoda/shared'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { eq } from 'drizzle-orm'
 import { invalidState, notFound } from '../auth/plugin.js'
 import { setupState as setupStateTable } from '../db/schema.js'
-import { createAdmin, firstAdmin, MasterKeyUnavailable, PENDING_TOTP_AAD, totpRequired } from '../local/break-glass.js'
+import { createAdmin, firstAdmin, MasterKeyUnavailable, PENDING_TOTP_AAD, setTotp, totpRequired } from '../local/break-glass.js'
+import { verifyPassword } from '../local/password.js'
 import { invalidCredentials, nowOf, secondFactorRequired, secretsUnavailable, storeOf, takeLimit, weakPassword, whereFrom, invalidCode } from '../local/http.js'
 import {
   createSession,
@@ -130,6 +133,45 @@ export function setupRoutes(app: FastifyInstance): void {
     await updateSessionData(app.deps.db, sess.row.idHash, data)
     reply.header('cache-control', 'no-store')
     return { uri: totpUri(secret, 'break-glass'), secret }
+  })
+
+  /**
+   * TOTP for the existing break-glass admin (I4): it was created without TOTP while the public URL was localhost,
+   * and D3 now requires it (the admin step shows as not done, and /setup/complete refuses). The seed comes from
+   * POST /setup/totp; its current code and the admin's password confirm it. Works after the kit too (the codes do
+   * not change). Limited like the token exchange; the session is rotated as after the admin step (8.3).
+   */
+  app.post('/setup/totp/confirm', SETUP, async (request, reply): Promise<SetupTotpConfirmResult> => {
+    const s = open()
+    const sess = await session(request)
+    takeLimit(perIp, request.ip, reply)
+    const body = SetupTotpConfirmBody.parse(request.body)
+    const now = nowOf(app)
+    const admin = await firstAdmin(app.deps.db)
+    if (!admin) throw invalidState('no_admin')
+    if (admin.totpEnabled) throw invalidState('totp_enabled')
+    const actor = { label: 'setup', source: 'setup', ...whereFrom(request) }
+    if (!(await verifyPassword(admin.passwordHash, body.password))) {
+      await s.audit({ action: 'break_glass.totp', actor, newValue: { username: admin.username }, result: 'invalid_password' })
+      throw invalidCredentials()
+    }
+    const data = sess.row.data as SessionData
+    const seed = data.totpSeed ? s.open(sealAad(sess), Buffer.from(data.totpSeed.blob, 'base64'), data.totpSeed.keyId) : null
+    if (!seed) throw secondFactorRequired()
+    const step = verifyTotp(seed, body.totpCode, { now: now.getTime() })
+    if (step === null) throw invalidCode()
+    try {
+      await setTotp(app.deps.db, s, admin.id, seed, step)
+    } catch (err) {
+      if (err instanceof MasterKeyUnavailable) throw secretsUnavailable()
+      throw err
+    }
+    await deleteSession(app.deps.db, sess.row.idHash)
+    const next = await createSession(app.deps.db, 'setup', request, { now })
+    setSessionCookie(reply, 'setup', next.value, isHttps(request))
+    await s.audit({ action: 'break_glass.totp', actor, newValue: { username: admin.username }, result: 'ok' })
+    reply.header('cache-control', 'no-store')
+    return { username: admin.username, totpEnabled: true, session: sessionView(next.row, next.value, 'setup', !isHttps(request)) }
   })
 
   /**

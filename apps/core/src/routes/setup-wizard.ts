@@ -39,6 +39,7 @@ import { RateLimiter } from '../settings/rate-limit.js'
 import type { SettingActor, SettingsStore } from '../settings/store.js'
 import { registerTelegramWebhook, runSettingsTest } from '../settings/tests.js'
 import { setupState as setupMode } from '../setup-state.js'
+import { issuerIssue } from './public-config.js'
 import {
   BOUND_SECRETS,
   CATEGORY_TEST,
@@ -132,7 +133,12 @@ export function setupWizardRoutes(app: FastifyInstance): void {
     return { installId: row?.installId ?? '', record: parseProgress(row?.progress) }
   }
 
-  async function facts(q: Db | Tx, s: SettingsStore, forUpdate = false) {
+  /**
+   * `host`: the request's host name. The admin step counts as done only with TOTP enrolled when D3 requires it
+   * (a public URL changed away from localhost after the admin was created without TOTP), so `/setup/complete`
+   * refuses until the wizard enrols it (POST /setup/totp, then /setup/totp/confirm).
+   */
+  async function facts(q: Db | Tx, s: SettingsStore, host: string | null, forUpdate = false) {
     const { installId, record } = await readRecord(q, forUpdate)
     const [admin] = await q.select().from(localAdmins).orderBy(localAdmins.createdAt).limit(1)
     let claimedIsAdmin = false
@@ -144,7 +150,7 @@ export function setupWizardRoutes(app: FastifyInstance): void {
     const states = stepStates({
       session: true,
       organisation: s.info('org.name').isSet && (url === 'db' || url === 'env'),
-      admin: !!admin,
+      admin: !!admin && (admin.totpEnabled || !totpRequired(s, host)),
       oidc: oidcHash(oidcNow(s)),
       claim: claimHash(oidcNow(s), staffGroupOf(s)),
       claimedIsAdmin,
@@ -161,7 +167,7 @@ export function setupWizardRoutes(app: FastifyInstance): void {
   }
 
   async function progress(request: FastifyRequest, s: SettingsStore, sess: ActiveSession): Promise<SetupProgress> {
-    const f = await facts(app.deps.db, s)
+    const f = await facts(app.deps.db, s, request.hostname)
     const totp = totpRequired(s, request.hostname)
     return {
       installId: f.installId,
@@ -225,6 +231,9 @@ export function setupWizardRoutes(app: FastifyInstance): void {
       const l = lockOf(s, s.info(key), { setup: true })
       if (l) throw locked(key, l.reason, l.envName)
     }
+    // The portal derives its Keycloak URL and realm from the issuer: another provider would save, then never sign in.
+    const issue = issuerIssue(values.get('oidc.issuer'))
+    if (issue) throw invalidSettings([{ key: 'oidc.issuer', message: issue }])
     // As in the admin form: an endpoint a secret is bound to is saved against the version the form loaded (8.6).
     const unversioned = [...values.keys()].filter((k) => BOUND_SECRETS.has(k) && body.versions?.[k] === undefined)
     if (unversioned.length) throw invalidSettings(unversioned.map((key) => ({ key, message: 'version_required' })))
@@ -480,7 +489,7 @@ export function setupWizardRoutes(app: FastifyInstance): void {
   app.post('/setup/complete', SETUP, async (request, reply: FastifyReply) => {
     const { s } = await signed(request)
     const done = await app.deps.db.transaction(async (tx) => {
-      const f = await facts(tx, s, true)
+      const f = await facts(tx, s, request.hostname, true)
       const missing = missingSteps(f.states)
       if (missing.length) throw new HttpError(409, { error: 'invalid_state', reason: 'incomplete', missing })
       const rows = await tx

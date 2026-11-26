@@ -2250,7 +2250,8 @@
       "settingLocked": "This value is set by environment on the install host.",
       "invalidState": "That cannot be done in the current state. Reload the page.",
       "validation": "Check the values you entered.",
-      "generic": "Something went wrong. Try again."
+      "generic": "Something went wrong. Try again.",
+      "notKeycloak": "The issuer must be a Keycloak realm, https://<host>/realms/<realm>: the portal signs in with Keycloak."
     },
     "statusOnly": {
       "title": "Status only: the master key is not usable",
@@ -2389,7 +2390,10 @@
         "sequence": "a run such as abc or 123",
         "common": "a common word",
         "username": "contains the username"
-      }
+      },
+      "addTotpTitle": "Set up the authenticator app",
+      "addTotpLead": "The web address is no longer this machine (localhost), so the break-glass admin needs an authenticator app (TOTP). Enter its password, scan the QR code, then enter the 6-digit code.",
+      "addTotpSave": "Turn on the authenticator app"
     },
     "check": {
       "kicker": "Step 3 · System check",
@@ -2475,7 +2479,7 @@
       "finish": "Finish setup",
       "missing": "Still to do: {steps}",
       "providerError": "Keycloak did not sign you in (cancelled or refused). Check the client's Valid redirect URIs and try again.",
-      "adminNeedsTotp": "The break-glass admin has no authenticator app, but the web address now needs one. It will be asked to set up TOTP at its first /recovery sign-in; or go back to step 2 and create the account again (possible before the kit is downloaded)."
+      "adminNeedsTotp": "The break-glass admin has no authenticator app, but the web address now needs one. Go back to step 2 and set it up; setup cannot finish before that."
     },
     "error": {
       "invalidToken": "The setup token is wrong, expired or already used. Get a new one with yoda-admin setup-token --new.",
@@ -2493,7 +2497,9 @@
       "noIssuer": "Keycloak is not set up yet. Go back to step 4.",
       "noAdmin": "The break-glass admin is not created yet. Go back to step 2.",
       "provider": "Could not reach Keycloak. Check the issuer URL in step 4.",
-      "generic": "Something went wrong. Try again."
+      "generic": "Something went wrong. Try again.",
+      "csrfFailed": "The request was refused (csrf_failed): the address in the browser is not the one the portal sees. Behind a reverse proxy, pass the browser's Host header (nginx: proxy_set_header Host $host;, runbook section 11), use one address in one tab, then enter a setup token again.",
+      "totpEnabled": "The authenticator app is already on."
     }
   }
 }

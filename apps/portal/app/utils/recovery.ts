@@ -51,6 +51,9 @@ const ERRORS: Record<string, string> = {
   validation: 'recovery.error.validation',
 }
 
+/** Field problems core names (`invalid_settings`); only the issuer has a worded one (not a Keycloak issuer). */
+const ISSUES: Record<string, string> = { 'oidc.issuer': 'recovery.error.notKeycloak' }
+
 /** The i18n key and values for a failed recovery call. */
 export function recoveryError(e: unknown): { key: string; named?: Record<string, unknown> } {
   const data = (e as { data?: { error?: string; retryAfter?: number; reason?: string } })?.data
@@ -60,6 +63,11 @@ export function recoveryError(e: unknown): { key: string; named?: Record<string,
   }
   // A status-only session (the master key is not usable) asked for more than the status.
   if (code === 'forbidden' && data?.reason === 'secrets_unavailable') return { key: 'recovery.error.secretsUnavailable' }
+  if (code === 'invalid_settings') {
+    const issues = (data as { issues?: { key?: string }[] }).issues ?? []
+    const hit = issues.map((i) => ISSUES[i.key ?? '']).find(Boolean)
+    return { key: hit ?? 'recovery.error.validation' }
+  }
   if (code && ERRORS[code]) return { key: ERRORS[code]! }
   return { key: 'recovery.error.generic' }
 }

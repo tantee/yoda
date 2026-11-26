@@ -14,6 +14,12 @@ export function keycloakFromIssuer(issuer: string | undefined): { url: string; r
   return m ? { url: m[1]!, realm: decodeURIComponent(m[2]!) } : null
 }
 
+/** Why an issuer cannot be used for portal sign-in (null when it can): keycloak-js needs `<url>/realms/<realm>`. */
+export const NOT_KEYCLOAK_ISSUER = 'must be a Keycloak issuer, https://<host>/realms/<realm> (the portal signs in with Keycloak)'
+export function issuerIssue(issuer: unknown): string | null {
+  return typeof issuer === 'string' && issuer !== '' && !keycloakFromIssuer(issuer) ? NOT_KEYCLOAK_ISSUER : null
+}
+
 // Re-exported: setup-mode gating (503 setup_required, auth/plugin.ts) and the portal read the same function.
 export { setupState }
 

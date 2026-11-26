@@ -75,7 +75,7 @@ import { RateLimiter } from '../settings/rate-limit.js'
 import type { SettingActor, SettingsStore } from '../settings/store.js'
 import { runSettingsTest } from '../settings/tests.js'
 import { funMode } from './admin.js'
-import { setupState } from './public-config.js'
+import { issuerIssue, setupState } from './public-config.js'
 
 /**
  * The recovery API (installer proposal §7.2, §7.4, §8.3, §8.6, §11): the break-glass admin signs in with password
@@ -269,6 +269,8 @@ export function recoveryRoutes(app: FastifyInstance): void {
   app.put('/recovery/oidc/pending', PUBLIC, async (request): Promise<RecoveryStatus> => {
     const s = await signed(request)
     const values = OidcValues.parse(request.body)
+    const issue = issuerIssue(values.issuer)
+    if (issue) throw new HttpError(422, { error: 'invalid_settings', issues: [{ key: 'oidc.issuer', message: issue }] })
     const locked = envLockedOidc(s.store)
     if (locked.length) {
       const key = locked[0]!

@@ -125,6 +125,16 @@ describe('setup settings: only through the setup session', () => {
     expect(refused.json()).toMatchObject({ error: 'setting_locked', key: 'org.publicUrl', reason: 'env' })
   })
 
+  it('refuses an issuer that is not Keycloak (the portal needs /realms/<realm>)', async () => {
+    await boot()
+    const h = await setupSession()
+    const res = await put(h, 'signin', { 'oidc.issuer': 'https://login.example.org/oauth2' })
+    expect(res.statusCode).toBe(422)
+    expect(res.json()).toMatchObject({ error: 'invalid_settings', issues: [{ key: 'oidc.issuer', message: expect.stringContaining('/realms/<realm>') }] })
+    expect(store.get('oidc.issuer')).toBeUndefined()
+    expect((await put(h, 'signin', { 'oidc.issuer': 'https://sso.example.org/realms/hospital' })).statusCode).toBe(200)
+  })
+
   it('saves through the store (source setup, audited), an endpoint and its secret together', async () => {
     await boot()
     const h = await setupSession()
@@ -371,6 +381,43 @@ describe('claim and complete (8.1)', () => {
     await put(h, 'signin', { 'oidc.clientId': 'yoda-portal-2' })
     expect((await app.inject({ method: 'POST', url: '/setup/complete', headers: h })).json().missing).toEqual(['claim'])
     expect((await (await db()).select().from(setupState))[0]!.setupCompletedAt).toBeNull()
+  })
+
+  it('an admin made without TOTP (localhost) counts as missing once the URL needs TOTP; the wizard enrols it (I4)', async () => {
+    await boot({ PORTAL_URL: '' })
+    let h = await setupSession()
+    await put(h, 'general', { 'org.name': 'Example Hospital', 'org.publicUrl': 'http://localhost:3000' })
+    const made = await app.inject({ method: 'POST', url: '/setup/admin', headers: h, payload: { username: 'admin', password: BG_LOGIN } })
+    expect(made.json()).toMatchObject({ totpEnabled: false })
+    h = { ...UA, cookie: cookieOf(made, 'yoda_setup')!, 'x-yoda-csrf': made.json().session.csrf }
+    await put(h, 'signin', { 'oidc.issuer': idp.issuer })
+    await app.inject({ method: 'POST', url: '/setup/recovery-kit', headers: h })
+    const version = store.info('org.publicUrl').version ?? 0
+    await put(h, 'general', { 'org.publicUrl': 'https://portal.example.org' }, { 'org.publicUrl': version })
+    expect(await progress(h)).toMatchObject({ adminNeedsTotp: true, steps: { admin: 'todo' } })
+    expect((await claimAs(h, { username: 'somchai' })).json().ok).toBe(true)
+    const refused = await app.inject({ method: 'POST', url: '/setup/complete', headers: h })
+    expect(refused.json()).toEqual({ error: 'invalid_state', reason: 'incomplete', missing: ['admin'] })
+
+    // Enrol: a seed in the session, then its code and the admin's password.
+    const enrol = (await app.inject({ method: 'POST', url: '/setup/totp', headers: h })).json()
+    const code = totpCodeAt(enrol.secret, clock.getTime())
+    const wrong = await app.inject({ method: 'POST', url: '/setup/totp/confirm', headers: h, payload: { password: 'not-the-password-1', totpCode: code } })
+    expect(wrong.json()).toEqual({ error: 'invalid_credentials' })
+    const badCode = await app.inject({ method: 'POST', url: '/setup/totp/confirm', headers: h, payload: { password: BG_LOGIN, totpCode: code === '000000' ? '111111' : '000000' } })
+    expect(badCode.json()).toEqual({ error: 'invalid_code' })
+    const ok = await app.inject({ method: 'POST', url: '/setup/totp/confirm', headers: h, payload: { password: BG_LOGIN, totpCode: code } })
+    expect(ok.statusCode, ok.body).toBe(200)
+    expect(ok.json()).toMatchObject({ username: 'admin', totpEnabled: true })
+    expect(JSON.stringify(ok.json())).not.toContain(enrol.secret)
+    // The session was rotated: the old cookie is gone.
+    expect((await app.inject({ url: '/setup/progress', headers: h })).statusCode).toBe(401)
+    h = { ...UA, cookie: cookieOf(ok, 'yoda_setup')!, 'x-yoda-csrf': ok.json().session.csrf }
+    expect(await progress(h)).toMatchObject({ adminNeedsTotp: false, steps: { admin: 'done' } })
+    expect((await app.inject({ method: 'POST', url: '/setup/totp/confirm', headers: h, payload: { password: BG_LOGIN, totpCode: code } })).json()).toMatchObject({ reason: 'totp_enabled' })
+    const audit = await (await db()).select().from(settingsAudit).where(eq(settingsAudit.action, 'break_glass.totp'))
+    expect(audit.map((a) => a.result)).toEqual(['invalid_password', 'ok'])
+    expect((await app.inject({ method: 'POST', url: '/setup/complete', headers: h })).json()).toEqual({ done: true })
   })
 
   it('completes: marks done in the same process, ends every setup session, deletes the token, then /setup is 404', async () => {

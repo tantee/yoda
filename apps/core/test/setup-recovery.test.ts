@@ -585,6 +585,15 @@ describe('recovery: changing the OIDC settings (8.6)', () => {
     expect(res.json()).toMatchObject({ error: 'setting_locked', key: 'oidc.issuer', envName: 'OIDC_ISSUER' })
   })
 
+  it('refuses to stage an issuer that is not Keycloak', async () => {
+    await boot({ done: true })
+    await withAdmin()
+    const h = await bg()
+    const res = await app.inject({ method: 'PUT', url: '/recovery/oidc/pending', headers: h, payload: { issuer: 'https://login.example.org/oauth2', clientId: 'yoda-portal', jwksUrl: null } })
+    expect(res.statusCode).toBe(422)
+    expect(res.json()).toMatchObject({ error: 'invalid_settings', issues: [{ key: 'oidc.issuer' }] })
+  })
+
   it('the prod compose env with an empty .env locks none of the OIDC settings (C1)', async () => {
     const env = prodComposeCoreEnv({ YODA_IMAGE_PREFIX: 'registry.example.org/yoda', YODA_VERSION: '1.0.0' })
     expect(env.OIDC_CLIENT_ID).toBe('')
