@@ -21,3 +21,27 @@ export function parseSse(buffer: string): { events: SseEvent[]; rest: string } {
   }
   return { events, rest }
 }
+
+export type StreamStep = 'stream' | 'reconnect' | 'refresh-retry' | 'login'
+
+/**
+ * What the live stream does next. A token refresh that fails means signing in again only when the session really
+ * ended (`sessionEnded`, see utils/session.ts); otherwise (offline, Keycloak briefly down) it reconnects with backoff.
+ * A 401 gets one forced refresh and retry; a 401 after that means signing in again, unless the browser is offline.
+ * Other failures (network, 5xx) reconnect with backoff. `status` is absent when the request was not made or failed.
+ */
+export function streamStep(o: {
+  tokenOk: boolean
+  sessionEnded?: boolean
+  status?: number
+  retriedAuth: boolean
+  online?: boolean
+}): StreamStep {
+  if (!o.tokenOk) return o.sessionEnded ? 'login' : 'reconnect'
+  if (o.status === 401) {
+    if (!o.retriedAuth) return 'refresh-retry'
+    return o.online === false ? 'reconnect' : 'login'
+  }
+  if (o.status !== undefined && o.status >= 200 && o.status < 300) return 'stream'
+  return 'reconnect'
+}

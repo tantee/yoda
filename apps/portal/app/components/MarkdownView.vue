@@ -19,9 +19,17 @@ const html = computed(() => renderMarkdown(props.source))
 .markdown-view :deep(blockquote) { margin-bottom: 0.75rem; }
 .markdown-view :deep(ul),
 .markdown-view :deep(ol) { padding-left: 1.5rem; }
+/* Reading size, and headings capped below the page title (proposal §3.3). */
+.markdown-view { font-size: .9375rem; line-height: 1.7; overflow-wrap: anywhere; }
 .markdown-view :deep(h1),
 .markdown-view :deep(h2),
-.markdown-view :deep(h3) { margin: 0.75rem 0 0.5rem; font-weight: 500; }
+.markdown-view :deep(h3),
+.markdown-view :deep(h4),
+.markdown-view :deep(h5),
+.markdown-view :deep(h6) { margin: 0.75rem 0 0.5rem; font-size: .875rem; font-weight: 600; line-height: 1.5; letter-spacing: 0; }
+.markdown-view :deep(h1),
+.markdown-view :deep(h2) { font-size: 1rem; }
+.markdown-view :deep(code) { font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace; }
 .markdown-view :deep(pre) { overflow-x: auto; padding: 0.5rem; background: rgba(128, 128, 128, 0.12); border-radius: 4px; }
 .markdown-view :deep(code) { background: rgba(128, 128, 128, 0.12); padding: 0 0.25rem; border-radius: 3px; }
 .markdown-view :deep(pre code) { background: none; padding: 0; }

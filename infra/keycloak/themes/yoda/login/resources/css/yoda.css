@@ -1,0 +1,231 @@
+/* Yoda login theme. Tokens are the portal's (docs/design/portal-design-refresh.md §2.1); every text pair is AA. */
+:root {
+  --yoda-nav: #0B2545;
+  --yoda-on-nav: #C3D0E2;
+  --yoda-nav-label: #8BA0BF;
+  --yoda-nav-accent: #6FA8FF;
+  --yoda-primary: #1F5FBF;
+  --yoda-primary-darken: #184C99;
+  --yoda-primary-soft: #E8F0FB;
+  --yoda-background: #F4F6F9;
+  --yoda-surface: #FFFFFF;
+  --yoda-on-surface: #1A2433;
+  --yoda-text-secondary: #556275;
+  --yoda-border: #D8DEE7;
+  --yoda-border-strong: #8A95A5;
+  --yoda-error: #A8261D;
+  --yoda-error-soft: #FBE8E6;
+  --yoda-warning: #7A4F00;
+  --yoda-warning-soft: #FCF0D7;
+  --yoda-success: #1D6B3A;
+  --yoda-success-soft: #E5F3EA;
+  --yoda-info: #1A4F9E;
+  --yoda-info-soft: #E8F0FB;
+  --yoda-font: 'IBM Plex Sans Thai', 'IBM Plex Sans', 'Leelawadee UI', 'Thonburi', system-ui, sans-serif;
+  --yoda-radius: 8px;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html { font-size: 16px; -webkit-text-size-adjust: 100%; }
+body.yoda-body {
+  margin: 0; min-height: 100vh; background: var(--yoda-background); color: var(--yoda-on-surface);
+  font-family: var(--yoda-font); font-size: .9375rem; line-height: 1.6; letter-spacing: 0;
+}
+/* Thai has no case and needs no tracking. */
+h1, h2, h3, p, label, a, button, input { letter-spacing: 0; text-transform: none; }
+a { color: var(--yoda-primary); text-underline-offset: 2px; }
+a:hover { color: var(--yoda-primary-darken); }
+:focus-visible { outline: 2px solid var(--yoda-primary); outline-offset: 2px; }
+.yoda-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
+/* Layout: brand panel left, form right; stacked on phones. */
+.yoda-login { min-height: 100vh; display: grid; grid-template-columns: minmax(340px, 40%) 1fr; }
+.yoda-brand {
+  position: relative; overflow: hidden; display: flex; flex-direction: column; justify-content: center; gap: 20px;
+  padding: 48px 56px; background: var(--yoda-nav); color: #fff;
+}
+/* Decorative layer behind the brand (kept empty and still; later additions draw here). */
+.yoda-brand__sky {
+  position: absolute; inset: 0; pointer-events: none;
+  background: radial-gradient(120% 80% at 15% 10%, rgba(111, 168, 255, .16), transparent 60%);
+}
+.yoda-brand__inner, .yoda-brand__tagline, .yoda-brand__wisdom { position: relative; }
+.yoda-brand__inner { display: flex; align-items: center; gap: 14px; }
+.yoda-mark { display: block; flex: none; width: 48px; height: 48px; }
+.yoda-brand__text { min-width: 0; }
+.yoda-brand__name { margin: 0; font-size: 1.5rem; font-weight: 600; line-height: 1.3; color: #fff; }
+.yoda-brand__sub { margin: 0; font-size: .9375rem; color: var(--yoda-on-nav); }
+.yoda-brand__tagline { margin: 0; max-width: 40ch; font-size: 1rem; color: var(--yoda-on-nav); }
+
+/*
+ * Fun touches (body.yoda-fun, theme property funMode; docs/operations.md §2): a sparse CSS-only starfield in the
+ * sky layer and one playful line. Stars are tiny radial gradients in the nav accent; two layers drift in opacity
+ * only, slowly, and stand still for prefers-reduced-motion. The wisdom line meets AA on the navy (#8BA0BF: 5.8).
+ */
+.yoda-brand__wisdom { margin: -8px 0 0; max-width: 40ch; font-size: .875rem; font-style: italic; color: var(--yoda-nav-label); }
+.yoda-brand__wisdom:lang(th) { font-style: normal; }
+.yoda-fun .yoda-brand__sky::before, .yoda-fun .yoda-brand__sky::after {
+  content: ''; position: absolute; inset: 0; background-repeat: repeat;
+}
+.yoda-fun .yoda-brand__sky::before {
+  background-image:
+    radial-gradient(1px 1px at 12% 18%, rgba(255, 255, 255, .85), transparent 60%),
+    radial-gradient(1px 1px at 68% 9%, rgba(255, 255, 255, .7), transparent 60%),
+    radial-gradient(1.5px 1.5px at 84% 46%, rgba(111, 168, 255, .9), transparent 60%),
+    radial-gradient(1px 1px at 33% 72%, rgba(255, 255, 255, .6), transparent 60%),
+    radial-gradient(1px 1px at 52% 38%, rgba(195, 208, 226, .8), transparent 60%),
+    radial-gradient(1.5px 1.5px at 7% 88%, rgba(111, 168, 255, .7), transparent 60%),
+    radial-gradient(1px 1px at 91% 81%, rgba(255, 255, 255, .7), transparent 60%);
+  background-size: 360px 300px;
+  opacity: .9;
+}
+.yoda-fun .yoda-brand__sky::after {
+  background-image:
+    radial-gradient(1px 1px at 24% 54%, rgba(255, 255, 255, .7), transparent 60%),
+    radial-gradient(1.5px 1.5px at 76% 24%, rgba(255, 255, 255, .8), transparent 60%),
+    radial-gradient(1px 1px at 44% 92%, rgba(111, 168, 255, .8), transparent 60%),
+    radial-gradient(1px 1px at 61% 63%, rgba(255, 255, 255, .5), transparent 60%),
+    radial-gradient(1px 1px at 3% 33%, rgba(195, 208, 226, .7), transparent 60%);
+  background-size: 260px 220px;
+  opacity: .5;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .yoda-fun .yoda-brand__sky::before { animation: yoda-twinkle 7s ease-in-out infinite alternate; }
+  .yoda-fun .yoda-brand__sky::after { animation: yoda-twinkle 11s ease-in-out -4s infinite alternate-reverse; }
+}
+@keyframes yoda-twinkle {
+  from { opacity: .35; }
+  to { opacity: .95; }
+}
+
+.yoda-main { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: 48px 24px; min-width: 0; }
+.yoda-card {
+  width: 100%; max-width: 420px; padding: 28px 32px 32px; background: var(--yoda-surface);
+  border: 1px solid var(--yoda-border); border-radius: 12px; box-shadow: 0 8px 24px rgba(11, 37, 69, .08);
+  overflow-wrap: anywhere;
+}
+.yoda-card__head { margin-bottom: 20px; }
+#kc-page-title { margin: 0; font-size: 1.25rem; font-weight: 600; line-height: 1.4; }
+.yoda-required { margin: 0 0 8px; font-size: .8125rem; color: var(--yoda-text-secondary); }
+.required { color: var(--yoda-error); }
+.yoda-foot { margin: 0; font-size: .8125rem; color: var(--yoda-text-secondary); text-align: center; }
+
+/* Language links (no menu: two languages fit as links). */
+.yoda-locale { display: flex; justify-content: flex-end; margin: -8px -8px 12px 0; }
+.yoda-locale__list { display: flex; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.yoda-locale__link {
+  display: inline-flex; align-items: center; min-height: 32px; padding: 0 8px; border-radius: 6px;
+  font-size: .8125rem; text-decoration: none;
+}
+.yoda-locale__link:hover { background: var(--yoda-primary-soft); }
+.yoda-locale__link[aria-current='true'] { color: var(--yoda-on-surface); font-weight: 600; background: var(--yoda-background); }
+
+/* The signed-in-as line on later steps. */
+.yoda-username { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; }
+#kc-attempted-username { font-size: 1.125rem; font-weight: 600; }
+#reset-login { font-size: .8125rem; }
+
+/* Messages */
+.yoda-alert {
+  display: flex; align-items: flex-start; gap: 8px; margin: 0 0 16px; padding: 10px 12px; border-radius: var(--yoda-radius);
+  font-size: .875rem; background: var(--yoda-info-soft); color: var(--yoda-info);
+}
+.yoda-alert--error { background: var(--yoda-error-soft); color: var(--yoda-error); }
+.yoda-alert--warning { background: var(--yoda-warning-soft); color: var(--yoda-warning); }
+.yoda-alert--success { background: var(--yoda-success-soft); color: var(--yoda-success); }
+.yoda-alert__text { min-width: 0; }
+.yoda-alert .yoda-icon { margin-top: 2px; }
+
+/* Fields */
+.yoda-form, #kc-form-login { margin: 0; }
+.yoda-field { margin: 0 0 16px; }
+.yoda-label, .yoda-field > label { display: block; margin: 0 0 6px; font-size: .875rem; font-weight: 500; }
+.yoda-input {
+  display: block; width: 100%; min-height: 44px; padding: 8px 12px; margin: 0;
+  font: inherit; font-size: 1rem; color: var(--yoda-on-surface); background: var(--yoda-surface);
+  border: 1px solid var(--yoda-border-strong); border-radius: 6px;
+}
+.yoda-input::placeholder { color: #6B7789; }
+.yoda-input:focus { outline: 2px solid var(--yoda-primary); outline-offset: 0; border-color: var(--yoda-primary); }
+.yoda-input[aria-invalid='true'] { border-color: var(--yoda-error); }
+.yoda-input[readonly], .yoda-input:disabled { background: var(--yoda-background); }
+textarea.yoda-input { min-height: 96px; }
+.yoda-input-group { display: flex; align-items: stretch; }
+.yoda-input-group .yoda-input { flex: 1 1 auto; min-width: 0; border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.yoda-input-group .yoda-btn--icon { border-top-left-radius: 0; border-bottom-left-radius: 0; margin-left: -1px; }
+.yoda-field__error { display: block; margin-top: 6px; font-size: .8125rem; color: var(--yoda-error); }
+.yoda-field__help { display: block; margin-top: 6px; font-size: .8125rem; color: var(--yoda-text-secondary); }
+.yoda-choice { display: flex; align-items: center; gap: 8px; }
+.yoda-choice__input, #kc-form-options input[type='checkbox'] { width: 18px; height: 18px; margin: 0; accent-color: var(--yoda-primary); }
+.yoda-choice--disabled { color: var(--yoda-text-secondary); }
+#kc-form-options .checkbox label { display: inline-flex; align-items: center; gap: 8px; font-size: .875rem; font-weight: 400; }
+
+/* Remember me / forgot password */
+.yoda-options { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; font-size: .875rem; }
+.yoda-options:empty, #kc-form-options:empty { display: none; }
+
+/* Buttons */
+.yoda-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 0 20px; margin: 0;
+  font: inherit; font-size: .9375rem; font-weight: 600; line-height: 1.2; text-decoration: none; cursor: pointer;
+  border: 1px solid var(--yoda-border-strong); border-radius: 6px; background: var(--yoda-surface); color: var(--yoda-on-surface);
+}
+.yoda-btn:hover { background: var(--yoda-background); }
+.yoda-btn--primary { background: var(--yoda-primary); border-color: var(--yoda-primary); color: #fff; }
+.yoda-btn--primary:hover { background: var(--yoda-primary-darken); border-color: var(--yoda-primary-darken); color: #fff; }
+.yoda-btn--block { display: flex; width: 100%; }
+.yoda-btn--icon { flex: none; width: 44px; padding: 0; color: var(--yoda-text-secondary); }
+.yoda-btn:disabled { opacity: .6; cursor: default; }
+#kc-form-buttons { margin-top: 24px; margin-bottom: 0; }
+.yoda-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+.yoda-buttons > .yoda-btn { flex: 1 1 auto; }
+#kc-select-try-another-way-form, #kc-info { margin-top: 16px; font-size: .875rem; }
+#kc-info { padding-top: 16px; border-top: 1px solid var(--yoda-border); text-align: center; }
+
+/* Identity providers */
+.yoda-idp { margin-top: 20px; }
+.yoda-idp hr { border: 0; border-top: 1px solid var(--yoda-border); margin: 0 0 16px; }
+.yoda-idp h2 { margin: 0 0 12px; font-size: .875rem; font-weight: 500; color: var(--yoda-text-secondary); }
+.yoda-idp__list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.yoda-idp__list--grid { grid-template-columns: 1fr 1fr; }
+
+/* Choosing another sign-in method, OTP devices, recovery codes */
+.yoda-auth-list { display: grid; gap: 8px; }
+.yoda-auth-item {
+  display: flex; align-items: center; gap: 12px; padding: 12px; color: inherit; text-decoration: none;
+  border: 1px solid var(--yoda-border); border-radius: var(--yoda-radius); cursor: pointer;
+}
+.yoda-auth-item:hover { border-color: var(--yoda-primary); background: var(--yoda-primary-soft); }
+.yoda-auth-item__icon { color: var(--yoda-primary); }
+.yoda-auth-item__body { flex: 1 1 auto; min-width: 0; }
+.yoda-auth-item__title { margin: 0; font-weight: 600; }
+.yoda-auth-item__text { margin: 0; font-size: .8125rem; color: var(--yoda-text-secondary); }
+.yoda-otp { display: flex; align-items: center; gap: 8px; padding: 8px 12px; margin-bottom: 8px; border: 1px solid var(--yoda-border); border-radius: var(--yoda-radius); }
+.yoda-codes { padding: 12px 16px 12px 36px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--yoda-background); border-radius: var(--yoda-radius); }
+
+/* Icons: Material Design Icons paths (Apache 2.0, the set the portal uses) drawn with a mask in the text colour. */
+.yoda-icon {
+  display: inline-block; flex: none; width: 20px; height: 20px; background-color: currentColor;
+  -webkit-mask: var(--yoda-icon) center / contain no-repeat; mask: var(--yoda-icon) center / contain no-repeat;
+}
+.yoda-icon--eye { --yoda-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12,9A3,3 0 0,0 9,12A3,3 0 0,0 12,15A3,3 0 0,0 15,12A3,3 0 0,0 12,9M12,17A5,5 0 0,1 7,12A5,5 0 0,1 12,7A5,5 0 0,1 17,12A5,5 0 0,1 12,17M12,4.5C7,4.5 2.73,7.61 1,12C2.73,16.39 7,19.5 12,19.5C17,19.5 21.27,16.39 23,12C21.27,7.61 17,4.5 12,4.5Z'/%3E%3C/svg%3E"); }
+.yoda-icon--eye-off { --yoda-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M11.83,9L15,12.16C15,12.11 15,12.05 15,12A3,3 0 0,0 12,9C11.94,9 11.89,9 11.83,9M7.53,9.8L9.08,11.35C9.03,11.56 9,11.77 9,12A3,3 0 0,0 12,15C12.22,15 12.44,14.97 12.65,14.92L14.2,16.47C13.53,16.8 12.79,17 12,17A5,5 0 0,1 7,12C7,11.21 7.2,10.47 7.53,9.8M2,4.27L4.28,6.55L4.73,7C3.08,8.3 1.78,10 1,12C2.73,16.39 7,19.5 12,19.5C13.55,19.5 15.03,19.2 16.38,18.66L16.81,19.08L19.73,22L21,20.73L3.27,3M12,7A5,5 0 0,1 17,12C17,12.64 16.87,13.26 16.64,13.82L19.57,16.75C21.07,15.5 22.27,13.86 23,12C21.27,7.61 17,4.5 12,4.5C10.6,4.5 9.26,4.75 8,5.2L10.17,7.35C10.74,7.13 11.35,7 12,7Z'/%3E%3C/svg%3E"); }
+.yoda-icon--error { --yoda-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M13,13H11V7H13M13,17H11V15H13M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2Z'/%3E%3C/svg%3E"); }
+.yoda-icon--warning { --yoda-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M13,14H11V9H13M13,18H11V16H13M1,21H23L12,2L1,21Z'/%3E%3C/svg%3E"); }
+.yoda-icon--success { --yoda-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2C6.5 2 2 6.5 2 12S6.5 22 12 22 22 17.5 22 12 17.5 2 12 2M10 17L5 12L6.41 10.59L10 14.17L17.59 6.58L19 8L10 17Z'/%3E%3C/svg%3E"); }
+.yoda-icon--info { --yoda-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M13,9H11V7H13M13,17H11V11H13M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2Z'/%3E%3C/svg%3E"); }
+.yoda-icon--chevron { --yoda-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M8.59,16.58L13.17,12L8.59,7.41L10,6L16,12L10,18L8.59,16.58Z'/%3E%3C/svg%3E"); }
+.yoda-icon--key { --yoda-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M7 14C5.9 14 5 13.1 5 12S5.9 10 7 10 9 10.9 9 12 8.1 14 7 14M12.6 10C11.8 7.7 9.6 6 7 6C3.7 6 1 8.7 1 12S3.7 18 7 18C9.6 18 11.8 16.3 12.6 14H16V18H20V14H23V10H12.6Z'/%3E%3C/svg%3E"); }
+.yoda-icon--phone { --yoda-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M17,19H7V5H17M17,1H7C5.89,1 5,1.89 5,3V21A2,2 0 0,0 7,23H17A2,2 0 0,0 19,21V3C19,1.89 18.1,1 17,1Z'/%3E%3C/svg%3E"); }
+
+/* Phones and narrow windows: the brand becomes a band above the card. */
+@media (max-width: 899px) {
+  .yoda-login { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+  .yoda-brand { padding: 20px 16px; gap: 8px; }
+  .yoda-mark { width: 40px; height: 40px; }
+  .yoda-brand__name { font-size: 1.25rem; }
+  .yoda-brand__tagline { font-size: .875rem; }
+  .yoda-brand__wisdom { margin-top: -2px; font-size: .8125rem; }
+  .yoda-main { justify-content: flex-start; padding: 24px 16px; }
+  .yoda-card { padding: 20px 20px 24px; }
+}

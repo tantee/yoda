@@ -1,6 +1,6 @@
 import type { Me } from '@yoda/shared'
-import { MemberRolesPut, Project, ProjectCreate, ProjectDetail, ProjectPatch } from '@yoda/shared'
-import { and, asc, eq } from 'drizzle-orm'
+import { MemberRolesPut, Project, ProjectCreate, ProjectDetail, ProjectListItem, ProjectPatch } from '@yoda/shared'
+import { and, asc, eq, sql } from 'drizzle-orm'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { forbidden, lastPm, notStaff, notFound, requireAdmin, requireStaff } from '../auth/plugin.js'
@@ -40,6 +40,65 @@ async function loadDetail(db: Db | Tx, id: string): Promise<ProjectDetail | null
   return ProjectDetail.parse({ ...toProject(row), members })
 }
 
+/**
+ * Outstanding staff tasks per person across all projects, in one grouped query: assigned and open or in
+ * progress, plus proposed to them. People without any are absent.
+ */
+async function openTaskCounts(db: Db, personIds: string[]): Promise<Map<string, number>> {
+  if (!personIds.length) return new Map()
+  const ids = sql.join(personIds.map((id) => sql`${id}::uuid`), sql`, `)
+  const rows = await db.execute<{ person_id: string; n: number }>(sql`
+    SELECT person_id, count(*)::int AS n FROM (
+      SELECT t.assignee_id AS person_id FROM tasks t
+        WHERE t.role <> 'REQUESTER' AND t.superseded_at IS NULL AND t.state IN ('open', 'in_progress')
+          AND t.assignee_id IN (${ids})
+      UNION ALL
+      SELECT t.proposed_assignee_id FROM tasks t
+        WHERE t.role <> 'REQUESTER' AND t.superseded_at IS NULL AND t.state = 'proposed'
+          AND t.proposed_assignee_id IN (${ids})
+    ) x GROUP BY person_id
+  `)
+  return new Map(rows.map((r) => [r.person_id, r.n]))
+}
+
+/**
+ * PM names, member counts and newest event time of `rows`, for the projects list: one query for the members, one
+ * for the last activity (a max per project, answered from `events_project_created_idx`).
+ */
+async function listExtras(db: Db, rows: ProjectRow[]): Promise<ProjectListItem[]> {
+  const ids = rows.map((r) => r.id)
+  if (!ids.length) return []
+  const inIds = sql.join(ids.map((id) => sql`${id}::uuid`), sql`, `)
+  const [members, last] = await Promise.all([
+    db
+      .select({ projectId: projectMembers.projectId, name: people.displayName, roles: projectMembers.roles })
+      .from(projectMembers)
+      .innerJoin(people, eq(people.id, projectMembers.personId))
+      .where(sql`${projectMembers.projectId} in (${inIds})`)
+      .orderBy(asc(people.displayName), asc(people.id)),
+    db.execute<{ project_id: string; at: string | Date | null }>(sql`
+      SELECT p.id AS project_id, (SELECT max(e.created_at) FROM events e WHERE e.project_id = p.id) AS at
+      FROM unnest(ARRAY[${inIds}]) AS p(id)
+    `),
+  ])
+  const byProject = new Map<string, { pms: string[]; count: number }>()
+  for (const m of members) {
+    const g = byProject.get(m.projectId) ?? { pms: [], count: 0 }
+    g.count++
+    if (m.roles.includes('PM')) g.pms.push(m.name)
+    byProject.set(m.projectId, g)
+  }
+  const lastAt = new Map(last.map((r) => [r.project_id, r.at === null ? null : new Date(r.at).toISOString()]))
+  return rows.map((row) =>
+    ProjectListItem.parse({
+      ...toProject(row),
+      pmNames: byProject.get(row.id)?.pms ?? [],
+      memberCount: byProject.get(row.id)?.count ?? 0,
+      lastActivityAt: lastAt.get(row.id) ?? null,
+    }),
+  )
+}
+
 const ProjectParams = z.object({ id: z.string().uuid() })
 const MemberParams = z.object({ id: z.string().uuid(), personId: z.string().uuid() })
 
@@ -68,7 +127,7 @@ export function projectRoutes(app: FastifyInstance): void {
           .where(eq(projectMembers.personId, me.id))
           .orderBy(asc(projects.name))
           .then((r) => r.map((x) => x.p))
-    return rows.map(toProject)
+    return listExtras(db(), rows)
   })
 
   app.post('/projects', async (request, reply) => {
@@ -89,7 +148,8 @@ export function projectRoutes(app: FastifyInstance): void {
     if (!detail) throw notFound()
     const me = request.me
     if (!me.isAdmin && !detail.members.some((m) => m.personId === me.id)) throw notFound()
-    return detail
+    const load = await openTaskCounts(db(), detail.members.map((m) => m.personId))
+    return { ...detail, members: detail.members.map((m) => ({ ...m, openTasks: load.get(m.personId) ?? 0 })) }
   })
 
   app.put('/projects/:id/members/:personId', async (request) => {

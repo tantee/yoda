@@ -95,52 +95,68 @@ async function submit() {
 }
 
 const close = () => emit('update:modelValue', false)
+const dirty = computed(() => !token.value && !!name.value.trim())
 </script>
 
 <template>
-  <v-dialog :model-value="modelValue" max-width="600" persistent @update:model-value="emit('update:modelValue', $event)">
-    <v-card :title="token ? t('runners.tokenTitle') : t('runners.dialog.title')" data-testid="runner-dialog">
-      <v-card-text v-if="token">
-        <RunnerTokenOnce :token="token" />
-      </v-card-text>
-      <v-card-text v-else class="d-flex flex-column ga-2">
-        <v-alert v-if="error" type="error" data-testid="runner-create-error">{{ error }}</v-alert>
-        <v-text-field v-model="name" :label="t('runners.dialog.name')" :hint="t('runners.dialog.nameHint')" maxlength="80" data-testid="runner-name" />
-        <template v-if="isAdmin">
-          <v-select v-model="kind" :items="kindItems" :label="t('runners.col.kind')" data-testid="runner-kind" />
-          <v-autocomplete v-model="ownerId" :items="ownerItems" :label="t('runners.dialog.owner')" data-testid="runner-owner" />
-        </template>
-        <v-select v-model="accountType" :items="accountItems" :label="t('runners.col.accountType')" data-testid="runner-account" />
-        <v-alert v-if="accountType === 'personal-subscription'" type="info" variant="tonal" density="compact" data-testid="runner-personal-hint">
-          {{ t('runners.dialog.personalHint') }}
-        </v-alert>
-        <v-select v-model="capabilities" :items="capabilityItems" :label="t('runners.col.capabilities')" multiple chips closable-chips data-testid="runner-capabilities" />
+  <AppDialog
+    :model-value="modelValue"
+    :title="token ? t('runners.tokenTitle') : t('runners.dialog.title')"
+    :busy="busy"
+    :dirty="dirty"
+    :persistent="!!token"
+    scrollable
+    data-testid="runner-dialog"
+    @update:model-value="emit('update:modelValue', $event)"
+  >
+    <RunnerTokenOnce v-if="token" :token="token" />
+    <div v-else class="runner-form">
+      <v-alert v-if="error" type="error" variant="tonal" density="compact" data-testid="runner-create-error">{{ error }}</v-alert>
+      <v-text-field v-model="name" :label="t('runners.dialog.nameRequired')" :hint="t('runners.dialog.nameHint')" persistent-hint maxlength="80" autofocus data-testid="runner-name" />
+      <template v-if="isAdmin">
+        <v-select v-model="kind" :items="kindItems" :label="t('runners.col.kind')" data-testid="runner-kind" />
+        <v-autocomplete v-model="ownerId" :items="ownerItems" :label="t('runners.dialog.owner')" data-testid="runner-owner" />
+      </template>
+      <v-select v-model="accountType" :items="accountItems" :label="t('runners.col.accountType')" data-testid="runner-account" />
+      <v-alert v-if="accountType === 'personal-subscription'" type="info" variant="tonal" density="compact" data-testid="runner-personal-hint">
+        {{ t('runners.dialog.personalHint') }}
+      </v-alert>
+      <v-select v-model="capabilities" :items="capabilityItems" :label="t('runners.col.capabilities')" multiple chips closable-chips data-testid="runner-capabilities" />
+      <div class="runner-form__pair">
         <v-select v-model="mode" :items="modeItems" :label="t('runners.col.mode')" data-testid="runner-mode" />
         <v-select v-model="maxConcurrent" :items="[1, 2, 3, 4]" :label="t('runners.dialog.maxConcurrent')" data-testid="runner-max" />
-        <v-switch v-model="limitHours" :label="t('runners.dialog.limitHours')" color="primary" hide-details data-testid="runner-limit-hours" />
-        <template v-if="limitHours">
-          <div class="text-caption">{{ t('runners.dialog.days') }}</div>
-          <v-chip-group v-model="days" multiple column selected-class="text-primary" data-testid="runner-days">
-            <v-chip v-for="d in [1, 2, 3, 4, 5, 6, 0]" :key="d" :value="d" filter size="small">{{ t(`runners.days.${d}`) }}</v-chip>
-          </v-chip-group>
-          <div class="d-flex ga-2">
-            <v-text-field v-model="start" type="time" :label="t('runners.dialog.start')" data-testid="runner-start" />
-            <v-text-field v-model="end" type="time" :label="t('runners.dialog.end')" data-testid="runner-end" />
-          </div>
-          <div class="text-caption text-medium-emphasis">{{ t('runners.dialog.hoursHint') }}</div>
-          <div v-if="hours && !hours.success" class="text-caption text-error" data-testid="runner-hours-error">{{ t('runners.dialog.invalidHours') }}</div>
-        </template>
-      </v-card-text>
-      <v-card-actions>
-        <v-spacer />
-        <template v-if="token">
-          <v-btn color="primary" data-testid="runner-token-done" @click="close">{{ t('runners.done') }}</v-btn>
-        </template>
-        <template v-else>
-          <v-btn @click="close">{{ t('common.cancel') }}</v-btn>
-          <v-btn color="primary" :disabled="!canSubmit" :loading="busy" data-testid="runner-create-submit" @click="submit">{{ t('runners.create') }}</v-btn>
-        </template>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
+      </div>
+      <v-switch v-model="limitHours" :label="t('runners.dialog.limitHours')" color="primary" hide-details inset density="compact" data-testid="runner-limit-hours" />
+      <fieldset v-if="limitHours" class="runner-form__hours">
+        <legend class="text-body-2 font-weight-medium">{{ t('runners.dialog.days') }}</legend>
+        <v-chip-group v-model="days" multiple column selected-class="text-primary" data-testid="runner-days">
+          <v-chip v-for="d in [1, 2, 3, 4, 5, 6, 0]" :key="d" :value="d" filter size="small" variant="outlined">{{ t(`runners.days.${d}`) }}</v-chip>
+        </v-chip-group>
+        <div class="runner-form__pair mt-2">
+          <v-text-field v-model="start" type="time" :label="t('runners.dialog.start')" data-testid="runner-start" />
+          <v-text-field v-model="end" type="time" :label="t('runners.dialog.end')" data-testid="runner-end" />
+        </div>
+        <div class="text-caption text-medium-emphasis mt-1">{{ t('runners.dialog.hoursHint') }}</div>
+        <div v-if="hours && !hours.success" class="text-caption text-error d-flex align-center ga-1" data-testid="runner-hours-error">
+          <v-icon icon="mdi-alert-circle-outline" size="14" aria-hidden="true" />{{ t('runners.dialog.invalidHours') }}
+        </div>
+      </fieldset>
+    </div>
+    <template #actions>
+      <template v-if="token">
+        <v-btn color="primary" variant="flat" prepend-icon="mdi-check" data-testid="runner-token-done" @click="close">{{ t('runners.tokenDone') }}</v-btn>
+      </template>
+      <template v-else>
+        <v-btn variant="text" :disabled="busy" @click="close">{{ t('common.cancel') }}</v-btn>
+        <v-btn color="primary" variant="flat" :disabled="!canSubmit" :loading="busy" data-testid="runner-create-submit" @click="submit">{{ t('runners.create') }}</v-btn>
+      </template>
+    </template>
+  </AppDialog>
 </template>
+
+<style scoped>
+.runner-form { display: flex; flex-direction: column; gap: 16px; }
+.runner-form__pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 599px) { .runner-form__pair { grid-template-columns: minmax(0, 1fr); } }
+.runner-form__hours { border: 0; padding: 0; margin: 0; }
+</style>

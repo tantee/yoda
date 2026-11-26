@@ -307,6 +307,42 @@ describe('knowledge API', () => {
     expect(deptEvents.filter((e) => e.type.startsWith('knowledge.')).map((e) => e.projectId)).toEqual([p])
   })
 
+  it('pages the list with limit and offset and reports the total of a page in x-total-count', async () => {
+    await setup()
+    const p = await newProject()
+    const ids: string[] = []
+    for (let i = 0; i < 5; i++) ids.push((await create(dev, { scope: 'project', projectId: p, type: 'fact', title: `ข้อเท็จจริง ${i}`, body: '' })).id)
+    await create(dev, { scope: 'project', projectId: p, type: 'decision', title: 'การตัดสินใจ', body: '' })
+    const newestFirst = [...ids].reverse()
+
+    const first = await call(dev, 'GET', `/knowledge?projectId=${p}&type=fact&limit=2`)
+    expect(first.statusCode).toBe(200)
+    expect(first.headers['x-total-count']).toBe('5')
+    expect((first.json() as KnowledgeEntry[]).map((e) => e.id)).toEqual(newestFirst.slice(0, 2))
+    const last = await call(dev, 'GET', `/knowledge?projectId=${p}&type=fact&limit=2&offset=4`)
+    expect(last.headers['x-total-count']).toBe('5')
+    expect((last.json() as KnowledgeEntry[]).map((e) => e.id)).toEqual(newestFirst.slice(4))
+    const past = await call(dev, 'GET', `/knowledge?projectId=${p}&type=fact&limit=2&offset=10`)
+    expect(past.json()).toEqual([])
+    expect(past.headers['x-total-count']).toBe('5')
+
+    // Without paging: everything (up to the default cap) and no count.
+    const all = await call(dev, 'GET', `/knowledge?projectId=${p}`)
+    expect((all.json() as KnowledgeEntry[]).length).toBe(6)
+    expect(all.headers['x-total-count']).toBeUndefined()
+    expect((await call(dev, 'GET', `/knowledge?projectId=${p}&offset=0`)).headers['x-total-count']).toBe('6')
+
+    // Bounds.
+    for (const q of ['limit=0', 'limit=201', 'offset=-1', 'limit=x']) {
+      expect((await call(dev, 'GET', `/knowledge?projectId=${p}&${q}`)).statusCode).toBe(400)
+    }
+    // Same visibility: an outsider still gets 404, a requester 403.
+    expect((await call(outsider, 'GET', `/knowledge?projectId=${p}&limit=2`)).statusCode).toBe(404)
+    expect((await call(nurse, 'GET', `/knowledge?projectId=${p}&limit=2`)).statusCode).toBe(403)
+    // The total counts only visible entries.
+    expect((await call(outsider, 'GET', '/knowledge?limit=1')).headers['x-total-count']).toBe('0')
+  })
+
   it('work-item entries record events with the work item id; AI drafts are confirmed by a person', async () => {
     await setup()
     const p = await newProject()

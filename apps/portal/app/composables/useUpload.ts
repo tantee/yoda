@@ -1,4 +1,6 @@
 import type { Attachment } from '@yoda/shared'
+import { loginLocale } from '~/utils/loginLocale'
+import { sessionEnded } from '~/utils/session'
 import { validateUpload } from '~/utils/upload'
 
 export class UploadError extends Error {
@@ -14,8 +16,13 @@ export function useUpload() {
     try {
       await $keycloak.updateToken(30)
     } catch {
-      await $keycloak.login()
-      throw new Error('session_expired')
+      // Sign in again only when the session really ended; a refresh that failed while offline (or with Keycloak
+      // briefly down) fails just this request, and the page offers a retry.
+      if (sessionEnded($keycloak)) {
+        await $keycloak.login({ locale: loginLocale(document.cookie) })
+        throw new Error('session_expired')
+      }
+      throw new Error('token_refresh_failed')
     }
     return new Headers({ Authorization: `Bearer ${$keycloak.token}` })
   }

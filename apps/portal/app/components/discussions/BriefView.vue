@@ -2,68 +2,77 @@
 import type { Discussion } from '@yoda/shared'
 import { briefFailKey } from '~/utils/discussions'
 
-/** The brief of a discussion. AI text is untrusted: plain text for options, sanitized markdown for the context. */
+/**
+ * The brief of a discussion: context and recommendation. An AI brief sits in the AI container ("ร่างโดย AI");
+ * a person's in a plain card. The options are `DiscussionsOptionCards`. AI text is untrusted: sanitized markdown
+ * for the context, plain text for the rest.
+ */
 const props = defineProps<{ discussion: Discussion; canEdit?: boolean; canRetry?: boolean; busy?: boolean }>()
 const emit = defineEmits<{ edit: []; retry: [] }>()
 const { t } = useI18n()
 const brief = computed(() => props.discussion.brief)
 const undecided = computed(() => props.discussion.state === 'open' || props.discussion.state === 'scheduled')
+const ai = computed(() => brief.value?.status === 'ready' && brief.value.source === 'ai')
+const recommendedTitle = computed(() => brief.value?.options.find(o => o.key === brief.value?.recommendedKey)?.title ?? '')
+const editable = computed(() => props.canEdit && undecided.value && brief.value?.status !== 'pending')
 </script>
 
 <template>
   <section data-testid="brief">
-    <div class="d-flex align-center ga-2 mb-2">
-      <h2 class="text-h6">{{ t('discussions.brief.title') }}</h2>
-      <v-chip v-if="brief?.status === 'ready' && brief.source === 'ai'" size="x-small" color="secondary" data-testid="ai-prepared">{{ t('discussions.brief.aiPrepared') }}</v-chip>
-      <v-chip v-else-if="brief?.status === 'ready'" size="x-small" variant="outlined">{{ t('discussions.brief.personWritten') }}</v-chip>
+    <div class="brief-head">
+      <h2 class="brief-title">{{ t('discussions.brief.title') }}</h2>
+      <StatusChip v-if="ai" kind="aiDraft" value="normal" :label="t('discussions.brief.aiPrepared')" size="x-small" data-testid="ai-prepared" />
+      <span v-else-if="brief?.status === 'ready'" class="text-caption text-medium-emphasis">{{ t('discussions.brief.personWritten') }}</span>
       <v-spacer />
-      <v-btn v-if="canEdit && undecided && brief?.status !== 'pending'" size="small" variant="outlined" prepend-icon="mdi-pencil" data-testid="brief-edit" @click="emit('edit')">
+      <v-btn v-if="editable" size="small" variant="text" color="primary" prepend-icon="mdi-pencil-outline" data-testid="brief-edit" @click="emit('edit')">
         {{ t('discussions.brief.edit') }}
       </v-btn>
     </div>
 
-    <v-alert v-if="brief?.status === 'pending'" type="info" variant="tonal" density="compact" data-testid="brief-pending">{{ t('discussions.brief.preparing') }}</v-alert>
-    <v-alert v-else-if="brief?.status === 'failed'" type="warning" variant="tonal" density="compact" data-testid="brief-failed">
+    <v-card v-if="brief?.status === 'pending'" class="brief-state" data-testid="brief-pending">
+      <StatusChip kind="aiStatus" value="drafting" :label="t('discussions.brief.preparing')" />
+      <span class="text-body-2 text-medium-emphasis">{{ t('discussions.brief.preparingHint') }}</span>
+    </v-card>
+    <v-alert v-else-if="brief?.status === 'failed'" type="warning" variant="tonal" density="compact" class="brief-failed" data-testid="brief-failed">
       {{ t('discussions.brief.failed', { reason: t(briefFailKey(brief.failReason)) }) }}
       <template #append>
         <v-btn v-if="canRetry && undecided" size="small" variant="outlined" :loading="busy" data-testid="brief-retry" @click="emit('retry')">{{ t('discussions.brief.retry') }}</v-btn>
       </template>
     </v-alert>
-    <p v-else-if="!brief" class="text-medium-emphasis">{{ t('discussions.brief.none') }}</p>
+    <p v-else-if="!brief" class="text-body-2 text-medium-emphasis">{{ t('discussions.brief.none') }}</p>
 
-    <template v-if="brief && brief.status !== 'pending'">
-      <template v-if="brief.context">
-        <h3 class="text-subtitle-2 mt-3 mb-1">{{ t('discussions.brief.context') }}</h3>
-        <MarkdownView :source="brief.context" />
-      </template>
-      <template v-if="brief.options.length">
-        <h3 class="text-subtitle-2 mt-3 mb-1">{{ t('discussions.brief.options') }}</h3>
-        <v-card
-          v-for="o in brief.options"
-          :key="o.key"
-          variant="outlined"
-          class="mb-2"
-          :color="o.key === brief.recommendedKey ? 'primary' : undefined"
-          data-testid="brief-option"
-        >
-          <v-card-text>
-            <div class="font-weight-medium">
-              {{ o.title }}
-              <v-chip v-if="o.key === brief.recommendedKey" size="x-small" color="primary" class="ml-1">{{ t('discussions.brief.recommended') }}</v-chip>
-            </div>
-            <div v-if="o.pros" class="mt-1"><strong>{{ t('discussions.brief.pros') }}:</strong> <span class="pre">{{ o.pros }}</span></div>
-            <div v-if="o.cons" class="mt-1"><strong>{{ t('discussions.brief.cons') }}:</strong> <span class="pre">{{ o.cons }}</span></div>
-          </v-card-text>
-        </v-card>
-      </template>
-      <template v-if="brief.recommendation">
-        <h3 class="text-subtitle-2 mt-3 mb-1">{{ t('discussions.brief.recommendation') }}</h3>
-        <p class="pre" data-testid="brief-recommendation">{{ brief.recommendation }}</p>
-      </template>
+    <template v-if="brief && brief.status !== 'pending' && (brief.context || brief.recommendation)">
+      <AiDraft v-if="ai">
+        <template v-if="brief.context">
+          <h3 class="brief-sub">{{ t('discussions.brief.context') }}</h3>
+          <MarkdownView :source="brief.context" class="brief-reading" />
+        </template>
+        <div v-if="brief.recommendation" class="brief-rec" data-testid="brief-recommendation">
+          <h3 class="brief-sub">{{ t('discussions.brief.recommendation') }}<template v-if="recommendedTitle">: {{ recommendedTitle }}</template></h3>
+          <p class="pre mb-0">{{ brief.recommendation }}</p>
+        </div>
+      </AiDraft>
+      <v-card v-else class="card-body">
+        <template v-if="brief.context">
+          <h3 class="brief-sub">{{ t('discussions.brief.context') }}</h3>
+          <MarkdownView :source="brief.context" class="brief-reading" />
+        </template>
+        <div v-if="brief.recommendation" class="brief-rec" data-testid="brief-recommendation">
+          <h3 class="brief-sub">{{ t('discussions.brief.recommendation') }}<template v-if="recommendedTitle">: {{ recommendedTitle }}</template></h3>
+          <p class="pre mb-0">{{ brief.recommendation }}</p>
+        </div>
+      </v-card>
     </template>
   </section>
 </template>
 
 <style scoped>
-.pre { white-space: pre-wrap; }
+.brief-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+.brief-title { margin: 0; font-size: 1rem; font-weight: 600; }
+.brief-sub { margin: 0 0 4px; font-size: .875rem; font-weight: 600; }
+.brief-reading { max-width: 720px; }
+.brief-rec { margin-top: 12px; }
+.brief-rec:first-child { margin-top: 0; }
+.brief-state { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 12px 16px; }
+.pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 </style>

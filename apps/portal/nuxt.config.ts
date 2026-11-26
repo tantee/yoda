@@ -1,19 +1,33 @@
+import { fileURLToPath } from 'node:url'
 import vuetify, { transformAssetUrls } from 'vite-plugin-vuetify'
 
 export default defineNuxtConfig({
   compatibilityDate: '2025-07-15',
   ssr: false,
   devtools: { enabled: false },
+  app: {
+    head: {
+      // The Thai 400 face is on every page (proposal §3.2: preload that one file only).
+      link: [
+        { rel: 'preload', href: '/fonts/ibm-plex-sans-thai-thai-400-normal.woff2', as: 'font', type: 'font/woff2', crossorigin: '' },
+        // The static mark (docs/design/jedi-touch.md), the same whether fun mode is on or off.
+        { rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' },
+      ],
+    },
+  },
   modules: [
     '@nuxtjs/i18n',
     // Tree-shaken Vuetify: only the components and directives the templates use are bundled.
+    // Styles compile from SASS with the design settings (fonts, type scale, no uppercase).
     (_options, nuxt) => {
       nuxt.hooks.hook('vite:extendConfig', (config) => {
-        config.plugins?.push(vuetify({ autoImport: true }))
+        const styles = { configFile: fileURLToPath(new URL('./app/assets/vuetify-settings.scss', import.meta.url)) }
+        // vite-plugin-vuetify is typed against a newer Vite than Nuxt's; the plugin objects are compatible.
+        config.plugins?.push(vuetify({ autoImport: true, styles }) as unknown as NonNullable<typeof config.plugins>[number])
       })
     },
   ],
-  css: ['@mdi/font/css/materialdesignicons.css', 'vuetify/styles'],
+  css: ['~/assets/fonts.css', '@mdi/font/css/materialdesignicons.css', 'vuetify/styles', '~/assets/main.css'],
   build: { transpile: ['vuetify'] },
   vite: { vue: { template: { transformAssetUrls } } },
   devServer: { port: Number(process.env.PORTAL_PORT ?? 3000) },
@@ -28,6 +42,8 @@ export default defineNuxtConfig({
       runnerDocsUrl: 'https://github.com/tantee/yoda#runners',
       // The LINE Official Account's add-friend link, shown when linking LINE (NUXT_PUBLIC_LINE_ADD_FRIEND_URL).
       lineAddFriendUrl: '',
+      // A line at the foot of the side menu, e.g. the department or hospital name (NUXT_PUBLIC_ORG_LINE).
+      orgLine: '',
     },
   },
   i18n: {

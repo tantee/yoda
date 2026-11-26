@@ -1,29 +1,45 @@
 {
   "app": {
-    "title": "AI Work Portal",
-    "logout": "Log out"
+    "title": "Yoda · IT work portal",
+    "logout": "Log out",
+    "name": "Yoda",
+    "sub": "IT work portal",
+    "subRequester": "Requests to the IT department"
   },
   "common": {
     "comingSoon": "Coming soon",
     "save": "Save",
     "cancel": "Cancel",
-    "error": "Something went wrong. Please try again."
+    "error": "Something went wrong. Please try again.",
+    "close": "Close"
   },
   "nav": {
     "chat": "Chat",
     "todo": "To-do",
     "discussions": "Discussions",
-    "status": "Status",
+    "status": "Overall status",
     "projects": "Projects",
     "requests": "My requests",
-    "answers": "Things to answer",
+    "answers": "Questions for me",
     "admin": {
-      "people": "People admin",
+      "people": "People",
       "ai": "AI budget",
-      "gitlab": "GitLab",
+      "gitlab": "GitLab connection",
       "notifications": "Notification channels"
     },
-    "runners": "Runners"
+    "runners": "Runners",
+    "agendas": "Meeting agendas",
+    "assistant": "Chat with the assistant",
+    "group": {
+      "mine": "My work",
+      "projects": "Projects",
+      "meetings": "Meetings",
+      "system": "System"
+    },
+    "short": {
+      "status": "Status",
+      "assistant": "Assistant"
+    }
   },
   "projects": {
     "title": "Projects",
@@ -44,13 +60,77 @@
     "propose": "Propose",
     "autonomyHint": "Propose: assignments wait for a PM to confirm. Auto-assign: assignments happen directly.",
     "tabs": {
-      "overview": "Overview",
+      "overview": "Members & settings",
       "items": "Work items",
       "knowledge": "Knowledge",
-      "ai": "AI settings",
-      "repos": "Repositories",
+      "ai": "AI budget",
+      "repos": "Repository",
       "status": "Status"
-    }
+    },
+    "list": {
+      "active": "Active",
+      "archived": "Archived",
+      "cols": {
+        "name": "Project",
+        "health": "Status",
+        "pm": "PM",
+        "active": "Active items",
+        "overdue": "Overdue",
+        "lastActivity": "Last activity"
+      },
+      "noActivity": "None yet",
+      "noPm": "No PM yet",
+      "emptyText": "An admin can create a project and add you as a member",
+      "emptyArchived": "No archived projects",
+      "createTitle": "Create a project"
+    },
+    "meta": {
+      "pm": "PM {names}",
+      "noPm": "No PM yet",
+      "members": "{n} members"
+    },
+    "archivedBanner": "This project is archived and cannot be edited",
+    "autonomyHelp": {
+      "propose": "AI proposes who should do each task; a PM confirms before it is assigned",
+      "autoAssign": "The proposed person is assigned straight away, without confirmation"
+    },
+    "settings": "Settings",
+    "membersCols": {
+      "name": "Name",
+      "roles": "Roles",
+      "load": "Open tasks",
+      "actions": "Actions"
+    },
+    "editRoles": "Edit roles",
+    "editRolesTitle": "Edit roles of {name}",
+    "rolesRequired": "Choose at least one role",
+    "personRequired": "Choose a person",
+    "memberMenu": "Options for {name}",
+    "removeEllipsis": "Remove from project…",
+    "removeTitle": "Remove {name} from the project?",
+    "removeText": "Tasks in this project assigned to {name} go back to waiting for assignment",
+    "removeConfirm": "Remove from project",
+    "noCandidates": "Every staff member is already a member",
+    "items": {
+      "search": "Search work items",
+      "state": "State",
+      "stateAll": "All states",
+      "step": "Step",
+      "priority": "Priority",
+      "owner": "Owner",
+      "overdue": "Overdue only",
+      "clear": "Clear filters",
+      "filterEmpty": "No work items match the filters",
+      "filterEmptyText": "Clear the filters or change the search",
+      "empty": "No work items in this project yet",
+      "emptyText": "Create a work item to start tracking it here",
+      "count": "{n} items",
+      "due": "Due",
+      "overdueOn": "Overdue {date}"
+    },
+    "notFound": "Project not found",
+    "notFoundHint": "It may have been removed, or you are not a member of this project",
+    "toProjects": "Go to my projects"
   },
   "people": {
     "name": "Name",
@@ -60,7 +140,29 @@
     "overrideStaff": "Force staff",
     "overrideRequester": "Force requester",
     "admin": "Admin",
-    "lastAdmin": "There must be at least one admin"
+    "lastAdmin": "There must be at least one admin",
+    "hint": "People come from Keycloak. Only skills, staff status and admin rights can be changed here.",
+    "search": "Search name, username or skill",
+    "filterLabel": "Type",
+    "filter": {
+      "all": "Everyone",
+      "staff": "IT staff",
+      "requester": "Requesters",
+      "admin": "Admins"
+    },
+    "type": "Type",
+    "actions": "Actions",
+    "staff": "Staff",
+    "requester": "Requester",
+    "overridden": "set manually",
+    "overrideNote": "Status set here instead of the Keycloak group",
+    "empty": "No one matches the search",
+    "edit": "Edit",
+    "editNamed": "Edit {name}",
+    "editTitle": "Edit",
+    "skillsHint": "Type and press Enter to add. Used to suggest who takes a task.",
+    "staffOverrideHint": "Normally follows the Keycloak group; change it to set it by hand.",
+    "adminHint": "Admins manage people, the AI budget, the GitLab connection and notification channels."
   },
   "errors": {
     "forbidden": "You do not have access to this page",
@@ -84,27 +186,79 @@
   "todo": {
     "myTasks": "My tasks",
     "confirmations": "Waiting for your confirmation",
-    "empty": "Nothing to do right now",
+    "empty": "Nothing waiting for you",
     "needsAssignee": "Needs an assignee",
     "waitingForAi": "Waiting for AI — assign to a person",
     "confirm": "Confirm",
     "project": "Project",
     "workItem": "Work item",
     "back": "Back to to-do",
+    "notFound": "Task not found",
+    "notFoundText": "It may have been finished or cancelled, or you cannot see it.",
     "proposals": "Waiting for your decision",
     "stepAdvance": "The current step is finished. Move this work item to the next step?",
     "awaitingAdvance": "This work item finished its current step and is waiting to move on",
-    "waitingForRunner": "Waiting for a runner — or assign to a person"
+    "waitingForRunner": "Waiting for a runner — or assign to a person",
+    "emptyText": "New work shows up here when someone assigns it to you or an AI draft is ready",
+    "pending": "{n} waiting for you",
+    "updated": "Updates automatically · last {time}",
+    "allProjects": "All projects",
+    "createIn": "New work item in project",
+    "loadingProjects": "Loading projects…",
+    "noProjects": "No projects yet",
+    "tabs": {
+      "all": "All",
+      "decisions": "Decisions",
+      "confirmations": "To confirm",
+      "mine": "My tasks"
+    },
+    "filterEmpty": "Nothing matches this filter",
+    "filterEmptyText": "Try another tab or all projects",
+    "sortHint": "By priority, then by waiting time",
+    "kind": {
+      "advance": "Move to the next step",
+      "priority": "Priority change",
+      "intake": "New request from chat",
+      "discussion": "Raise a discussion"
+    },
+    "verb": {
+      "advance": "Move to next step",
+      "notYet": "Not yet",
+      "reject": "Reject",
+      "accept": "Accept request",
+      "confirm": "Confirm",
+      "raise": "Raise discussion"
+    },
+    "aiProposed": "AI proposal",
+    "allTasksDone": "Every task of this step is done",
+    "heldByDiscussions": "{n} open discussion(s) must be decided before moving on",
+    "stepDone": "{name} done",
+    "changeTo": "changes to",
+    "requester": "Requested by {name}",
+    "aiRouted": "AI picked the project",
+    "chooseProjectFirst": "Choose a project first to accept the request",
+    "dismissNoteRequired": "Reason (required)",
+    "cols": {
+      "priority": "Priority",
+      "task": "Task / work item",
+      "project": "Project",
+      "step": "Step",
+      "waiting": "Waiting for",
+      "actions": "Actions",
+      "state": "State",
+      "due": "Due"
+    },
+    "proposedTo": "Proposed: {name}",
+    "waitingAi": "Waiting for AI",
+    "assignPerson": "Assign a person",
+    "changePerson": "Change person",
+    "due": "Due {date}",
+    "noDue": "No due date",
+    "showing": "Showing {n} of {total}",
+    "showAll": "Show all",
+    "showLess": "Show less"
   },
   "task": {
-    "state": {
-      "proposed": "Proposed",
-      "open": "Open",
-      "in_progress": "In progress",
-      "submitted": "Submitted",
-      "accepted": "Accepted",
-      "rejected": "Rejected"
-    },
     "type": {
       "ai": "AI",
       "human": "Human",
@@ -131,7 +285,43 @@
     "copyIntoResult": "Copy into my result",
     "attachments": "Attachments",
     "resultAttachments": "Attach files to your result",
-    "noPreviousText": "(no text)"
+    "noPreviousText": "(no text)",
+    "assignTitle": "Assign {title}",
+    "openLoad": "{n} open",
+    "requestChangesEllipsis": "Request changes…",
+    "changesTitle": "Request changes to {title}",
+    "changesHint": "Tell the assignee what to fix. The task goes back to them with this comment.",
+    "changesReason": "What needs to change (required)",
+    "changesReasonRequired": "Say what needs to change",
+    "sendBack": "Send back for changes",
+    "yourDecision": "Your decision",
+    "yourWork": "Your work",
+    "attachFile": "Attach a file",
+    "updatedAgo": "Updated {time}",
+    "side": {
+      "label": "Task details",
+      "owner": "Owner",
+      "requester": "Requester",
+      "target": "Due date",
+      "dates": "Dates",
+      "created": "Created",
+      "updated": "Last updated"
+    },
+    "requester": {
+      "answerLabel": "Your answer",
+      "question": "The team's question",
+      "delivered": "What the team delivered",
+      "deliveryAsk": "Does it work the way you asked?",
+      "notYet": "Not yet — tell us what to fix",
+      "accept": "Accept delivery",
+      "send": "Send answer",
+      "noDelivery": "The team has not attached delivery notes. Try it out, then answer.",
+      "done": "All set. Thank you for answering.",
+      "changesTitle": "What needs fixing in {title}",
+      "changesHint": "Tell the team what still does not match your request. They fix it and send it back to you.",
+      "changesReason": "What needs fixing",
+      "sendChanges": "Send to the team"
+    }
   },
   "priority": {
     "low": "Low",
@@ -180,7 +370,40 @@
     "targetDateHint": "Optional; overdue once this day has passed (Bangkok time)",
     "clearTargetDate": "Clear",
     "saveTargetDate": "Save date",
-    "noTargetDate": "No target date"
+    "noTargetDate": "No target date",
+    "more": "More actions",
+    "reopenEllipsis": "Reopen a step…",
+    "cancelEllipsis": "Cancel work item…",
+    "reopenTo": "Back to {step}",
+    "cancelTitleNamed": "Cancel “{title}”?",
+    "stepNotStarted": "Not started",
+    "stepProgress": "{done} of {total} done",
+    "stepTasks": "{n} task | {n} tasks",
+    "timelineFailed": "Couldn't load the timeline",
+    "timelineEmpty": "No events yet",
+    "timelineMore": "Show events before {date}",
+    "side": {
+      "label": "Work item details",
+      "details": "Details",
+      "created": "Created",
+      "runs": "Running now",
+      "discussions": "Discussions"
+    },
+    "daysLeft": "in {n} days",
+    "daysLate": "{n} days late",
+    "notFound": "Work item not found",
+    "notFoundHint": "It may have been removed, or you aren't a member of its project.",
+    "toProjects": "Go to projects",
+    "editTargetDate": "Edit target date",
+    "timelineFilter": "Timeline filter",
+    "timelineKey": "Key events",
+    "timelineAll": "All",
+    "timelineEmptyKey": "No key events yet",
+    "timelineMoreFailed": "Couldn't load earlier events. Try again.",
+    "titleRequired": "Title (required)",
+    "titleMissing": "Enter a title",
+    "ownerRequired": "Owner (required)",
+    "ownerMissing": "Pick an owner"
   },
   "steps": {
     "done": "Done",
@@ -307,7 +530,8 @@
       "person": "Person",
       "ai": "AI",
       "upload": "Upload",
-      "task": "Task"
+      "task": "Task",
+      "gitlab": "GitLab"
     },
     "noAi": "No AI",
     "empty": "No knowledge yet",
@@ -331,7 +555,22 @@
     "dropHere": "Drag a file here or click to choose",
     "uploadNoAi": "Do not send this file to AI",
     "uploading": "Uploading...",
-    "uploaded": "Uploaded"
+    "uploaded": "Uploaded",
+    "groupDrafts": "Progress drafts",
+    "groupDraftsHint": "AI drafts nobody has confirmed yet",
+    "searchResults": "Search results",
+    "uploadTitle": "Upload a file to the project",
+    "attachmentsCols": {
+      "name": "File",
+      "size": "Size",
+      "by": "Uploaded by",
+      "noAi": "Keep from AI"
+    },
+    "pageLabel": "Pages of {type}",
+    "bodyEdit": "Write",
+    "bodyPreview": "Preview",
+    "markdownHint": "Markdown works, e.g. **bold**, - list",
+    "previewEmpty": "Nothing to preview yet"
   },
   "ai": {
     "title": "AI settings",
@@ -351,7 +590,22 @@
     "retry": "Retry AI",
     "deptTitle": "Department AI budget",
     "deptHint": "Monthly limit for all AI use in the department. Empty = no limit.",
-    "saved": "Saved"
+    "saved": "Saved",
+    "budgetSection": "AI budget and usage",
+    "noAiHelp": "Turn on when the project holds data that must not leave the organisation",
+    "spendOf": "{spend} of {budget}",
+    "spendNoBudget": "{spend} · no budget set",
+    "month": "Month {month}",
+    "budgetCard": "Monthly budget",
+    "byProject": "By project",
+    "project": "Project",
+    "projectBudget": "Project budget",
+    "departmentCalls": "Department-wide (no project)",
+    "funCard": "Fun touches",
+    "funMode": "Playful touches in the portal",
+    "funHint": "A small star on the logo, a playful line on empty, loading and error pages, and a hidden keyboard surprise. Never in work data, tables, notifications or email. The sign-in page has its own switch (see the operations guide).",
+    "funOn": "Fun touches are on",
+    "funOff": "Fun touches are off"
   },
   "chat": {
     "threads": "Conversations",
@@ -359,7 +613,7 @@
     "intake": "My assistant",
     "empty": "No messages yet",
     "select": "Select a conversation",
-    "placeholder": "Type a message (Enter to send, Shift+Enter for a new line)",
+    "placeholder": "Type a message…",
     "send": "Send",
     "attach": "Attach a file",
     "typing": "The secretary is typing…",
@@ -380,11 +634,17 @@
         "pending": "Waiting for a decision",
         "accepted": "Confirmed",
         "rejected": "Dismissed",
-        "superseded": "No longer applies"
+        "superseded": "No longer applies",
+        "sentToTeam": "Sent to the team"
       },
       "project": "Project",
       "chooseProject": "Choose a project",
-      "requester": "Requester"
+      "requester": "Requester",
+      "openWorkItem": "Open work item",
+      "openRequest": "View request",
+      "requestSent": "Request sent to the IT team",
+      "myRequests": "My requests",
+      "sentToTeam": "Sent to the IT team"
     },
     "textRequired": "Add a message to send the attached files",
     "marker": {
@@ -396,6 +656,23 @@
         "ai_unavailable": "The assistant isn't available right now: AI is not set up. Please ask an administrator.",
         "ai_failed": "The assistant couldn't answer this time. Please try again in a moment."
       }
+    },
+    "enterHint": "Enter to send, Shift+Enter for a new line",
+    "newMessages": "New messages",
+    "unread": "{n} unread",
+    "kind": {
+      "personal": "Personal assistant",
+      "intake": "Assistant",
+      "project": "Project thread",
+      "work_item": "Work item thread"
+    },
+    "emptyAssistant": "Start a conversation",
+    "emptyAssistantHint": "Type a question or a request below.",
+    "suggest": {
+      "myWork": "Try: what's on my plate today?",
+      "status": "Try: how are my projects doing?",
+      "newRequest": "Try: I need a new report…",
+      "myRequests": "Try: where are my requests?"
     }
   },
   "notifications": {
@@ -444,7 +721,21 @@
         "linked": "{channel} is linked",
         "unlinked": "{channel} is unlinked",
         "close": "Close"
-      }
+      },
+      "linkFirst": "Link {channel} first",
+      "channelsTitle": "Channels",
+      "portal": "Portal",
+      "alwaysOn": "Always on",
+      "portalHint": "Every notification always shows on the bell in the portal.",
+      "notLinked": "Not linked",
+      "emailReady": "Ready",
+      "channelHint": {
+        "email": "Sent to the email address on your account.",
+        "line": "Messages on LINE once your account is linked.",
+        "telegram": "Messages from the bot on Telegram once your account is linked."
+      },
+      "gridTitle": "Where to get each kind of notification",
+      "saving": "Saving…"
     },
     "admin": {
       "title": "Notification channels",
@@ -454,34 +745,98 @@
       "enabled": "Enabled",
       "yes": "Yes",
       "no": "No",
-      "notConfiguredHint": "Set its credentials in the server environment before enabling it"
+      "notConfiguredHint": "Set its credentials in the server environment before enabling it",
+      "channelsTitle": "Channels",
+      "configuredYes": "Configured",
+      "configuredNo": "Not configured",
+      "channelHint": {
+        "email": "Sent through the system's SMTP. People choose it on their notification settings.",
+        "line": "Sent through the LINE Official account. People link their account first.",
+        "telegram": "Sent through the Telegram bot. People link their account first."
+      }
     }
   },
   "answers": {
-    "empty": "Nothing needs your answer right now",
-    "back": "Back to questions"
+    "empty": "No open questions",
+    "back": "Back to questions",
+    "emptyText": "When the team needs something from you, it shows up here.",
+    "subtitle": "What the IT team is waiting for you to answer or accept",
+    "askedBy": "IT team",
+    "sentAt": "Sent to you {date}",
+    "open": "View request"
   },
   "requests": {
-    "empty": "You have no requests yet. Tell the assistant what you need.",
+    "empty": "No requests yet",
     "startChat": "Talk to the assistant",
     "back": "Back to my requests",
     "updated": "Last updated",
     "yourAnswers": "Questions for you",
     "openChat": "Open chat",
-    "status": {
-      "submitted": "Received",
-      "in_progress": "In progress",
-      "waiting_for_you": "Waiting for you",
-      "done": "Done",
-      "cancelled": "Cancelled"
-    },
     "hint": {
       "submitted": "We received your request.",
       "in_progress": "The team is working on it.",
       "waiting_for_you": "We need an answer from you to continue.",
       "done": "This request is complete.",
       "cancelled": "This request was cancelled."
-    }
+    },
+    "emptyText": "Tell the assistant what you need; it passes the request to the IT team.",
+    "subtitle": "Follow everything you asked the IT team for, in one place",
+    "new": "New request",
+    "waitingTitle": "Waiting for you: {n}",
+    "waitingHint": "The team can continue once you reply",
+    "sentToYou": "Sent to you {date}",
+    "updatedAt": "Updated {date}",
+    "expected": "Expected {date}",
+    "inProgress": "In progress",
+    "finished": "Finished",
+    "details": "View details",
+    "answer": "Answer",
+    "accept": "Accept delivery",
+    "deliveryAsk": "The work is done. Please check it solves what you asked for.",
+    "howTitle": "Need something new?",
+    "howText": "Tell the assistant in the chat what you need. It asks for the details the team needs and passes the request on.",
+    "todo": "Things to do",
+    "nothingToDo": "Nothing needs you right now",
+    "delivered": "What the team delivered",
+    "timeline": "Progress",
+    "timelineEmpty": "No progress yet",
+    "about": "About this request",
+    "project": "System",
+    "expectedDate": "Expected",
+    "noExpected": "Not set yet",
+    "notFound": "Request not found",
+    "notFoundText": "It may have been removed, or it is not one of your requests.",
+    "step": {
+      "intake": "Received",
+      "ba": "The team is gathering requirements",
+      "sa": "The team is designing",
+      "dev": "The team is building it",
+      "qc": "Testing",
+      "close": "Waiting for you to accept"
+    },
+    "kind": {
+      "question": "Question for you",
+      "delivery": "Accept delivery"
+    },
+    "event": {
+      "received": "The IT team received your request",
+      "step": "Progress: {step}",
+      "reopened": "The team went back to {step}",
+      "question": "The team sent you a question",
+      "delivery": "The work is done and sent to you to accept",
+      "answered": "You answered",
+      "accepted": "You accepted the delivery",
+      "changes": "You asked for changes",
+      "expected_date": "Expected to finish {date}",
+      "expected_date_cleared": "Expected date removed",
+      "done": "Request completed",
+      "cancelled": "Request cancelled",
+      "answeredOther": "The question was answered",
+      "acceptedOther": "The delivery was accepted"
+    },
+    "contact": "Contact {name}",
+    "contactLabel": "Contact",
+    "lastUpdate": "Last update"
   },
   "guards": {
     "rework": "Changes were requested in this step",
@@ -550,7 +905,10 @@
       "retry": "Retry AI brief",
       "save": "Save brief",
       "noOptionTitle": "Every option needs a title",
-      "noRecommended": "No recommendation"
+      "noRecommended": "No recommendation",
+      "ready": "Brief ready",
+      "aiRecommended": "AI recommends",
+      "preparingHint": "The brief shows here when the AI finishes."
     },
     "failReason": {
       "no_ai": "AI is not set up",
@@ -561,31 +919,42 @@
     "thread": {
       "title": "Responses",
       "opinion": "Your opinion",
-      "send": "Send",
+      "send": "Post opinion",
       "vote": "Vote",
       "myVote": "Your vote",
       "noResponses": "No responses yet",
       "voted": "voted for {option}",
-      "opinionBy": "opinion"
+      "opinionBy": "opinion",
+      "opinionRequired": "Type your opinion first"
     },
     "decide": {
-      "button": "Decide",
+      "button": "Record decision",
       "title": "Record the decision",
       "option": "Chosen option",
       "none": "No specific option",
       "text": "Decision",
-      "submit": "Decide"
+      "submit": "Record decision",
+      "titleNamed": "Record the decision:",
+      "textRequired": "Decision (required)",
+      "textHint": "What was agreed and why. The team sees this on the work item.",
+      "textMissing": "Enter the decision before saving"
     },
     "withdraw": {
       "button": "Withdraw",
       "title": "Withdraw this discussion",
       "reason": "Reason",
-      "submit": "Withdraw"
+      "submit": "Withdraw",
+      "menu": "Withdraw…",
+      "titleNamed": "Withdraw “{question}”?",
+      "text": "The discussion closes without a decision and leaves its agenda. Work waiting on it can go on.",
+      "reasonRequired": "Reason (required)",
+      "reasonMissing": "Enter a reason before withdrawing"
     },
     "decision": {
       "title": "Decision",
       "by": "Decided by {name} on {date}",
-      "withdrawn": "Withdrawn"
+      "withdrawn": "Withdrawn",
+      "chosen": "Chosen option"
     },
     "blocked": "Waiting on {n} discussion | Waiting on {n} discussions",
     "blockedHint": "This work item cannot move on until they are decided or withdrawn.",
@@ -626,11 +995,62 @@
       "notes": "Notes",
       "prev": "Previous",
       "next": "Next",
-      "position": "{n} of {total}",
-      "presentHint": "Use the left and right arrow keys to move between discussions",
+      "position": "Item {n} of {total}",
+      "presentHint": "change item",
       "exit": "Exit",
-      "readOnly": "Only project managers and admins can edit agendas"
-    }
+      "readOnly": "Only project managers and admins can edit agendas",
+      "emptyText": "Create an agenda, then add the discussions the meeting should decide.",
+      "nameRequired": "Agenda name (required)",
+      "nameMissing": "Enter a name",
+      "day": "Meeting day",
+      "dayMissing": "Pick the meeting day",
+      "time": "Time",
+      "timeMissing": "Enter a valid time",
+      "timeHint": "Thailand time (Asia/Bangkok)",
+      "notFound": "Agenda not found",
+      "backToList": "Go to agendas",
+      "deleteMenu": "Delete agenda…",
+      "deleteTitle": "Delete “{title}”?",
+      "itemsTitle": "Items",
+      "dragHint": "Drag to reorder, or use the ⋯ menu",
+      "noItemsText": "Add open discussions with the field below.",
+      "itemMenu": "Actions for item {n}",
+      "progress": "Agenda progress",
+      "goTo": "Go to item {n}: {question}"
+    },
+    "emptyTab": {
+      "open": "No open discussions",
+      "scheduled": "No discussions on an agenda",
+      "decided": "No decided discussions yet"
+    },
+    "emptyText": "Raise a discussion from a work item or task when the team needs to decide something.",
+    "cols": {
+      "question": "Question",
+      "workItem": "Work item",
+      "priority": "Priority",
+      "brief": "Brief",
+      "votes": "Votes",
+      "raised": "Raised"
+    },
+    "voteShare": "{title}: {n} votes ({percent}%)",
+    "voteTotal": "{n} votes in total",
+    "notFound": "Discussion not found",
+    "notFoundText": "It may have been deleted, or you cannot see it.",
+    "backToList": "Go to discussions",
+    "more": "More actions",
+    "side": {
+      "title": "Details",
+      "agenda": "Agenda",
+      "raisedBy": "Raised by",
+      "created": "Raised on"
+    },
+    "optionTitleN": "Option {n}",
+    "raiseOn": "Raise a discussion on",
+    "questionRequired": "Question (required)",
+    "questionMissing": "Enter the question first",
+    "contextLabel": "Context",
+    "contextHint": "What the team needs to know to decide",
+    "optional": "optional"
   },
   "gitlab": {
     "notConnected": "GitLab is not connected",
@@ -683,7 +1103,8 @@
       "noIssue": "No issue yet (created when development starts)",
       "mergeRequests": "Merge requests",
       "noMrs": "No merge requests yet",
-      "closesHint": "Include {hint} in your merge request"
+      "closesHint": "Include {hint} in your merge request",
+      "manage": "Manage"
     },
     "admin": {
       "title": "GitLab connection",
@@ -696,8 +1117,17 @@
       "no": "No",
       "unknown": "-",
       "webhookUrl": "Webhook URL to configure in GitLab",
-      "webhookHint": "In GitLab, Settings → Webhooks: enter this URL, set the secret token to GITLAB_WEBHOOK_SECRET, and enable Merge request, Pipeline and Comments events.",
-      "copy": "Copy"
+      "copy": "Copy",
+      "connection": "Connection",
+      "check": "Check again",
+      "webhookTitle": "Webhook",
+      "stepsTitle": "Set up in GitLab",
+      "steps": {
+        "1": "In GitLab, open Settings → Webhooks of the group or project",
+        "2": "Paste the URL above into the URL field",
+        "3": "Set the Secret token to the system's GITLAB_WEBHOOK_SECRET",
+        "4": "Select Merge request, Pipeline and Comments events, then save"
+      }
     }
   },
   "runners": {
@@ -730,11 +1160,11 @@
     "revoke": "Revoke",
     "keep": "Keep",
     "confirm": {
-      "pauseTitle": "Pause this runner?",
+      "pauseTitle": "Pause runner “{name}”?",
       "pauseText": "The runner stops claiming new tasks. Work it already claimed can still be submitted.",
-      "resumeTitle": "Resume this runner?",
+      "resumeTitle": "Resume runner “{name}”?",
       "resumeText": "The runner can claim tasks again.",
-      "revokeTitle": "Revoke this runner?",
+      "revokeTitle": "Revoke runner “{name}”?",
       "revokeText": "Its token stops working at once and its running tasks go back to the queue. This cannot be undone."
     },
     "state": {
@@ -775,7 +1205,8 @@
       "end": "End",
       "hoursHint": "Times are in Asia/Bangkok. The window cannot cross midnight.",
       "invalidHours": "Pick at least one day and an end time after the start",
-      "personalHint": "A personal subscription works tasks on demand only, unless an admin allows personal subscriptions unattended."
+      "personalHint": "A personal subscription works tasks on demand only, unless an admin allows personal subscriptions unattended.",
+      "nameRequired": "Name (required)"
     },
     "days": {
       "0": "Sun",
@@ -803,8 +1234,16 @@
       "pauseAllHint": "While on, no runner can claim new tasks. Work already claimed can still be submitted.",
       "allowPersonalUnattended": "Allow personal subscriptions unattended",
       "personalCaveat": "Unattended use must run under an account whose terms allow automated use (an API key, or an organization Team/Enterprise plan whose terms cover it). Whether a personal consumer subscription may be used unattended must be confirmed against the provider's current terms before turning this on.",
-      "saved": "Saved"
-    }
+      "saved": "Saved",
+      "titleAdmin": "Runner settings (admin)",
+      "allPaused": "All paused",
+      "on": "On",
+      "off": "Off"
+    },
+    "emptyText": "Create a runner on your machine or a server so the AI can change code, analyse repos and run tests.",
+    "more": "More actions for {name}",
+    "revokeMenu": "Revoke…",
+    "tokenDone": "Copied, close"
   },
   "status": {
     "title": "Status",
@@ -838,7 +1277,11 @@
       "aiSpend": "AI this month",
       "noBudget": "{amount} (no budget)",
       "ofBudget": "{spend} of {budget}",
-      "open": "Open status"
+      "open": "Open status",
+      "noBudgetShort": "{amount} · no budget set",
+      "moreReasons": "and {n} more",
+      "byStep": "Work by step",
+      "noReasons": "Nothing to watch"
     },
     "board": "Board",
     "boardEmpty": "No active work items",
@@ -849,7 +1292,8 @@
       "roles": "Roles",
       "openTasks": "Open tasks",
       "inProgress": "In progress",
-      "todayAssigned": "Assigned today"
+      "todayAssigned": "Assigned today",
+      "load": "Load"
     },
     "recentEvents": "Recent events",
     "eventsEmpty": "No events yet",
@@ -879,7 +1323,259 @@
         "no_activity": "No summary was written: the project had no activity this week.",
         "budget_exceeded": "No summary was written: this month's AI budget is used up.",
         "ai_failed": "No summary was written: the AI call failed. Try again later."
-      }
+      },
+      "aiLabel": "AI draft",
+      "draftPending": "Draft, awaiting PM confirmation",
+      "published": "Published",
+      "created": "Created {time}",
+      "publish": "Confirm and publish",
+      "regenerateEllipsis": "Regenerate…"
+    },
+    "kpi": {
+      "overdueLink": "View items",
+      "ofBudget": "of {budget}",
+      "noBudget": "No budget set",
+      "discussionsLink": "View discussions"
+    },
+    "reasonsTitle": {
+      "at_risk": "Why this project is at risk",
+      "blocked": "Why this project is blocked",
+      "on_track": "Notes"
+    },
+    "boardHint": "Sorted by priority within each step",
+    "columnEmpty": "Nothing in this step",
+    "overdueOn": "Overdue {date}",
+    "stuckShort": "Idle {n} days",
+    "showAll": "View all",
+    "showLess": "Show less",
+    "openedOn": "Opened {date}",
+    "inactiveGroup": "No active work ({n})",
+    "showMoreEvents": "Show more"
+  },
+  "chip": {
+    "workItem": {
+      "active": "In progress",
+      "done": "Done",
+      "cancelled": "Cancelled"
+    },
+    "task": {
+      "proposed": "Awaiting assignment",
+      "open": "Not started",
+      "in_progress": "In progress",
+      "submitted": "Awaiting review",
+      "accepted": "Accepted",
+      "rejected": "Rejected"
+    },
+    "taskType": {
+      "ai": "AI",
+      "human": "Person",
+      "review": "Review",
+      "approval": "Approval"
+    },
+    "step": {
+      "done": "Done",
+      "current": "Current",
+      "pending": "Not started"
+    },
+    "request": {
+      "submitted": "Received",
+      "in_progress": "In progress",
+      "waiting_for_you": "Waiting for you",
+      "done": "Done",
+      "cancelled": "Cancelled"
+    },
+    "health": {
+      "on_track": "On track",
+      "at_risk": "At risk",
+      "blocked": "Blocked"
+    },
+    "aiStatus": {
+      "drafting": "AI drafting",
+      "failed": "AI draft failed"
+    },
+    "aiDraft": {
+      "low": "Low confidence",
+      "normal": "AI draft"
+    },
+    "waiting": {
+      "runner": "Waiting for a runner",
+      "ai": "Waiting for AI"
+    },
+    "run": {
+      "running": "Running",
+      "succeeded": "Succeeded",
+      "failed": "Failed",
+      "expired": "Expired",
+      "parked": "Waiting for an answer",
+      "released": "Given back"
+    },
+    "runner": {
+      "active": "Active",
+      "paused": "Paused",
+      "revoked": "Revoked"
+    },
+    "sync": {
+      "synced": "Synced",
+      "failed": "Sync failed",
+      "pending": "Pending"
+    },
+    "pipeline": {
+      "success": "Passed",
+      "failed": "Failed",
+      "running": "Running",
+      "pending": "Pending",
+      "canceled": "Canceled",
+      "none": "No pipeline"
+    },
+    "mr": {
+      "opened": "Open",
+      "merged": "Merged",
+      "closed": "Closed"
+    },
+    "discussion": {
+      "open": "Open",
+      "scheduled": "On agenda",
+      "decided": "Decided",
+      "withdrawn": "Withdrawn"
+    },
+    "brief": {
+      "pending": "Preparing brief",
+      "ready": "Brief ready",
+      "failed": "Brief failed"
+    },
+    "proposal": {
+      "pending": "Pending",
+      "accepted": "Accepted",
+      "rejected": "Rejected",
+      "superseded": "Superseded"
+    },
+    "knowledge": {
+      "draft": "Draft",
+      "confirmed": "Confirmed"
+    },
+    "project": {
+      "active": "Active",
+      "archived": "Archived"
+    },
+    "yesNo": {
+      "yes": "Yes",
+      "no": "No"
+    },
+    "requesterTask": {
+      "proposed": "Waiting for you",
+      "open": "Waiting for you",
+      "in_progress": "Answering",
+      "submitted": "Sent",
+      "accepted": "Done",
+      "rejected": "Sent back for changes"
     }
+  },
+  "stateView": {
+    "loading": "Loading…",
+    "errorTitle": "Could not load this",
+    "errorServer": "The server returned an error ({status})",
+    "errorNetwork": "Cannot reach the server. Check the network connection.",
+    "errorGeneric": "Something went wrong. Please try again.",
+    "retry": "Try again"
+  },
+  "aiDraft": {
+    "label": "AI draft",
+    "editedBy": "AI draft · edited by {name}",
+    "missingTitle": "The AI is missing:",
+    "missingHint": "Check and fill in before accepting"
+  },
+  "stepTrack": {
+    "short": "{n}/{total} {name}",
+    "allDone": "All {total} steps done",
+    "plain": "step {n} of {total}"
+  },
+  "shell": {
+    "role": {
+      "staff": "IT staff",
+      "admin": "Administrator",
+      "requester": "Requester"
+    },
+    "signingIn": "Signing in…",
+    "mainMenu": "Main menu",
+    "openMenu": "Open menu",
+    "collapseRail": "Collapse menu",
+    "expandRail": "Expand menu",
+    "breadcrumb": "You are here",
+    "userMenu": "User menu",
+    "language": "Language",
+    "myNotifications": "My notifications",
+    "notificationsCount": "Notifications, {n} unread",
+    "unread": "Unread",
+    "search": {
+      "label": "Search",
+      "placeholder": "Search work, projects, people",
+      "placeholderRequester": "Search my requests",
+      "hint": "Type at least 2 characters",
+      "noResults": "Nothing matches",
+      "failed": "Search failed, try again",
+      "types": {
+        "project": "Project",
+        "work_item": "Work item",
+        "person": "Person",
+        "request": "Request"
+      }
+    },
+    "home": "Go to the home page",
+    "notFound": {
+      "title": "Page not found",
+      "text": "The link may be wrong, or the page has moved"
+    },
+    "error": {
+      "title": "Something went wrong",
+      "text": "The system had a temporary problem. Try reloading the page.",
+      "status": "Error code {status}",
+      "reload": "Reload"
+    },
+    "forbidden": {
+      "crumb": "No access",
+      "admin": "This page is for administrators",
+      "staff": "This page is for IT staff",
+      "generic": "You do not have access to this page",
+      "text": "If you think you should have access, contact an administrator"
+    },
+    "close": "Close",
+    "skipToContent": "Skip to main content"
+  },
+  "timeline": {
+    "today": "Today, {date}",
+    "yesterday": "Yesterday, {date}"
+  },
+  "fun": {
+    "empty": [
+      "Empty, this list is. Rest a moment, you may.",
+      "Nothing here, there is. Yet.",
+      "Quiet, the queue is today.",
+      "Clear, the road ahead looks.",
+      "Waiting for work, this page is.",
+      "Calm before the next request, this is.",
+      "All done here, it seems.",
+      "Start something new here, you can.",
+      "Peaceful, an empty inbox is.",
+      "Room for new work, there still is."
+    ],
+    "loading": [
+      "Loading, the work is. A moment, give it.",
+      "Fetching the details, we are.",
+      "Arriving soon, your data is.",
+      "Gathering the tasks, the server is.",
+      "Short, this wait will be.",
+      "On its way, the page is."
+    ],
+    "notFound": [
+      "Lost, this page is. Home, the way back is.",
+      "Here, no such page there is.",
+      "Wandered off the map, this link has."
+    ],
+    "error": [
+      "Stumbled, the system has. Again, try it.",
+      "Troubled, the server is. Reload, you should.",
+      "Back to normal soon, all will be."
+    ],
+    "konami": "May the source be with you"
   }
 }

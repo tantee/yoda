@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { ChannelName, NotificationKind, type MyNotificationPrefs } from '@yoda/shared'
-import { channelColumns, channelKey, countdown, isChecked, kindKey, msLeft, toggleChannel } from '../app/utils/notificationSettings'
+import { cellKey, channelColumns, channelKey, codeLeftPercent, columnNoteKey, countdown, isChecked, kindKey, msLeft, serialQueue, toggleChannel, withPendingPrefs } from '../app/utils/notificationSettings'
 import { errorKey } from '../app/utils/errors'
 import { navItemsFor } from '../app/utils/nav'
 
@@ -74,5 +74,78 @@ describe('labels', () => {
     const base = { id: crypto.randomUUID(), username: 'u', displayName: 'U', email: null }
     expect(navItemsFor({ ...base, isStaff: true, isAdmin: true }).map(i => i.key)).toContain('nav.admin.notifications')
     expect(navItemsFor({ ...base, isStaff: true, isAdmin: false }).map(i => i.key)).not.toContain('nav.admin.notifications')
+  })
+})
+
+describe('columnNoteKey', () => {
+  it('explains why a column cannot be ticked', () => {
+    expect(columnNoteKey({ name: 'line', available: false, linked: false })).toBe('notifications.settings.notAvailable')
+    expect(columnNoteKey({ name: 'telegram', available: true, linked: false })).toBe('notifications.settings.linkFirst')
+    expect(columnNoteKey({ name: 'email', available: true, linked: false })).toBe('notifications.settings.noEmail')
+    expect(columnNoteKey({ name: 'line', available: true, linked: true })).toBeNull()
+  })
+  it('uses keys present in both locales', () => {
+    for (const key of ['notifications.settings.notAvailable', 'notifications.settings.linkFirst', 'notifications.settings.noEmail']) {
+      for (const loc of Object.values(LOCALES)) expect(typeof lookup(loc, key)).toBe('string')
+    }
+  })
+})
+
+describe('codeLeftPercent', () => {
+  it('is the share of the 15 minutes left, clamped', () => {
+    const now = Date.parse('2026-11-26T00:00:00Z')
+    expect(codeLeftPercent('2026-11-26T00:15:00Z', now)).toBe(100)
+    expect(codeLeftPercent('2026-11-26T00:07:30Z', now)).toBe(50)
+    expect(codeLeftPercent('2026-11-25T23:59:00Z', now)).toBe(0)
+    expect(codeLeftPercent('2026-11-26T01:00:00Z', now)).toBe(100)
+  })
+})
+
+describe('grid saves', () => {
+  it('names one cell per kind and channel', () => {
+    expect(cellKey('request_update', 'email')).toBe('request_update:email')
+    expect(cellKey('request_update', 'line')).not.toBe(cellKey('secretary_message', 'line'))
+  })
+  it('runs saves in click order, one at a time, and counts the unfinished ones', async () => {
+    const q = serialQueue()
+    const log: string[] = []
+    let release!: () => void
+    const first = q.run(() => new Promise<string>((r) => { release = () => { log.push('first'); r('a') } }))
+    const second = q.run(async () => { log.push('second'); return 'b' })
+    expect(q.pending).toBe(2)
+    await Promise.resolve()
+    expect(log).toEqual([])
+    release()
+    expect(await first).toBe('a')
+    expect(q.pending).toBe(1)
+    expect(await second).toBe('b')
+    expect(log).toEqual(['first', 'second'])
+    expect(q.pending).toBe(0)
+  })
+  it('keeps going after a failed save', async () => {
+    const q = serialQueue()
+    const failed = q.run(async () => { throw new Error('500') })
+    const next = q.run(async () => 'ok')
+    await expect(failed).rejects.toThrow('500')
+    expect(await next).toBe('ok')
+    expect(q.pending).toBe(0)
+  })
+})
+
+describe('withPendingPrefs', () => {
+  it('takes a fresh load as is when no save is queued', () => {
+    const fresh = my({ linked: { email: true, line: true, telegram: false } })
+    expect(withPendingPrefs(fresh, my(), 0)).toBe(fresh)
+  })
+  it('keeps the grid the user just clicked while saves are queued, but takes the rest (channels) fresh', () => {
+    const current = { ...my(), prefs: { kinds: { request_update: [], secretary_message: ['email' as const] } } }
+    const fresh = my({ linked: { email: true, line: true, telegram: false } })
+    const merged = withPendingPrefs(fresh, current, 2)
+    expect(merged.prefs).toEqual(current.prefs)
+    expect(merged.channels).toEqual(fresh.channels)
+  })
+  it('takes the fresh load when there is nothing on screen yet', () => {
+    const fresh = my()
+    expect(withPendingPrefs(fresh, null, 1)).toBe(fresh)
   })
 })

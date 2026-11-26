@@ -32,7 +32,7 @@ export function mergeMessages(existing: Message[], incoming: Message[]): Message
   return [...byId.values()].sort((a, b) => a.seq - b.seq)
 }
 
-export const TYPING_TIMEOUT_MS = 60_000
+const TYPING_TIMEOUT_MS = 60_000
 
 /**
  * The secretary answers every person message in personal/intake threads, and in project/work_item threads
@@ -82,4 +82,37 @@ export function systemMarkerKey(m: Pick<Message, 'authorKind' | 'text'>): string
     return `chat.marker.secretaryFailed.${SECRETARY_FAILED.has(arg) ? arg : 'ai_failed'}`
   }
   return arg === undefined ? (SYSTEM_MARKERS[name!] ?? null) : null
+}
+
+/** Within `threshold` px of the end of a scroll container. */
+export function isNearBottom(el: { scrollHeight: number; scrollTop: number; clientHeight: number }, threshold = 80): boolean {
+  return el.scrollHeight - el.scrollTop - el.clientHeight < threshold
+}
+
+/**
+ * What the message list does after its content changed: jump to the bottom (thread switched, own message, or
+ * already near the bottom), hold the position (older messages prepended), offer the "new messages" pill
+ * (someone else posted while the reader scrolled up), or nothing.
+ */
+export function scrollPlan(s: {
+  switched: boolean
+  prepended: boolean
+  appended: boolean
+  nearBottom: boolean
+  lastMine: boolean
+}): 'bottom' | 'hold' | 'pill' | 'none' {
+  if (s.switched) return 'bottom'
+  if (s.prepended) return 'hold'
+  if (s.nearBottom || (s.appended && s.lastMine)) return 'bottom'
+  return s.appended ? 'pill' : 'none'
+}
+
+/** Where a "work item created" card opens: staff go to the work item, the requester to their own request. */
+export function workItemCardLink(workItemId: string, staff: boolean): string {
+  return staff ? `/work-items/${workItemId}` : `/requests/${workItemId}`
+}
+
+export function threadIcon(kind: ConversationKind): string {
+  if (kind === 'personal' || kind === 'intake') return 'mdi-robot-outline'
+  return kind === 'project' ? 'mdi-folder-outline' : 'mdi-clipboard-text-outline'
 }

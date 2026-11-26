@@ -5,6 +5,10 @@
   "registrationAllowed": false,
   "loginWithEmailAllowed": false,
   "duplicateEmailsAllowed": true,
+  "loginTheme": "yoda",
+  "internationalizationEnabled": true,
+  "supportedLocales": ["th", "en"],
+  "defaultLocale": "th",
   "groups": [
     {
       "name": "it-dev",

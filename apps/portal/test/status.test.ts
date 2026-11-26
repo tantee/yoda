@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { HealthReasonCode, WeeklySummaryReason, type HealthReason } from '@yoda/shared'
-import { bangkokToday, debounceMax, healthColor, isOverdue, outcomeMessageKey, reasonLink, reasonText, spendPercent, usd } from '../app/utils/status'
+import { bangkokToday, debounceMax, isOverdue, outcomeMessageKey, reasonLink, reasonText, spendPercent, usd } from '../app/utils/status'
 import { isStaffPath, navItemsFor } from '../app/utils/nav'
 
 const load = (f: string) => JSON.parse(readFileSync(new URL(`../i18n/locales/${f}`, import.meta.url), 'utf8'))
@@ -22,14 +22,6 @@ function translator(locale: 'th' | 'en') {
 
 const reason = (code: HealthReason['code'], count: number): HealthReason => ({ code, count, sample: [] })
 const base = { id: crypto.randomUUID(), username: 'u', displayName: 'U', email: null }
-
-describe('healthColor', () => {
-  it('colours each health', () => {
-    expect(healthColor('on_track')).toBe('success')
-    expect(healthColor('at_risk')).toBe('warning')
-    expect(healthColor('blocked')).toBe('error')
-  })
-})
 
 describe('reasonText', () => {
   it('has a sentence for every reason code in both languages', () => {

@@ -2,6 +2,7 @@
 import type { Repo, WorkItemDetail } from '@yoda/shared'
 
 const props = defineProps<{ projectId: string; canManage: boolean; canImport: boolean }>()
+const emit = defineEmits<{ changed: [] }>()
 
 const { t } = useI18n()
 const api = useApi()
@@ -36,6 +37,7 @@ async function link() {
   try {
     await api(`/projects/${props.projectId}/repos`, { method: 'POST', body: { path: p } })
     path.value = ''
+    emit('changed')
   } catch (e) {
     error.value = code(e) === 'invalid_state' ? t('gitlab.repos.duplicate') : t(errorKey(e))
   } finally {
@@ -48,6 +50,7 @@ async function unlink(r: Repo) {
   error.value = ''
   try {
     await api(`/projects/${props.projectId}/repos/${r.id}`, { method: 'DELETE' })
+    emit('changed')
   } catch (e) {
     error.value = code(e) === 'invalid_state' ? t('gitlab.repos.hasIssues') : t(errorKey(e))
   }
@@ -78,39 +81,46 @@ onMounted(load)
 
 <template>
   <div data-testid="repos-tab">
-    <h2 class="text-h6 mb-2">{{ t('gitlab.repos.title') }}</h2>
-    <v-alert v-if="error" type="error" class="mb-4" data-testid="repos-error">{{ error }}</v-alert>
-    <p v-if="!repos.length" class="text-medium-emphasis mb-4" data-testid="repos-empty">{{ t('gitlab.repos.empty') }}</p>
-    <v-table v-else class="mb-4" data-testid="repos">
-      <tbody>
-        <tr v-for="r in repos" :key="r.id" data-testid="repo-row">
-          <td><a :href="r.webUrl" target="_blank" rel="noopener noreferrer" :title="t('gitlab.repos.open')">{{ r.pathWithNamespace }}</a></td>
-          <td class="text-medium-emphasis">{{ t('gitlab.repos.defaultBranch') }}: {{ r.defaultBranch ?? '—' }}</td>
-          <td v-if="canManage" class="text-right">
-            <v-btn icon="mdi-link-off" variant="text" :title="t('gitlab.repos.unlink')" data-testid="repo-unlink" @click="unlink(r)" />
-          </td>
-        </tr>
-      </tbody>
-    </v-table>
-    <v-card v-if="canManage" variant="outlined" class="mb-6">
-      <v-card-text class="d-flex ga-4 align-start">
+    <v-alert v-if="error" type="error" variant="tonal" class="mb-4" data-testid="repos-error">{{ error }}</v-alert>
+    <v-card class="mb-4">
+      <div class="card-head">
+        <h2>{{ t('gitlab.repos.title') }} <span class="count-pill ml-1">{{ repos.length }}</span></h2>
+      </div>
+      <p v-if="!repos.length" class="card-body text-medium-emphasis mb-0" data-testid="repos-empty">{{ t('gitlab.repos.empty') }}</p>
+      <ul v-else class="repo-list" data-testid="repos">
+        <li v-for="r in repos" :key="r.id" class="repo-row" data-testid="repo-row">
+          <v-icon icon="mdi-gitlab" size="20" class="text-medium-emphasis" aria-hidden="true" />
+          <div class="repo-row__main">
+            <a :href="r.webUrl" target="_blank" rel="noopener noreferrer" class="row-link" :title="t('gitlab.repos.open')">
+              {{ r.pathWithNamespace }} <v-icon icon="mdi-open-in-new" size="14" aria-hidden="true" />
+            </a>
+            <div class="text-caption text-medium-emphasis">
+              <v-icon icon="mdi-source-branch" size="14" aria-hidden="true" /> {{ t('gitlab.repos.defaultBranch') }}: {{ r.defaultBranch ?? '—' }}
+            </div>
+          </div>
+          <v-btn v-if="canManage" variant="text" color="error" size="small" prepend-icon="mdi-link-off" data-testid="repo-unlink" @click="unlink(r)">{{ t('gitlab.repos.unlink') }}</v-btn>
+        </li>
+      </ul>
+      <div v-if="canManage" class="repo-form">
         <v-text-field
           v-model="path"
           :label="t('gitlab.repos.path')"
           :hint="t('gitlab.repos.pathHint')"
           persistent-hint
+          prepend-inner-icon="mdi-gitlab"
+          class="repo-form__field"
           data-testid="repo-path"
           @keyup.enter="link"
         />
-        <v-btn color="primary" :disabled="!path.trim()" :loading="busy" data-testid="repo-link" @click="link">{{ t('gitlab.repos.link') }}</v-btn>
-      </v-card-text>
+        <v-btn color="primary" variant="tonal" :disabled="!path.trim()" :loading="busy" data-testid="repo-link" @click="link">{{ t('gitlab.repos.link') }}</v-btn>
+      </div>
     </v-card>
 
-    <template v-if="canImport && repos.length">
-      <h2 class="text-h6 mb-2">{{ t('gitlab.import.title') }}</h2>
-      <v-alert v-if="importError" type="error" class="mb-4" data-testid="import-error">{{ importError }}</v-alert>
-      <v-card variant="outlined">
-        <v-card-text class="d-flex ga-4 align-start">
+    <v-card v-if="canImport && repos.length">
+      <div class="card-head"><h2>{{ t('gitlab.import.title') }}</h2></div>
+      <div class="card-body">
+        <v-alert v-if="importError" type="error" variant="tonal" density="compact" class="mb-4" data-testid="import-error">{{ importError }}</v-alert>
+        <div class="repo-form repo-form--plain">
           <v-select
             v-model="importRepo"
             :items="repos"
@@ -118,12 +128,25 @@ onMounted(load)
             item-value="id"
             :label="t('gitlab.import.repo')"
             hide-details
+            class="repo-form__field"
             data-testid="import-repo"
           />
-          <v-text-field v-model="importIid" :label="t('gitlab.import.issueIid')" prefix="#" inputmode="numeric" hide-details style="max-width: 180px" data-testid="import-iid" />
+          <v-text-field v-model="importIid" :label="t('gitlab.import.issueIid')" prefix="#" inputmode="numeric" hide-details class="repo-form__iid" data-testid="import-iid" />
           <v-btn color="primary" :disabled="!importRepo || !iid" :loading="busy" data-testid="import-submit" @click="importIssue">{{ t('gitlab.import.submit') }}</v-btn>
-        </v-card-text>
-      </v-card>
-    </template>
+        </div>
+      </div>
+    </v-card>
   </div>
 </template>
+
+<style scoped>
+.repo-list { list-style: none; margin: 0; padding: 0; }
+.repo-row { display: flex; align-items: center; gap: 12px; padding: 10px 16px; flex-wrap: wrap; }
+.repo-row + .repo-row { border-top: 1px solid rgba(var(--v-border-color), var(--v-border-opacity)); }
+.repo-row__main { flex: 1 1 240px; min-width: 0; overflow-wrap: anywhere; }
+.repo-form { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 12px; padding: 16px; border-top: 1px solid rgba(var(--v-border-color), var(--v-border-opacity)); }
+.repo-form--plain { padding: 0; border-top: 0; align-items: center; }
+.repo-form__field { flex: 1 1 260px; max-width: 480px; }
+.repo-form__iid { flex: 0 1 160px; min-width: 120px; }
+.repo-form .v-btn { margin-top: 2px; }
+</style>

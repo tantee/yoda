@@ -5,6 +5,7 @@ const props = defineProps<{ project: ProjectDetail; canManage: boolean }>()
 const emit = defineEmits<{ changed: [] }>()
 
 const { t } = useI18n()
+const { month } = useDateFormat()
 const api = useApi()
 const usage = ref<AiUsage | null>(null)
 const budget = ref('')
@@ -48,57 +49,97 @@ function saveBudget() {
   return patch({ aiBudgetUsd: n })
 }
 
+const money = (n: number) => `$${n.toFixed(2)}`
+
 onMounted(loadUsage)
 </script>
 
 <template>
   <div data-testid="ai-settings">
-    <v-alert v-if="error" type="error" class="mb-4" data-testid="ai-error">{{ error }}</v-alert>
-    <p v-if="!canManage" class="text-medium-emphasis mb-2" data-testid="ai-readonly">{{ t('ai.readOnly') }}</p>
-    <v-switch
-      :model-value="project.noAi"
-      :label="t('ai.noAi')"
-      :disabled="!canManage"
-      color="warning"
-      hide-details
-      data-testid="no-ai-switch"
-      @update:model-value="(v) => patch({ noAi: !!v })"
-    />
-    <v-alert type="warning" variant="tonal" density="compact" class="mb-6" data-testid="no-ai-warning">{{ t('ai.noAiWarning') }}</v-alert>
+    <v-alert v-if="error" type="error" variant="tonal" class="mb-4" data-testid="ai-error">{{ error }}</v-alert>
+    <v-card class="mb-4">
+      <div class="card-head">
+        <h2>{{ t('ai.budgetSection') }}</h2>
+        <span v-if="!canManage" class="text-caption text-medium-emphasis" data-testid="ai-readonly">{{ t('ai.readOnly') }}</span>
+      </div>
+      <div class="card-body">
+        <div class="ai-grid">
+          <div class="text-body-2 font-weight-medium">{{ t('ai.title') }}</div>
+          <div>
+            <v-switch
+              :model-value="project.noAi"
+              :label="t('ai.noAi')"
+              :disabled="!canManage"
+              color="warning"
+              hide-details
+              inset
+              data-testid="no-ai-switch"
+              @update:model-value="(v) => patch({ noAi: !!v })"
+            />
+            <p class="text-caption text-medium-emphasis mb-2">{{ t('ai.noAiHelp') }}</p>
+            <v-alert type="warning" variant="tonal" density="compact" data-testid="no-ai-warning">{{ t('ai.noAiWarning') }}</v-alert>
+          </div>
 
-    <div class="d-flex ga-4 align-start mb-6" style="max-width: 480px">
-      <v-text-field
-        v-model="budget"
-        :label="t('ai.budget')"
-        :hint="t('ai.budgetHint')"
-        persistent-hint
-        type="number"
-        min="0"
-        step="0.01"
-        :disabled="!canManage"
-        data-testid="budget-input"
-        @keyup.enter="saveBudget"
-      />
-      <v-btn v-if="canManage" color="primary" class="mt-2" data-testid="save-budget" @click="saveBudget">{{ t('ai.saveBudget') }}</v-btn>
-    </div>
+          <div class="text-body-2 font-weight-medium">{{ t('ai.budget') }}</div>
+          <div class="d-flex flex-wrap ga-3 align-start">
+            <v-text-field
+              v-model="budget"
+              :label="t('ai.budget')"
+              :hint="t('ai.budgetHint')"
+              persistent-hint
+              type="number"
+              min="0"
+              step="0.01"
+              prefix="$"
+              :disabled="!canManage"
+              class="ai-budget-field"
+              data-testid="budget-input"
+              @keyup.enter="saveBudget"
+            />
+            <v-btn v-if="canManage" color="primary" class="mt-1" data-testid="save-budget" @click="saveBudget">{{ t('ai.saveBudget') }}</v-btn>
+          </div>
+        </div>
+      </div>
+    </v-card>
 
-    <h3 class="text-subtitle-1 mb-2">{{ t('ai.usage') }}<span v-if="usage" class="text-medium-emphasis"> ({{ usage.month }})</span></h3>
-    <div v-if="usage" data-testid="ai-usage">
-      <p>
-        {{ t('ai.spend') }}: <strong data-testid="ai-spend">${{ usage.costUsd.toFixed(4) }}</strong>
-        / {{ usage.budgetUsd == null ? t('ai.noLimit') : '$' + usage.budgetUsd }}
-        &middot; {{ t('ai.calls') }}: <span data-testid="ai-calls">{{ usage.calls }}</span>
-      </p>
-      <v-progress-linear
-        v-if="usage.budgetUsd != null"
-        :model-value="percent"
-        :color="barColor"
-        height="12"
-        rounded
-        class="mt-2"
-        data-testid="ai-bar"
-        :data-color="barColor"
-      />
-    </div>
+    <v-card>
+      <div class="card-head">
+        <h2>{{ t('ai.usage') }}</h2>
+        <span v-if="usage" class="text-body-2 text-medium-emphasis">{{ month(usage.month) }}</span>
+      </div>
+      <div class="card-body">
+        <SkeletonList v-if="!usage && !error" :rows="1" :two-line="false" quiet />
+        <div v-if="usage" class="ai-usage" data-testid="ai-usage">
+          <div class="d-flex flex-wrap align-baseline ga-2">
+            <strong class="text-h5 tabular-nums" data-testid="ai-spend">{{ money(usage.costUsd) }}</strong>
+            <span class="text-body-2 text-medium-emphasis">
+              {{ usage.budgetUsd == null ? t('status.kpi.noBudget') : t('status.kpi.ofBudget', { budget: money(usage.budgetUsd) }) }}
+            </span>
+            <v-spacer />
+            <span class="text-body-2 text-medium-emphasis">{{ t('ai.calls') }}: <span class="tabular-nums" data-testid="ai-calls">{{ usage.calls }}</span></span>
+          </div>
+          <v-progress-linear
+            v-if="usage.budgetUsd != null"
+            :model-value="percent"
+            :color="barColor"
+            bg-color="neutral-soft"
+            bg-opacity="1"
+            height="10"
+            rounded
+            class="mt-3"
+            :aria-label="t('ai.usage')"
+            data-testid="ai-bar"
+            :data-color="barColor"
+          />
+          <div v-if="usage.budgetUsd != null" class="text-caption text-medium-emphasis mt-1 tabular-nums">{{ Math.round(percent) }}%</div>
+        </div>
+      </div>
+    </v-card>
   </div>
 </template>
+
+<style scoped>
+.ai-grid { display: grid; grid-template-columns: 200px minmax(0, 680px); gap: 16px 24px; align-items: start; }
+@media (max-width: 767px) { .ai-grid { grid-template-columns: minmax(0, 1fr); gap: 8px; } }
+.ai-budget-field { flex: 1 1 200px; max-width: 280px; }
+</style>

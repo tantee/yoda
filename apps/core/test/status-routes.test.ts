@@ -7,7 +7,7 @@ import { aiCalls, discussions, events, projectRepos, workItemRepos, workItems } 
 import { LiveBus } from '../src/live/bus.js'
 import { bangkokDate } from '../src/status/health.js'
 import { mockModels, resetDb, testConfig, testDb } from './helpers.js'
-import { auth, login, makeApp, type Who } from './support.js'
+import { auth, login, makeApp, timelineOf, type Who } from './support.js'
 
 let app: FastifyInstance
 let admin: Who
@@ -289,14 +289,14 @@ describe('work item target date', () => {
     expect(byPm.statusCode).toBe(200)
     const d = byPm.json() as WorkItemDetail
     expect(d.targetDate).toBeNull()
-    const changes = d.events.filter((e) => e.type === 'work_item.target_date_changed')
+    const changes = (await timelineOf(app, pm, item.id)).filter((e) => e.type === 'work_item.target_date_changed')
     expect(changes.map((e) => e.payload)).toEqual([
       { from: null, to: '2026-12-01' },
       { from: '2026-12-01', to: null },
     ])
     // Unchanged → no new event.
-    const again = (await call(pm, 'PATCH', `/work-items/${item.id}`, { targetDate: null })).json() as WorkItemDetail
-    expect(again.events.filter((e) => e.type === 'work_item.target_date_changed')).toHaveLength(2)
+    expect((await call(pm, 'PATCH', `/work-items/${item.id}`, { targetDate: null })).statusCode).toBe(200)
+    expect((await timelineOf(app, pm, item.id)).filter((e) => e.type === 'work_item.target_date_changed')).toHaveLength(2)
   })
 
   it('validates the date and refuses empty patches and finished items', async () => {

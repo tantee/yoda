@@ -1,17 +1,4 @@
-import { RunnerCapability, type AgentRunState, type Task, type WorkingHours } from '@yoda/shared'
-
-const RUN_STATE: Record<AgentRunState, string> = {
-  running: 'info',
-  succeeded: 'success',
-  failed: 'error',
-  expired: 'warning',
-  parked: 'warning',
-  released: 'grey',
-}
-
-export function runStateColor(s: AgentRunState): string {
-  return RUN_STATE[s] ?? 'grey'
-}
+import { RunnerCapability, type Runner, type Task, type WorkingHours } from '@yoda/shared'
 
 /** Bangkok has no daylight saving: UTC+7 all year. */
 const BANGKOK_OFFSET_MS = 7 * 60 * 60 * 1000
@@ -32,6 +19,17 @@ export function withinHours(h: WorkingHours | null, now: Date): boolean {
 /** Whole minutes since a run's last heartbeat. */
 export function heartbeatAgeMinutes(iso: string, now: Date): number {
   return Math.max(0, Math.floor((now.getTime() - new Date(iso).getTime()) / 60000))
+}
+
+export type RunnerStatus = 'active' | 'paused' | 'revoked'
+
+export function runnerStatus(r: Pick<Runner, 'paused' | 'revokedAt'>): RunnerStatus {
+  return r.revokedAt ? 'revoked' : r.paused ? 'paused' : 'active'
+}
+
+/** Revoked runners last (proposal §8.2 runners); otherwise the server order. */
+export function sortRunners<T extends Pick<Runner, 'paused' | 'revokedAt'>>(list: readonly T[]): T[] {
+  return [...list].sort((a, b) => Number(!!a.revokedAt) - Number(!!b.revokedAt))
 }
 
 const RUNNER_CAPS: readonly string[] = RunnerCapability.options

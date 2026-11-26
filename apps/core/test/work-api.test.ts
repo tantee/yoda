@@ -1,10 +1,10 @@
 import type { FastifyInstance } from 'fastify'
-import type { Task, TaskWithContext, Todo, WorkItemDetail } from '@yoda/shared'
+import { KEY_EVENT_TYPES, type ProjectDetail, type Task, type TaskWithContext, type Todo, type WorkItemDetail, type WorkItemEventsPage } from '@yoda/shared'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { eq } from 'drizzle-orm'
-import { attachments } from '../src/db/schema.js'
+import { attachments, events } from '../src/db/schema.js'
 import { resetDb, testDb } from './helpers.js'
-import { acceptStepAdvance, auth, login, makeApp, type Who } from './support.js'
+import { acceptStepAdvance, auth, login, makeApp, timelineOf, type Who } from './support.js'
 
 let app: FastifyInstance
 let admin: Who
@@ -141,8 +141,10 @@ describe('work API', () => {
       proposedAssigneeId: pm.id,
       proposedAssigneeName: 'สมศรี',
     })
-    expect(wi.events.length).toBeGreaterThan(0)
-    expect(wi.events[0]).toMatchObject({ type: 'work_item.created', actorId: dev.id, actorName: 'สมชาย' })
+    const created = await timelineOf(app, dev, wi.id)
+    expect(created.length).toBeGreaterThan(0)
+    expect(created[0]).toMatchObject({ type: 'work_item.created', actorId: dev.id, actorName: 'สมชาย' })
+    expect(wi).not.toHaveProperty('events')
     expect(wi.steps.map((s) => s.status)).toEqual(['current', 'pending', 'pending', 'pending'])
 
     expect((await call(pm, 'GET', `/work-items/${wi.id}`)).json()).toEqual(wi)
@@ -161,7 +163,12 @@ describe('work API', () => {
     expect(before.confirmations.map((c) => c.id)).toEqual([t.id])
     expect(before.confirmations[0]).toMatchObject({ workItemTitle: 'แก้รายงานแล็บ', projectName: 'ระบบรายงานแล็บ' })
     expect(before.tasks).toEqual([])
+    // Context for the page: the item's step track and project name.
+    expect(before.workItems[wi.id]).toMatchObject({ title: 'แก้รายงานแล็บ', projectId: p, projectName: 'ระบบรายงานแล็บ', priority: 'normal', targetDate: null })
+    expect(before.workItems[wi.id]!.steps.map((s) => s.status)).toEqual(['current', 'pending', 'pending', 'pending'])
+    expect(before.projectNames).toEqual({ [p]: 'ระบบรายงานแล็บ' })
     expect((await todo(dev)).confirmations).toEqual([])
+    expect((await todo(dev)).workItems).toEqual({})
 
     expect((await call(dev, 'POST', `/tasks/${t.id}/confirm`)).statusCode).toBe(403)
     const res = await call(pm, 'POST', `/tasks/${t.id}/confirm`)
@@ -179,7 +186,9 @@ describe('work API', () => {
     expect(submitted.json()).toMatchObject({ state: 'accepted', result: { decision: 'approve' } })
     // The finished step waits for the PM to confirm the advance.
     expect((await detail(pm, wi.id)).currentStepKey).toBe('intake')
-    expect((await todo(pm)).proposals.map((x) => x.kind)).toEqual(['step_advance'])
+    const decide = await todo(pm)
+    expect(decide.proposals.map((x) => x.kind)).toEqual(['step_advance'])
+    expect(decide.workItems[wi.id]!.steps.map((s) => s.status)).toEqual(['current', 'pending', 'pending', 'pending'])
     expect(await acceptStepAdvance(app, pm, wi.id)).toBe(true)
     expect((await detail(pm, wi.id)).currentStepKey).toBe('dev')
   })
@@ -205,6 +214,10 @@ describe('work API', () => {
     expect(ok.json()).toMatchObject({ assigneeId: dev.id, assigneeName: 'สมชาย', state: 'open' })
     expect((await todo(pm)).confirmations.map((c) => c.id)).not.toContain(verify.id)
     expect((await todo(dev)).tasks.map((x) => x.id)).toContain(verify.id)
+    // The assign picker's load: outstanding staff tasks per member, on the project detail only.
+    const members = ((await call(pm, 'GET', `/projects/${p}`)).json() as ProjectDetail).members
+    expect(members.find((m) => m.personId === dev.id)?.openTasks).toBe(1)
+    expect(members.every((m) => typeof m.openTasks === 'number')).toBe(true)
 
     const d = await detail(pm, wi.id)
     expect(d.steps.map((s) => s.status)).toEqual(['done', 'done', 'current', 'pending'])
@@ -212,9 +225,16 @@ describe('work API', () => {
     expect(d.tasks.map((t) => t.templateTaskKey)).toEqual([
       'accept-bug', 'implement', 'draft-tests', 'review-code', 'verify',
     ])
-    const seqTypes = d.events.map((e) => e.type)
+    const seqTypes = (await timelineOf(app, pm, wi.id)).map((e) => e.type)
     expect(seqTypes[0]).toBe('work_item.created')
     expect(seqTypes.at(-1)).toBe('task.assigned')
+
+    // In progress still counts; requesters and non-members never get the project.
+    expect((await call(dev, 'POST', `/tasks/${verify.id}/start`)).statusCode).toBe(200)
+    const again = ((await call(pm, 'GET', `/projects/${p}`)).json() as ProjectDetail).members
+    expect(again.find((m) => m.personId === dev.id)?.openTasks).toBe(1)
+    expect((await call(outsider, 'GET', `/projects/${p}`)).statusCode).toBe(404)
+    expect((await call(nurse, 'GET', `/projects/${p}`)).statusCode).toBe(403)
   })
 
   it('projects without a PM surface unassigned tasks to admins only', async () => {
@@ -345,11 +365,97 @@ describe('work API', () => {
     expect(unknown.statusCode).toBe(404)
   })
 
-  it('events in the detail carry the actor kind', async () => {
+  it('timeline events carry the actor kind', async () => {
     const p = await project([[pm, ['PM']]])
     const wi = await createItem(pm, p)
-    expect(wi.events.length).toBeGreaterThan(0)
-    expect(wi.events.every((e) => e.actorKind === 'person')).toBe(true)
+    const evs = await timelineOf(app, pm, wi.id)
+    expect(evs.length).toBeGreaterThan(0)
+    expect(evs.every((e) => e.actorKind === 'person')).toBe(true)
+  })
+
+  describe('GET /work-items/:id/events', () => {
+    /** Adds `n` plain events to the item (oldest first), so paging has something to walk. */
+    async function addEvents(wi: WorkItemDetail, n: number) {
+      const db = await testDb()
+      for (let i = 0; i < n; i++) {
+        await db.insert(events).values({ projectId: wi.projectId, workItemId: wi.id, type: 'knowledge.created', actorId: pm.id, payload: { i } })
+      }
+    }
+    const page = async (who: Who, id: string, query = '') => call(who, 'GET', `/work-items/${id}/events${query}`)
+
+    it('pages newest first by seq with a cursor until the oldest event', async () => {
+      const p = await project([[pm, ['PM']], [dev, ['DEV']]])
+      const wi = await createItem(pm, p)
+      await addEvents(wi, 40)
+      const all = await timelineOf(app, pm, wi.id)
+      const total = all.length
+
+      const first = await page(dev, wi.id)
+      expect(first.statusCode).toBe(200)
+      const a = first.json() as WorkItemEventsPage
+      expect(a.events).toHaveLength(30)
+      expect(a.events[0]!.id).toBe(all.at(-1)!.id)
+      const seqs = a.events.map((e) => e.seq)
+      expect(seqs).toEqual([...seqs].sort((x, y) => y - x))
+      expect(a.nextBefore).toBe(seqs.at(-1))
+      expect(a.events[0]).toMatchObject({ type: 'knowledge.created', actorName: 'สมศรี', payload: { i: 39 } })
+
+      const b = (await page(dev, wi.id, `?before=${a.nextBefore}&limit=30`)).json() as WorkItemEventsPage
+      expect(b.events).toHaveLength(total - 30)
+      expect(b.nextBefore).toBeNull()
+      expect([...a.events, ...b.events].map((e) => e.id)).toEqual([...all].reverse().map((e) => e.id))
+    })
+
+    it('limits are 1..100 (default 30); the cursor must be a positive integer', async () => {
+      const p = await project([[pm, ['PM']]])
+      const wi = await createItem(pm, p)
+      await addEvents(wi, 3)
+      const one = (await page(pm, wi.id, '?limit=1')).json() as WorkItemEventsPage
+      expect(one.events).toHaveLength(1)
+      expect(one.nextBefore).toBe(one.events[0]!.seq)
+      expect((await page(pm, wi.id, '?limit=100')).statusCode).toBe(200)
+      expect((await page(pm, wi.id, '?limit=0')).statusCode).toBe(400)
+      expect((await page(pm, wi.id, '?limit=101')).statusCode).toBe(400)
+      expect((await page(pm, wi.id, '?before=abc')).statusCode).toBe(400)
+      expect((await page(pm, wi.id, '?before=0')).statusCode).toBe(400)
+      const last = (await page(pm, wi.id, `?before=${one.events[0]!.seq}&limit=100`)).json() as WorkItemEventsPage
+      expect(last.nextBefore).toBeNull()
+      expect(last.events.every((e) => e.seq < one.events[0]!.seq)).toBe(true)
+    })
+
+    it('kind=key keeps only key events (shared KEY_EVENT_TYPES), still paged newest first', async () => {
+      const p = await project([[pm, ['PM']], [dev, ['DEV']]])
+      const wi = await createItem(pm, p)
+      await drive(wi.id, 'accept-bug', pm, approve)
+      await addEvents(wi, 5)
+      const all = await timelineOf(app, pm, wi.id)
+      const key = await timelineOf(app, pm, wi.id, 'key')
+      const keySet = new Set<string>(KEY_EVENT_TYPES)
+      expect(key.map((e) => e.id)).toEqual(all.filter((e) => keySet.has(e.type)).map((e) => e.id))
+      expect(key.map((e) => e.type)).toEqual(expect.arrayContaining(['work_item.created', 'task.accepted', 'work_item.step_advanced']))
+      expect(all.some((e) => e.type === 'knowledge.created')).toBe(true)
+      expect(key.some((e) => e.type === 'knowledge.created' || e.type === 'task.created')).toBe(false)
+      const first = (await page(pm, wi.id, '?kind=key&limit=1')).json() as WorkItemEventsPage
+      expect(first.events.map((e) => e.id)).toEqual([key.at(-1)!.id])
+      expect(first.nextBefore).toBe(first.events[0]!.seq)
+      expect((await page(pm, wi.id, '?kind=other')).statusCode).toBe(400)
+    })
+
+    it('the detail no longer carries the timeline', async () => {
+      const p = await project([[pm, ['PM']]])
+      const wi = await createItem(pm, p)
+      expect(await detail(pm, wi.id)).not.toHaveProperty('events')
+    })
+
+    it('staff with visibility only: non-members and unknown ids 404, requesters 404 like the detail', async () => {
+      const p = await project([[pm, ['PM']]])
+      const wi = await createItem(pm, p, { requesterId: nurse.id })
+      expect((await page(outsider, wi.id)).statusCode).toBe(404)
+      expect((await page(pm, NO_ID)).statusCode).toBe(404)
+      expect((await call(nurse, 'GET', `/work-items/${wi.id}`)).statusCode).toBe(404)
+      expect((await page(nurse, wi.id)).statusCode).toBe(404)
+      expect((await page(admin, wi.id)).statusCode).toBe(200)
+    })
   })
 
   it('a submit never moves files off other tasks; project-level files join the work item', async () => {
@@ -416,9 +522,10 @@ describe('work API', () => {
       expect(latest('review-code')).toMatchObject({ attempt: 1, state: 'accepted' })
       expect(latest('accept-delivery')).toMatchObject({ attempt: 2, state: 'rejected' })
       expect(d.tasks.filter((t) => ['accept-delivery', 'close-bug'].includes(t.templateTaskKey)).every((t) => t.state !== 'open')).toBe(true)
-      const rejected = d.events.filter((e) => e.type === 'task.rejected' && e.reason === 'reopened')
+      const evs = await timelineOf(app, pm, wi.id)
+      const rejected = evs.filter((e) => e.type === 'task.rejected' && e.reason === 'reopened')
       expect(rejected.map((e) => e.taskId)).toEqual([latest('accept-delivery').id])
-      expect(d.events.filter((e) => e.type === 'work_item.reopened').map((e) => [e.payload, e.actorId])).toEqual([[{ from: 'close', to: 'dev' }, pm.id]])
+      expect(evs.filter((e) => e.type === 'work_item.reopened').map((e) => [e.payload, e.actorId])).toEqual([[{ from: 'close', to: 'dev' }, pm.id]])
 
       // Reopening to the current or a later step, or an unknown one, is refused.
       for (const step of ['dev', 'qc', 'close', 'nope']) {
@@ -461,7 +568,7 @@ describe('work API', () => {
       expect((await todo(pm)).proposals.filter((x) => x.workItemId === wi.id)).toEqual([])
       const d = await detail(pm, wi.id)
       expect(d.currentStepKey).toBe('intake')
-      expect(d.events.some((e) => e.type === 'proposal.superseded')).toBe(true)
+      expect((await timelineOf(app, pm, wi.id)).some((e) => e.type === 'proposal.superseded')).toBe(true)
       // No requester change request after the last one? The latest REQUESTER rejection is still the feedback.
       expect(await active(pm, wi.id, 'accept-bug')).toMatchObject({ attempt: 2, state: 'open', feedback: 'สีรายงานยังผิด' })
 

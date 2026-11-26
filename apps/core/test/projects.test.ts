@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import type { Todo, WorkItemDetail } from '@yoda/shared'
-import { and, asc, eq } from 'drizzle-orm'
+import type { ProjectListItem, Todo, WorkItemDetail } from '@yoda/shared'
+import { and, asc, eq, sql } from 'drizzle-orm'
 import { events, projectMembers } from '../src/db/schema.js'
 import { resetDb, testDb } from './helpers.js'
 import { acceptStepAdvance, auth, login, makeApp, type Who } from './support.js'
@@ -49,6 +49,30 @@ describe('projects API', () => {
     expect(res.json()).toMatchObject({ name: 'ระบบรายงานแล็บ', autonomy: 'propose', noAi: false })
     const list = await call(admin, 'GET', '/projects')
     expect(list.json()[0].name).toBe('ระบบรายงานแล็บ')
+  })
+
+  it('lists projects with PM names, member count and last activity', async () => {
+    const p = await createProject()
+    const q = await createProject('ระบบคิว')
+    await call(admin, 'PUT', `/projects/${p.id}/members/${somchai.id}`, { roles: ['PM', 'DEV'] })
+    await call(admin, 'PUT', `/projects/${p.id}/members/${other.id}`, { roles: ['DEV'] })
+    const wi = await call(somchai, 'POST', `/projects/${p.id}/work-items`, { title: 'งานแรก', templateKey: 'bug-fix' })
+    expect(wi.statusCode).toBe(201)
+    const [newest] = await app.deps.db
+      .select({ at: events.createdAt })
+      .from(events)
+      .where(eq(events.projectId, p.id))
+      .orderBy(sql`${events.seq} desc`)
+      .limit(1)
+
+    const list = (await call(admin, 'GET', '/projects')).json() as ProjectListItem[]
+    const row = list.find((x) => x.id === p.id)!
+    expect(row).toMatchObject({ name: 'ระบบรายงานแล็บ', pmNames: ['สมชาย'], memberCount: 2, lastActivityAt: newest!.at.toISOString() })
+    expect(list.find((x) => x.id === q.id)).toMatchObject({ pmNames: [], memberCount: 0, lastActivityAt: null })
+    // Members see only their projects, with the same fields.
+    const mine = (await call(other, 'GET', '/projects')).json() as ProjectListItem[]
+    expect(mine.map((x) => x.id)).toEqual([p.id])
+    expect(mine[0]).toMatchObject({ pmNames: ['สมชาย'], memberCount: 2 })
   })
 
   it('membership controls visibility', async () => {

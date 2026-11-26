@@ -233,12 +233,35 @@ export const WorkItemPatch = z
   .strict()
 export type WorkItemPatch = z.infer<typeof WorkItemPatch>
 
+/** A workflow step as shown on a work item: done, the current one, or still to come. */
+export const WorkItemStep = z.object({ key: z.string(), name: LocalizedText, status: z.enum(['done', 'current', 'pending']) })
+export type WorkItemStep = z.infer<typeof WorkItemStep>
+
+/** To-do context: a work item named by a task or decision on the page, with its step track. */
+export const TodoWorkItem = z.object({
+  id: uuid,
+  title: z.string(),
+  projectId: uuid,
+  projectName: z.string(),
+  priority: Priority,
+  targetDate: IsoDate.nullable(),
+  steps: z.array(WorkItemStep),
+})
+export type TodoWorkItem = z.infer<typeof TodoWorkItem>
+
 export const Todo = z.object({
   tasks: z.array(TaskWithContext),
   confirmations: z.array(TaskWithContext),
   proposals: z.array(Proposal),
   /** Work items (where the caller decides, as for confirmations) whose finished step waits to be advanced. */
   awaitingAdvance: z.array(WorkItem),
+  /**
+   * Context for the rows above, by work item id: only items of projects the caller sees as staff (never the
+   * items of tasks shown in the requester view).
+   */
+  workItems: z.record(z.string(), TodoWorkItem).default({}),
+  /** Names of the projects the rows above belong to (projects the caller sees), by id. */
+  projectNames: z.record(z.string(), z.string()).default({}),
 })
 export type Todo = z.infer<typeof Todo>
 
@@ -270,6 +293,18 @@ export const EventType = z.enum([
 ])
 export type EventType = z.infer<typeof EventType>
 
+/**
+ * Key timeline events (proposal §6.9 "เหตุการณ์สำคัญ"): state changes and step moves of the item, decisions,
+ * merge requests opened or merged, and tasks accepted or rejected. `GET /work-items/:id/events?kind=key`.
+ */
+export const KEY_EVENT_TYPES = [
+  'work_item.created', 'work_item.step_advanced', 'work_item.done', 'work_item.cancelled', 'work_item.reopened',
+  'work_item.priority_changed', 'work_item.target_date_changed',
+  'proposal.accepted', 'proposal.rejected', 'discussion.decided',
+  'gitlab.mr_opened', 'gitlab.mr_merged',
+  'task.accepted', 'task.rejected',
+] as const satisfies readonly EventType[]
+
 export const EventEntry = z.object({
   id: uuid,
   type: EventType,
@@ -283,10 +318,33 @@ export const EventEntry = z.object({
 })
 export type EventEntry = z.infer<typeof EventEntry>
 
+/**
+ * `GET /work-items/:id/events` (staff who see the item): `before` = a seq cursor, `limit` 1..100 (default 30),
+ * `kind` all (default) or key events only.
+ */
+export const WorkItemEventsQuery = z.object({
+  before: z.coerce.number().int().positive().optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(30),
+  /** `key`: only `KEY_EVENT_TYPES`. */
+  kind: z.enum(['all', 'key']).default('all'),
+})
+export type WorkItemEventsQuery = z.infer<typeof WorkItemEventsQuery>
+
+/** A timeline event with its position (`seq`, ascending in time), the paging cursor. */
+export const SeqEventEntry = EventEntry.extend({ seq: z.number().int() })
+export type SeqEventEntry = z.infer<typeof SeqEventEntry>
+
+/** One page of a work item's timeline, newest first; `nextBefore` loads the older page (null at the start). */
+export const WorkItemEventsPage = z.object({
+  events: z.array(SeqEventEntry),
+  nextBefore: z.number().int().nullable(),
+})
+export type WorkItemEventsPage = z.infer<typeof WorkItemEventsPage>
+
+/** The timeline is not part of the detail: it is paged through `GET /work-items/:id/events`. */
 export const WorkItemDetail = WorkItem.extend({
-  steps: z.array(z.object({ key: z.string(), name: LocalizedText, status: z.enum(['done', 'current', 'pending']) })),
+  steps: z.array(WorkItemStep),
   tasks: z.array(Task),
-  events: z.array(EventEntry),
 })
 export type WorkItemDetail = z.infer<typeof WorkItemDetail>
 
@@ -313,5 +371,48 @@ export const MyRequest = z.object({
   status: RequestStatus,
   currentStepName: LocalizedText.nullable(),
   updatedAt: z.string(),
+  /** The step key (the portal's plain-language step wording is keyed by it); null once done or cancelled. */
+  currentStepKey: z.string().nullable().default(null),
+  /** The template's steps with done / current / pending, for the requester's step track. */
+  steps: z.array(WorkItemStep).default([]),
+  /** The expected finish date (`YYYY-MM-DD`), when the team set one. */
+  targetDate: z.string().nullable().default(null),
+  /** The contact person (the item's owner, proposal §8.3 "ผู้ติดต่อ"): display name only, never an id. */
+  contactName: z.string().nullable().default(null),
 })
 export type MyRequest = z.infer<typeof MyRequest>
+
+/**
+ * One row of the requester timeline, in plain words and without staff names: the request was received, moved
+ * to a step (or back), the team asked a question or handed over the delivery, the requester answered, accepted
+ * or asked for changes, the expected date changed, the request ended. `byYou` when the requester did it.
+ */
+export const RequestEventKind = z.enum([
+  'received', 'step', 'reopened', 'question', 'delivery', 'answered', 'accepted', 'changes', 'expected_date', 'done',
+  'cancelled',
+])
+export type RequestEventKind = z.infer<typeof RequestEventKind>
+
+export const RequestEvent = z.object({
+  kind: RequestEventKind,
+  at: z.string(),
+  /** `step` / `reopened`: the step moved to. */
+  stepKey: z.string().nullable(),
+  stepName: LocalizedText.nullable(),
+  /** `expected_date`: the new date (`YYYY-MM-DD`) or null when cleared. */
+  date: z.string().nullable(),
+  byYou: z.boolean(),
+})
+export type RequestEvent = z.infer<typeof RequestEvent>
+
+/**
+ * `GET /me/requests/:id`: the caller's own request (404 for anyone else) with its requester timeline (newest
+ * first, at most `REQUEST_TIMELINE_LIMIT` rows) and `delivered`: the result text the requester already sees as
+ * the input of their delivery acceptance (the latest accepted attempt of its last dependency), else null.
+ */
+export const MyRequestDetail = MyRequest.extend({
+  timeline: z.array(RequestEvent),
+  delivered: z.string().nullable(),
+})
+export type MyRequestDetail = z.infer<typeof MyRequestDetail>
+export const REQUEST_TIMELINE_LIMIT = 50

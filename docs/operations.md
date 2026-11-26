@@ -71,6 +71,52 @@ Owner checklist (realm `yoda` here; an existing organisation realm works the sam
       `NUXT_PUBLIC_KEYCLOAK_REALM` is `yoda`. If core cannot reach the public Keycloak URL, set
       `OIDC_JWKS_URL` to Keycloak's internal certs URL; tokens are still checked against `OIDC_ISSUER`.
 
+### Login theme (optional)
+
+`infra/keycloak/themes/yoda` is Yoda's own sign-in page: the portal's navy and blue, IBM Plex Sans Thai and IBM
+Plex Sans (bundled in the theme with their OFL licence, no CDN), Thai and English. It is a `login` theme on top of
+Keycloak's `base` theme and is built for Keycloak 26 (the dev version). Install it on the hospital Keycloak in one
+of two ways:
+
+- **Copy the folders.** Copy both theme folders, `infra/keycloak/themes/yoda` and `infra/keycloak/themes/yoda-plain`
+  (the same theme without the fun touches, see below), to `/opt/keycloak/themes/` on every Keycloak node (or mount
+  `infra/keycloak/themes` there read-only in a container). A theme folder needs no build step.
+- **Theme JAR** (when the server is built or images are baked). From `infra/keycloak/themes`, add a
+  `META-INF/keycloak-themes.json` listing both themes and zip it with both theme folders under `theme/`:
+
+  ```bash
+  mkdir -p /tmp/yoda-theme/META-INF /tmp/yoda-theme/theme
+  cp -r infra/keycloak/themes/yoda infra/keycloak/themes/yoda-plain /tmp/yoda-theme/theme/
+  echo '{"themes": [{"name": "yoda", "types": ["login"]}, {"name": "yoda-plain", "types": ["login"]}]}' > /tmp/yoda-theme/META-INF/keycloak-themes.json
+  (cd /tmp/yoda-theme && zip -r ../yoda-login-theme.jar META-INF theme)
+  ```
+
+  Put `yoda-login-theme.jar` in `/opt/keycloak/providers/`, then run `kc.sh build` (or rebuild the image) and
+  restart.
+
+Then, in the admin console for the realm Yoda uses:
+
+- [ ] **Realm settings → Themes → Login theme:** `yoda`. If the realm is shared with other systems, set it on the
+      client instead (**Clients → yoda-portal → Settings → Login settings → Login theme**) so only Yoda's sign-in
+      changes.
+- [ ] **Realm settings → Localization:** internationalisation on, supported locales `th` and `en`, default `th`.
+      The portal sends its language as `ui_locales`, so the page follows the language chosen in the portal.
+
+Fun touches on the sign-in page (docs/design/jedi-touch.md): the theme shows a faint starfield, the fun mark and
+one playful line by default. The portal's admin switch (side menu ระบบ → งบประมาณ AI / System → AI budget, card
+"Fun touches", switch "Playful touches in the portal") cannot reach Keycloak at runtime, so the sign-in page has
+its own switch. Pick one:
+
+- [ ] **Environment variable:** set `YODA_LOGIN_FUN_MODE=false` on the Keycloak server (read through the theme
+      property `funMode=${env.YODA_LOGIN_FUN_MODE:true}`), then restart Keycloak.
+- [ ] **Plain theme:** choose `yoda-plain` instead of `yoda` as the login theme (both folders are installed
+      above; `yoda-plain` is a two-line child of `yoda` with `funMode=false`).
+
+Caching: production Keycloak caches themes and templates (`--spi-theme-cache-themes`, `--spi-theme-cache-templates`
+and `--spi-theme-static-max-age` are on by default), so after updating the files restart Keycloak (every node) and,
+if a browser still shows the old look, clear its cache: static files are cached for 30 days by default. Never turn
+the caches off in production; `start-dev` turns them off for development.
+
 ## 3. Environment variables
 
 All configuration is environment variables, set in the deploy host's `.env` next to the compose files (compose
@@ -128,6 +174,7 @@ Portal:
 | `NUXT_PUBLIC_KEYCLOAK_CLIENT_ID` | Public client | optional (`yoda-portal`) | `yoda-portal` |
 | `NUXT_PUBLIC_RUNNER_DOCS_URL` | Setup docs linked from the Runners page | optional (README "Runners") | `https://portal.example.org/docs/runners` |
 | `NUXT_PUBLIC_LINE_ADD_FRIEND_URL` | The LINE Official Account's add-friend link, shown when linking LINE | optional | `https://line.me/R/ti/p/@example` |
+| `NUXT_PUBLIC_ORG_LINE` | Organisation line at the foot of the side menu, e.g. the department or hospital name | optional (empty: no line) | `ฝ่ายเทคโนโลยีสารสนเทศ` |
 | `PORTAL_URL` | The portal's public base URL, used in links in emails, chats and GitLab issues (compose refuses to start without it) | yes | `https://portal.example.org` |
 
 AI:

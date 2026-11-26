@@ -1,0 +1,441 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>รายการงาน</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet"><link href="https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css" rel="stylesheet">
+<style>
+/* Yoda portal design refresh: tokens mirror the proposed Vuetify theme (docs/design/portal-design-refresh.md). */
+:root {
+  --nav: #0B2545; --nav-hover: #12305A; --nav-active: #173A66; --nav-text: #C3D0E2; --nav-label: #8BA0BF; --nav-accent: #6FA8FF;
+  --primary: #1F5FBF; --primary-hover: #184C99; --primary-soft: #E8F0FB; --on-primary-soft: #1A4F9E;
+  --bg: #F4F6F9; --surface: #FFFFFF; --surface-variant: #EDF1F6; --border: #D8DEE7; --border-strong: #8A95A5;
+  --text: #1A2433; --text-2: #556275; --text-3: #6B7789;
+  --success: #1D6B3A; --success-soft: #E5F3EA; --success-dot: #2F8A4F;
+  --warning: #7A4F00; --warning-soft: #FCF0D7; --warning-dot: #B07800;
+  --error: #B3261E; --error-ink: #A8261D; --error-soft: #FBE8E6; --error-dot: #D0342C;
+  --info: #1A4F9E; --info-soft: #E8F0FB; --info-dot: #2F6FD0;
+  --neutral: #465264; --neutral-soft: #EDF1F6; --neutral-dot: #7A8699;
+  --ai: #4A3FA0; --ai-soft: #EFEDFB; --ai-dot: #6A5CD6;
+  --radius: 8px; --radius-sm: 6px;
+  --rail: 248px; --bar: 56px;
+  --font: 'IBM Plex Sans Thai', 'IBM Plex Sans', system-ui, sans-serif;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { font-family: var(--font); font-size: 14px; line-height: 1.6; color: var(--text); background: var(--bg); letter-spacing: 0; -webkit-font-smoothing: antialiased; }
+:lang(en), .latin { font-family: 'IBM Plex Sans', 'IBM Plex Sans Thai', system-ui, sans-serif; }
+a { color: var(--primary); text-decoration: none; }
+a:hover { text-decoration: underline; }
+:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 4px; }
+.num { font-variant-numeric: tabular-nums; }
+.mdi::before { line-height: 1; }
+h1, h2, h3, p { margin: 0; }
+
+/* Type scale: 12 / 13 / 14 / 16 / 20 / 24 */
+.t-page { font-size: 20px; line-height: 1.4; font-weight: 600; }
+.t-section { font-size: 16px; line-height: 1.5; font-weight: 600; }
+.t-body { font-size: 14px; }
+.t-meta { font-size: 13px; color: var(--text-2); }
+.t-caption { font-size: 12px; color: var(--text-2); line-height: 1.5; }
+.t-kpi { font-size: 24px; line-height: 1.3; font-weight: 600; font-variant-numeric: tabular-nums; }
+.muted { color: var(--text-2); }
+.strong { font-weight: 600; }
+
+/* ---------------- shell ---------------- */
+.app { display: grid; grid-template-columns: var(--rail) 1fr; min-height: 100vh; }
+.rail { background: var(--nav); color: var(--nav-text); min-height: 100vh; }
+.rail-inner { position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; padding: 12px 12px 16px; overflow-y: auto; }
+.brand { display: flex; align-items: center; gap: 10px; height: 44px; padding: 0 8px; margin-bottom: 12px; color: #fff; }
+.brand-mark { width: 30px; height: 30px; border-radius: 7px; background: #fff; color: var(--nav); display: grid; place-items: center; font-weight: 700; font-size: 15px; font-family: 'IBM Plex Sans', sans-serif; }
+.brand-name { font-weight: 600; font-size: 15px; line-height: 1.2; }
+.brand-sub { font-size: 12px; color: var(--nav-label); line-height: 1.3; }
+.nav-group { margin-top: 12px; }
+.nav-label { font-size: 12px; color: var(--nav-label); padding: 4px 12px 4px; font-weight: 500; }
+.nav-item { display: flex; align-items: center; gap: 12px; height: 40px; padding: 0 12px; border-radius: var(--radius-sm); color: var(--nav-text); font-size: 14px; position: relative; }
+.nav-item:hover { background: var(--nav-hover); text-decoration: none; }
+.nav-item .mdi { font-size: 20px; width: 20px; text-align: center; }
+.nav-item.active { background: var(--nav-active); color: #fff; font-weight: 500; }
+.nav-item.active::before { content: ''; position: absolute; left: -12px; top: 8px; bottom: 8px; width: 3px; border-radius: 0 3px 3px 0; background: var(--nav-accent); }
+.nav-count { margin-left: auto; min-width: 22px; height: 20px; padding: 0 6px; border-radius: 10px; background: #1E3E6B; color: #DCE6F5; font-size: 12px; display: grid; place-items: center; font-variant-numeric: tabular-nums; }
+.nav-item.active .nav-count { background: #9CC2FF; color: var(--nav); font-weight: 600; }
+.rail-foot { margin-top: auto; padding: 12px 12px 0; font-size: 12px; color: var(--nav-label); border-top: 1px solid #1E3E6B; }
+
+.main { min-width: 0; display: flex; flex-direction: column; }
+.topbar { position: sticky; top: 0; z-index: 5; height: var(--bar); background: var(--surface); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 16px; padding: 0 24px; }
+.icon-btn.menu-btn { display: none; }
+.crumbs { display: flex; align-items: center; gap: 4px; font-size: 13px; color: var(--text-2); min-width: 0; flex: 1; white-space: nowrap; overflow: hidden; }
+.crumbs a { color: var(--text-2); }
+.crumbs .sep { color: var(--border-strong); font-size: 16px; }
+.crumbs .here { color: var(--text); font-weight: 500; overflow: hidden; text-overflow: ellipsis; }
+.search { display: flex; align-items: center; gap: 8px; width: 300px; height: 36px; padding: 0 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg); color: var(--text-3); font-size: 13px; }
+.search .mdi { font-size: 18px; }
+.kbd { margin-left: auto; font-size: 12px; border: 1px solid var(--border); border-radius: 4px; padding: 0 5px; color: var(--text-2); background: #fff; font-family: 'IBM Plex Sans', sans-serif; }
+.icon-btn { width: 36px; height: 36px; border-radius: 50%; border: 0; background: transparent; color: var(--text-2); display: grid; place-items: center; position: relative; cursor: pointer; font-size: 20px; }
+.icon-btn:hover { background: var(--surface-variant); }
+.bell-badge { position: absolute; top: 3px; right: 0; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 9px; background: var(--error); color: #fff; font-size: 11px; font-weight: 600; display: grid; place-items: center; border: 2px solid #fff; font-family: 'IBM Plex Sans', sans-serif; }
+.user { display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 6px 0 4px; border-radius: 20px; cursor: pointer; }
+.user:hover { background: var(--surface-variant); }
+.avatar { width: 32px; height: 32px; border-radius: 50%; background: var(--primary-soft); color: var(--on-primary-soft); display: grid; place-items: center; font-size: 13px; font-weight: 600; flex: none; }
+.person { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
+.avatar.sm { width: 24px; height: 24px; font-size: 11px; }
+.user-name { font-size: 13px; line-height: 1.3; }
+.user-role { font-size: 12px; color: var(--text-2); line-height: 1.3; }
+
+.content { padding: 24px; width: 100%; }
+.content.reading { max-width: 1280px; }
+
+/* page header */
+.page-head { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 16px; flex-wrap: wrap; }
+.page-head .titles { flex: 1 1 420px; min-width: 0; }
+.page-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; margin-top: 6px; font-size: 13px; color: var(--text-2); }
+.page-meta .mdi { font-size: 16px; margin-right: 4px; vertical-align: -2px; color: var(--text-3); }
+.page-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin: 0 0 20px; overflow-x: auto; scrollbar-width: none; }
+.tab { height: 40px; padding: 0 14px; display: flex; align-items: center; gap: 6px; color: var(--text-2); font-size: 14px; font-weight: 500; border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; }
+.tab.active { color: var(--primary); border-color: var(--primary); }
+.tab .count { font-size: 12px; background: var(--surface-variant); color: var(--text-2); border-radius: 10px; padding: 0 7px; font-variant-numeric: tabular-nums; }
+.tab.active .count { background: var(--primary-soft); color: var(--on-primary-soft); }
+
+/* buttons: 36px, no uppercase, no tracking */
+.btn { height: 36px; padding: 0 16px; border-radius: var(--radius-sm); border: 1px solid transparent; font: inherit; font-size: 14px; font-weight: 500; letter-spacing: 0; text-transform: none; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; white-space: nowrap; }
+.btn .mdi { font-size: 18px; }
+.btn-primary { background: var(--primary); color: #fff; }
+.btn-primary:hover { background: var(--primary-hover); }
+.btn-tonal { background: var(--primary-soft); color: var(--on-primary-soft); }
+.btn-outline { background: #fff; color: var(--text); border-color: var(--border); }
+.btn-outline:hover { background: var(--bg); }
+.btn-text { background: transparent; color: var(--primary); padding: 0 10px; }
+.btn-danger-text { background: transparent; color: var(--error); padding: 0 10px; }
+.btn-sm { height: 32px; padding: 0 12px; font-size: 13px; }
+.btn-icon { width: 36px; padding: 0; justify-content: center; }
+
+/* cards */
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+.card-head { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--border); min-height: 48px; }
+.card-head .t-section { flex: 1; }
+.card-body { padding: 16px; }
+.section-title { display: flex; align-items: center; gap: 8px; margin: 24px 0 10px; }
+.section-title:first-child { margin-top: 0; }
+.section-title .count { font-size: 12px; color: var(--text-2); background: var(--surface-variant); border-radius: 10px; padding: 0 8px; font-weight: 500; font-variant-numeric: tabular-nums; }
+
+/* chips: soft bg + strong text + dot/icon, 24px */
+.chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px 0 8px; border-radius: 12px; font-size: 12px; font-weight: 500; white-space: nowrap; line-height: 1; }
+.chip::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
+.chip.icon::before { display: none; }
+.chip .mdi { font-size: 14px; }
+.chip.success { background: var(--success-soft); color: var(--success); } .chip.success::before { background: var(--success-dot); }
+.chip.warning { background: var(--warning-soft); color: var(--warning); } .chip.warning::before { background: var(--warning-dot); }
+.chip.error { background: var(--error-soft); color: var(--error-ink); } .chip.error::before { background: var(--error-dot); }
+.chip.info { background: var(--info-soft); color: var(--info); } .chip.info::before { background: var(--info-dot); }
+.chip.neutral { background: var(--neutral-soft); color: var(--neutral); } .chip.neutral::before { background: var(--neutral-dot); }
+.chip.ai { background: var(--ai-soft); color: var(--ai); } .chip.ai::before { background: var(--ai-dot); }
+.chip.outline { background: #fff; border: 1px solid var(--border); color: var(--text-2); }
+.chip.outline::before { display: none; }
+/* priority: a glyph, not a colour flood */
+.prio { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; white-space: nowrap; }
+.prio .mdi { font-size: 16px; }
+.prio.urgent { color: var(--error-ink); font-weight: 600; }
+.prio.high { color: var(--warning); font-weight: 500; }
+.prio.normal { color: var(--text-2); }
+.prio.low { color: var(--text-3); }
+
+/* tables: 40px rows */
+.table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 14px; }
+.table th { text-align: left; font-weight: 500; font-size: 12px; color: var(--text-2); height: 36px; padding: 0 12px; background: var(--bg); border-bottom: 1px solid var(--border); white-space: nowrap; }
+.table td { height: 40px; padding: 6px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.table tr:last-child td { border-bottom: 0; }
+.table tbody tr:hover td { background: #F8FAFC; }
+.table .r { text-align: right; }
+.cell-title { font-weight: 500; color: var(--text); }
+.cell-sub { font-size: 12px; color: var(--text-2); line-height: 1.5; }
+
+/* step track: the signature element (workflow position at a glance) */
+.track { display: grid; grid-template-columns: repeat(6, 1fr); gap: 3px; width: 96px; }
+.track i { height: 6px; border-radius: 2px; background: #C4CCD8; }
+.track i.done { background: var(--primary); }
+.track i.now { background: #fff; box-shadow: inset 0 0 0 2px var(--primary); }
+.track-label { font-size: 12px; color: var(--text-2); margin-top: 4px; white-space: nowrap; }
+
+.ai-label { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 500; color: var(--ai); }
+.ai-label .mdi { font-size: 15px; }
+
+.alert { display: flex; gap: 12px; padding: 12px 16px; border-radius: var(--radius); border: 1px solid; font-size: 14px; }
+.alert > .mdi { font-size: 20px; line-height: 1.2; }
+.alert.warning { background: var(--warning-soft); border-color: #EFD9A8; color: var(--text); } .alert.warning > .mdi { color: var(--warning-dot); }
+.alert.info { background: var(--info-soft); border-color: #C9DAF3; } .alert.info > .mdi { color: var(--info-dot); }
+.alert .alert-title { font-weight: 600; }
+
+.divider { height: 1px; background: var(--border); margin: 16px 0; border: 0; }
+.row { display: flex; align-items: center; gap: 8px; }
+.grow { flex: 1; min-width: 0; }
+.stack > * + * { margin-top: 8px; }
+.ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bar { height: 6px; border-radius: 3px; background: var(--surface-variant); overflow: hidden; }
+.bar > i { display: block; height: 100%; background: var(--primary); border-radius: 3px; }
+.bar.warn > i { background: var(--warning-dot); }
+.field { height: 36px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); display: flex; align-items: center; padding: 0 10px; gap: 8px; font-size: 14px; color: var(--text-3); background: #fff; }
+.field .mdi { font-size: 18px; color: var(--text-2); }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius-sm); background: #fff; overflow: hidden; }
+.seg span { height: 32px; padding: 0 12px; display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-2); border-right: 1px solid var(--border); white-space: nowrap; }
+.seg span:last-child { border-right: 0; }
+.seg span.on { background: var(--primary-soft); color: var(--on-primary-soft); font-weight: 500; }
+.seg .n { font-variant-numeric: tabular-nums; }
+
+/* bottom nav: mobile only */
+.bottom-nav { display: none; }
+
+@media (max-width: 1023px) {
+  .app { grid-template-columns: 1fr; }
+  .rail { display: none; }
+  .icon-btn.menu-btn { display: grid; margin-left: -8px; }
+  .search { display: none; }
+  .user-text { display: none; }
+  .topbar { padding: 0 12px 0 16px; gap: 8px; }
+  .content { padding: 16px 16px 24px; }
+  .bottom-nav { display: grid; grid-template-columns: repeat(4, 1fr); position: sticky; bottom: 0; height: 64px; background: #fff; border-top: 1px solid var(--border); z-index: 6; }
+  .bottom-nav a { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; font-size: 12px; color: var(--text-2); position: relative; }
+  .bottom-nav a .mdi { font-size: 22px; line-height: 1; }
+  .bottom-nav a.active { color: var(--primary); font-weight: 500; }
+  .bottom-nav a.active .mdi { background: var(--primary-soft); border-radius: 12px; padding: 2px 16px; }
+  .bottom-nav .bn-badge { position: absolute; top: 6px; left: calc(50% + 8px); min-width: 18px; height: 18px; border-radius: 9px; background: var(--error); color: #fff; font-size: 11px; display: grid; place-items: center; padding: 0 4px; font-weight: 600; }
+  .page-head { gap: 12px; }
+  .page-head .titles { flex-basis: 100%; }
+  .page-actions { width: 100%; }
+  .hide-sm { display: none !important; }
+}
+@media (min-width: 1024px) { .show-sm { display: none !important; } }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+
+.wi-grid { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 24px; align-items: start; }
+.steps { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; margin: 4px 0 20px; }
+.step { padding-top: 10px; position: relative; min-width: 0; }
+.step::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 6px; border-radius: 3px; background: #C4CCD8; }
+.step.done::before { background: var(--primary); }
+.step.now::before { background: #fff; box-shadow: inset 0 0 0 2px var(--primary); }
+.step .n { font-size: 13px; margin-right: 2px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.step .name { font-size: 13px; font-weight: 500; line-height: 1.4; }
+.step.pending .name { color: var(--text-2); font-weight: 400; }
+.step.now .name { color: var(--primary); font-weight: 600; }
+.step .sub { font-size: 12px; color: var(--text-2); }
+.step-group { border-top: 1px solid var(--border); }
+.step-group:first-child { border-top: 0; }
+.sg-head { display: flex; align-items: center; gap: 10px; padding: 0 16px; height: 48px; cursor: pointer; }
+.sg-head .mdi-chevron-down, .sg-head .mdi-chevron-right { font-size: 20px; color: var(--text-2); }
+.sg-head .sg-name { font-weight: 600; }
+.task { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; gap: 4px 12px; padding: 12px 16px 12px 16px; border-top: 1px solid var(--border); align-items: start; }
+.task .ic { width: 28px; height: 28px; border-radius: 6px; display: grid; place-items: center; font-size: 16px; }
+.task .ic.ai { background: var(--ai-soft); color: var(--ai); }
+.task .ic.human { background: var(--surface-variant); color: var(--neutral); }
+.task .ic.review { background: var(--info-soft); color: var(--info); }
+.task .t-title { font-weight: 500; }
+.task .t-sub { display: flex; flex-wrap: wrap; gap: 2px 14px; font-size: 13px; color: var(--text-2); margin-top: 2px; }
+.task .t-sub .mdi { font-size: 15px; vertical-align: -2px; margin-right: 3px; }
+.task .t-side { display: flex; align-items: center; gap: 8px; }
+.draft { grid-column: 2 / -1; margin-top: 8px; border: 1px solid #D9D4F3; border-radius: var(--radius); overflow: hidden; }
+.draft-head { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--ai-soft); font-size: 13px; flex-wrap: wrap; }
+.draft-body { padding: 12px 14px; font-size: 14px; }
+.draft-body h4 { font-size: 14px; font-weight: 600; margin: 0 0 6px; }
+.draft-body table { border-collapse: collapse; width: 100%; font-size: 13px; margin-top: 4px; }
+.draft-body td, .draft-body th { border: 1px solid var(--border); padding: 4px 8px; text-align: left; }
+.draft-body th { background: var(--bg); font-weight: 500; }
+.conf { display: flex; gap: 8px; padding: 8px 12px; background: var(--warning-soft); font-size: 13px; border-top: 1px solid #EFD9A8; }
+.conf .mdi { color: var(--warning-dot); font-size: 18px; }
+.side .card + .card { margin-top: 16px; }
+.kv { display: grid; grid-template-columns: 112px 1fr; gap: 10px 12px; font-size: 14px; align-items: center; }
+.kv dt { color: var(--text-2); font-size: 13px; }
+.kv dd { margin: 0; min-width: 0; }
+.mr { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; padding: 10px 0; border-top: 1px solid var(--border); font-size: 13px; }
+.mr:first-of-type { border-top: 0; padding-top: 0; }
+.tl-day { font-size: 12px; font-weight: 600; color: var(--text-2); padding: 12px 16px 4px; }
+.tl { position: relative; padding: 4px 16px 4px 40px; }
+.tl::before { content: ''; position: absolute; left: 23px; top: 0; bottom: 0; width: 1px; background: var(--border); }
+.tl-item { position: relative; padding: 6px 0; font-size: 13px; display: flex; gap: 8px; }
+.tl-item::before { content: ''; position: absolute; left: -21px; top: 13px; width: 9px; height: 9px; border-radius: 50%; background: #fff; border: 2px solid var(--border-strong); }
+.tl-item.key::before { border-color: var(--primary); background: var(--primary); }
+.tl-item.ai::before { border-color: var(--ai-dot); }
+.tl-item .time { color: var(--text-2); font-variant-numeric: tabular-nums; width: 40px; flex: none; }
+.tl-item .who { color: var(--text-2); }
+.more-btn { width: 100%; justify-content: center; border-top: 1px solid var(--border); border-radius: 0 0 var(--radius) var(--radius); height: 40px; }
+.menu-pop { position: absolute; right: 0; top: 42px; width: 220px; background: #fff; border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 8px 24px rgba(11,37,69,.12); padding: 6px; z-index: 4; }
+.menu-pop a { display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 10px; color: var(--text); border-radius: 6px; font-size: 14px; }
+.menu-pop a .mdi { font-size: 18px; color: var(--text-2); }
+.menu-pop a.danger, .menu-pop a.danger .mdi { color: var(--error); }
+.menu-pop hr { border: 0; height: 1px; background: var(--border); margin: 6px 0; }
+@media (max-width: 1279px) { .wi-grid { grid-template-columns: 1fr; } }
+@media (max-width: 1023px) {
+  .steps { margin-bottom: 4px; }
+  .steps .name, .steps .sub { display: none; }
+  .steps-cur { margin-bottom: 16px; font-size: 13px; }
+  .menu-pop { display: none; }
+  .task { grid-template-columns: 28px minmax(0, 1fr); }
+  .task .t-side { grid-column: 2; }
+  .draft { grid-column: 1 / -1; }
+  .kv { grid-template-columns: 104px 1fr; }
+}
+
+</style>
+</head>
+<body>
+<div class="app">
+<aside class="rail" aria-label="เมนูหลัก"><div class="rail-inner">
+<div class="brand"><div class="brand-mark">Y</div><div><div class="brand-name">Yoda</div><div class="brand-sub">พอร์ทัลงานฝ่าย IT</div></div></div>
+<div class="nav-group">
+<div class="nav-label">งานของฉัน</div>
+<a class="nav-item" href="#"><span class="mdi mdi-checkbox-marked-circle-outline"></span><span>งานที่ต้องทำ</span><span class="nav-count">16</span></a>
+<a class="nav-item" href="#"><span class="mdi mdi-message-text-outline"></span><span>แชท</span><span class="nav-count">3</span></a>
+</div>
+<div class="nav-group">
+<div class="nav-label">โครงการ</div>
+<a class="nav-item active" href="#" aria-current="page"><span class="mdi mdi-folder-outline"></span><span>โครงการ</span></a>
+<a class="nav-item" href="#"><span class="mdi mdi-chart-box-outline"></span><span>สถานะภาพรวม</span></a>
+<a class="nav-item" href="#"><span class="mdi mdi-server-network-outline"></span><span>รันเนอร์</span></a>
+</div>
+<div class="nav-group">
+<div class="nav-label">การประชุม</div>
+<a class="nav-item" href="#"><span class="mdi mdi-forum-outline"></span><span>ประเด็นหารือ</span><span class="nav-count">2</span></a>
+<a class="nav-item" href="#"><span class="mdi mdi-calendar-text-outline"></span><span>วาระการประชุม</span></a>
+</div>
+<div class="nav-group">
+<div class="nav-label">ระบบ</div>
+<a class="nav-item" href="#"><span class="mdi mdi-account-group-outline"></span><span>บุคลากร</span></a>
+<a class="nav-item" href="#"><span class="mdi mdi-cash-multiple"></span><span>งบประมาณ AI</span></a>
+<a class="nav-item" href="#"><span class="mdi mdi-source-branch"></span><span>การเชื่อม GitLab</span></a>
+<a class="nav-item" href="#"><span class="mdi mdi-bell-cog-outline"></span><span>ช่องทางแจ้งเตือน</span></a>
+</div>
+<div class="rail-foot">ฝ่ายเทคโนโลยีสารสนเทศ</div>
+</div></aside>
+<div class="main">
+<header class="topbar">
+<button class="icon-btn menu-btn" aria-label="เปิดเมนู"><span class="mdi mdi-menu"></span></button>
+<nav class="crumbs" aria-label="breadcrumb"><a href="#">โครงการ</a><span class="mdi mdi-chevron-right sep"></span><a href="#">ระบบนัดหมายผู้ป่วยนอก</a><span class="mdi mdi-chevron-right sep"></span><a href="#">งาน</a><span class="mdi mdi-chevron-right sep"></span><span class="here">แจ้งเตือนนัดผ่าน SMS ล่วงหน้า 1 วัน</span></nav>
+<div class="search" role="search"><span class="mdi mdi-magnify"></span>ค้นหางาน โครงการ คน<span class="kbd">⌘K</span></div>
+<button class="icon-btn hide-sm-search show-sm" aria-label="ค้นหา"><span class="mdi mdi-magnify"></span></button>
+<button class="icon-btn" aria-label="การแจ้งเตือน 9+ รายการ"><span class="mdi mdi-bell-outline"></span><span class="bell-badge">9+</span></button>
+<div class="user" role="button" aria-label="เมนูผู้ใช้"><span class="avatar">สจ</span><span class="user-text"><div class="user-name">สมชาย ใจดี</div><div class="user-role">PM · ผู้ดูแลระบบ</div></span><span class="mdi mdi-chevron-down muted hide-sm"></span></div>
+</header>
+<main class="content">
+
+<div class="page-head">
+  <div class="titles">
+    <div class="row" style="gap:8px;margin-bottom:6px;flex-wrap:wrap"><span class="t-meta num">WI-0142</span><span class="chip info">กำลังดำเนินการ</span><span class="prio high"><span class="mdi mdi-chevron-up"></span>สูง</span><span class="chip outline">เปลี่ยนแปลงระบบ</span></div>
+    <h1 class="t-page">แจ้งเตือนนัดผ่าน SMS ล่วงหน้า 1 วัน</h1>
+    <div class="page-meta"><span><span class="mdi mdi-folder-outline"></span>ระบบนัดหมายผู้ป่วยนอก</span><span><span class="mdi mdi-calendar-outline"></span>กำหนดเสร็จ 9 ธ.ค. 2569</span><span><span class="mdi mdi-update"></span>อัปเดต 25 พ.ย. 2569 14:05</span></div>
+  </div>
+  <div class="page-actions" style="position:relative">
+    <button class="btn btn-outline"><span class="mdi mdi-forum-outline"></span>ยกประเด็นหารือ</button>
+    <button class="btn btn-outline btn-icon" aria-label="การดำเนินการอื่น" aria-expanded="false"><span class="mdi mdi-dots-horizontal"></span></button>
+    <div class="menu-pop" role="menu" hidden>
+      <a href="#" role="menuitem"><span class="mdi mdi-calendar-edit"></span>เปลี่ยนวันกำหนดเสร็จ</a>
+      <a href="#" role="menuitem"><span class="mdi mdi-undo-variant"></span>ย้อนกลับขั้นตอน…</a>
+      <hr>
+      <a href="#" role="menuitem" class="danger"><span class="mdi mdi-close-circle-outline"></span>ยกเลิกงาน…</a>
+    </div>
+  </div>
+</div>
+
+<div class="steps" role="list" aria-label="ขั้นตอนของงาน"><div class="step done"><div class="name"><span class="n">1</span> รับเรื่อง</div><div class="sub">18 พ.ย.</div></div><div class="step done"><div class="name"><span class="n">2</span> วิเคราะห์ความต้องการ</div><div class="sub">20 พ.ย.</div></div><div class="step done"><div class="name"><span class="n">3</span> ออกแบบระบบ</div><div class="sub">22 พ.ย.</div></div><div class="step now" aria-current="step"><div class="name"><span class="n">4</span> พัฒนา</div><div class="sub">เริ่ม 24 พ.ย.</div></div><div class="step pending"><div class="name"><span class="n">5</span> ทดสอบ</div><div class="sub">&nbsp;</div></div><div class="step pending"><div class="name"><span class="n">6</span> ปิดงาน</div><div class="sub">&nbsp;</div></div></div><div class="steps-cur show-sm">ขั้นตอน <b class="num">4</b> จาก 6: <b style="color:var(--primary)">พัฒนา</b> <span class="muted">เริ่ม 24 พ.ย. 2569</span></div>
+
+<div class="alert warning" style="margin-bottom:20px">
+  <span class="mdi mdi-forum-outline"></span>
+  <div class="grow"><div class="alert-title">รอผลประเด็นหารือ 1 เรื่องก่อนไปขั้นตอนถัดไป</div>
+  <div><a href="#">ควรส่ง SMS ผ่านผู้ให้บริการรายเดิมหรือย้ายไป LINE OA ทั้งหมด?</a> <span class="t-meta">อยู่ในวาระประชุม 27 พ.ย. 2569</span></div></div>
+</div>
+
+<div class="wi-grid">
+<div>
+  <div class="section-title"><h2 class="t-section">งานย่อย</h2><span class="count">11</span></div>
+  <div class="card" style="overflow:hidden">
+    <div class="step-group"><div class="sg-head"><span class="mdi mdi-chevron-right"></span><span class="sg-name">1. รับเรื่อง</span><span class="chip success">เสร็จแล้ว</span><span class="t-meta hide-sm" style="margin-left:auto">1 งานย่อย</span></div></div>
+    <div class="step-group"><div class="sg-head"><span class="mdi mdi-chevron-right"></span><span class="sg-name">2. วิเคราะห์ความต้องการ</span><span class="chip success">เสร็จแล้ว</span><span class="t-meta hide-sm" style="margin-left:auto">4 งานย่อย</span></div></div>
+    <div class="step-group"><div class="sg-head"><span class="mdi mdi-chevron-right"></span><span class="sg-name">3. ออกแบบระบบ</span><span class="chip success">เสร็จแล้ว</span><span class="t-meta hide-sm" style="margin-left:auto">2 งานย่อย</span></div></div>
+    <div class="step-group">
+      <div class="sg-head"><span class="mdi mdi-chevron-down"></span><span class="sg-name">4. พัฒนา</span><span class="chip info">ขั้นตอนปัจจุบัน</span><span class="t-meta" style="margin-left:auto">เสร็จ 1 จาก 3</span></div>
+      <div class="task">
+        <span class="ic ai"><span class="mdi mdi-creation-outline"></span></span>
+        <div><div class="t-title"><a href="#" style="color:inherit">พัฒนาโค้ด</a></div>
+          <div class="t-sub"><span><span class="mdi mdi-server-network-outline"></span>yoda-runner-01</span><span><span class="mdi mdi-source-branch"></span>wi-142-sms-reminder</span></div></div>
+        <div class="t-side"><span class="chip success">ยอมรับแล้ว</span></div>
+      </div>
+      <div class="task">
+        <span class="ic ai"><span class="mdi mdi-creation-outline"></span></span>
+        <div><div class="t-title"><a href="#" style="color:inherit">ร่างกรณีทดสอบ</a></div>
+          <div class="t-sub"><span><span class="mdi mdi-account-outline"></span>ตรวจโดย วราภรณ์ ชัยมงคล (QC)</span></div></div>
+        <div class="t-side"><span class="chip warning">รอตรวจ</span></div>
+        <div class="draft">
+          <div class="draft-head"><span class="ai-label"><span class="mdi mdi-creation-outline"></span>ร่างโดย AI</span><span class="chip warning icon"><span class="mdi mdi-gauge-low"></span>ความมั่นใจต่ำ</span><span class="t-caption" style="margin-left:auto">claude · 25 พ.ย. 2569 13:40</span></div>
+          <div class="draft-body">
+            <h4>กรณีทดสอบ: แจ้งเตือนนัดผ่าน SMS ล่วงหน้า 1 วัน</h4>
+            <table><tr><th>#</th><th>กรณี</th><th>ผลที่คาดหวัง</th></tr>
+            <tr><td class="num">1</td><td>นัดวันพรุ่งนี้ 09:00 มีเบอร์มือถือ</td><td>ส่ง SMS เวลา 08:00 ของวันนี้</td></tr>
+            <tr><td class="num">2</td><td>ผู้ป่วยไม่มีเบอร์มือถือ</td><td>ข้ามและบันทึกในรายงาน</td></tr>
+            <tr><td class="num">3</td><td>ผู้ให้บริการ SMS ไม่ตอบสนอง</td><td>เข้าคิวส่งซ้ำ และแจ้งผู้ดูแล</td></tr></table>
+          </div>
+          <div class="conf"><span class="mdi mdi-alert-outline"></span><div><b>AI ยังขาดข้อมูล:</b> ช่วงเวลาที่ห้ามส่ง SMS, การแจ้งเตือนซ้ำเมื่อเลื่อนนัด — ตรวจและเติมก่อนยอมรับ</div></div>
+        </div>
+      </div>
+      <div class="task">
+        <span class="ic review"><span class="mdi mdi-eye-check-outline"></span></span>
+        <div><div class="t-title"><a href="#" style="color:inherit">ตรวจโค้ด</a></div>
+          <div class="t-sub"><span class="person"><span class="avatar sm">วศ</span>วิชัย ศรีสุข (DEV)</span><span><span class="mdi mdi-source-merge"></span>!41</span></div></div>
+        <div class="t-side"><span class="chip info">กำลังทำ</span></div>
+      </div>
+    </div>
+    <div class="step-group"><div class="sg-head" style="color:var(--text-2)"><span class="mdi mdi-chevron-right"></span><span>5. ทดสอบ</span><span class="t-meta" style="margin-left:auto">2 งานย่อย รอเริ่ม</span></div></div>
+    <div class="step-group"><div class="sg-head" style="color:var(--text-2)"><span class="mdi mdi-chevron-right"></span><span>6. ปิดงาน</span><span class="t-meta" style="margin-left:auto">2 งานย่อย รอเริ่ม</span></div></div>
+  </div>
+
+  <div class="section-title" style="margin-top:28px"><h2 class="t-section">ไทม์ไลน์</h2><span class="grow"></span>
+    <div class="seg"><span class="on">เหตุการณ์สำคัญ</span><span>ทั้งหมด <b class="n">64</b></span></div></div>
+  <div class="card">
+    <div class="tl-day">วันนี้ 25 พ.ย. 2569</div>
+    <div class="tl">
+      <div class="tl-item ai"><span class="time">13:40</span><span>AI ส่งร่าง <b>ร่างกรณีทดสอบ</b> <span class="who">· ความมั่นใจต่ำ</span></span></div>
+      <div class="tl-item key"><span class="time">11:12</span><span>เปิด merge request <a href="#">!41</a> <span class="who">· yoda-runner-01</span></span></div>
+      <div class="tl-item"><span class="time">08:23</span><span>สมชาย ใจดี ยกประเด็นหารือ <a href="#">ควรส่ง SMS ผ่านผู้ให้บริการรายเดิม…</a></span></div>
+    </div>
+    <div class="tl-day">24 พ.ย. 2569</div>
+    <div class="tl">
+      <div class="tl-item key"><span class="time">16:05</span><span>ไปขั้นตอน <b>พัฒนา</b> <span class="who">· ปราณี วงศ์สวัสดิ์</span></span></div>
+      <div class="tl-item"><span class="time">15:58</span><span>อนุมัติแบบระบบ <span class="who">· ธนกร พึ่งบุญ</span></span></div>
+    </div>
+    <button class="btn btn-text more-btn">แสดงวันก่อนหน้า (22 พ.ย. – 18 พ.ย.)</button>
+  </div>
+</div>
+
+<aside class="side">
+  <div class="card"><div class="card-head"><span class="t-section">รายละเอียด</span></div>
+    <div class="card-body">
+      <p style="margin-bottom:16px">ส่ง SMS แจ้งเตือนผู้ป่วยนอกก่อนวันนัด 1 วัน เพื่อลดอัตราการไม่มาตามนัด ใช้ข้อมูลนัดจาก HIS และเบอร์มือถือในเวชระเบียน</p>
+      <dl class="kv" style="margin:0">
+        <dt>เจ้าของงาน</dt><dd><span class="person"><span class="avatar sm">ปว</span>ปราณี วงศ์สวัสดิ์</span></dd>
+        <dt>ผู้ขอ</dt><dd><span class="person"><span class="avatar sm">มส</span>มาลี ศรีวงศ์</span></dd>
+        <dt>กำหนดเสร็จ</dt><dd class="row">9 ธ.ค. 2569 <span class="t-caption">(อีก 14 วัน)</span><button class="btn btn-text btn-sm btn-icon" aria-label="เปลี่ยนวันกำหนดเสร็จ" style="margin-left:auto"><span class="mdi mdi-pencil-outline"></span></button></dd>
+        <dt>แม่แบบ</dt><dd>เปลี่ยนแปลงระบบ</dd>
+        <dt>สร้างเมื่อ</dt><dd class="num">4 พ.ย. 2569 10:22</dd>
+      </dl>
+    </div></div>
+  <div class="card"><div class="card-head"><span class="mdi mdi-source-branch muted"></span><span class="t-section">โค้ด</span><button class="btn btn-text btn-sm">จัดการ</button></div>
+    <div class="card-body">
+      <div class="t-caption" style="margin-bottom:6px">Repository</div>
+      <div class="row" style="margin-bottom:4px"><span class="latin">it-dev/opd-appointment</span><span class="chip success" style="margin-left:auto">issue #41 ซิงก์แล้ว</span></div>
+      <div class="row" style="margin-bottom:14px"><span class="latin">it-dev/sms-gateway</span><span class="chip success" style="margin-left:auto">issue #12 ซิงก์แล้ว</span></div>
+      <div class="t-caption" style="margin-bottom:6px">Merge request</div>
+      <div class="mr"><a href="#" class="latin">!41 SMS reminder job (D-1)</a><span class="chip success icon"><span class="mdi mdi-check-circle-outline"></span>pipeline ผ่าน</span><span class="t-caption">วิชัย ศรีสุข · เปิดอยู่</span></div>
+    </div></div>
+</aside>
+</div>
+
+</main>
+</div>
+</div>
+<nav class="bottom-nav" style="grid-template-columns:repeat(4,1fr)" aria-label="เมนูหลัก">
+<a href="#"><span class="mdi mdi-checkbox-marked-circle-outline"></span>งานที่ต้องทำ<span class="bn-badge">16</span></a>
+<a href="#"><span class="mdi mdi-message-text-outline"></span>แชท<span class="bn-badge">3</span></a>
+<a href="#" class="active"><span class="mdi mdi-folder-outline"></span>โครงการ</a>
+<a href="#"><span class="mdi mdi-chart-box-outline"></span>สถานะ</a>
+</nav>
+</body>
+</html>

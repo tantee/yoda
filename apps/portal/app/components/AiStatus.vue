@@ -29,13 +29,13 @@ async function retry() {
 </script>
 
 <template>
-  <span v-if="task.aiStatus === 'drafting'" class="d-inline-flex align-center ga-1" data-testid="ai-drafting">
+  <span v-if="task.aiStatus === 'drafting'" class="d-inline-flex align-center ga-1 text-ai" data-testid="ai-drafting">
     <v-progress-circular indeterminate size="14" width="2" />
     {{ t('ai.drafting') }}
   </span>
   <span v-else-if="task.aiStatus === 'failed'" class="d-inline-flex align-center flex-wrap ga-2" data-testid="ai-failed">
-    <v-icon icon="mdi-alert-outline" color="warning" size="small" />
-    {{ t('ai.failed', { reason }) }}
+    <v-icon icon="mdi-alert-circle-outline" color="error" size="small" aria-hidden="true" />
+    <span class="text-error">{{ t('ai.failed', { reason }) }}</span>
     <v-btn v-if="canRetry" size="small" variant="outlined" :loading="busy" data-testid="retry-ai-btn" @click.prevent.stop="retry">{{ t('ai.retry') }}</v-btn>
     <span v-if="error" class="text-error text-caption" data-testid="retry-error">{{ error }}</span>
   </span>

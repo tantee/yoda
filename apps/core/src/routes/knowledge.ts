@@ -5,6 +5,7 @@ import { notFound, requireStaff } from '../auth/plugin.js'
 import { searchKnowledge } from '../knowledge/search.js'
 import {
   confirmEntry,
+  countEntries,
   createEntry,
   getEntry,
   listEntries,
@@ -17,7 +18,12 @@ import { canSeeProject } from '../work/queries.js'
 
 const IdParams = z.object({ id: z.string().uuid() })
 const ScopeQuery = z.object({ projectId: z.string().uuid().optional(), workItemId: z.string().uuid().optional() })
-const ListQuery = ScopeQuery.extend({ type: KnowledgeType.optional(), status: KnowledgeStatus.optional() })
+const ListQuery = ScopeQuery.extend({
+  type: KnowledgeType.optional(),
+  status: KnowledgeStatus.optional(),
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+  offset: z.coerce.number().int().min(0).optional(),
+})
 const SearchQuery = ScopeQuery.extend({
   q: z.string().trim().min(1).max(500),
   limit: z.coerce.number().int().min(1).max(50).optional(),
@@ -42,11 +48,18 @@ export function knowledgeRoutes(app: FastifyInstance): void {
     return e
   }
 
-  app.get('/knowledge', async (request) => {
+  /**
+   * Newest first. With `limit` (1-200, default 200) or `offset` the list is a page and `x-total-count` gives the
+   * matching total; without them there is no count query.
+   */
+  app.get('/knowledge', async (request, reply) => {
     requireStaff(request)
     const q = ListQuery.parse(request.query)
     await checkScope(request, q)
-    return listEntries(db(), request.me, q)
+    if (q.limit === undefined && q.offset === undefined) return listEntries(db(), request.me, q)
+    const [entries, total] = await Promise.all([listEntries(db(), request.me, q), countEntries(db(), request.me, q)])
+    reply.header('x-total-count', String(total))
+    return entries
   })
 
   app.get('/knowledge/search', async (request) => {

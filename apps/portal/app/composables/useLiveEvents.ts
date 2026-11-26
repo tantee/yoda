@@ -1,7 +1,13 @@
 import { LiveEvent } from '@yoda/shared'
-import { parseSse } from '~/utils/sse'
+import { loginLocale } from '~/utils/loginLocale'
+import { sessionEnded } from '~/utils/session'
+import { parseSse, streamStep } from '~/utils/sse'
 
-/** Streams /api/stream with fetch (EventSource cannot send Authorization). Reconnects with backoff. */
+/**
+ * Streams /api/stream with fetch (EventSource cannot send Authorization). Reconnects with backoff; only when the
+ * session really ended (the refresh token is gone or expired, or a 401 survives one forced refresh while online)
+ * does it send the user to sign in again. A refresh that fails while offline just waits for the next reconnect.
+ */
 export function useLiveEvents(onEvent: (e: LiveEvent) => void, onReconnect?: () => void): void {
   const { $keycloak } = useNuxtApp()
   let stopped = false
@@ -10,16 +16,39 @@ export function useLiveEvents(onEvent: (e: LiveEvent) => void, onReconnect?: () 
   let delay = 1000
   let connectedBefore = false
 
-  async function connect() {
+  function signIn() {
+    stopped = true
+    void $keycloak.login({ locale: loginLocale(document.cookie) })
+  }
+
+  function reconnectLater() {
     if (stopped) return
+    timer = setTimeout(() => void connect(), delay)
+    delay = Math.min(delay * 2, 30000)
+  }
+
+  async function connect(retriedAuth = false): Promise<void> {
+    if (stopped) return
+    let tokenOk = true
+    try {
+      await $keycloak.updateToken(retriedAuth ? -1 : 30)
+    } catch {
+      tokenOk = false
+    }
+    if (!tokenOk) {
+      const step = streamStep({ tokenOk, sessionEnded: sessionEnded($keycloak), retriedAuth })
+      return step === 'login' ? signIn() : reconnectLater()
+    }
     controller = new AbortController()
     try {
-      await $keycloak.updateToken(30)
       const res = await fetch('/api/stream', {
         headers: { Authorization: `Bearer ${$keycloak.token}`, Accept: 'text/event-stream' },
         signal: controller.signal,
       })
-      if (!res.ok || !res.body) throw new Error(`stream_${res.status}`)
+      const step = streamStep({ tokenOk, status: res.status, retriedAuth, online: navigator.onLine })
+      if (step === 'refresh-retry') return connect(true)
+      if (step === 'login') return signIn()
+      if (step !== 'stream' || !res.body) throw new Error(`stream_${res.status}`)
       delay = 1000
       if (connectedBefore) onReconnect?.()
       connectedBefore = true
@@ -45,12 +74,10 @@ export function useLiveEvents(onEvent: (e: LiveEvent) => void, onReconnect?: () 
     } catch {
       // fall through to reconnect
     }
-    if (stopped) return
-    timer = setTimeout(connect, delay)
-    delay = Math.min(delay * 2, 30000)
+    reconnectLater()
   }
 
-  onMounted(connect)
+  onMounted(() => void connect())
   onBeforeUnmount(() => {
     stopped = true
     if (timer) clearTimeout(timer)

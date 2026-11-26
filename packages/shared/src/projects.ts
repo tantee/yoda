@@ -15,6 +15,15 @@ export const Project = z.object({
 })
 export type Project = z.infer<typeof Project>
 
+/** `GET /projects` row: the project plus what the projects list shows (PM names, member count, last event). */
+export const ProjectListItem = Project.extend({
+  pmNames: z.array(z.string()),
+  memberCount: z.number().int(),
+  /** Time of the project's newest event; null when it has none. */
+  lastActivityAt: z.string().nullable(),
+})
+export type ProjectListItem = z.infer<typeof ProjectListItem>
+
 export const ProjectCreate = z.object({
   name: z.string().trim().min(1).max(200),
   description: z.string().max(5000).default(''),
@@ -25,6 +34,11 @@ export const ProjectMember = z.object({
   personId: z.string().uuid(),
   displayName: z.string(),
   roles: z.array(ProjectRole).min(1),
+  /**
+   * `GET /projects/:id` only: the member's outstanding staff tasks across all projects (assigned open or in
+   * progress, plus proposed to them), for the assign picker. Absent in other responses.
+   */
+  openTasks: z.number().int().optional(),
 })
 export type ProjectMember = z.infer<typeof ProjectMember>
 

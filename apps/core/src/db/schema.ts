@@ -215,6 +215,8 @@ export const events = pgTable(
   },
   (t) => [
     index('events_work_item_seq_idx').on(t.workItemId, t.seq),
+    // The projects list's last activity: newest event per project.
+    index('events_project_created_idx').on(t.projectId, t.createdAt),
     // The daily task cap counts today's automatic assignments (work/assign.ts).
     index('events_auto_assigned_idx')
       .on(t.createdAt)
@@ -449,6 +451,8 @@ export const departmentSettings = pgTable(
     id: integer('id').primaryKey().default(1),
     /** Monthly budget for project-less AI calls (null = no limit). */
     aiBudgetUsd: numeric('ai_budget_usd', { precision: 12, scale: 2 }),
+    /** The optional fun touches in the portal (mark, wise-master microcopy, easter egg); cosmetic only. */
+    funMode: boolean('fun_mode').notNull().default(true),
     updatedBy: uuid('updated_by').references(() => people.id, { onDelete: 'set null' }),
     updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
   },

@@ -1,0 +1,1 @@
+ALTER TABLE "department_settings" ADD COLUMN "fun_mode" boolean DEFAULT true NOT NULL;

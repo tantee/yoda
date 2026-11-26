@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify'
+import type { SeqEventEntry, WorkItemEventsPage } from '@yoda/shared'
 import { buildApp, type AppDeps } from '../src/app.js'
 import { signToken } from './jwt.js'
 import { testDeps } from './helpers.js'
@@ -47,4 +48,19 @@ export async function acceptStepAdvance(app: FastifyInstance, pm: Who, workItemI
   })
   if (dec.statusCode !== 200) throw new Error(`accept step_advance → ${dec.statusCode} ${dec.body}`)
   return true
+}
+
+/** A work item's whole timeline, oldest first, read page by page from `GET /work-items/:id/events`. */
+export async function timelineOf(app: FastifyInstance, who: Who, workItemId: string, kind: 'all' | 'key' = 'all'): Promise<SeqEventEntry[]> {
+  const all: SeqEventEntry[] = []
+  let before: number | null | undefined
+  do {
+    const query = `?limit=100&kind=${kind}${before ? `&before=${before}` : ''}`
+    const res = await app.inject({ method: 'GET', url: `/work-items/${workItemId}/events${query}`, headers: auth(who) })
+    if (res.statusCode !== 200) throw new Error(`timeline ${res.statusCode}`)
+    const page = res.json() as WorkItemEventsPage
+    all.push(...page.events)
+    before = page.nextBefore
+  } while (before)
+  return all.reverse()
 }

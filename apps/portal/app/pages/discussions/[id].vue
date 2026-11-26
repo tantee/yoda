@@ -1,32 +1,39 @@
 <script setup lang="ts">
-import type { Discussion, ProjectDetail } from '@yoda/shared'
-import { voteSummary } from '~/utils/discussions'
+import type { Discussion, DiscussionResponse, ProjectDetail } from '@yoda/shared'
+import { votersByOption } from '~/utils/discussions'
 
-const { t, locale } = useI18n()
+const { t } = useI18n()
 const { me } = useMe()
 const route = useRoute()
 const api = useApi()
 const id = route.params.id as string
 
 const d = ref<Discussion | null>(null)
+useBreadcrumb(() => (d.value ? [{ label: d.value.question }] : []))
 const project = ref<ProjectDetail | null>(null)
 const loadError = ref('')
+const loadFailure = ref<unknown>(null)
+const notFound = ref(false)
 const error = ref('')
 const busy = ref(false)
+const voting = ref(false)
 const editing = ref(false)
 const decideOpen = ref(false)
 const withdrawOpen = ref(false)
+const withdrawTried = ref(false)
+const withdrawError = ref('')
 const reason = ref('')
-const responses = ref<{ load: () => Promise<void> } | null>(null)
+const responses = ref<{ load: () => Promise<void>; vote: (key: string) => Promise<boolean> } | null>(null)
+const voters = ref<Record<string, string[]>>({})
 
 const isPm = computed(() => !!project.value?.members.some(m => m.personId === me.value?.id && m.roles.includes('PM')))
 const isAdmin = computed(() => !!me.value?.isAdmin)
 const undecided = computed(() => d.value?.state === 'open' || d.value?.state === 'scheduled')
 const canDecide = computed(() => undecided.value && (isAdmin.value || (!!d.value?.projectId && isPm.value)))
 const canEdit = computed(() => undecided.value && (isAdmin.value || isPm.value || d.value?.raisedById === me.value?.id))
-const fmt = (s: string) => new Date(s).toLocaleString(locale.value === 'en' ? 'en-GB' : 'th-TH')
+const { dateTime: fmt, date } = useDateFormat()
 const decidedTitle = computed(() => d.value?.brief?.options.find(o => o.key === d.value?.decidedOptionKey)?.title ?? '')
-const summary = computed(() => (d.value ? voteSummary(d.value) : []))
+const hasOptions = computed(() => !!d.value?.brief?.options.length && d.value.brief.status !== 'pending')
 
 let seq = 0
 async function load() {
@@ -45,7 +52,10 @@ async function load() {
     }
     void responses.value?.load()
   } catch (e) {
-    if (mine === seq) loadError.value = t(errorKey(e))
+    if (mine !== seq) return
+    notFound.value = errorKey(e) === 'errors.notFound'
+    loadError.value = t(errorKey(e))
+    loadFailure.value = e
   }
 }
 let timer: ReturnType<typeof setTimeout> | null = null
@@ -73,19 +83,38 @@ async function retry() {
   }
   await load()
 }
+function openWithdraw() {
+  reason.value = ''
+  withdrawTried.value = false
+  withdrawError.value = ''
+  withdrawOpen.value = true
+}
 async function withdraw() {
+  withdrawTried.value = true
+  if (!reason.value.trim()) return
   busy.value = true
-  error.value = ''
+  withdrawError.value = ''
   try {
     await api(`/discussions/${id}/withdraw`, { method: 'POST', body: { reason: reason.value.trim() } })
     withdrawOpen.value = false
     reason.value = ''
   } catch (e) {
-    error.value = t(errorKey(e))
+    withdrawError.value = t(errorKey(e))
   } finally {
     busy.value = false
   }
   await load()
+}
+async function vote(key: string) {
+  voting.value = true
+  try {
+    await responses.value?.vote(key)
+  } finally {
+    voting.value = false
+  }
+}
+const onResponses = (list: DiscussionResponse[]) => {
+  voters.value = votersByOption(list)
 }
 async function saved() {
   editing.value = false
@@ -95,63 +124,137 @@ async function saved() {
 
 <template>
   <div>
-    <v-btn variant="text" prepend-icon="mdi-arrow-left" to="/discussions" class="mb-2">{{ t('discussions.back') }}</v-btn>
-    <v-alert v-if="loadError" type="error" class="mb-4" data-testid="load-error">{{ loadError }}</v-alert>
+    <EmptyState
+      v-if="!d && notFound"
+      icon="mdi-forum-remove-outline"
+      wisdom="notFound"
+      :title="t('discussions.notFound')"
+      :text="t('discussions.notFoundText')"
+      data-testid="load-error"
+    >
+      <v-btn color="primary" variant="flat" to="/discussions">{{ t('discussions.backToList') }}</v-btn>
+    </EmptyState>
+    <ErrorState v-else-if="!d && loadError" :error="loadFailure" data-testid="load-error" @retry="load" />
+    <SkeletonDetail v-else-if="!d" />
     <template v-if="d">
-      <div class="d-flex align-center ga-2 mb-2">
-        <h1 class="text-h5" data-testid="question">{{ d.question }}</h1>
-        <v-spacer />
-        <v-btn v-if="canDecide" color="primary" data-testid="decide-btn" @click="decideOpen = true">{{ t('discussions.decide.button') }}</v-btn>
-        <v-btn v-if="canEdit" variant="outlined" color="error" data-testid="withdraw-btn" @click="withdrawOpen = true">{{ t('discussions.withdraw.button') }}</v-btn>
-      </div>
-      <div class="d-flex flex-wrap ga-2 mb-2">
-        <v-chip size="small" data-testid="state-chip">{{ t(`discussions.state.${d.state}`) }}</v-chip>
-        <v-chip size="small" variant="outlined">{{ t(`priority.${d.priority}`) }}</v-chip>
-        <v-chip size="small" variant="outlined" prepend-icon="mdi-account-outline">{{ t('discussions.raisedBy', { name: d.raisedByName }) }}</v-chip>
-      </div>
-      <p class="text-medium-emphasis mb-4">
-        {{ t('discussions.project') }}:
-        <NuxtLink v-if="d.projectId" :to="`/projects/${d.projectId}`">{{ d.projectName }}</NuxtLink>
-        <span v-else>{{ t('discussions.department') }}</span>
-        <template v-if="d.workItemId">
-          · {{ t('discussions.workItem') }}: <NuxtLink :to="`/work-items/${d.workItemId}`" data-testid="work-item-link">{{ d.workItemTitle }}</NuxtLink>
+      <PageHeader :title="d.question">
+        <template #context>
+          <StatusChip kind="discussion" :value="d.state" data-testid="state-chip" />
+          <PriorityMark :priority="d.priority" />
         </template>
-        <template v-if="d.agendaId"> · <NuxtLink :to="`/agendas/${d.agendaId}`">{{ t('discussions.onAgenda') }}</NuxtLink></template>
-      </p>
-      <p v-if="d.details" class="mb-4" style="white-space: pre-wrap" data-testid="details">{{ d.details }}</p>
-      <v-alert v-if="error" type="error" class="mb-4" data-testid="action-error">{{ error }}</v-alert>
+        <template #actions>
+          <v-btn v-if="canDecide" color="primary" prepend-icon="mdi-gavel" data-testid="decide-btn" @click="decideOpen = true">{{ t('discussions.decide.button') }}</v-btn>
+          <v-menu v-if="canEdit" location="bottom end">
+            <template #activator="{ props: act }">
+              <v-btn v-bind="act" icon="mdi-dots-horizontal" variant="outlined" size="small" :aria-label="t('discussions.more')" :title="t('discussions.more')" data-testid="more-btn" />
+            </template>
+            <v-list density="compact" data-testid="more-menu">
+              <v-list-item v-if="d.brief?.status !== 'pending'" prepend-icon="mdi-pencil-outline" :title="t('discussions.brief.edit')" @click="editing = true" />
+              <v-divider v-if="d.brief?.status !== 'pending'" class="my-1" />
+              <v-list-item base-color="error" prepend-icon="mdi-close-circle-outline" :title="t('discussions.withdraw.menu')" data-testid="withdraw-btn" @click="openWithdraw" />
+            </v-list>
+          </v-menu>
+        </template>
+        <template #meta>
+          <span><v-icon icon="mdi-account-outline" size="16" aria-hidden="true" /> {{ t('discussions.raisedBy', { name: d.raisedByName }) }}</span>
+          <span><v-icon icon="mdi-calendar-outline" size="16" aria-hidden="true" /> {{ date(d.createdAt) }}</span>
+        </template>
+      </PageHeader>
 
-      <v-alert v-if="d.state === 'decided'" type="success" variant="tonal" class="mb-4" :title="t('discussions.decision.title')" data-testid="decision">
-        <div style="white-space: pre-wrap">{{ d.decision }}</div>
-        <div v-if="d.decidedOptionKey" class="font-weight-medium">{{ decidedTitle }}</div>
-        <div class="text-caption">{{ t('discussions.decision.by', { name: d.decidedByName ?? '', date: d.decidedAt ? fmt(d.decidedAt) : '' }) }}</div>
-      </v-alert>
-      <v-alert v-else-if="d.state === 'withdrawn'" type="info" variant="tonal" class="mb-4" data-testid="withdrawn">{{ t('discussions.decision.withdrawn') }}</v-alert>
+      <v-alert v-if="error" type="error" variant="tonal" density="compact" class="mb-4" data-testid="action-error">{{ error }}</v-alert>
 
-      <DiscussionsBriefEditor v-if="editing" :discussion="d" class="mb-6" @saved="saved" @cancel="editing = false" />
-      <DiscussionsBriefView v-else :discussion="d" :can-edit="canEdit" :can-retry="canEdit" :busy="busy" class="mb-6" @edit="editing = true" @retry="retry" />
+      <div class="disc-layout">
+        <div class="disc-main">
+          <v-card v-if="d.state === 'decided'" class="disc-decision mb-4" data-testid="decision">
+            <div class="card-head"><h2><v-icon icon="mdi-check-decagram-outline" color="success" size="20" class="mr-1" aria-hidden="true" />{{ t('discussions.decision.title') }}</h2></div>
+            <div class="card-body">
+              <div v-if="d.decidedOptionKey" class="font-weight-medium mb-1">{{ decidedTitle }}</div>
+              <div class="pre">{{ d.decision }}</div>
+              <div class="text-caption text-medium-emphasis mt-2">{{ t('discussions.decision.by', { name: d.decidedByName ?? '', date: d.decidedAt ? fmt(d.decidedAt) : '' }) }}</div>
+            </div>
+          </v-card>
+          <v-alert v-else-if="d.state === 'withdrawn'" type="info" variant="tonal" density="compact" class="mb-4" data-testid="withdrawn">{{ t('discussions.decision.withdrawn') }}</v-alert>
 
-      <div v-if="summary.length" class="mb-6" data-testid="vote-summary">
-        <div v-for="s in summary" :key="s.key" class="d-flex ga-2">
-          <span>{{ s.title }}</span><v-spacer /><strong>{{ s.votes }}</strong>
+          <v-card v-if="d.details" class="mb-4">
+            <div class="card-head"><h2>{{ t('discussions.details') }}</h2></div>
+            <div class="card-body pre disc-reading" data-testid="details">{{ d.details }}</div>
+          </v-card>
+
+          <DiscussionsBriefEditor v-if="editing" :discussion="d" class="mb-4" @saved="saved" @cancel="editing = false" />
+          <template v-else>
+            <DiscussionsBriefView :discussion="d" :can-edit="canEdit" :can-retry="canEdit" :busy="busy" class="mb-4" @edit="editing = true" @retry="retry" />
+            <section v-if="hasOptions" class="mb-6">
+              <h2 class="disc-section">{{ t('discussions.brief.options') }}</h2>
+              <DiscussionsOptionCards :discussion="d" :voters="voters" :can-vote="undecided" :busy="voting" @vote="vote" />
+            </section>
+          </template>
+
+          <DiscussionsResponses ref="responses" :discussion="d" :can-respond="undecided" @changed="load" @loaded="onResponses" />
         </div>
-      </div>
 
-      <DiscussionsResponses ref="responses" :discussion="d" :can-respond="undecided" @changed="load" />
+        <aside class="disc-side">
+          <v-card data-testid="side-details">
+            <div class="card-head"><h2>{{ t('discussions.side.title') }}</h2></div>
+            <dl class="card-body side-list">
+              <dt>{{ t('discussions.project') }}</dt>
+              <dd>
+                <NuxtLink v-if="d.projectId" :to="`/projects/${d.projectId}`">{{ d.projectName }}</NuxtLink>
+                <span v-else>{{ t('discussions.department') }}</span>
+              </dd>
+              <template v-if="d.workItemId">
+                <dt>{{ t('discussions.workItem') }}</dt>
+                <dd><NuxtLink :to="`/work-items/${d.workItemId}`" data-testid="work-item-link">{{ d.workItemTitle }}</NuxtLink></dd>
+              </template>
+              <template v-if="d.agendaId">
+                <dt>{{ t('discussions.side.agenda') }}</dt>
+                <dd><NuxtLink :to="`/agendas/${d.agendaId}`">{{ t('discussions.onAgenda') }}</NuxtLink></dd>
+              </template>
+              <dt>{{ t('discussions.side.raisedBy') }}</dt>
+              <dd>{{ d.raisedByName }}</dd>
+              <dt>{{ t('discussions.side.created') }}</dt>
+              <dd>{{ fmt(d.createdAt) }}</dd>
+            </dl>
+          </v-card>
+        </aside>
+      </div>
 
       <DiscussionsDecideDialog v-model="decideOpen" :discussion="d" @decided="load" />
-      <v-dialog v-model="withdrawOpen" max-width="420">
-        <v-card :title="t('discussions.withdraw.title')" data-testid="withdraw-dialog">
-          <v-card-text>
-            <v-textarea v-model="reason" :label="t('discussions.withdraw.reason')" rows="2" auto-grow data-testid="withdraw-reason" />
-          </v-card-text>
-          <v-card-actions>
-            <v-spacer />
-            <v-btn @click="withdrawOpen = false">{{ t('common.cancel') }}</v-btn>
-            <v-btn color="error" :loading="busy" :disabled="!reason.trim()" data-testid="withdraw-submit" @click="withdraw">{{ t('discussions.withdraw.submit') }}</v-btn>
-          </v-card-actions>
-        </v-card>
-      </v-dialog>
+      <ConfirmDialog
+        v-model="withdrawOpen"
+        :title="t('discussions.withdraw.titleNamed', { question: d.question })"
+        :text="t('discussions.withdraw.text')"
+        :confirm-label="t('discussions.withdraw.submit')"
+        destructive
+        :busy="busy"
+        :dirty="!!reason.trim()"
+        :error="withdrawError"
+        confirm-testid="withdraw-submit"
+        data-testid="withdraw-dialog"
+        @confirm="withdraw"
+      >
+        <v-textarea
+          v-model="reason"
+          :label="t('discussions.withdraw.reasonRequired')"
+          rows="2"
+          auto-grow
+          class="mt-4"
+          :error-messages="withdrawTried && !reason.trim() ? [t('discussions.withdraw.reasonMissing')] : []"
+          data-testid="withdraw-reason"
+        />
+      </ConfirmDialog>
     </template>
   </div>
 </template>
+
+<style scoped>
+.disc-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-items: start; }
+@media (min-width: 1280px) { .disc-layout { grid-template-columns: minmax(0, 880px) 340px; } }
+.disc-main, .disc-side { min-width: 0; }
+.disc-section { margin: 0 0 8px; font-size: 1rem; font-weight: 600; }
+.disc-reading { max-width: 720px; font-size: .9375rem; line-height: 1.7; }
+.disc-decision { border-color: rgba(var(--v-theme-success-dot), .45) !important; }
+.pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.side-list { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px 16px; margin: 0; font-size: .875rem; }
+.side-list dt { color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity)); }
+.side-list dd { margin: 0; overflow-wrap: anywhere; }
+</style>

@@ -98,9 +98,10 @@ export async function consumeLinkCode(
       dedupeKey: `channel-link-moved:${channel}:${now.toISOString()}`,
     })
   }
+  // linkedAt from the app clock: webhook event timestamps (also app-side) are compared with it.
   await tx
     .insert(channelLinks)
-    .values({ personId: row.personId, channel, externalId })
+    .values({ personId: row.personId, channel, externalId, linkedAt: now })
     .onConflictDoUpdate({ target: [channelLinks.personId, channelLinks.channel], set: { externalId, linkedAt: now } })
   return 'linked'
 }

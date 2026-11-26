@@ -10,7 +10,7 @@ import { personAsMe } from '../src/proposals/service.js'
 import { deliverable } from '../src/routes/stream.js'
 import { FakeGitLab, startFakeGitLab } from './fake-gitlab.js'
 import { resetDb, testDb } from './helpers.js'
-import { acceptStepAdvance, auth, login, makeApp, type Who } from './support.js'
+import { acceptStepAdvance, auth, login, makeApp, timelineOf, type Who } from './support.js'
 
 // Obviously fake test value; never a real secret.
 const SECRET = 'fake-webhook-secret-for-tests'
@@ -251,8 +251,8 @@ describe('requester probing', () => {
     const delivery = await latest(id, 'accept-delivery')
     expect(delivery.assigneeId).toBe(nurse.id)
 
-    // Staff see the GitLab trail on the item.
-    const staffJson = JSON.stringify(await detail(id))
+    // Staff see the GitLab trail on the item's timeline.
+    const staffJson = JSON.stringify([await detail(id), await timelineOf(app, pm, id)])
     expect(staffJson).toContain('gitlab.mr_merged')
     expect(staffJson).toContain(fake.url)
 

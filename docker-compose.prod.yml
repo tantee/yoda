@@ -136,6 +136,7 @@ services:
       NUXT_PUBLIC_KEYCLOAK_CLIENT_ID: ${NUXT_PUBLIC_KEYCLOAK_CLIENT_ID:-yoda-portal}
       NUXT_PUBLIC_LINE_ADD_FRIEND_URL: ${NUXT_PUBLIC_LINE_ADD_FRIEND_URL:-}
       NUXT_PUBLIC_RUNNER_DOCS_URL: ${NUXT_PUBLIC_RUNNER_DOCS_URL:-https://github.com/tantee/yoda#runners}
+      NUXT_PUBLIC_ORG_LINE: ${NUXT_PUBLIC_ORG_LINE:-}
     healthcheck:
       test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:3000/health').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
       interval: 15s

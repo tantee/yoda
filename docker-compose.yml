@@ -42,6 +42,8 @@ services:
       KEYCLOAK_ADMIN_PASSWORD: admin # DEV ONLY
     volumes:
       - ./infra/keycloak:/opt/keycloak/data/import:ro
+      # The Yoda login theme (start-dev turns theme caching off, so edits show on reload).
+      - ./infra/keycloak/themes:/opt/keycloak/themes:ro
 
   # DEV ONLY: catches every email the core sends (SMTP on 1025, web UI on 8025); never used in production.
   mailpit:

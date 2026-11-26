@@ -141,6 +141,20 @@
       "when": 1795613370141,
       "tag": "0019_link_attempts",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1795656216509,
+      "tag": "0020_events_project_created",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1795662920894,
+      "tag": "0021_fun_mode",
+      "breakpoints": true
     }
   ]
 }

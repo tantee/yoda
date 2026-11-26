@@ -1,13 +1,18 @@
 <script setup lang="ts">
 import type { Notification } from '@yoda/shared'
+import { capCount } from '~/utils/nav'
+import { isLocalRoute, NOTIFICATION_ICONS } from '~/utils/search'
 
 const { t } = useI18n()
+const { relative, dateTime } = useDateFormat()
 const api = useApi()
 const { me } = useMe()
 const items = ref<Notification[]>([])
 const open = ref(false)
 
 const unread = computed(() => items.value.filter(n => !n.readAt).length)
+// The bell caps at 9+ (proposal §5.3).
+const badge = computed(() => capCount(unread.value, 9))
 
 let seq = 0
 async function load() {
@@ -53,20 +58,27 @@ async function openItem(n: Notification) {
     void load()
   }
   // Same-site paths only.
-  if (n.link && n.link.startsWith('/') && !n.link.startsWith('//')) await navigateTo(n.link)
+  if (isLocalRoute(n.link)) await navigateTo(n.link)
 }
 </script>
 
 <template>
   <v-menu v-model="open" :close-on-content-click="false" location="bottom end">
     <template #activator="{ props: activator }">
-      <v-btn v-bind="activator" icon variant="text" :title="t('notifications.title')" data-testid="bell">
-        <v-badge :model-value="unread > 0" :content="unread" color="error" data-testid="bell-count">
+      <v-btn
+        v-bind="activator"
+        icon
+        variant="text"
+        :title="t('notifications.title')"
+        :aria-label="unread ? t('shell.notificationsCount', { n: badge }) : t('notifications.title')"
+        data-testid="bell"
+      >
+        <v-badge :model-value="unread > 0" :content="badge ?? ''" color="error" data-testid="bell-count">
           <v-icon icon="mdi-bell-outline" />
         </v-badge>
       </v-btn>
     </template>
-    <v-card min-width="320" max-width="400">
+    <v-card min-width="320" max-width="400" width="min(400px, calc(100vw - 24px))">
       <v-card-title class="d-flex align-center text-subtitle-1">
         {{ t('notifications.title') }}
         <v-spacer />
@@ -79,14 +91,28 @@ async function openItem(n: Notification) {
         <v-list-item
           v-for="n in items"
           :key="n.id"
-          :title="n.title"
-          :subtitle="n.body"
-          :class="{ 'font-weight-bold': !n.readAt }"
+          :class="{ 'notification--unread': !n.readAt }"
           data-testid="notification-item"
           @click="openItem(n)"
-        />
+        >
+          <template #prepend>
+            <v-icon :icon="NOTIFICATION_ICONS[n.kind] ?? 'mdi-bell-outline'" size="20" color="primary" class="mr-n2" aria-hidden="true" />
+          </template>
+          <v-list-item-title class="notification__title">{{ n.title }}</v-list-item-title>
+          <v-list-item-subtitle>{{ n.body }}</v-list-item-subtitle>
+          <div class="text-caption text-medium-emphasis mt-1" :title="dateTime(n.createdAt)">{{ relative(n.createdAt) }}</div>
+          <template #append>
+            <span v-if="!n.readAt" class="notification__dot" :aria-label="t('shell.unread')" role="img" />
+          </template>
+        </v-list-item>
       </v-list>
       <p v-else class="pa-4 text-medium-emphasis" data-testid="notification-empty">{{ t('notifications.empty') }}</p>
     </v-card>
   </v-menu>
 </template>
+
+<style scoped>
+.notification__title { white-space: normal; }
+.notification--unread .notification__title { font-weight: 600; }
+.notification__dot { width: 8px; height: 8px; border-radius: 50%; background: rgb(var(--v-theme-primary)); margin-left: 8px; }
+</style>

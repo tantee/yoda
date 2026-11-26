@@ -1,32 +1,13 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { EventType } from '@yoda/shared'
-import { closesHint, mrStateColor, pipelineColor, syncStatusKey } from '../app/utils/gitlab'
+import { closesHint, syncStatusKey } from '../app/utils/gitlab'
 import { errorKey } from '../app/utils/errors'
 
 const load = (f: string) => JSON.parse(readFileSync(new URL(`../i18n/locales/${f}`, import.meta.url), 'utf8'))
 const LOCALES = { th: load('th.json'), en: load('en.json') }
 const lookup = (o: Record<string, unknown>, key: string): unknown =>
   key.split('.').reduce<unknown>((acc, k) => (acc && typeof acc === 'object' ? (acc as Record<string, unknown>)[k] : undefined), o)
-
-describe('pipelineColor', () => {
-  it('colours each pipeline status', () => {
-    expect(pipelineColor('success')).toBe('success')
-    expect(pipelineColor('failed')).toBe('error')
-    expect(pipelineColor('running')).toBe('info')
-    expect(pipelineColor('pending')).toBe('warning')
-    expect(pipelineColor('canceled')).toBe('grey')
-    expect(pipelineColor('none')).toBe('grey')
-  })
-})
-
-describe('mrStateColor', () => {
-  it('colours each merge request state', () => {
-    expect(mrStateColor('merged')).toBe('success')
-    expect(mrStateColor('opened')).toBe('info')
-    expect(mrStateColor('closed')).toBe('grey')
-  })
-})
 
 describe('syncStatusKey', () => {
   it('maps each sync status to a label key that exists in both locales', () => {

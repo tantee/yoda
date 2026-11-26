@@ -1,24 +1,13 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { AccountType, AgentRunState, RunnerCapability, RunnerKind, RunnerMode } from '@yoda/shared'
-import { heartbeatAgeMinutes, runStateColor, waitingFor, withinHours } from '../app/utils/runners'
+import { heartbeatAgeMinutes, runnerStatus, sortRunners, waitingFor, withinHours } from '../app/utils/runners'
 import { isStaffPath, navItemsFor } from '../app/utils/nav'
 
 const load = (f: string) => JSON.parse(readFileSync(new URL(`../i18n/locales/${f}`, import.meta.url), 'utf8'))
 const LOCALES = { th: load('th.json'), en: load('en.json') }
 const lookup = (o: Record<string, unknown>, key: string): unknown =>
   key.split('.').reduce<unknown>((acc, k) => (acc && typeof acc === 'object' ? (acc as Record<string, unknown>)[k] : undefined), o)
-
-describe('runStateColor', () => {
-  it('colours each run state', () => {
-    expect(runStateColor('running')).toBe('info')
-    expect(runStateColor('succeeded')).toBe('success')
-    expect(runStateColor('failed')).toBe('error')
-    expect(runStateColor('expired')).toBe('warning')
-    expect(runStateColor('parked')).toBe('warning')
-    expect(runStateColor('released')).toBe('grey')
-  })
-})
 
 describe('withinHours', () => {
   // 2026-11-25 is a Wednesday (day 3). Bangkok is UTC+7 all year.
@@ -122,5 +111,18 @@ describe('runner labels', () => {
   it('th is the Thai text, not a copy of en', () => {
     expect(lookup(LOCALES.th, 'runners.tokenOnce')).not.toBe(lookup(LOCALES.en, 'runners.tokenOnce'))
     expect(lookup(LOCALES.th, 'runners.settings.personalCaveat')).not.toBe(lookup(LOCALES.en, 'runners.settings.personalCaveat'))
+  })
+})
+
+describe('runnerStatus and sortRunners', () => {
+  const r = (id: string, paused: boolean, revokedAt: string | null) => ({ id, paused, revokedAt })
+  it('names the status: revoked over paused over active', () => {
+    expect(runnerStatus(r('a', false, null))).toBe('active')
+    expect(runnerStatus(r('a', true, null))).toBe('paused')
+    expect(runnerStatus(r('a', true, '2026-11-01T00:00:00Z'))).toBe('revoked')
+  })
+  it('puts revoked runners last and keeps the rest in order', () => {
+    const list = [r('x', false, '2026-11-01T00:00:00Z'), r('a', false, null), r('y', false, '2026-11-02T00:00:00Z'), r('b', true, null)]
+    expect(sortRunners(list).map(x => x.id)).toEqual(['a', 'b', 'x', 'y'])
   })
 })
