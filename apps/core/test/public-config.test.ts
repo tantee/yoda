@@ -127,7 +127,7 @@ describe('buildPublicConfig', () => {
 
   it('falls back to the registry defaults without a store, and to fun mode off when the database fails', async () => {
     const { oidcIssuer: _i, ...config } = testConfig()
-    const pc = await buildPublicConfig({ config, settings: undefined, db: funDb(new Error('down')) })
+    const pc = await buildPublicConfig({ config: { ...config, devSkipSetup: false }, settings: undefined, db: funDb(new Error('down')) })
     expect(pc).toMatchObject({
       oidc: null,
       org: { name: null, nameEn: null, line: null, defaultLocale: 'th' },
@@ -158,17 +158,38 @@ describe('GET /public-config', () => {
 })
 
 describe('setup mode: no OIDC issuer', () => {
-  it('refuses every bearer token with 503 not_configured, while public routes answer', async () => {
+  it('answers 503 setup_required for every portal route, while health, readiness and public config answer', async () => {
+    const { oidcIssuer: _i, ...config } = testConfig()
+    const a = await app({ config: { ...config, devSkipSetup: false } as AppDeps['config'] })
+    const token = await signToken({ sub: 'u1', preferred_username: 'somchai' })
+    for (const url of ['/me', '/projects', '/admin/settings', '/notifications', '/recovery/status', '/webhooks/gitlab']) {
+      const res = await a.inject({ url, headers: { authorization: `Bearer ${token}` } })
+      expect(res.statusCode, url).toBe(503)
+      expect(res.json(), url).toEqual({ error: 'setup_required' })
+    }
+    expect((await a.inject({ url: '/me' })).json()).toEqual({ error: 'setup_required' })
+    expect((await a.inject({ url: '/health' })).statusCode).toBe(200)
+    const pc = await a.inject({ url: '/public-config' })
+    expect(pc.json()).toMatchObject({ oidc: null, setup: 'required' })
+    await a.close()
+  })
+
+  it('with setup done but no issuer (dev skip), refuses every bearer token with 503 not_configured', async () => {
     const { oidcIssuer: _i, ...config } = testConfig()
     const a = await app({ config: config as AppDeps['config'] })
     const token = await signToken({ sub: 'u1', preferred_username: 'somchai' })
     const me = await a.inject({ url: '/me', headers: { authorization: `Bearer ${token}` } })
     expect(me.statusCode).toBe(503)
     expect(me.json()).toEqual({ error: 'not_configured' })
-    expect((await a.inject({ url: '/me' })).json()).toEqual({ error: 'not_configured' })
-    expect((await a.inject({ url: '/health' })).statusCode).toBe(200)
-    const pc = await a.inject({ url: '/public-config' })
-    expect(pc.json()).toMatchObject({ oidc: null, setup: 'required' })
+    await a.close()
+  })
+
+  it('a set-up install answers 404 on every /setup route (nothing to probe)', async () => {
+    const a = await app({ settings: fakeSettings({}, { setupDone: true }), config: { ...testConfig(), devSkipSetup: false } })
+    for (const [method, url] of [['GET', '/setup/status'], ['POST', '/setup/session'], ['GET', '/setup/session'], ['POST', '/setup/admin'], ['POST', '/setup/totp']] as const) {
+      const res = await a.inject({ method, url, payload: method === 'POST' ? {} : undefined })
+      expect(res.statusCode, url).toBe(404)
+    }
     await a.close()
   })
 })

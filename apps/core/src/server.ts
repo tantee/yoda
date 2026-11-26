@@ -13,6 +13,8 @@ import { LiveSettings } from './settings/live.js'
 import { SettingsStore } from './settings/store.js'
 import { internalAddresses } from './settings/outbound.js'
 import { keycloakMismatch } from './routes/public-config.js'
+import { issueSetupToken, setupTokenFile } from './local/setup-token.js'
+import { setupState } from './setup-state.js'
 
 // The bundled stack's DATABASE_URL and S3 keys come from the bootstrap volume (the `init` service) when env leaves
 // them empty; env always wins.
@@ -64,7 +66,10 @@ const ai = new AiGateway({
 // Settings tests reach loopback only with YODA_OUTBOUND_ALLOW_LOOPBACK=true (dev: the fakes on 127.0.0.1), and
 // never core's own addresses or the compose services' (looked up once, best effort).
 const outbound = { allowLoopback: settings.get('security.outboundAllowLoopback') === true, blockedAddresses: await internalAddresses() }
-const deps = live.attach({ db, bus, storage, ai, jobs, settings, outbound })
+// Setup mode (§4.1, §8.2): a new setup token on every start until setup is done, in the log and the 0600 file.
+const tokenFile = setupTokenFile(process.env)
+if (setupState(live.config, settings) === 'required') await issueSetupToken(db, { file: tokenFile, now: new Date() })
+const deps = live.attach({ db, bus, storage, ai, jobs, settings, outbound, setupTokenFile: tokenFile })
 const app = await buildApp(deps)
 await registerJobHandlers(app.deps)
 

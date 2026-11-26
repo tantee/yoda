@@ -13,7 +13,7 @@ import type { JobQueue } from './jobs/queue.js'
 import type { GitLabClient } from './gitlab/client.js'
 import type { MailTransport } from './notifications/channels/email.js'
 import type { SettingsStore } from './settings/store.js'
-import type { OutboundPolicy } from './settings/outbound.js'
+import { isInternalAddress, type OutboundPolicy } from './settings/outbound.js'
 import { createAttachmentEntry } from './knowledge/service.js'
 import { knowledgeRoutes } from './routes/knowledge.js'
 import { aiRoutes } from './routes/ai.js'
@@ -39,6 +39,8 @@ import { mcpRoutes } from './routes/mcp.js'
 import { notificationChannelRoutes } from './routes/notification-channels.js'
 import { channelWebhookRoutes } from './routes/channel-webhooks.js'
 import { publicConfigRoutes } from './routes/public-config.js'
+import { setupRoutes } from './routes/setup.js'
+import { recoveryRoutes } from './routes/recovery.js'
 import { readiness } from './readiness.js'
 import { VERSION } from './version.js'
 
@@ -67,6 +69,10 @@ export type AppDeps = {
   outbound?: OutboundPolicy
   /** The Anthropic API base for the AI settings test; tests point it at a fake. */
   anthropicUrl?: string
+  /** The clock (tests move it); defaults to the system time. */
+  now?: () => Date
+  /** Where the setup token is written (0600, the core-only bootstrap directory); null or unset: log only. */
+  setupTokenFile?: string | null
   /** Replaces the default upload hook (create the attachment's knowledge entry); tests use it to observe calls. */
   onAttachmentStored?: AttachmentStoredHook
 }
@@ -84,11 +90,13 @@ export const LOGGER_OPTIONS = {
       'req.headers["x-telegram-bot-api-secret-token"]',
       'req.headers["x-line-signature"]',
       'req.headers.cookie',
+      'req.headers["x-yoda-csrf"]',
       'headers.authorization',
       'headers["x-gitlab-token"]',
       'headers["x-telegram-bot-api-secret-token"]',
       'headers["x-line-signature"]',
       'headers.cookie',
+      'headers["x-yoda-csrf"]',
       // Settings saves and tests carry secrets in their bodies; bodies are not logged, and never should be.
       'req.body',
       'body.changes',
@@ -98,8 +106,16 @@ export const LOGGER_OPTIONS = {
   },
 } satisfies Exclude<FastifyServerOptions['logger'], boolean | undefined>
 
+/**
+ * The client address and scheme come from X-Forwarded-For / -Proto only when the direct peer is internal (the
+ * portal's /api proxy on the compose network, or loopback) and only one hop deep: the portal appends the address
+ * it saw, so a client cannot choose its own address for the rate limits and the audit log. Behind a further
+ * reverse proxy, that proxy's address is what counts.
+ */
+export const TRUST_PROXY = (address: string, hop: number): boolean => hop === 0 && isInternalAddress(address)
+
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
-  const app = Fastify({ logger: process.env.VITEST ? false : LOGGER_OPTIONS })
+  const app = Fastify({ logger: process.env.VITEST ? false : LOGGER_OPTIONS, trustProxy: TRUST_PROXY })
   app.decorate('deps', deps)
 
   app.setErrorHandler((err, _req, reply) => {
@@ -128,16 +144,18 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
 
   // Liveness: the process answers. Readiness: its database, storage and queue answer too (load balancers, compose).
   // With the settings store, health also shows the master key state, so a wrong or missing key is visible.
-  app.get('/health', { config: { public: true } }, async () => ({
+  app.get('/health', { config: { public: true, setupMode: true } }, async () => ({
     status: 'ok',
     version: VERSION,
     ...(deps.settings ? { settings: { secrets: deps.settings.keyStatus, recovery: deps.settings.recovery } } : {}),
   }))
-  app.get('/ready', { config: { public: true } }, async (_req, reply) => {
+  app.get('/ready', { config: { public: true, setupMode: true } }, async (_req, reply) => {
     const r = await readiness(app.deps)
     return reply.status(r.ok ? 200 : 503).send({ status: r.ok ? 'ok' : 'unavailable', checks: r.checks })
   })
   publicConfigRoutes(app)
+  setupRoutes(app)
+  recoveryRoutes(app)
   meRoutes(app)
   peopleRoutes(app)
   projectRoutes(app)

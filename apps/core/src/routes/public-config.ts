@@ -4,6 +4,7 @@ import type { FastifyInstance } from 'fastify'
 import type { AppDeps } from '../app.js'
 import type { Config } from '../config.js'
 import type { Db } from '../db/client.js'
+import { setupState } from '../setup-state.js'
 import { VERSION } from '../version.js'
 import { funMode } from './admin.js'
 
@@ -13,17 +14,8 @@ export function keycloakFromIssuer(issuer: string | undefined): { url: string; r
   return m ? { url: m[1]!, realm: decodeURIComponent(m[2]!) } : null
 }
 
-/**
- * Setup is done once the wizard finished (or an env install was marked done on upgrade, §6.5), when the OIDC
- * issuer comes from env (an env-based install, even with no data yet), or in dev with YODA_DEV_SKIP_SETUP=true.
- * Without a settings store (tests), a configured issuer counts as done.
- */
-// Task 7: setup-mode gating (503 setup_required) must use this same function, so the portal and core agree.
-export function setupState(config: Pick<Config, 'oidcIssuer' | 'devSkipSetup'>, settings: AppDeps['settings']): 'required' | 'done' {
-  if (config.devSkipSetup) return 'done'
-  if (!settings) return config.oidcIssuer ? 'done' : 'required'
-  return settings.setupDone || settings.fromEnv('oidc.issuer') ? 'done' : 'required'
-}
+// Re-exported: setup-mode gating (503 setup_required, auth/plugin.ts) and the portal read the same function.
+export { setupState }
 
 const trim = (s: string) => s.replace(/\/+$/, '')
 
@@ -111,7 +103,7 @@ export async function buildPublicConfig(
  */
 export function publicConfigRoutes(app: FastifyInstance): void {
   const fun = funModeCache()
-  app.get('/public-config', { config: { public: true } }, async (request, reply) => {
+  app.get('/public-config', { config: { public: true, setupMode: true } }, async (request, reply) => {
     const body = JSON.stringify(await buildPublicConfig(app.deps, fun))
     const etag = `"${createHash('sha256').update(body).digest('base64url').slice(0, 27)}"`
     reply.header('cache-control', 'no-cache').header('etag', etag)

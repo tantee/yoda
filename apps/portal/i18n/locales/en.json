@@ -686,7 +686,8 @@
       "work_item_stuck": "Work item stuck",
       "secretary_message": "AI secretary messages",
       "budget_alert": "AI budget alerts",
-      "discussion": "Discussions"
+      "discussion": "Discussions",
+      "security_alert": "Security alerts (break-glass use)"
     },
     "channels": {
       "email": "Email",
@@ -1624,13 +1625,13 @@
       "env": "Set by environment · {name}",
       "bootstrap": "Set at install only",
       "readonly": "Filled by the system",
-      "recovery_only": "Protected: not changed here",
+      "recovery_only": "Changed from recovery only",
       "bound_secret_in_env": "Its secret is set by environment · {name}",
       "how": {
         "env": "To manage it here, remove {name} from the .env on the install host and restart. The current value is kept.",
         "bootstrap": "This lives in the install host's configuration. Change it there and restart.",
         "readonly": "The system fills this in",
-        "recovery_only": "Changing the issuer, client or JWKS URL can lock everyone out, so it is not changed here. A guarded way to change it, with a test, is coming in the setup update; until then ask the host administrator.",
+        "recovery_only": "Changing the issuer, client or JWKS URL can lock everyone out, so it is changed from the recovery page (/recovery) only, after a test sign-in passes.",
         "bound_secret_in_env": "Remove {name} from the .env before moving this endpoint",
         "managed_on_host": "Set {name} on the {container} container on the install host, then restart that container. It becomes editable here in a later update.",
         "managed_on_host_unused": "Nothing reads this yet. It becomes editable here with the setup update.",
@@ -1732,7 +1733,18 @@
         "invalid_config": "The settings are not valid",
         "rejected": "The server refused the request",
         "unreachable": "The storage cannot be reached",
-        "smtp": "The SMTP server answered {status}"
+        "smtp": "The SMTP server answered {status}",
+        "state_mismatch": "The sign-in came back for another attempt; start the test sign-in again",
+        "expired": "The test sign-in took too long; start it again",
+        "pending_changed": "The pending values changed after the test started; test again",
+        "code_rejected": "The server refused the sign-in code (check the client and redirect URI)",
+        "token_invalid": "The token is not valid for these settings (issuer, audience or keys)",
+        "nonce_mismatch": "The ID token does not belong to this sign-in",
+        "azp_mismatch": "The token is for another client",
+        "typ_mismatch": "The access token has the wrong type",
+        "claims_missing": "The token lacks claims Yoda needs (username)",
+        "groups_missing": "The token has no groups claim (add the groups mapper)",
+        "not_admin": "The person who signed in is not a portal admin"
       },
       "check": {
         "discovery": "Issuer discovery",
@@ -1751,7 +1763,12 @@
         "model_embed": "Embedding model",
         "config": "Backup settings",
         "bucket": "Bucket",
-        "other": "Check"
+        "other": "Check",
+        "state": "Sign-in round trip",
+        "token": "Code exchange",
+        "id_token": "ID token",
+        "access_token": "Access token and claims",
+        "admin": "Signed in as a portal admin"
       }
     },
     "reauth": {
@@ -1812,7 +1829,7 @@
       }
     },
     "signin": {
-      "recoveryNote": "The issuer, client and JWKS URL are not changed here, so nobody is locked out. A guarded way to change them is coming in the setup update; until then ask the host administrator.",
+      "recoveryNote": "The issuer, client and JWKS URL are not changed here, so nobody is locked out; use the recovery page (/recovery) with the break-glass account. If its password is lost, the host administrator runs yoda-admin reset-break-glass.",
       "loginFunNote": "The login page fun mode is set on the Keycloak host (YODA_LOGIN_FUN_MODE)"
     },
     "runners": {
@@ -2110,5 +2127,121 @@
     "notConfiguredTitle": "Sign-in is not set up",
     "notConfigured": "This install has no Keycloak sign-in configured. An administrator can fix it from the recovery page.",
     "retry": "Try again"
+  },
+  "recovery": {
+    "title": "Yoda recovery",
+    "warning": "For emergencies only: signing in with the break-glass account here notifies every portal administrator, and every action is recorded.",
+    "insecure": "This connection is plain HTTP, so the session cookie is not protected by HTTPS. Use an SSH tunnel or HTTPS when you can.",
+    "signin": {
+      "title": "Break-glass sign-in",
+      "help": "Use the local account created during setup. Keycloak is not needed.",
+      "username": "Username",
+      "password": "Password",
+      "totp": "Authenticator code",
+      "totpHint": "6 digits from your authenticator app (leave empty if TOTP is not set up)",
+      "recoveryCode": "Recovery code",
+      "useTotp": "Use an authenticator code instead",
+      "useCode": "Use a recovery code instead",
+      "submit": "Sign in"
+    },
+    "signedIn": {
+      "title": "Recovery",
+      "as": "Signed in as {username} (break-glass)",
+      "expires": "Session ends at {at} if idle",
+      "signOut": "Sign out"
+    },
+    "reset": {
+      "title": "Finish the account reset",
+      "help": "The account was reset on the install host. Choose a new password, then set up the authenticator again, before anything else."
+    },
+    "account": {
+      "title": "Break-glass account",
+      "totp": "Authenticator (TOTP)",
+      "codesLeft": "Recovery codes left",
+      "password": "Password",
+      "newPassword": "New password",
+      "passwordRule": "At least 14 characters, not containing the username",
+      "confirmPassword": "New password again",
+      "mismatch": "The passwords do not match",
+      "savePassword": "Change password",
+      "passwordChanged": "Password changed. Other sessions of this account were ended.",
+      "currentTotp": "Current authenticator code"
+    },
+    "totp": {
+      "title": "Authenticator (TOTP)",
+      "start": "Set up a new authenticator",
+      "code": "Code from the new authenticator",
+      "currentCode": "Code from the current authenticator",
+      "confirm": "Confirm",
+      "enrolled": "Authenticator set up.",
+      "qrAlt": "QR code for the authenticator app",
+      "scan": "Scan this QR code with an authenticator app, then enter the 6-digit code it shows.",
+      "manual": "Or type this key into the app:"
+    },
+    "codes": {
+      "title": "Recovery codes",
+      "regenerate": "Make 10 new codes",
+      "once": "These codes are shown only now. Store them with the recovery kit; each works once, and the old codes no longer work.",
+      "copy": "Copy",
+      "copied": "Copied"
+    },
+    "status": {
+      "title": "Install state",
+      "masterKey": "Master key",
+      "key": {
+        "ok": "OK",
+        "missing": "Missing",
+        "malformed": "Malformed",
+        "mismatch": "Does not match"
+      },
+      "setup": "Setup",
+      "setupState": {
+        "required": "Not finished",
+        "done": "Done"
+      },
+      "funMode": "Fun mode",
+      "on": "On",
+      "off": "Off",
+      "funOff": "Turn off"
+    },
+    "oidc": {
+      "title": "Sign-in (Keycloak)",
+      "help": "A new issuer, client or JWKS URL is staged first. It applies only after a test sign-in through it passes, and the previous values can be put back for 7 days.",
+      "issuer": "Issuer URL",
+      "clientId": "Client ID",
+      "jwksUrl": "JWKS URL",
+      "jwksUrlOptional": "Internal JWKS URL (optional)",
+      "notSet": "Not set",
+      "fromIssuer": "From the issuer",
+      "envLocked": "Set by environment on the install host ({names}), so it is not changed here.",
+      "stage": "Stage the change",
+      "pending": "Pending:",
+      "tested": "Test sign-in passed as {username} at {at}.",
+      "notTested": "Not tested yet: run the test sign-in before applying.",
+      "check": "Check issuer and keys",
+      "testSignIn": "Test sign-in",
+      "apply": "Apply",
+      "discard": "Discard",
+      "rollbackHelp": "The previous sign-in settings ({issuer}) can be put back until {until}.",
+      "rollback": "Roll back",
+      "applied": "The new sign-in settings are in use.",
+      "rolledBack": "The previous sign-in settings are back.",
+      "providerError": "The identity provider did not complete the test sign-in. Check the client settings in Keycloak and try again."
+    },
+    "error": {
+      "invalidCredentials": "Wrong username or password.",
+      "secondFactorRequired": "Enter the authenticator code or a recovery code.",
+      "invalidCode": "That code is not valid, or was already used.",
+      "rateLimited": "Too many tries. Wait {minutes} min and try again.",
+      "locked": "Too many failed tries: the account is locked for about {minutes} min.",
+      "secretsUnavailable": "The master key is missing or wrong, so the authenticator and recovery codes cannot be checked. Fix the master key on the install host.",
+      "weakPassword": "Choose a longer password with more variety, not containing the username.",
+      "sessionExpired": "The session ended. Sign in again.",
+      "setupRequired": "Setup is not finished. Use the setup page instead.",
+      "settingLocked": "This value is set by environment on the install host.",
+      "invalidState": "That cannot be done in the current state. Reload the page.",
+      "validation": "Check the values you entered.",
+      "generic": "Something went wrong. Try again."
+    }
   }
 }

@@ -3,6 +3,7 @@ import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { jwtVerify } from 'jose'
 import type { AppDeps } from '../app.js'
 import type { Config } from '../config.js'
+import { setupState } from '../setup-state.js'
 import { isStaff, TokenClaims, upsertPersonFromClaims } from './people.js'
 
 /** Thrown by guards / auth; mapped to `{ error }` bodies by the app error handler. */
@@ -42,6 +43,12 @@ export class HttpError extends Error {
         | 'settings_unavailable'
         | 'rate_limited'
         | 'not_configured'
+        | 'setup_required'
+        | 'invalid_credentials'
+        | 'csrf_failed'
+        | 'second_factor_required'
+        | 'invalid_code'
+        | 'weak_password'
       /** Machine-readable detail for some errors (runner claims: why `invalid_state`; a setting's lock reason). */
       reason?: string
       /** The setting an error is about (settings API). */
@@ -62,6 +69,8 @@ export class HttpError extends Error {
 const unauthorized = () => new HttpError(401, { error: 'unauthorized' })
 /** Sign-in is not configured yet (no OIDC issuer: setup mode); no bearer token can be checked. */
 export const notConfigured = () => new HttpError(503, { error: 'not_configured' })
+/** Setup mode (§4.1): only /setup, /public-config, /health and /ready answer until setup is done. */
+export const setupRequired = () => new HttpError(503, { error: 'setup_required' })
 export const notFound = () => new HttpError(404, { error: 'not_found' })
 export const lastAdmin = () => new HttpError(409, { error: 'last_admin' })
 export const lastPm = () => new HttpError(409, { error: 'last_pm' })
@@ -118,6 +127,10 @@ async function verifyRequest(request: FastifyRequest, deps: Pick<AppDeps, 'jwks'
 /**
  * Authenticates every route except those marked `config: { public: true }`.
  * Registered directly on the root instance so the hook applies app-wide.
+ *
+ * Setup mode first (§4.1): while setup is required, every route not marked `setupMode: true` answers
+ * 503 `setup_required`, before any token is looked at. The setup and recovery routes are `public` to this hook:
+ * they check their own cookie session (local/session.ts), and that cookie opens nothing else.
  */
 export function registerAuth(app: FastifyInstance): void {
   app.decorateRequest('me', null as unknown as Me)
@@ -125,8 +138,10 @@ export function registerAuth(app: FastifyInstance): void {
   app.decorateRequest('authTime', null)
 
   app.addHook('onRequest', async (request) => {
-    if (request.routeOptions.config?.public === true) return
     const { deps } = app
+    const route = request.routeOptions.config
+    if (route?.setupMode !== true && setupState(deps.config, deps.settings) === 'required') throw setupRequired()
+    if (route?.public === true) return
     // One snapshot of the settings for the whole check (the issuer, client id and JWKS are swapped together).
     const config = deps.config
     if (!config.oidcIssuer) throw notConfigured()
@@ -176,5 +191,7 @@ declare module 'fastify' {
   }
   interface FastifyContextConfig {
     public?: boolean
+    /** Served in setup mode (§4.1); every other route answers 503 `setup_required` until setup is done. */
+    setupMode?: boolean
   }
 }

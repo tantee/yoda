@@ -173,7 +173,7 @@ export const GeneratedSecret = z.object({ key: z.string(), value: z.string(), ve
 export type GeneratedSecret = z.infer<typeof GeneratedSecret>
 
 /**
- * Every fixed result code a settings test can return (core `settings/tests.ts` and `settings/outbound.ts`), so the
+ * Every fixed result code a settings test can return (core `settings/tests.ts`, `settings/outbound.ts` and `local/oidc-change.ts`), so the
  * portal can word each one. `http_<status>` and `smtp_<reply code>` carry a number and are matched by pattern.
  * A portal test reads core's sources and fails when a new code is missing here.
  */
@@ -186,5 +186,8 @@ export const SETTINGS_TEST_CODES = [
   // per action
   'issuer_mismatch', 'no_keys', 'client_rejected', 'smtp_error', 'no_address', 'no_sender', 'webhook_not_registered',
   'missing_scope', 'model_not_found', 'provider_unavailable', 'no_embeddings',
+  // the /recovery test sign-in of a pending OIDC change (core local/oidc-change.ts)
+  'state_mismatch', 'expired', 'pending_changed', 'code_rejected', 'token_invalid', 'nonce_mismatch', 'azp_mismatch',
+  'typ_mismatch', 'claims_missing', 'groups_missing', 'not_admin',
 ] as const
 export type SettingsTestCode = (typeof SETTINGS_TEST_CODES)[number]

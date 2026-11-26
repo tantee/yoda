@@ -20,6 +20,8 @@ import {
   encryptSecret,
   fingerprint,
   makeCanary,
+  openBlob,
+  sealBlob,
   type MasterKey,
   type MasterKeyLoad,
 } from './crypto.js'
@@ -432,6 +434,43 @@ export class SettingsStore {
     if (!row || row.ciphertext) return d.default
     const parsed = d.schema.safeParse(row.value)
     return parsed.success ? parsed.data : d.default
+  }
+
+  /**
+   * Encrypts a value that lives outside `settings` (the break-glass TOTP seed) under the master key; null when the
+   * key is not usable. The master key itself never leaves the store.
+   */
+  seal(aad: string, plaintext: string): { blob: Buffer; keyId: string } | null {
+    return this.status === 'ok' ? sealBlob(this.mk!, aad, plaintext) : null
+  }
+
+  /** Opens a `seal` blob; null when the key is not usable, is not the blob's key, or the blob does not open. */
+  open(aad: string, blob: Buffer, keyId: string): string | null {
+    if (this.status !== 'ok' || keyId !== this.mk!.id) return null
+    try {
+      return openBlob(this.mk!, aad, blob, keyId)
+    } catch {
+      return null
+    }
+  }
+
+  /** Runs `fn` with the master key (break-glass recovery-code HMACs); null when the key is not usable. */
+  withKey<T>(fn: (mk: MasterKey) => T): T | null {
+    return this.status === 'ok' ? fn(this.mk!) : null
+  }
+
+  /**
+   * An audit row that is not a setting write (§5.4): break-glass sign-ins, setup steps, recovery actions. Never a
+   * secret: callers pass names, codes and booleans only.
+   */
+  async audit(entry: { action: string; actor: { personId?: string | null; label: string; source: string; ip?: string | null; requestId?: string | null }; key?: string | null; newValue?: object | null; result?: string | null }): Promise<void> {
+    await this.db.insert(settingsAudit).values({
+      ...this.auditActor(entry.actor),
+      action: entry.action,
+      key: entry.key ?? null,
+      newValue: entry.newValue ?? null,
+      result: entry.result ?? null,
+    })
   }
 
   /** A test run (§5.4): who, which action, the result code; never a value. */

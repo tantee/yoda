@@ -169,3 +169,31 @@ export function takeMasterKey(env: NodeJS.ProcessEnv): MasterKeyLoad {
   delete env.YODA_MASTER_KEY
   return r
 }
+
+const BLOB_VERSION = 1
+
+/**
+ * A value encrypted under the master key as one blob (version, data-key nonce, wrapped data key, nonce,
+ * ciphertext + tag), for columns outside `settings` (the break-glass TOTP seed). `aad` binds it to its place.
+ */
+export function sealBlob(mk: MasterKey, aad: string, plaintext: string): { blob: Buffer; keyId: string } {
+  const e = encryptSecret(mk, aad, plaintext)
+  return { blob: Buffer.concat([Buffer.from([BLOB_VERSION]), e.dekNonce, e.wrappedDek, e.nonce, e.ciphertext]), keyId: mk.id }
+}
+
+/** Opens a `sealBlob`; throws `SecretDecryptError` for a wrong key, a tampered blob or another `aad`. */
+export function openBlob(mk: MasterKey, aad: string, blob: Buffer, keyId: string): string {
+  if (blob.length < 1 + 12 + 48 + 12 + TAG || blob[0] !== BLOB_VERSION) throw new SecretDecryptError(keyId)
+  return decryptSecret(mk, aad, {
+    keyId,
+    dekNonce: blob.subarray(1, 13),
+    wrappedDek: blob.subarray(13, 61),
+    nonce: blob.subarray(61, 73),
+    ciphertext: blob.subarray(73),
+  })
+}
+
+/** A 32-byte key derived from the master key for one purpose (HKDF-SHA-256, `info` names the purpose). */
+export function deriveKey(mk: MasterKey, info: string): Buffer {
+  return Buffer.from(hkdfSync('sha256', mk.key, Buffer.alloc(0), info, 32))
+}

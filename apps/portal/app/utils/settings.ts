@@ -461,7 +461,7 @@ export function testCodeMessage(code: string | undefined): { key: string; named?
   return { key: KNOWN_CODES.has(code) ? `settings.test.code.${code}` : 'settings.test.code.failed' }
 }
 
-const KNOWN_CHECKS = new Set(['discovery', 'jwks', 'client', 'connect', 'send', 'bot', 'webhook', 'user', 'scopes', 'anthropic', 'openai', 'model_draft', 'model_fast', 'model_embed', 'config', 'bucket'])
+const KNOWN_CHECKS = new Set(['discovery', 'jwks', 'client', 'connect', 'send', 'bot', 'webhook', 'user', 'scopes', 'anthropic', 'openai', 'model_draft', 'model_fast', 'model_embed', 'config', 'bucket', 'state', 'token', 'id_token', 'access_token', 'admin'])
 
 /** A check id (`model.draft`) as the i18n key of its label. */
 export function checkLabelKey(id: string): string {
