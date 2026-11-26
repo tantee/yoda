@@ -1,9 +1,9 @@
 import type { SettingKey } from '@yoda/shared'
 import type { JWTVerifyGetKey } from 'jose'
+import type postgres from 'postgres'
 import { buildModels, type ModelSet } from '../ai/models.js'
 import { remoteJwks } from '../auth/jwks.js'
 import type { Config } from '../config.js'
-import { pgClient } from '../db/client.js'
 import { GitLabClient } from '../gitlab/client.js'
 import { createMailTransport, emailConfigured, type MailTransport } from '../notifications/channels/email.js'
 import { SecretsUnavailableError, type SettingsLog, type SettingsStore } from './store.js'
@@ -105,9 +105,10 @@ export const DEFAULT_BUILDERS: LiveBuilders = {
 }
 
 type Held = { [K in keyof LiveBuilders]: ReturnType<LiveBuilders[K]> }
+type HolderName = keyof Held
 
 /** The Config fields each holder is built from; any other change leaves the holder alone. */
-const HOLDER_FIELDS: { [K in keyof Held]: readonly (keyof Config)[] } = {
+const HOLDER_FIELDS: { [K in HolderName]: readonly (keyof Config)[] } = {
   jwks: ['oidcIssuer', 'oidcJwksUrl'],
   models: ['anthropicApiKey', 'openaiApiKey', 'openaiBaseUrl', 'aiModelDraft', 'aiModelFast', 'aiEmbeddingModel'],
   gitlab: ['gitlabUrl', 'gitlabToken'],
@@ -126,6 +127,13 @@ function dispose(old: unknown): void {
   }
 }
 
+const HOLDERS = Object.keys(HOLDER_FIELDS) as HolderName[]
+
+/** A frozen copy: no consumer can change the snapshot others read. */
+function freeze(c: Config): Config {
+  return Object.freeze({ ...c, bootstrapAdmins: Object.freeze([...c.bootstrapAdmins]) as string[] })
+}
+
 const consoleLog: SettingsLog = {
   warn: (obj, msg) => console.warn(`settings: ${msg}`, JSON.stringify(obj)),
   info: (obj, msg) => console.log(`settings: ${msg}`, JSON.stringify(obj)),
@@ -134,12 +142,15 @@ const consoleLog: SettingsLog = {
 export class LiveSettings {
   private snapshot: Config
   private held: Held
+  /** The snapshot each holder's client was built from; a holder is rebuilt when its fields differ from it. */
+  private builtFrom: Record<HolderName, Config>
   private readonly build: LiveBuilders
   private readonly log: SettingsLog
   private readonly debounceMs: number
   private readonly unsubscribe: () => void
   private readonly store: SettingsStore
   private readonly base: Config
+  private readonly client: Pick<postgres.Sql, 'listen'> | null
   private sub: { unlisten(): Promise<unknown> } | null = null
   private timer: ReturnType<typeof setTimeout> | null = null
   private reloading: Promise<void> = Promise.resolve()
@@ -153,13 +164,17 @@ export class LiveSettings {
     log?: SettingsLog
     /** How long notifications are gathered before one reload (default 250 ms). */
     debounceMs?: number
+    /** The postgres.js client to LISTEN on (`pgClient(db)`); without it, `listen()` refuses. */
+    client?: Pick<postgres.Sql, 'listen'>
   }) {
     this.store = opts.store
     this.base = opts.base
     this.build = { ...DEFAULT_BUILDERS, ...opts.build }
     this.log = opts.log ?? consoleLog
     this.debounceMs = opts.debounceMs ?? 250
-    this.snapshot = resolveConfig(this.base, this.store)
+    this.client = opts.client ?? null
+    this.snapshot = freeze(resolveConfig(this.base, this.store))
+    this.builtFrom = { jwks: this.snapshot, models: this.snapshot, gitlab: this.snapshot, mailTransport: this.snapshot }
     this.held = {
       jwks: this.build.jwks(this.snapshot),
       models: this.build.models(this.snapshot),
@@ -196,33 +211,42 @@ export class LiveSettings {
   }
 
   /**
-   * Recomputes the snapshot from the store and rebuilds the holders whose fields changed; returns the changed
-   * field names. Runs after every store change (a write here or a reload from the listener).
+   * Recomputes the snapshot from the store and rebuilds each holder whose fields differ from the snapshot it was
+   * built from; returns the changed field names. Runs after every store change (a write here or a reload from the
+   * listener). When a rebuild fails, the snapshot keeps that holder's previous values (so a reader never pairs new
+   * config with the old client), and the next refresh tries again.
    */
   refresh(): (keyof Config)[] {
     const prev = this.snapshot
-    const next = resolveConfig(this.base, this.store)
-    for (const f of RESTART_FIELDS) (next as Record<string, unknown>)[f] = prev[f]
-    const changed = (Object.keys(next) as (keyof Config)[]).filter((f) => !same(prev[f], next[f]))
-    if (!changed.length) return changed
+    const next: Record<string, unknown> = { ...resolveConfig(this.base, this.store) }
+    for (const f of RESTART_FIELDS) next[f] = prev[f]
     const held = { ...this.held }
+    const builtFrom = { ...this.builtFrom }
     const old: unknown[] = []
-    for (const name of Object.keys(HOLDER_FIELDS) as (keyof Held)[]) {
-      if (!HOLDER_FIELDS[name].some((f) => changed.includes(f))) continue
+    for (const name of HOLDERS) {
+      const fields = HOLDER_FIELDS[name]
+      if (fields.every((f) => same(builtFrom[name][f], next[f]))) continue
       try {
-        held[name] = this.build[name](next) as never
+        held[name] = this.build[name](next as Config) as never
         old.push(this.held[name])
+        builtFrom[name] = next as Config
       } catch (err) {
-        // Keep the old client; the values are schema-checked, so this is a bug or an environment problem.
+        // Keep the old client and the values it was built from; the values are schema-checked, so this is a bug
+        // or an environment problem.
+        for (const f of fields) next[f] = builtFrom[name][f]
         this.log.warn({ holder: name, err: err instanceof Error ? err.name : 'error' }, 'client rebuild failed; keeping the previous one')
       }
     }
+    const changed = (Object.keys(next) as (keyof Config)[]).filter((f) => !same(prev[f], next[f]))
+    if (!changed.length && old.length === 0) return changed
     // One synchronous swap: no reader sees the new snapshot with an old client, or the reverse.
-    this.snapshot = next
+    this.snapshot = freeze(next as Config)
+    for (const name of HOLDERS) if (builtFrom[name] === next) builtFrom[name] = this.snapshot
+    this.builtFrom = builtFrom
     this.held = held
     for (const o of old) dispose(o)
     // Field names only, never values.
-    this.log.info({ fields: changed }, 'settings applied')
+    if (changed.length) this.log.info({ fields: changed }, 'settings applied')
     return changed
   }
 
@@ -232,8 +256,9 @@ export class LiveSettings {
    */
   async listen(): Promise<void> {
     if (this.closed || this.sub) return
+    if (!this.client) throw new Error('LiveSettings.listen needs the postgres client')
     const schedule = () => this.schedule()
-    this.sub = await pgClient(this.store.db).listen(this.store.channel, schedule, schedule)
+    this.sub = await this.client.listen(this.store.channel, schedule, schedule)
   }
 
   private schedule(): void {
@@ -246,6 +271,8 @@ export class LiveSettings {
         .then(() => this.store.load())
         .catch((err) => this.log.warn({ err: err instanceof Error ? err.name : 'error' }, 'settings reload failed'))
     }, this.debounceMs)
+    // A pending reload never keeps the process alive on its own.
+    this.timer.unref?.()
   }
 
   /** Stops listening and waits for a reload in progress. Idempotent. */

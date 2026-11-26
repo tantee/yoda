@@ -29,7 +29,7 @@ const settings = await SettingsStore.open({ db, env: process.env, masterKey })
 if (settings.recovery) console.warn(`settings: recovery state (master key ${settings.keyStatus}); stored secrets unavailable`)
 // Live apply (§5.3): `deps.config` and the clients built from settings (JWKS, AI models, GitLab, SMTP) follow
 // every change, here or on another instance (NOTIFY), without a restart. Bootstrap-only values stay from env.
-const live = new LiveSettings({ store: settings, base: config })
+const live = new LiveSettings({ store: settings, base: config, client: pgClient(db) })
 await live.listen()
 const storage = await createS3Storage(config)
 const bus = new LiveBus()

@@ -113,6 +113,7 @@ export const envSchema = z.object({
   YODA_SETTINGS_IMPORT: z.preprocess((v) => (v === '' ? undefined : v), z.enum(['true', 'false']).default('true')),
 })
 
+/** URLs lose trailing slashes here as in the settings registry, so the shown value is the one in effect. */
 export function loadConfig(env: NodeJS.ProcessEnv): Config {
   const parsed = envSchema.safeParse(env)
   if (!parsed.success) {
@@ -127,7 +128,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     databaseUrl: e.DATABASE_URL,
     oidcIssuer: e.OIDC_ISSUER.replace(/\/+$/, ''),
     oidcClientId: e.OIDC_CLIENT_ID,
-    oidcJwksUrl: e.OIDC_JWKS_URL,
+    oidcJwksUrl: e.OIDC_JWKS_URL?.replace(/\/+$/, ''),
     migrateOnStart: e.MIGRATE_ON_START === 'true',
     staffGroup: e.STAFF_GROUP,
     bootstrapAdmins: e.BOOTSTRAP_ADMINS.split(',')
@@ -135,11 +136,11 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
       .filter(Boolean),
     anthropicApiKey: e.ANTHROPIC_API_KEY,
     openaiApiKey: e.OPENAI_API_KEY,
-    openaiBaseUrl: e.OPENAI_BASE_URL,
+    openaiBaseUrl: e.OPENAI_BASE_URL?.replace(/\/+$/, ''),
     aiModelDraft: e.AI_MODEL_DRAFT,
     aiModelFast: e.AI_MODEL_FAST,
     aiEmbeddingModel: e.AI_EMBEDDING_MODEL,
-    s3Endpoint: e.S3_ENDPOINT,
+    s3Endpoint: e.S3_ENDPOINT.replace(/\/+$/, ''),
     s3Region: e.S3_REGION,
     s3Bucket: e.S3_BUCKET,
     s3AccessKey: e.S3_ACCESS_KEY,

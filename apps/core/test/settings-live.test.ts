@@ -22,6 +22,14 @@ const KEY: MasterKeyLoad = { status: 'ok', key: masterKey(Buffer.alloc(32, 0x33)
 const admin: SettingActor = { personId: null, label: 'admin', source: 'ui' }
 const quiet = () => ({ warn: vi.fn(), info: vi.fn() })
 
+const minimalEnv = {
+  DATABASE_URL: 'postgres://yoda:yoda@localhost:5432/yoda_test',
+  OIDC_ISSUER: 'https://sso.example.org/realms/yoda',
+  OIDC_CLIENT_ID: 'yoda-portal',
+  S3_ACCESS_KEY: 'access-placeholder',
+  S3_SECRET_KEY: 'secret-placeholder',
+}
+
 const opened: LiveSettings[] = []
 let channel: string
 
@@ -73,7 +81,7 @@ function builders(opts: { gitlabFetch?: typeof fetch } = {}) {
 }
 
 async function live(store: SettingsStore, build: Partial<LiveBuilders>, base: Config = testConfig(), debounceMs = 20) {
-  const l = new LiveSettings({ store, base, build, log: quiet(), debounceMs })
+  const l = new LiveSettings({ store, base, build, log: quiet(), debounceMs, client: pgClient(await testDb()) })
   opened.push(l)
   return l
 }
@@ -323,6 +331,91 @@ describe('live settings', () => {
     await writer.set('work.dailyTaskCap', 6, admin)
     await new Promise((r) => setTimeout(r, 200))
     expect(l.config.dailyTaskCap).toBe(8)
+  })
+})
+
+describe('live settings consistency', () => {
+  it('keeps the old values with the old client when a rebuild fails, and retries on the next refresh', async () => {
+    const { build, transports } = builders()
+    let broken = true
+    const mailTransport = build.mailTransport!
+    build.mailTransport = (c) => {
+      if (broken && c.smtpHost === 'smtp-b.example.org') throw new Error('boom')
+      return mailTransport(c)
+    }
+    const store = await open()
+    await store.set('smtp.host', 'smtp-a.example.org', admin)
+    await store.set('smtp.from', 'yoda@example.org', admin)
+    const l = await live(store, build)
+    const old = l.mailTransport
+    await store.set('smtp.host', 'smtp-b.example.org', admin)
+    // Readers never get the new host with the old transport.
+    expect(l.mailTransport).toBe(old)
+    expect(l.config.smtpHost).toBe('smtp-a.example.org')
+    // Other fields still apply.
+    await store.set('work.dailyTaskCap', 5, admin)
+    expect(l.config).toMatchObject({ dailyTaskCap: 5, smtpHost: 'smtp-a.example.org' })
+    broken = false
+    await store.set('work.dailyTaskCap', 6, admin)
+    expect(l.config.smtpHost).toBe('smtp-b.example.org')
+    expect(l.mailTransport).toBe(transports.at(-1))
+    expect(l.mailTransport).not.toBe(old)
+  })
+
+  it('a full reload that started before a local write does not undo it', async () => {
+    const db = await testDb()
+    const store = await open()
+    const real = db.select.bind(db)
+    let release = () => {}
+    const gate = new Promise<void>((r) => (release = r))
+    let read: Promise<unknown> = Promise.resolve()
+    // The load's first read runs now (before the write) but its result arrives only after the write.
+    vi.spyOn(db, 'select').mockImplementationOnce((() => ({
+      from: (t: typeof settings) => {
+        read = Promise.resolve(real().from(t))
+        return { then: (ok: (v: unknown) => unknown, ko: (e: unknown) => unknown) => gate.then(() => read).then(ok, ko) }
+      },
+    })) as never)
+    const loading = store.load()
+    await read
+    await store.set('smtp.port', 2525, admin)
+    release()
+    await loading
+    vi.restoreAllMocks()
+    expect(store.get('smtp.port')).toBe(2525)
+    // A later load sees the committed row as usual.
+    await store.load()
+    expect(store.get('smtp.port')).toBe(2525)
+  })
+
+  it('freezes the snapshot', async () => {
+    const l = await live(await open(), builders().build)
+    expect(Object.isFrozen(l.config)).toBe(true)
+    expect(Object.isFrozen(l.config.bootstrapAdmins)).toBe(true)
+  })
+
+  it('an env URL imported and then removed from env keeps the same effective value', async () => {
+    const env = {
+      ...minimalEnv,
+      OPENAI_BASE_URL: 'https://llm.example.org/v1/',
+      OIDC_JWKS_URL: 'https://sso.example.org/certs/',
+      S3_ENDPOINT: 'http://storage.example.org:9000/',
+    }
+    const withEnv = loadConfig(env)
+    expect(withEnv).toMatchObject({
+      openaiBaseUrl: 'https://llm.example.org/v1',
+      oidcJwksUrl: 'https://sso.example.org/certs',
+      s3Endpoint: 'http://storage.example.org:9000',
+    })
+    const first = await open(env)
+    expect(first.info('ai.openaiBaseUrl').value).toBe(withEnv.openaiBaseUrl)
+    const l1 = await live(first, builders().build, withEnv)
+    const without = { ...env } as Record<string, string | undefined>
+    delete without.OPENAI_BASE_URL
+    delete without.OIDC_JWKS_URL
+    const l2 = await live(await open(without), builders().build, loadConfig(without))
+    expect(l2.config.openaiBaseUrl).toBe(l1.config.openaiBaseUrl)
+    expect(l2.config.oidcJwksUrl).toBe(l1.config.oidcJwksUrl)
   })
 })
 

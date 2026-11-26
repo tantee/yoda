@@ -156,10 +156,17 @@ export class SettingsStore {
   /** Restart-mode values as this process booted with them. */
   private bootValues = new Map<SettingKey, unknown>()
   private listeners = new Set<() => void>()
+  /**
+   * Read order: every `load()` and single-key `reload()` takes the next epoch before it reads. A read applies
+   * only what no later-started read has applied already, so a full reload that began before a local write never
+   * undoes it.
+   */
+  private epoch = 0
+  private loadedAt = 0
+  private keyLoadedAt = new Map<SettingKey, number>()
 
   private constructor(
-    /** Also the NOTIFY listener's connection (live.ts). */
-    readonly db: Db,
+    private readonly db: Db,
     private readonly env: NodeJS.ProcessEnv,
     private readonly mk: MasterKey | null,
     private status: KeyStatus,
@@ -353,7 +360,11 @@ export class SettingsStore {
 
   /** Reads every row again (boot, and the NOTIFY listener in live.ts on every notification and reconnect). */
   async load(): Promise<void> {
+    const started = ++this.epoch
     const rows = await this.db.select().from(settings)
+    const [st] = await this.db.select().from(setupState).where(eq(setupState.id, 1))
+    // A load that started later has already applied newer rows.
+    if (started < this.loadedAt) return
     const next = new Map<SettingKey, Stored>()
     let secrets = 0
     for (const r of rows) {
@@ -361,16 +372,27 @@ export class SettingsStore {
       const s = this.decode(r)
       if (s) next.set(r.key as SettingKey, s)
     }
+    // Keys re-read after this load started keep their newer entry.
+    for (const [key, at] of this.keyLoadedAt) {
+      if (at < started) continue
+      const cur = this.rows.get(key)
+      if (cur) next.set(key, cur)
+      else next.delete(key)
+    }
+    this.loadedAt = started
     this.rows = next
     this.storedSecrets = secrets
-    const [st] = await this.db.select().from(setupState).where(eq(setupState.id, 1))
     this.state = { installId: st?.installId ?? '', setupDone: !!st?.setupCompletedAt }
     this.recoveryMode = !!st?.recoveryMode
     this.changed()
   }
 
   private async reload(key: SettingKey): Promise<void> {
+    const started = ++this.epoch
     const [r] = await this.db.select().from(settings).where(eq(settings.key, key))
+    // A later full load or a later read of this key has applied a newer row.
+    if (started < this.loadedAt || started < (this.keyLoadedAt.get(key) ?? 0)) return
+    this.keyLoadedAt.set(key, started)
     const s = r ? this.decode(r) : undefined
     if (s) this.rows.set(key, s)
     else this.rows.delete(key)
