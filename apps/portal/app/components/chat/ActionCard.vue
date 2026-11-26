@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { ActionCard, Proposal } from '@yoda/shared'
+import type { ActionCard, ConversationKind, Proposal } from '@yoda/shared'
 import { proposalFallbackKey } from '~/utils/requests'
 import { guardOf } from '~/utils/guards'
 import { DECISION_KINDS } from '~/utils/todo'
@@ -8,7 +8,7 @@ import { DECISION_KINDS } from '~/utils/todo'
  * One action card in a chat message (proposal §8.2 chat): kind icon + kind label, a title naming the object,
  * a state chip and a real button. Proposal cards carry the same content as To-do decision cards.
  */
-const props = defineProps<{ card: ActionCard; proposal?: Proposal; canDecide?: boolean }>()
+const props = defineProps<{ card: ActionCard; proposal?: Proposal; canDecide?: boolean; conversationKind?: ConversationKind }>()
 const emit = defineEmits<{ decided: [] }>()
 const { t } = useI18n()
 const { me } = useMe()
@@ -34,6 +34,12 @@ const proposalTitle = computed(() => {
 /** The summary when the title is the request title (so nothing is lost). */
 const proposalSummary = computed(() => (props.proposal && props.proposal.summary.trim() && props.proposal.summary !== proposalTitle.value ? props.proposal.summary : ''))
 const guard = computed(() => (props.proposal ? guardOf(props.proposal.payload) : null))
+/**
+ * Requesters cannot load proposals, so their cards name only where it went. In their own (intake) thread the
+ * only proposal is their request (create_work_item); in a work item thread they can read, staff-made proposals
+ * (create_work_item, priority_change) get a neutral label.
+ */
+const ownRequest = computed(() => props.conversationKind === 'intake' || props.conversationKind === 'personal')
 /** A requester's own pending request reads "sent to the team" rather than "awaiting a decision". */
 const stateLabel = computed(() => {
   const p = props.proposal
@@ -85,9 +91,9 @@ const stateLabel = computed(() => {
             </span>
           </div>
           <div v-if="proposal" class="action-card__title" data-testid="proposal-summary">{{ proposalTitle }}</div>
-          <div v-else-if="!staff" class="action-card__title" data-testid="proposal-summary">{{ t('chat.card.requestSent') }}</div>
+          <div v-else-if="!staff" class="action-card__title" data-testid="proposal-summary">{{ ownRequest ? t('chat.card.requestSent') : t('chat.card.sentToTeam') }}</div>
         </div>
-        <v-btn v-if="!proposal && !staff" to="/requests" size="small" variant="tonal" color="primary" data-testid="action-card-open">{{ t('chat.card.myRequests') }}</v-btn>
+        <v-btn v-if="!proposal && !staff && ownRequest" to="/requests" size="small" variant="tonal" color="primary" data-testid="action-card-open">{{ t('chat.card.myRequests') }}</v-btn>
         <StatusChip
           v-if="proposal && (proposal.state !== 'pending' || !canDecide)"
           kind="proposal"

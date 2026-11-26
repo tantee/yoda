@@ -1,4 +1,4 @@
-import type { EventEntry, EventType, WorkItemEventsPage } from '@yoda/shared'
+import { KEY_EVENT_TYPES, type EventEntry, type EventType, type WorkItemEventsPage } from '@yoda/shared'
 import { bangkokDay } from '~/utils/chat'
 import { bangkokToday } from '~/utils/status'
 
@@ -29,13 +29,8 @@ export function relativeDay(day: string, now = new Date()): 'today' | 'yesterday
   return null
 }
 
-/** Step changes, merge requests and decisions: the events worth a filled dot. */
-const KEY_EVENTS = new Set<EventType>([
-  'work_item.created', 'work_item.step_advanced', 'work_item.done', 'work_item.cancelled', 'work_item.reopened',
-  'work_item.priority_changed', 'work_item.target_date_changed',
-  'gitlab.mr_opened', 'gitlab.mr_merged', 'gitlab.mr_closed',
-  'proposal.accepted', 'discussion.raised', 'discussion.decided',
-])
+/** Key events (shared with the core's `kind=key` filter): the events worth a filled dot. */
+const KEY_EVENTS = new Set<EventType>(KEY_EVENT_TYPES)
 export const isKeyEvent = (e: Pick<EventEntry, 'type'>) => KEY_EVENTS.has(e.type)
 
 /** Timeline dot: key events filled primary, AI events hollow indigo, everything else hollow gray. */
@@ -58,4 +53,14 @@ export function mergeTimeline(loaded: WorkItemEventsPage, latest: WorkItemEvents
     events: [...latest.events, ...older],
     nextBefore: older.length ? loaded.nextBefore : latest.nextBefore,
   }
+}
+
+/**
+ * An older page loaded with cursor `before` joins the timeline below it (rows already shown are skipped). Null
+ * when the timeline has since moved to another cursor (reset by a filter change or a gap), so the result is stale.
+ */
+export function appendOlder(loaded: WorkItemEventsPage, before: number, older: WorkItemEventsPage): WorkItemEventsPage | null {
+  if (loaded.nextBefore !== before) return null
+  const seen = new Set(loaded.events.map(e => e.id))
+  return { events: [...loaded.events, ...older.events.filter(e => !seen.has(e.id))], nextBefore: older.nextBefore }
 }

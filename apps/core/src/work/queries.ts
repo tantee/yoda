@@ -1,6 +1,6 @@
 import {
   ACTIVE_TASK_STATES,
-  EventEntry,
+  KEY_EVENT_TYPES,
   MyRequest,
   Task,
   TaskWithContext,
@@ -518,13 +518,6 @@ export async function getWorkItemDetail(db: Conn, me: Me, id: string): Promise<W
     return pa[0] - pb[0] || pa[1] - pb[1] || pa[2] - pb[2]
   })
 
-  const eventRows = await db
-    .select({ e: events, actorName: people.displayName })
-    .from(events)
-    .leftJoin(people, eq(people.id, events.actorId))
-    .where(eq(events.workItemId, id))
-    .orderBy(asc(events.seq))
-
   const who = await names(db, taskRows.flatMap((t) => [t.assigneeId, t.proposedAssigneeId]))
   const ai = await aiStates(db, taskRows.map((row) => ({ row, def })))
   const runs = await latestRuns(db, taskRows.map((t) => t.id))
@@ -533,7 +526,6 @@ export async function getWorkItemDetail(db: Conn, me: Me, id: string): Promise<W
     ...toWorkItem(r, await advanceState(db, [r])),
     steps,
     tasks: taskRows.map((t) => ({ ...toTask(t, def, who, ai), run: runs.get(t.id) ?? null, parked: parked.has(t.id) })),
-    events: eventRows.map(({ e, actorName }) => EventEntry.parse(eventEntry(e, actorName))),
   })
 }
 
@@ -559,14 +551,20 @@ export async function listWorkItemEvents(
   db: Conn,
   me: Me,
   id: string,
-  { before, limit }: { before?: number; limit: number },
+  { before, limit, kind = 'all' }: { before?: number; limit: number; kind?: 'all' | 'key' },
 ): Promise<WorkItemEventsPage> {
   await requireWorkItemVisible(db, me, id)
   const rows = await db
     .select({ e: events, actorName: people.displayName })
     .from(events)
     .leftJoin(people, eq(people.id, events.actorId))
-    .where(and(eq(events.workItemId, id), before === undefined ? undefined : lt(events.seq, before)))
+    .where(
+      and(
+        eq(events.workItemId, id),
+        before === undefined ? undefined : lt(events.seq, before),
+        kind === 'key' ? inArray(events.type, [...KEY_EVENT_TYPES]) : undefined,
+      ),
+    )
     .orderBy(desc(events.seq))
     .limit(limit + 1)
   const more = rows.length > limit

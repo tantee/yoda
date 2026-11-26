@@ -299,7 +299,12 @@
     "notFound": "Work item not found",
     "notFoundHint": "It may have been removed, or you aren't a member of its project.",
     "toProjects": "Go to projects",
-    "editTargetDate": "Edit target date"
+    "editTargetDate": "Edit target date",
+    "timelineFilter": "Timeline filter",
+    "timelineKey": "Key events",
+    "timelineAll": "All",
+    "timelineEmptyKey": "No key events yet",
+    "timelineMoreFailed": "Couldn't load earlier events. Try again."
   },
   "steps": {
     "done": "Done",
@@ -508,7 +513,8 @@
       "openWorkItem": "Open work item",
       "openRequest": "View request",
       "requestSent": "Request sent to the IT team",
-      "myRequests": "My requests"
+      "myRequests": "My requests",
+      "sentToTeam": "Sent to the IT team"
     },
     "textRequired": "Add a message to send the attached files",
     "marker": {

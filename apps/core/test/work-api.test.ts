@@ -1,10 +1,10 @@
 import type { FastifyInstance } from 'fastify'
-import type { ProjectDetail, Task, TaskWithContext, Todo, WorkItemDetail, WorkItemEventsPage } from '@yoda/shared'
+import { KEY_EVENT_TYPES, type ProjectDetail, type Task, type TaskWithContext, type Todo, type WorkItemDetail, type WorkItemEventsPage } from '@yoda/shared'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { attachments, events } from '../src/db/schema.js'
 import { resetDb, testDb } from './helpers.js'
-import { acceptStepAdvance, auth, login, makeApp, type Who } from './support.js'
+import { acceptStepAdvance, auth, login, makeApp, timelineOf, type Who } from './support.js'
 
 let app: FastifyInstance
 let admin: Who
@@ -141,8 +141,10 @@ describe('work API', () => {
       proposedAssigneeId: pm.id,
       proposedAssigneeName: 'สมศรี',
     })
-    expect(wi.events.length).toBeGreaterThan(0)
-    expect(wi.events[0]).toMatchObject({ type: 'work_item.created', actorId: dev.id, actorName: 'สมชาย' })
+    const created = await timelineOf(app, dev, wi.id)
+    expect(created.length).toBeGreaterThan(0)
+    expect(created[0]).toMatchObject({ type: 'work_item.created', actorId: dev.id, actorName: 'สมชาย' })
+    expect(wi).not.toHaveProperty('events')
     expect(wi.steps.map((s) => s.status)).toEqual(['current', 'pending', 'pending', 'pending'])
 
     expect((await call(pm, 'GET', `/work-items/${wi.id}`)).json()).toEqual(wi)
@@ -223,7 +225,7 @@ describe('work API', () => {
     expect(d.tasks.map((t) => t.templateTaskKey)).toEqual([
       'accept-bug', 'implement', 'draft-tests', 'review-code', 'verify',
     ])
-    const seqTypes = d.events.map((e) => e.type)
+    const seqTypes = (await timelineOf(app, pm, wi.id)).map((e) => e.type)
     expect(seqTypes[0]).toBe('work_item.created')
     expect(seqTypes.at(-1)).toBe('task.assigned')
 
@@ -363,11 +365,12 @@ describe('work API', () => {
     expect(unknown.statusCode).toBe(404)
   })
 
-  it('events in the detail carry the actor kind', async () => {
+  it('timeline events carry the actor kind', async () => {
     const p = await project([[pm, ['PM']]])
     const wi = await createItem(pm, p)
-    expect(wi.events.length).toBeGreaterThan(0)
-    expect(wi.events.every((e) => e.actorKind === 'person')).toBe(true)
+    const evs = await timelineOf(app, pm, wi.id)
+    expect(evs.length).toBeGreaterThan(0)
+    expect(evs.every((e) => e.actorKind === 'person')).toBe(true)
   })
 
   describe('GET /work-items/:id/events', () => {
@@ -384,7 +387,7 @@ describe('work API', () => {
       const p = await project([[pm, ['PM']], [dev, ['DEV']]])
       const wi = await createItem(pm, p)
       await addEvents(wi, 40)
-      const all = (await detail(pm, wi.id)).events
+      const all = await timelineOf(app, pm, wi.id)
       const total = all.length
 
       const first = await page(dev, wi.id)
@@ -418,6 +421,30 @@ describe('work API', () => {
       const last = (await page(pm, wi.id, `?before=${one.events[0]!.seq}&limit=100`)).json() as WorkItemEventsPage
       expect(last.nextBefore).toBeNull()
       expect(last.events.every((e) => e.seq < one.events[0]!.seq)).toBe(true)
+    })
+
+    it('kind=key keeps only key events (shared KEY_EVENT_TYPES), still paged newest first', async () => {
+      const p = await project([[pm, ['PM']], [dev, ['DEV']]])
+      const wi = await createItem(pm, p)
+      await drive(wi.id, 'accept-bug', pm, approve)
+      await addEvents(wi, 5)
+      const all = await timelineOf(app, pm, wi.id)
+      const key = await timelineOf(app, pm, wi.id, 'key')
+      const keySet = new Set<string>(KEY_EVENT_TYPES)
+      expect(key.map((e) => e.id)).toEqual(all.filter((e) => keySet.has(e.type)).map((e) => e.id))
+      expect(key.map((e) => e.type)).toEqual(expect.arrayContaining(['work_item.created', 'task.accepted', 'work_item.step_advanced']))
+      expect(all.some((e) => e.type === 'knowledge.created')).toBe(true)
+      expect(key.some((e) => e.type === 'knowledge.created' || e.type === 'task.created')).toBe(false)
+      const first = (await page(pm, wi.id, '?kind=key&limit=1')).json() as WorkItemEventsPage
+      expect(first.events.map((e) => e.id)).toEqual([key.at(-1)!.id])
+      expect(first.nextBefore).toBe(first.events[0]!.seq)
+      expect((await page(pm, wi.id, '?kind=other')).statusCode).toBe(400)
+    })
+
+    it('the detail no longer carries the timeline', async () => {
+      const p = await project([[pm, ['PM']]])
+      const wi = await createItem(pm, p)
+      expect(await detail(pm, wi.id)).not.toHaveProperty('events')
     })
 
     it('staff with visibility only: non-members and unknown ids 404, requesters 404 like the detail', async () => {
@@ -495,9 +522,10 @@ describe('work API', () => {
       expect(latest('review-code')).toMatchObject({ attempt: 1, state: 'accepted' })
       expect(latest('accept-delivery')).toMatchObject({ attempt: 2, state: 'rejected' })
       expect(d.tasks.filter((t) => ['accept-delivery', 'close-bug'].includes(t.templateTaskKey)).every((t) => t.state !== 'open')).toBe(true)
-      const rejected = d.events.filter((e) => e.type === 'task.rejected' && e.reason === 'reopened')
+      const evs = await timelineOf(app, pm, wi.id)
+      const rejected = evs.filter((e) => e.type === 'task.rejected' && e.reason === 'reopened')
       expect(rejected.map((e) => e.taskId)).toEqual([latest('accept-delivery').id])
-      expect(d.events.filter((e) => e.type === 'work_item.reopened').map((e) => [e.payload, e.actorId])).toEqual([[{ from: 'close', to: 'dev' }, pm.id]])
+      expect(evs.filter((e) => e.type === 'work_item.reopened').map((e) => [e.payload, e.actorId])).toEqual([[{ from: 'close', to: 'dev' }, pm.id]])
 
       // Reopening to the current or a later step, or an unknown one, is refused.
       for (const step of ['dev', 'qc', 'close', 'nope']) {
@@ -540,7 +568,7 @@ describe('work API', () => {
       expect((await todo(pm)).proposals.filter((x) => x.workItemId === wi.id)).toEqual([])
       const d = await detail(pm, wi.id)
       expect(d.currentStepKey).toBe('intake')
-      expect(d.events.some((e) => e.type === 'proposal.superseded')).toBe(true)
+      expect((await timelineOf(app, pm, wi.id)).some((e) => e.type === 'proposal.superseded')).toBe(true)
       // No requester change request after the last one? The latest REQUESTER rejection is still the feedback.
       expect(await active(pm, wi.id, 'accept-bug')).toMatchObject({ attempt: 2, state: 'open', feedback: 'สีรายงานยังผิด' })
 

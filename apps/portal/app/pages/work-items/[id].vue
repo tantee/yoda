@@ -5,7 +5,7 @@ import { localized } from '~/utils/localized'
 import { waitingFor } from '~/utils/runners'
 import { bangkokToday, isOverdue } from '~/utils/status'
 import { statusStyle } from '~/utils/statusStyle'
-import { mergeTimeline } from '~/utils/timeline'
+import { appendOlder, mergeTimeline } from '~/utils/timeline'
 import { daysUntil, reopenTargets, stepGroups } from '~/utils/workItems'
 
 const { t, locale } = useI18n()
@@ -115,16 +115,20 @@ async function load() {
 /** Rows per timeline page (proposal §6.9: about two days, at most 20 rows). */
 const TIMELINE_PAGE = 20
 // The timeline is paged (newest first): a refresh reloads the newest page and keeps older pages already shown.
+// Key events by default (proposal §6.9); switching the filter starts over.
+const timelineKind = ref<'key' | 'all'>('key')
 const timeline = ref<WorkItemEventsPage>({ events: [], nextBefore: null })
 const timelineLoaded = ref(false)
 const timelineError = ref<unknown>(null)
 const loadingMore = ref(false)
+const moreError = ref('')
 let timelineSeq = 0
 async function loadTimeline() {
   const mine = ++timelineSeq
+  const kind = timelineKind.value
   try {
-    const page = await api<WorkItemEventsPage>(`/work-items/${id}/events`, { query: { limit: TIMELINE_PAGE } })
-    if (mine !== timelineSeq) return
+    const page = await api<WorkItemEventsPage>(`/work-items/${id}/events`, { query: { limit: TIMELINE_PAGE, kind } })
+    if (mine !== timelineSeq || kind !== timelineKind.value) return
     timeline.value = mergeTimeline(timeline.value, page)
     timelineLoaded.value = true
     timelineError.value = null
@@ -132,18 +136,26 @@ async function loadTimeline() {
     if (mine === timelineSeq && !timelineLoaded.value) timelineError.value = e
   }
 }
+watch(timelineKind, () => {
+  timeline.value = { events: [], nextBefore: null }
+  timelineLoaded.value = false
+  timelineError.value = null
+  moreError.value = ''
+  void loadTimeline()
+})
 async function loadMore() {
   const before = timeline.value.nextBefore
   if (before === null || loadingMore.value) return
   loadingMore.value = true
-  const mine = timelineSeq
+  moreError.value = ''
+  const kind = timelineKind.value
   try {
-    const page = await api<WorkItemEventsPage>(`/work-items/${id}/events`, { query: { before, limit: TIMELINE_PAGE } })
-    if (mine !== timelineSeq || timeline.value.nextBefore !== before) return
-    const seen = new Set(timeline.value.events.map(e => e.id))
-    timeline.value = { events: [...timeline.value.events, ...page.events.filter(e => !seen.has(e.id))], nextBefore: page.nextBefore }
-  } catch (e) {
-    error.value = t(errorKey(e))
+    const page = await api<WorkItemEventsPage>(`/work-items/${id}/events`, { query: { before, limit: TIMELINE_PAGE, kind } })
+    // A live refresh in the meantime keeps the cursor, so the page still applies; a reset makes it stale.
+    const next = kind === timelineKind.value ? appendOlder(timeline.value, before, page) : null
+    if (next) timeline.value = next
+  } catch {
+    moreError.value = t('workItems.timelineMoreFailed')
   } finally {
     loadingMore.value = false
   }
@@ -199,6 +211,10 @@ async function cancelItem() {
   if (ok) cancelOpen.value = false
 }
 const setTargetDate = (targetDate: string | null) => act(() => api(`/work-items/${id}`, { method: 'PATCH', body: { targetDate } }))
+// Dialog errors show inside the dialog only, and go away with it.
+watch([cancelOpen, reopenOpen], ([c, r]) => {
+  if (!c && !r) error.value = ''
+})
 function toggleStep(key: string, byDefault: boolean) {
   expanded.value = { ...expanded.value, [key]: !isExpanded(key, byDefault) }
 }
@@ -279,7 +295,7 @@ useLiveEvents((e) => {
 
       <StepTrack :steps="item.steps" :show-names="!smAndDown" class="mb-4" data-testid="stepper" />
 
-      <v-alert v-if="error" type="error" variant="tonal" class="mb-4" closable data-testid="action-error" @click:close="error = ''">{{ error }}</v-alert>
+      <v-alert v-if="error && !cancelOpen && !reopenOpen" type="error" variant="tonal" class="mb-4" closable data-testid="action-error" @click:close="error = ''">{{ error }}</v-alert>
 
       <v-alert
         v-if="item.openDiscussions > 0"
@@ -360,13 +376,29 @@ useLiveEvents((e) => {
           </section>
 
           <section :aria-labelledby="'wi-timeline-title'">
-            <h2 id="wi-timeline-title" class="text-subtitle-1 wi-section-title">{{ t('workItems.timeline') }}</h2>
+            <div class="wi-timeline-head">
+              <h2 id="wi-timeline-title" class="text-subtitle-1 wi-section-title mb-0">{{ t('workItems.timeline') }}</h2>
+              <v-btn-toggle
+                v-model="timelineKind"
+                mandatory
+                density="compact"
+                variant="outlined"
+                divided
+                color="primary"
+                :aria-label="t('workItems.timelineFilter')"
+                data-testid="timeline-filter"
+              >
+                <v-btn value="key" size="small" data-testid="timeline-filter-key">{{ t('workItems.timelineKey') }}</v-btn>
+                <v-btn value="all" size="small" data-testid="timeline-filter-all">{{ t('workItems.timelineAll') }}</v-btn>
+              </v-btn-toggle>
+            </div>
             <ErrorState v-if="timelineError" :error="timelineError" :title="t('workItems.timelineFailed')" data-testid="timeline-error" @retry="loadTimeline" />
             <v-card v-else class="wi-timeline">
               <SkeletonList v-if="!timelineLoaded" :rows="4" data-testid="timeline-loading" />
-              <p v-else-if="!timeline.events.length" class="text-body-2 text-medium-emphasis pa-4 ma-0">{{ t('workItems.timelineEmpty') }}</p>
+              <p v-else-if="!timeline.events.length" class="text-body-2 text-medium-emphasis pa-4 ma-0">{{ timelineKind === 'key' ? t('workItems.timelineEmptyKey') : t('workItems.timelineEmpty') }}</p>
               <EventTimeline v-else :events="timeline.events" :task-titles="taskTitles" class="px-4 pb-2" />
               <div v-if="timeline.nextBefore !== null" class="wi-timeline__more">
+                <div v-if="moreError" class="text-body-2 text-error text-center pt-2" role="alert" data-testid="timeline-more-error">{{ moreError }}</div>
                 <v-btn variant="text" color="primary" block :loading="loadingMore" data-testid="timeline-load-more" @click="loadMore">
                   {{ t('workItems.timelineMore', { date: timeline.events.length ? dateShort(timeline.events[timeline.events.length - 1]!.createdAt) : '' }) }}
                 </v-btn>
@@ -536,6 +568,7 @@ useLiveEvents((e) => {
   .wi-task__actions { justify-content: flex-start; }
 }
 
+.wi-timeline-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
 .wi-timeline { overflow: visible; --et-sticky-top: var(--v-layout-top, 56px); }
 .wi-timeline__more { border-top: 1px solid rgba(var(--v-border-color), var(--v-border-opacity)); padding: 4px 8px; }
 

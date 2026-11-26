@@ -133,6 +133,7 @@ function onScroll() {
                 :card="card"
                 :proposal="card.type === 'proposal' ? proposals[card.proposalId] : undefined"
                 :can-decide="card.type === 'proposal' && decidable.includes(card.proposalId)"
+                :conversation-kind="kind"
                 @decided="emit('decided')"
               />
             </div>

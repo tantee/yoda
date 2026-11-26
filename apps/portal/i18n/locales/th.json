@@ -299,7 +299,12 @@
     "notFound": "ไม่พบงานนี้",
     "notFoundHint": "งานนี้อาจถูกลบ หรือคุณไม่ได้เป็นสมาชิกของโครงการ",
     "toProjects": "ไปที่โครงการ",
-    "editTargetDate": "แก้วันที่กำหนดเสร็จ"
+    "editTargetDate": "แก้วันที่กำหนดเสร็จ",
+    "timelineFilter": "ตัวกรองไทม์ไลน์",
+    "timelineKey": "เหตุการณ์สำคัญ",
+    "timelineAll": "ทั้งหมด",
+    "timelineEmptyKey": "ยังไม่มีเหตุการณ์สำคัญ",
+    "timelineMoreFailed": "โหลดเหตุการณ์ก่อนหน้าไม่สำเร็จ ลองอีกครั้ง"
   },
   "steps": {
     "done": "เสร็จสิ้น",
@@ -508,7 +513,8 @@
       "openWorkItem": "เปิดงาน",
       "openRequest": "ดูคำขอ",
       "requestSent": "ส่งคำขอถึงทีม IT แล้ว",
-      "myRequests": "ดูคำขอของฉัน"
+      "myRequests": "ดูคำขอของฉัน",
+      "sentToTeam": "ส่งถึงทีม IT แล้ว"
     },
     "textRequired": "พิมพ์ข้อความเพื่อส่งไฟล์ที่แนบ",
     "marker": {

@@ -293,6 +293,18 @@ export const EventType = z.enum([
 ])
 export type EventType = z.infer<typeof EventType>
 
+/**
+ * Key timeline events (proposal §6.9 "เหตุการณ์สำคัญ"): state changes and step moves of the item, decisions,
+ * merge requests opened or merged, and tasks accepted or rejected. `GET /work-items/:id/events?kind=key`.
+ */
+export const KEY_EVENT_TYPES = [
+  'work_item.created', 'work_item.step_advanced', 'work_item.done', 'work_item.cancelled', 'work_item.reopened',
+  'work_item.priority_changed', 'work_item.target_date_changed',
+  'proposal.accepted', 'proposal.rejected', 'discussion.decided',
+  'gitlab.mr_opened', 'gitlab.mr_merged',
+  'task.accepted', 'task.rejected',
+] as const satisfies readonly EventType[]
+
 export const EventEntry = z.object({
   id: uuid,
   type: EventType,
@@ -306,10 +318,15 @@ export const EventEntry = z.object({
 })
 export type EventEntry = z.infer<typeof EventEntry>
 
-/** `GET /work-items/:id/events` (staff who see the item): `before` = a seq cursor, `limit` 1..100 (default 30). */
+/**
+ * `GET /work-items/:id/events` (staff who see the item): `before` = a seq cursor, `limit` 1..100 (default 30),
+ * `kind` all (default) or key events only.
+ */
 export const WorkItemEventsQuery = z.object({
   before: z.coerce.number().int().positive().optional(),
   limit: z.coerce.number().int().min(1).max(100).default(30),
+  /** `key`: only `KEY_EVENT_TYPES`. */
+  kind: z.enum(['all', 'key']).default('all'),
 })
 export type WorkItemEventsQuery = z.infer<typeof WorkItemEventsQuery>
 
@@ -324,10 +341,10 @@ export const WorkItemEventsPage = z.object({
 })
 export type WorkItemEventsPage = z.infer<typeof WorkItemEventsPage>
 
+/** The timeline is not part of the detail: it is paged through `GET /work-items/:id/events`. */
 export const WorkItemDetail = WorkItem.extend({
   steps: z.array(WorkItemStep),
   tasks: z.array(Task),
-  events: z.array(EventEntry),
 })
 export type WorkItemDetail = z.infer<typeof WorkItemDetail>
 

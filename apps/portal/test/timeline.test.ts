@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { SeqEventEntry } from '@yoda/shared'
-import { eventDot, isKeyEvent, mergeTimeline, relativeDay, timelineDays } from '../app/utils/timeline'
+import { appendOlder, eventDot, isKeyEvent, mergeTimeline, relativeDay, timelineDays } from '../app/utils/timeline'
 
 let n = 0
 function ev(seq: number, createdAt: string, over: Partial<SeqEventEntry> = {}): SeqEventEntry {
@@ -89,5 +89,23 @@ describe('mergeTimeline', () => {
     const loaded = { events: [ev(3, t), ev(2, t)], nextBefore: 2 }
     const latest = { events: [ev(9, t), ev(8, t)], nextBefore: 8 }
     expect(mergeTimeline(loaded, latest)).toEqual(latest)
+  })
+})
+
+describe('appendOlder', () => {
+  const t = '2026-11-25T00:00:00Z'
+  it('appends an older page loaded from the current cursor, skipping rows already shown', () => {
+    const loaded = { events: [ev(9, t), ev(8, t)], nextBefore: 8 }
+    const older = { events: [ev(8, t), ev(6, t), ev(5, t)], nextBefore: 5 }
+    const next = appendOlder(loaded, 8, older)!
+    expect(next.events.map(e => e.seq)).toEqual([9, 8, 6, 5])
+    expect(next.nextBefore).toBe(5)
+  })
+  it('still applies after a live refresh merged newer rows above (the cursor is unchanged)', () => {
+    const refreshed = { events: [ev(10, t), ev(9, t), ev(8, t)], nextBefore: 8 }
+    expect(appendOlder(refreshed, 8, { events: [ev(7, t)], nextBefore: null })!.events.map(e => e.seq)).toEqual([10, 9, 8, 7])
+  })
+  it('is stale (null) once the timeline was reset to another cursor (filter change or a gap)', () => {
+    expect(appendOlder({ events: [ev(20, t)], nextBefore: 20 }, 8, { events: [ev(7, t)], nextBefore: null })).toBeNull()
   })
 })
