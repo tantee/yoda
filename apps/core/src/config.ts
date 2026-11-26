@@ -106,6 +106,11 @@ export const envSchema = z.object({
   TELEGRAM_BOT_USERNAME: optional(z.string().regex(/^@?[A-Za-z0-9_]{5,32}$/, 'must be the bot username')),
   TELEGRAM_WEBHOOK_SECRET: optional(z.string().regex(/^[A-Za-z0-9_-]{16,256}$/, 'must be 16-256 characters of A-Z, a-z, 0-9, _ and -')),
   TELEGRAM_API_URL: z.preprocess((v) => (v === '' ? undefined : v), z.string().url().default('https://api.telegram.org')),
+  // Read by the settings store (src/settings), not mapped into Config: the master key never sits in Config. A bad
+  // key does not stop core; it starts in the recovery state instead.
+  YODA_MASTER_KEY: optional(z.string()),
+  YODA_MASTER_KEY_FILE: optional(z.string()),
+  YODA_SETTINGS_IMPORT: z.preprocess((v) => (v === '' ? undefined : v), z.enum(['true', 'false']).default('true')),
 })
 
 export function loadConfig(env: NodeJS.ProcessEnv): Config {

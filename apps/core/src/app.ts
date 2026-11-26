@@ -12,6 +12,7 @@ import type { AttachmentStoredHook } from './attachments/service.js'
 import type { JobQueue } from './jobs/queue.js'
 import type { GitLabClient } from './gitlab/client.js'
 import type { MailTransport } from './notifications/channels/email.js'
+import type { SettingsStore } from './settings/store.js'
 import { createAttachmentEntry } from './knowledge/service.js'
 import { knowledgeRoutes } from './routes/knowledge.js'
 import { aiRoutes } from './routes/ai.js'
@@ -50,6 +51,11 @@ export type AppDeps = {
   gitlab: GitLabClient | null
   /** SMTP transport for the email channel (server.ts builds it when SMTP is configured; tests inject a fake). */
   mailTransport?: MailTransport
+  /**
+   * Settings resolved env > database > default, with encrypted secrets (server.ts opens it at boot). Consumers
+   * still read `config`; the live switch-over is a later step. Optional so tests without it are unchanged.
+   */
+  settings?: SettingsStore
   /** Replaces the default upload hook (create the attachment's knowledge entry); tests use it to observe calls. */
   onAttachmentStored?: AttachmentStoredHook
 }
@@ -106,7 +112,12 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   })
 
   // Liveness: the process answers. Readiness: its database, storage and queue answer too (load balancers, compose).
-  app.get('/health', { config: { public: true } }, async () => ({ status: 'ok', version: VERSION }))
+  // With the settings store, health also shows the master key state, so a wrong or missing key is visible.
+  app.get('/health', { config: { public: true } }, async () => ({
+    status: 'ok',
+    version: VERSION,
+    ...(deps.settings ? { settings: { secrets: deps.settings.keyStatus, recovery: deps.settings.recovery } } : {}),
+  }))
   app.get('/ready', { config: { public: true } }, async (_req, reply) => {
     const r = await readiness(app.deps)
     return reply.status(r.ok ? 200 : 503).send({ status: r.ok ? 'ok' : 'unavailable', checks: r.checks })

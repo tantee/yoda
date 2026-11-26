@@ -12,6 +12,8 @@ import { createPgBossQueue } from './jobs/queue.js'
 import { GitLabClient } from './gitlab/client.js'
 import { seedTemplates } from './workflow/seed.js'
 import { createMailTransport, emailConfigured } from './notifications/channels/email.js'
+import { loadMasterKey } from './settings/crypto.js'
+import { SettingsStore } from './settings/store.js'
 
 const config = loadConfig(process.env)
 const db = createDb(config.databaseUrl)
@@ -22,6 +24,10 @@ if (config.migrateOnStart) {
   console.log('migrations applied')
 }
 await seedTemplates(db)
+// Imports env into the settings table (D4) and checks the master key; a missing or wrong key is a recovery
+// state shown on /health, not a crash. Consumers still read `config` for now.
+const settings = await SettingsStore.open({ db, env: process.env, masterKey: loadMasterKey(process.env) })
+if (settings.recovery) console.warn(`settings: recovery state (master key ${settings.keyStatus}); stored secrets unavailable`)
 const jwks = remoteJwks(config)
 const storage = await createS3Storage(config)
 const bus = new LiveBus()
@@ -31,7 +37,7 @@ const gitlab = config.gitlabUrl && config.gitlabToken ? new GitLabClient({ baseU
 // Caches the bot user for the webhook (which never calls GitLab); best effort, the admin status page retries it.
 if (gitlab) void gitlab.currentUser().catch(() => console.warn('gitlab: bot user not resolved at boot (GitLab unreachable?)'))
 const mailTransport = emailConfigured(config) ? createMailTransport(config) : undefined
-const app = await buildApp({ config, db, jwks, bus, storage, ai, jobs, gitlab, mailTransport })
+const app = await buildApp({ config, db, jwks, bus, storage, ai, jobs, gitlab, mailTransport, settings })
 await registerJobHandlers(app.deps)
 
 let stopping = false

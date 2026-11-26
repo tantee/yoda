@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import { SETTING_KEYS, settingDef } from '@yoda/shared'
 import { describe, expect, it } from 'vitest'
 import { envSchema } from '../src/config.js'
 
@@ -61,6 +62,35 @@ describe('docs/operations.md environment table', () => {
   it('lists nothing the code or compose does not read', () => {
     const known = new Set([...coreKeys, ...portalKeys(), ...composeKeys()])
     expect([...tableNames].filter((k) => !known.has(k))).toEqual([])
+  })
+})
+
+describe('settings registry (installer proposal §5.1, §9)', () => {
+  const defs = SETTING_KEYS.map(settingDef)
+  const envOf = (pred: (d: (typeof defs)[number]) => boolean) =>
+    defs.filter((d) => d.envName && pred(d)).map((d) => d.envName!).sort()
+  /** §9 rows the runbook does not list: one lives on the Keycloak server, one is compose's own variable. */
+  const NOT_IN_RUNBOOK = ['YODA_LOGIN_FUN_MODE', 'COMPOSE_PROFILES']
+  /** The server runner's variables stay outside the registry (§9.4). */
+  const runnerOnly = (k: string) => k.startsWith('YODA_RUNNER_') || k.startsWith('YODA_GIT_')
+
+  it('has a core row for exactly the envSchema keys', () => {
+    expect(envOf((d) => d.scope === 'core')).toEqual([...coreKeys].sort())
+  })
+
+  it('has a portal row for exactly the portal runtime keys', () => {
+    const rows = envOf((d) => d.scope === 'portal')
+    expect(portalKeys().filter((k) => !rows.includes(k))).toEqual([])
+    expect(rows.filter((k) => !portalKeys().includes(k))).toEqual([])
+  })
+
+  it('lists every registry env var in the runbook table', () => {
+    expect(envOf(() => true).filter((k) => !tableNames.has(k) && !NOT_IN_RUNBOOK.includes(k))).toEqual([])
+  })
+
+  it('has a row for every runbook variable but the server runner ones', () => {
+    const rows = new Set(envOf(() => true))
+    expect([...tableNames].filter((k) => !rows.has(k) && !runnerOnly(k))).toEqual([])
   })
 })
 

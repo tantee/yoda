@@ -154,6 +154,14 @@ Database and storage:
 | `BACKUP_AT` | Daily backup time, Asia/Bangkok | optional (`02:00`) | `02:00` |
 | `BACKUP_KEEP_DAYS` | Days of backups kept on the `backups` volume | optional (`14`) | `14` |
 
+Settings and secrets (installer proposal §3.5, §6):
+
+| Variable | Purpose | Required | Example |
+| --- | --- | --- | --- |
+| `YODA_MASTER_KEY` | Master key for secrets saved in the admin settings, base64 of 32 bytes; never stored in the database. Empty: no secrets stored there (env secrets still work); a wrong key starts core in recovery | optional | `<openssl rand -base64 32>` |
+| `YODA_MASTER_KEY_FILE` | File holding the master key instead (the bootstrap volume); `YODA_MASTER_KEY` wins when both are set | optional | `/run/yoda/core/master-key` |
+| `YODA_SETTINGS_IMPORT` | `false` = env secrets are not copied into the database on start (other values still are) | optional (`true`) | `true` |
+
 Sign-in (section 2):
 
 | Variable | Purpose | Required | Example |
