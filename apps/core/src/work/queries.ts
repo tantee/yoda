@@ -776,6 +776,17 @@ export async function getMyRequestDetail(db: Conn, me: Me, id: string): Promise<
     )
     .orderBy(desc(events.seq))
     .limit(REQUEST_TIMELINE_LIMIT)
+  // A long history keeps where it started: the received event replaces the oldest row past the cap.
+  if (rows.length === REQUEST_TIMELINE_LIMIT && !rows.some((r) => r.e.type === 'work_item.created')) {
+    const [created] = await db
+      .select({ e: events, taskType: tasks.type })
+      .from(events)
+      .leftJoin(tasks, eq(tasks.id, events.taskId))
+      .where(and(eq(events.workItemId, id), eq(events.type, 'work_item.created')))
+      .orderBy(events.seq)
+      .limit(1)
+    if (created) rows.splice(rows.length - 1, 1, created)
+  }
   const timeline: RequestEvent[] = []
   for (const { e, taskType } of rows) {
     const payload = (e.payload ?? {}) as Record<string, unknown>

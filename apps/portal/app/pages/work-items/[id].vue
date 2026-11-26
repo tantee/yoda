@@ -475,6 +475,7 @@ useLiveEvents((e) => {
         v-model="raiseOpen"
         :project-id="item.projectId"
         :work-item-id="item.id"
+        :work-item-title="item.title"
         :no-ai="project?.noAi"
         @raised="(did: string) => navigateTo(`/discussions/${did}`)"
       />
@@ -487,44 +488,38 @@ useLiveEvents((e) => {
         @assigned="load"
       />
 
-      <v-dialog v-model="reopenOpen" max-width="480" aria-labelledby="reopen-dialog-title" :persistent="busy">
-        <v-card data-testid="reopen-dialog">
-          <v-card-title id="reopen-dialog-title" class="text-wrap">{{ t('workItems.reopenTitle') }}</v-card-title>
-          <v-card-text>
-            <p class="text-body-2 mb-4">{{ t('workItems.reopenConfirm') }}</p>
-            <v-select
-              v-model="reopenStep"
-              :items="reopenItems"
-              :label="t('workItems.reopenStep')"
-              hide-details
-              data-testid="reopen-step-select"
-            />
-            <v-alert v-if="error" type="error" variant="tonal" class="mt-4" density="compact">{{ error }}</v-alert>
-          </v-card-text>
-          <v-card-actions>
-            <v-spacer />
-            <v-btn variant="text" :disabled="busy" @click="reopenOpen = false">{{ t('workItems.keep') }}</v-btn>
-            <v-btn color="primary" variant="flat" :disabled="!reopenStep" :loading="busy" data-testid="reopen-confirm" @click="reopen">
-              {{ reopenStep ? t('workItems.reopenTo', { step: reopenName }) : t('workItems.reopen') }}
-            </v-btn>
-          </v-card-actions>
-        </v-card>
-      </v-dialog>
+      <AppDialog v-model="reopenOpen" :title="t('workItems.reopenTitle')" size="confirm" :busy="busy" data-testid="reopen-dialog">
+        <p class="text-body-2 mb-4">{{ t('workItems.reopenConfirm') }}</p>
+        <v-select
+          v-model="reopenStep"
+          :items="reopenItems"
+          :label="t('workItems.reopenStep')"
+          hide-details
+          data-testid="reopen-step-select"
+        />
+        <v-alert v-if="error" type="error" variant="tonal" class="mt-4" density="compact">{{ error }}</v-alert>
+        <template #actions>
+          <v-btn variant="text" :disabled="busy" @click="reopenOpen = false">{{ t('workItems.keep') }}</v-btn>
+          <v-btn color="primary" variant="flat" :disabled="!reopenStep" :loading="busy" data-testid="reopen-confirm" @click="reopen">
+            {{ reopenStep ? t('workItems.reopenTo', { step: reopenName }) : t('workItems.reopen') }}
+          </v-btn>
+        </template>
+      </AppDialog>
 
-      <v-dialog v-model="cancelOpen" max-width="480" aria-labelledby="cancel-dialog-title" :persistent="busy">
-        <v-card data-testid="cancel-dialog">
-          <v-card-title id="cancel-dialog-title" class="text-wrap">{{ t('workItems.cancelTitleNamed', { title: item.title }) }}</v-card-title>
-          <v-card-text class="text-body-2">
-            {{ t('workItems.cancelConfirm') }}
-            <v-alert v-if="error" type="error" variant="tonal" class="mt-4" density="compact">{{ error }}</v-alert>
-          </v-card-text>
-          <v-card-actions>
-            <v-spacer />
-            <v-btn variant="text" :disabled="busy" autofocus data-testid="cancel-keep" @click="cancelOpen = false">{{ t('workItems.keep') }}</v-btn>
-            <v-btn color="error" variant="flat" :loading="busy" data-testid="cancel-confirm" @click="cancelItem">{{ t('workItems.cancel') }}</v-btn>
-          </v-card-actions>
-        </v-card>
-      </v-dialog>
+      <ConfirmDialog
+        v-model="cancelOpen"
+        :title="t('workItems.cancelTitleNamed', { title: item.title })"
+        :text="t('workItems.cancelConfirm')"
+        :confirm-label="t('workItems.cancel')"
+        :cancel-label="t('workItems.keep')"
+        destructive
+        :busy="busy"
+        :error="error"
+        confirm-testid="cancel-confirm"
+        cancel-testid="cancel-keep"
+        data-testid="cancel-dialog"
+        @confirm="cancelItem"
+      />
     </template>
   </div>
 </template>

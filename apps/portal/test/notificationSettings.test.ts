@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { ChannelName, NotificationKind, type MyNotificationPrefs } from '@yoda/shared'
-import { channelColumns, channelKey, countdown, isChecked, kindKey, msLeft, toggleChannel } from '../app/utils/notificationSettings'
+import { channelColumns, channelKey, codeLeftPercent, columnNoteKey, countdown, isChecked, kindKey, msLeft, toggleChannel } from '../app/utils/notificationSettings'
 import { errorKey } from '../app/utils/errors'
 import { navItemsFor } from '../app/utils/nav'
 
@@ -74,5 +74,29 @@ describe('labels', () => {
     const base = { id: crypto.randomUUID(), username: 'u', displayName: 'U', email: null }
     expect(navItemsFor({ ...base, isStaff: true, isAdmin: true }).map(i => i.key)).toContain('nav.admin.notifications')
     expect(navItemsFor({ ...base, isStaff: true, isAdmin: false }).map(i => i.key)).not.toContain('nav.admin.notifications')
+  })
+})
+
+describe('columnNoteKey', () => {
+  it('explains why a column cannot be ticked', () => {
+    expect(columnNoteKey({ name: 'line', available: false, linked: false })).toBe('notifications.settings.notAvailable')
+    expect(columnNoteKey({ name: 'telegram', available: true, linked: false })).toBe('notifications.settings.linkFirst')
+    expect(columnNoteKey({ name: 'email', available: true, linked: false })).toBe('notifications.settings.noEmail')
+    expect(columnNoteKey({ name: 'line', available: true, linked: true })).toBeNull()
+  })
+  it('uses keys present in both locales', () => {
+    for (const key of ['notifications.settings.notAvailable', 'notifications.settings.linkFirst', 'notifications.settings.noEmail']) {
+      for (const loc of Object.values(LOCALES)) expect(typeof lookup(loc, key)).toBe('string')
+    }
+  })
+})
+
+describe('codeLeftPercent', () => {
+  it('is the share of the 15 minutes left, clamped', () => {
+    const now = Date.parse('2026-11-26T00:00:00Z')
+    expect(codeLeftPercent('2026-11-26T00:15:00Z', now)).toBe(100)
+    expect(codeLeftPercent('2026-11-26T00:07:30Z', now)).toBe(50)
+    expect(codeLeftPercent('2026-11-25T23:59:00Z', now)).toBe(0)
+    expect(codeLeftPercent('2026-11-26T01:00:00Z', now)).toBe(100)
   })
 })

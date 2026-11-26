@@ -140,7 +140,29 @@
     "overrideStaff": "Force staff",
     "overrideRequester": "Force requester",
     "admin": "Admin",
-    "lastAdmin": "There must be at least one admin"
+    "lastAdmin": "There must be at least one admin",
+    "hint": "People come from Keycloak. Only skills, staff status and admin rights can be changed here.",
+    "search": "Search name, username or skill",
+    "filterLabel": "Type",
+    "filter": {
+      "all": "Everyone",
+      "staff": "IT staff",
+      "requester": "Requesters",
+      "admin": "Admins"
+    },
+    "type": "Type",
+    "actions": "Actions",
+    "staff": "Staff",
+    "requester": "Requester",
+    "overridden": "set manually",
+    "overrideNote": "Status set here instead of the Keycloak group",
+    "empty": "No one matches the search",
+    "edit": "Edit",
+    "editNamed": "Edit {name}",
+    "editTitle": "Edit",
+    "skillsHint": "Type and press Enter to add. Used to suggest who takes a task.",
+    "staffOverrideHint": "Normally follows the Keycloak group; change it to set it by hand.",
+    "adminHint": "Admins manage people, the AI budget, the GitLab connection and notification channels."
   },
   "errors": {
     "forbidden": "You do not have access to this page",
@@ -375,7 +397,11 @@
     "timelineKey": "Key events",
     "timelineAll": "All",
     "timelineEmptyKey": "No key events yet",
-    "timelineMoreFailed": "Couldn't load earlier events. Try again."
+    "timelineMoreFailed": "Couldn't load earlier events. Try again.",
+    "titleRequired": "Title (required)",
+    "titleMissing": "Enter a title",
+    "ownerRequired": "Owner (required)",
+    "ownerMissing": "Pick an owner"
   },
   "steps": {
     "done": "Done",
@@ -538,7 +564,11 @@
       "by": "Uploaded by",
       "noAi": "Keep from AI"
     },
-    "pageLabel": "Pages of {type}"
+    "pageLabel": "Pages of {type}",
+    "bodyEdit": "Write",
+    "bodyPreview": "Preview",
+    "markdownHint": "Markdown works, e.g. **bold**, - list",
+    "previewEmpty": "Nothing to preview yet"
   },
   "ai": {
     "title": "AI settings",
@@ -563,7 +593,12 @@
     "noAiHelp": "Turn on when the project holds data that must not leave the organisation",
     "spendOf": "{spend} of {budget}",
     "spendNoBudget": "{spend} · no budget set",
-    "month": "Month {month}"
+    "month": "Month {month}",
+    "budgetCard": "Monthly budget",
+    "byProject": "By project",
+    "project": "Project",
+    "projectBudget": "Project budget",
+    "departmentCalls": "Department-wide (no project)"
   },
   "chat": {
     "threads": "Conversations",
@@ -679,7 +714,21 @@
         "linked": "{channel} is linked",
         "unlinked": "{channel} is unlinked",
         "close": "Close"
-      }
+      },
+      "linkFirst": "Link {channel} first",
+      "channelsTitle": "Channels",
+      "portal": "Portal",
+      "alwaysOn": "Always on",
+      "portalHint": "Every notification always shows on the bell in the portal.",
+      "notLinked": "Not linked",
+      "emailReady": "Ready",
+      "channelHint": {
+        "email": "Sent to the email address on your account.",
+        "line": "Messages on LINE once your account is linked.",
+        "telegram": "Messages from the bot on Telegram once your account is linked."
+      },
+      "gridTitle": "Where to get each kind of notification",
+      "saving": "Saving…"
     },
     "admin": {
       "title": "Notification channels",
@@ -689,7 +738,15 @@
       "enabled": "Enabled",
       "yes": "Yes",
       "no": "No",
-      "notConfiguredHint": "Set its credentials in the server environment before enabling it"
+      "notConfiguredHint": "Set its credentials in the server environment before enabling it",
+      "channelsTitle": "Channels",
+      "configuredYes": "Configured",
+      "configuredNo": "Not configured",
+      "channelHint": {
+        "email": "Sent through the system's SMTP. People choose it on their notification settings.",
+        "line": "Sent through the LINE Official account. People link their account first.",
+        "telegram": "Sent through the Telegram bot. People link their account first."
+      }
     }
   },
   "answers": {
@@ -766,7 +823,9 @@
       "expected_date": "Expected to finish {date}",
       "expected_date_cleared": "Expected date removed",
       "done": "Request completed",
-      "cancelled": "Request cancelled"
+      "cancelled": "Request cancelled",
+      "answeredOther": "The question was answered",
+      "acceptedOther": "The delivery was accepted"
     },
     "contact": "Contact {name}",
     "contactLabel": "Contact",
@@ -839,7 +898,10 @@
       "retry": "Retry AI brief",
       "save": "Save brief",
       "noOptionTitle": "Every option needs a title",
-      "noRecommended": "No recommendation"
+      "noRecommended": "No recommendation",
+      "ready": "Brief ready",
+      "aiRecommended": "AI recommends",
+      "preparingHint": "The brief shows here when the AI finishes."
     },
     "failReason": {
       "no_ai": "AI is not set up",
@@ -850,31 +912,42 @@
     "thread": {
       "title": "Responses",
       "opinion": "Your opinion",
-      "send": "Send",
+      "send": "Post opinion",
       "vote": "Vote",
       "myVote": "Your vote",
       "noResponses": "No responses yet",
       "voted": "voted for {option}",
-      "opinionBy": "opinion"
+      "opinionBy": "opinion",
+      "opinionRequired": "Type your opinion first"
     },
     "decide": {
-      "button": "Decide",
+      "button": "Record decision",
       "title": "Record the decision",
       "option": "Chosen option",
       "none": "No specific option",
       "text": "Decision",
-      "submit": "Decide"
+      "submit": "Record decision",
+      "titleNamed": "Record the decision:",
+      "textRequired": "Decision (required)",
+      "textHint": "What was agreed and why. The team sees this on the work item.",
+      "textMissing": "Enter the decision before saving"
     },
     "withdraw": {
       "button": "Withdraw",
       "title": "Withdraw this discussion",
       "reason": "Reason",
-      "submit": "Withdraw"
+      "submit": "Withdraw",
+      "menu": "Withdraw…",
+      "titleNamed": "Withdraw “{question}”?",
+      "text": "The discussion closes without a decision and leaves its agenda. Work waiting on it can go on.",
+      "reasonRequired": "Reason (required)",
+      "reasonMissing": "Enter a reason before withdrawing"
     },
     "decision": {
       "title": "Decision",
       "by": "Decided by {name} on {date}",
-      "withdrawn": "Withdrawn"
+      "withdrawn": "Withdrawn",
+      "chosen": "Chosen option"
     },
     "blocked": "Waiting on {n} discussion | Waiting on {n} discussions",
     "blockedHint": "This work item cannot move on until they are decided or withdrawn.",
@@ -915,11 +988,62 @@
       "notes": "Notes",
       "prev": "Previous",
       "next": "Next",
-      "position": "{n} of {total}",
-      "presentHint": "Use the left and right arrow keys to move between discussions",
+      "position": "Item {n} of {total}",
+      "presentHint": "change item",
       "exit": "Exit",
-      "readOnly": "Only project managers and admins can edit agendas"
-    }
+      "readOnly": "Only project managers and admins can edit agendas",
+      "emptyText": "Create an agenda, then add the discussions the meeting should decide.",
+      "nameRequired": "Agenda name (required)",
+      "nameMissing": "Enter a name",
+      "day": "Meeting day",
+      "dayMissing": "Pick the meeting day",
+      "time": "Time",
+      "timeMissing": "Enter a valid time",
+      "timeHint": "Thailand time (Asia/Bangkok)",
+      "notFound": "Agenda not found",
+      "backToList": "Go to agendas",
+      "deleteMenu": "Delete agenda…",
+      "deleteTitle": "Delete “{title}”?",
+      "itemsTitle": "Items",
+      "dragHint": "Drag to reorder, or use the ⋯ menu",
+      "noItemsText": "Add open discussions with the field below.",
+      "itemMenu": "Actions for item {n}",
+      "progress": "Agenda progress",
+      "goTo": "Go to item {n}: {question}"
+    },
+    "emptyTab": {
+      "open": "No open discussions",
+      "scheduled": "No discussions on an agenda",
+      "decided": "No decided discussions yet"
+    },
+    "emptyText": "Raise a discussion from a work item or task when the team needs to decide something.",
+    "cols": {
+      "question": "Question",
+      "workItem": "Work item",
+      "priority": "Priority",
+      "brief": "Brief",
+      "votes": "Votes",
+      "raised": "Raised"
+    },
+    "voteShare": "{title}: {n} votes ({percent}%)",
+    "voteTotal": "{n} votes in total",
+    "notFound": "Discussion not found",
+    "notFoundText": "It may have been deleted, or you cannot see it.",
+    "backToList": "Go to discussions",
+    "more": "More actions",
+    "side": {
+      "title": "Details",
+      "agenda": "Agenda",
+      "raisedBy": "Raised by",
+      "created": "Raised on"
+    },
+    "optionTitleN": "Option {n}",
+    "raiseOn": "Raise a discussion on",
+    "questionRequired": "Question (required)",
+    "questionMissing": "Enter the question first",
+    "contextLabel": "Context",
+    "contextHint": "What the team needs to know to decide",
+    "optional": "optional"
   },
   "gitlab": {
     "notConnected": "GitLab is not connected",
@@ -986,8 +1110,17 @@
       "no": "No",
       "unknown": "-",
       "webhookUrl": "Webhook URL to configure in GitLab",
-      "webhookHint": "In GitLab, Settings → Webhooks: enter this URL, set the secret token to GITLAB_WEBHOOK_SECRET, and enable Merge request, Pipeline and Comments events.",
-      "copy": "Copy"
+      "copy": "Copy",
+      "connection": "Connection",
+      "check": "Check again",
+      "webhookTitle": "Webhook",
+      "stepsTitle": "Set up in GitLab",
+      "steps": {
+        "1": "In GitLab, open Settings → Webhooks of the group or project",
+        "2": "Paste the URL above into the URL field",
+        "3": "Set the Secret token to the system's GITLAB_WEBHOOK_SECRET",
+        "4": "Select Merge request, Pipeline and Comments events, then save"
+      }
     }
   },
   "runners": {
@@ -1020,11 +1153,11 @@
     "revoke": "Revoke",
     "keep": "Keep",
     "confirm": {
-      "pauseTitle": "Pause this runner?",
+      "pauseTitle": "Pause runner “{name}”?",
       "pauseText": "The runner stops claiming new tasks. Work it already claimed can still be submitted.",
-      "resumeTitle": "Resume this runner?",
+      "resumeTitle": "Resume runner “{name}”?",
       "resumeText": "The runner can claim tasks again.",
-      "revokeTitle": "Revoke this runner?",
+      "revokeTitle": "Revoke runner “{name}”?",
       "revokeText": "Its token stops working at once and its running tasks go back to the queue. This cannot be undone."
     },
     "state": {
@@ -1065,7 +1198,8 @@
       "end": "End",
       "hoursHint": "Times are in Asia/Bangkok. The window cannot cross midnight.",
       "invalidHours": "Pick at least one day and an end time after the start",
-      "personalHint": "A personal subscription works tasks on demand only, unless an admin allows personal subscriptions unattended."
+      "personalHint": "A personal subscription works tasks on demand only, unless an admin allows personal subscriptions unattended.",
+      "nameRequired": "Name (required)"
     },
     "days": {
       "0": "Sun",
@@ -1093,8 +1227,16 @@
       "pauseAllHint": "While on, no runner can claim new tasks. Work already claimed can still be submitted.",
       "allowPersonalUnattended": "Allow personal subscriptions unattended",
       "personalCaveat": "Unattended use must run under an account whose terms allow automated use (an API key, or an organization Team/Enterprise plan whose terms cover it). Whether a personal consumer subscription may be used unattended must be confirmed against the provider's current terms before turning this on.",
-      "saved": "Saved"
-    }
+      "saved": "Saved",
+      "titleAdmin": "Runner settings (admin)",
+      "allPaused": "All paused",
+      "on": "On",
+      "off": "Off"
+    },
+    "emptyText": "Create a runner on your machine or a server so the AI can change code, analyse repos and run tests.",
+    "more": "More actions for {name}",
+    "revokeMenu": "Revoke…",
+    "tokenDone": "Copied, close"
   },
   "status": {
     "title": "Status",

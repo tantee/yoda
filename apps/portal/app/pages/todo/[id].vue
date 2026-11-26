@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import type { Attachment, Conversation, ProjectDetail, TaskInput, TaskWithContext, WorkItemDetail } from '@yoda/shared'
-import { useDisplay } from 'vuetify'
 import { localized } from '~/utils/localized'
 import { requesterTaskKind, taskViewFor } from '~/utils/requests'
 import { waitingFor } from '~/utils/runners'
@@ -15,7 +14,6 @@ const route = useRoute()
 const api = useApi()
 const { dateTime, date, relative } = useDateFormat()
 const { refresh: refreshCounts } = useCounts()
-const { xs } = useDisplay()
 const id = route.params.id as string
 
 const task = ref<TaskWithContext | null>(null)
@@ -218,6 +216,7 @@ useLiveEvents((e) => {
         :project-id="task.projectId"
         :work-item-id="task.workItemId"
         :task-id="task.id"
+        :work-item-title="task.workItemTitle"
         :no-ai="project?.noAi"
         @raised="(did: string) => navigateTo(`/discussions/${did}`)"
       />
@@ -415,28 +414,28 @@ useLiveEvents((e) => {
 
       <TaskAssignDialog v-if="canManage && project" v-model="assignOpen" :task="task" :members="project.members" @assigned="onAssigned" />
 
-      <v-dialog v-model="changesOpen" aria-labelledby="changes-dialog-title" max-width="560" :persistent="busy || !!changesReason.trim()" :fullscreen="xs">
-        <v-card data-testid="changes-dialog">
-          <v-card-title id="changes-dialog-title" class="text-wrap">{{ staff ? t('task.changesTitle', { title }) : t('task.requester.changesTitle', { title: task.workItemTitle }) }}</v-card-title>
-          <v-card-text>
-            <p class="text-body-2 text-medium-emphasis mb-3">{{ staff ? t('task.changesHint') : t('task.requester.changesHint') }}</p>
-            <v-textarea
-              v-model="changesReason"
-              :label="staff ? t('task.changesReason') : t('task.requester.changesReason')"
-              :error-messages="changesError ? [changesError] : []"
-              rows="4"
-              auto-grow
-              autofocus
-              data-testid="changes-reason"
-            />
-          </v-card-text>
-          <v-card-actions>
-            <v-spacer />
-            <v-btn variant="text" :disabled="busy" data-testid="changes-cancel" @click="changesOpen = false">{{ t('common.cancel') }}</v-btn>
-            <v-btn color="primary" variant="flat" :loading="busy" data-testid="changes-submit" @click="sendChanges">{{ staff ? t('task.sendBack') : t('task.requester.sendChanges') }}</v-btn>
-          </v-card-actions>
-        </v-card>
-      </v-dialog>
+      <AppDialog
+        v-model="changesOpen"
+        :title="staff ? t('task.changesTitle', { title }) : t('task.requester.changesTitle', { title: task.workItemTitle })"
+        :busy="busy"
+        :dirty="!!changesReason.trim()"
+        data-testid="changes-dialog"
+      >
+        <p class="text-body-2 text-medium-emphasis mb-3">{{ staff ? t('task.changesHint') : t('task.requester.changesHint') }}</p>
+        <v-textarea
+          v-model="changesReason"
+          :label="staff ? t('task.changesReason') : t('task.requester.changesReason')"
+          :error-messages="changesError ? [changesError] : []"
+          rows="4"
+          auto-grow
+          autofocus
+          data-testid="changes-reason"
+        />
+        <template #actions>
+          <v-btn variant="text" :disabled="busy" data-testid="changes-cancel" @click="changesOpen = false">{{ t('common.cancel') }}</v-btn>
+          <v-btn color="primary" variant="flat" :loading="busy" data-testid="changes-submit" @click="sendChanges">{{ staff ? t('task.sendBack') : t('task.requester.sendChanges') }}</v-btn>
+        </template>
+      </AppDialog>
     </template>
   </div>
 </template>

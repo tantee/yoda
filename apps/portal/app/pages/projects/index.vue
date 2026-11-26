@@ -132,21 +132,15 @@ onMounted(load)
       </ul>
     </v-card>
 
-    <v-dialog v-model="dialog" max-width="560" :fullscreen="width < 600">
-      <v-card data-testid="create-project-dialog">
-        <div class="card-head"><h2>{{ t('projects.list.createTitle') }}</h2></div>
-        <v-card-text>
-          <v-alert v-if="createError" type="error" variant="tonal" density="compact" class="mb-3">{{ createError }}</v-alert>
-          <v-text-field v-model="form.name" :label="t('projects.name')" autofocus class="mb-2" />
-          <v-textarea v-model="form.description" :label="t('projects.description')" rows="3" />
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" @click="dialog = false">{{ t('common.cancel') }}</v-btn>
-          <v-btn color="primary" variant="flat" :disabled="!form.name.trim()" @click="create">{{ t('projects.create') }}</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <AppDialog v-model="dialog" :title="t('projects.list.createTitle')" :dirty="!!form.name.trim() || !!form.description.trim()" data-testid="create-project-dialog">
+      <v-alert v-if="createError" type="error" variant="tonal" density="compact" class="mb-3">{{ createError }}</v-alert>
+      <v-text-field v-model="form.name" :label="t('projects.name')" autofocus class="mb-3" />
+      <v-textarea v-model="form.description" :label="t('projects.description')" rows="3" />
+      <template #actions>
+        <v-btn variant="text" @click="dialog = false">{{ t('common.cancel') }}</v-btn>
+        <v-btn color="primary" variant="flat" :disabled="!form.name.trim()" @click="create">{{ t('projects.create') }}</v-btn>
+      </template>
+    </AppDialog>
   </div>
 </template>
 

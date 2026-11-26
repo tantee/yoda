@@ -14,7 +14,6 @@ const emit = defineEmits<{ changed: [] }>()
 const { t } = useI18n()
 const api = useApi()
 const { width } = useDisplay()
-const fullscreen = computed(() => width.value < 600)
 const stacked = computed(() => width.value < 1024)
 
 const autonomyError = ref('')
@@ -204,66 +203,62 @@ async function remove() {
       </div>
     </v-card>
 
-    <v-dialog v-model="rolesOpen" max-width="560" :fullscreen="fullscreen" aria-labelledby="roles-dialog-title">
-      <v-card data-testid="roles-dialog">
-        <div class="card-head">
-          <h2 id="roles-dialog-title">{{ editing ? t('projects.editRolesTitle', { name: editing.displayName }) : t('projects.addMember') }}</h2>
-        </div>
-        <v-card-text>
-          <v-alert v-if="dialogError" type="error" variant="tonal" density="compact" class="mb-3" data-testid="roles-error">{{ dialogError }}</v-alert>
-          <v-autocomplete
-            v-if="!editing"
-            v-model="personId"
-            :items="candidates"
-            item-title="displayName"
-            item-value="id"
-            :label="t('projects.person')"
-            :no-data-text="t('projects.noCandidates')"
-            :error-messages="tried && !personId ? [t('projects.personRequired')] : []"
-            class="mb-3"
-            data-testid="member-person"
+    <AppDialog
+      v-model="rolesOpen"
+      :title="editing ? t('projects.editRolesTitle', { name: editing.displayName }) : t('projects.addMember')"
+      :busy="busy"
+      data-testid="roles-dialog"
+    >
+      <v-alert v-if="dialogError" type="error" variant="tonal" density="compact" class="mb-3" data-testid="roles-error">{{ dialogError }}</v-alert>
+      <v-autocomplete
+        v-if="!editing"
+        v-model="personId"
+        :items="candidates"
+        item-title="displayName"
+        item-value="id"
+        :label="t('projects.person')"
+        :no-data-text="t('projects.noCandidates')"
+        :error-messages="tried && !personId ? [t('projects.personRequired')] : []"
+        class="mb-3"
+        data-testid="member-person"
+      />
+      <fieldset class="roles-field">
+        <legend class="text-body-2 mb-1">{{ t('projects.roles') }}</legend>
+        <div class="d-flex flex-wrap ga-2">
+          <v-checkbox
+            v-for="r in ROLES"
+            :key="r"
+            v-model="roles"
+            :value="r"
+            :label="r"
+            hide-details
+            density="compact"
+            :data-testid="`member-role-${r}`"
           />
-          <fieldset class="roles-field">
-            <legend class="text-body-2 mb-1">{{ t('projects.roles') }}</legend>
-            <div class="d-flex flex-wrap ga-2">
-              <v-checkbox
-                v-for="r in ROLES"
-                :key="r"
-                v-model="roles"
-                :value="r"
-                :label="r"
-                hide-details
-                density="compact"
-                :data-testid="`member-role-${r}`"
-              />
-            </div>
-            <p v-if="tried && !roles.length" class="text-caption text-error mt-1 mb-0 d-flex align-center ga-1" data-testid="roles-required">
-              <v-icon icon="mdi-alert-circle-outline" size="14" aria-hidden="true" />{{ t('projects.rolesRequired') }}
-            </p>
-          </fieldset>
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" @click="rolesOpen = false">{{ t('common.cancel') }}</v-btn>
-          <v-btn color="primary" variant="flat" :loading="busy" data-testid="roles-save" @click="saveRoles">{{ editing ? t('common.save') : t('projects.add') }}</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+        </div>
+        <p v-if="tried && !roles.length" class="text-caption text-error mt-1 mb-0 d-flex align-center ga-1" data-testid="roles-required">
+          <v-icon icon="mdi-alert-circle-outline" size="14" aria-hidden="true" />{{ t('projects.rolesRequired') }}
+        </p>
+      </fieldset>
+      <template #actions>
+        <v-btn variant="text" :disabled="busy" @click="rolesOpen = false">{{ t('common.cancel') }}</v-btn>
+        <v-btn color="primary" variant="flat" :loading="busy" data-testid="roles-save" @click="saveRoles">{{ editing ? t('common.save') : t('projects.add') }}</v-btn>
+      </template>
+    </AppDialog>
 
-    <v-dialog v-model="removeOpen" max-width="480" :fullscreen="fullscreen" aria-labelledby="remove-dialog-title">
-      <v-card v-if="removing" data-testid="remove-dialog">
-        <div class="card-head"><h2 id="remove-dialog-title">{{ t('projects.removeTitle', { name: removing.displayName }) }}</h2></div>
-        <v-card-text>
-          <v-alert v-if="dialogError" type="error" variant="tonal" density="compact" class="mb-3" data-testid="remove-error">{{ dialogError }}</v-alert>
-          <p class="text-body-2 mb-0">{{ t('projects.removeText', { name: removing.displayName }) }}</p>
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" autofocus data-testid="remove-keep" @click="removeOpen = false">{{ t('common.cancel') }}</v-btn>
-          <v-btn color="error" variant="flat" :loading="busy" data-testid="remove-confirm" @click="remove">{{ t('projects.removeConfirm') }}</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <ConfirmDialog
+      v-model="removeOpen"
+      :title="removing ? t('projects.removeTitle', { name: removing.displayName }) : ''"
+      :text="removing ? t('projects.removeText', { name: removing.displayName }) : ''"
+      :confirm-label="t('projects.removeConfirm')"
+      destructive
+      :busy="busy"
+      :error="dialogError"
+      confirm-testid="remove-confirm"
+      cancel-testid="remove-keep"
+      data-testid="remove-dialog"
+      @confirm="remove"
+    />
   </div>
 </template>
 

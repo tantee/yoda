@@ -303,17 +303,12 @@ const source = (e: KnowledgeEntry) => t(`knowledge.sources.${e.sourceKind}`)
       </ul>
     </v-card>
 
-    <v-dialog v-model="uploadOpen" max-width="560" :fullscreen="width < 600" aria-labelledby="upload-dialog-title">
-      <v-card data-testid="upload-dialog">
-        <div class="card-head">
-          <h2 id="upload-dialog-title">{{ t('knowledge.uploadTitle') }}</h2>
-          <v-btn icon="mdi-close" variant="text" size="small" :aria-label="t('common.close')" @click="uploadOpen = false" />
-        </div>
-        <v-card-text>
-          <AttachmentUpload :project-id="projectId" @uploaded="onUploaded" />
-        </v-card-text>
-      </v-card>
-    </v-dialog>
+    <AppDialog v-model="uploadOpen" :title="t('knowledge.uploadTitle')" data-testid="upload-dialog">
+      <AttachmentUpload :project-id="projectId" @uploaded="onUploaded" />
+      <template #actions>
+        <v-btn variant="text" @click="uploadOpen = false">{{ t('common.close') }}</v-btn>
+      </template>
+    </AppDialog>
 
     <ProjectKnowledgeEntryDialog v-model="dialogOpen" :project-id="projectId" :is-member="isMember ?? false" :entry-id="dialogEntryId" @saved="onSaved" />
   </div>

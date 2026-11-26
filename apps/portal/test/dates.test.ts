@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatDate, formatDateShort, formatDateTime, formatRelative, formatTime } from '../app/utils/dates'
+import { formatDate, formatDateShort, formatDateTime, formatDateTimeLong, formatRelative, formatTime } from '../app/utils/dates'
 
 // 14:05 on 25 Nov 2026 in Asia/Bangkok (UTC+7).
 const iso = '2026-11-25T07:05:30Z'
@@ -64,5 +64,15 @@ describe('formatRelative', () => {
   })
   it('falls back to the date after a week', () => {
     expect(formatRelative('2026-11-01T10:05:00Z', 'th', now)).toBe('1 พ.ย. 2569')
+  })
+})
+
+describe('formatDateTimeLong', () => {
+  it('spells out the weekday and month for meeting times, without seconds', () => {
+    expect(formatDateTimeLong(iso, 'th')).toBe('วันพุธที่ 25 พฤศจิกายน 2569 เวลา 14:05')
+    expect(formatDateTimeLong(iso, 'en')).toBe('Wednesday, 25 November 2026 at 14:05')
+  })
+  it('is empty for no date', () => {
+    expect(formatDateTimeLong(null, 'th')).toBe('')
   })
 })

@@ -1,4 +1,4 @@
-import { formatDate, formatDateShort, formatDateTime, formatRelative, formatTime } from '~/utils/dates'
+import { formatDate, formatDateShort, formatDateTime, formatDateTimeLong, formatRelative, formatTime } from '~/utils/dates'
 
 type Input = string | Date | null | undefined
 
@@ -7,6 +7,7 @@ export function useDateFormat() {
   const { locale } = useI18n()
   return {
     dateTime: (v: Input) => formatDateTime(v, locale.value),
+    dateTimeLong: (v: Input) => formatDateTimeLong(v, locale.value),
     date: (v: Input) => formatDate(v, locale.value),
     dateShort: (v: Input) => formatDateShort(v, locale.value),
     time: (v: Input) => formatTime(v, locale.value),

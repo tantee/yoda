@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import type { MyRequest, MyRequestDetail, Task, TaskWithContext, Todo, WorkItemDetail, WorkflowTemplateDef } from '@yoda/shared'
+import { REQUEST_TIMELINE_LIMIT } from '@yoda/shared'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { eq } from 'drizzle-orm'
 import { attachments, events, mergeRequests, projectRepos, tasks, workflowTemplates, workItemRepos } from '../src/db/schema.js'
@@ -449,6 +450,19 @@ describe('requesters in the workflow', () => {
     for (const who of [nurse2, pm, admin]) expect((await call(who, 'GET', `/me/requests/${wi.id}`)).statusCode).toBe(404)
     expect((await call(nurse, 'GET', `/me/requests/${NO_ID}`)).statusCode).toBe(404)
     expect((await call(nurse, 'GET', '/me/requests/not-a-uuid')).statusCode).toBe(400)
+  })
+
+  it('a long request timeline keeps the received event past the cap', async () => {
+    const p = await project([[pm, ['PM']], [ba, ['BA']]])
+    const wi = await createItem(p, { requesterId: nurse.id })
+    for (let i = 0; i < REQUEST_TIMELINE_LIMIT + 5; i++) {
+      const day = String((i % 27) + 1).padStart(2, '0')
+      expect((await call(pm, 'PATCH', `/work-items/${wi.id}`, { targetDate: `2026-12-${day}` })).statusCode).toBe(200)
+    }
+    const d = await requestDetail(nurse, wi.id)
+    expect(d.timeline).toHaveLength(REQUEST_TIMELINE_LIMIT)
+    expect(d.timeline.at(-1)).toMatchObject({ kind: 'received', byYou: false })
+    expect(d.timeline.filter((e) => e.kind === 'received')).toHaveLength(1)
   })
 
   it('the delivery summary is null when the acceptance has no input the requester may see', async () => {

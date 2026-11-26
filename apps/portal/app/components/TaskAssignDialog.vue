@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import type { LocalizedText, ProjectDetail, ProjectMember, TaskWithContext } from '@yoda/shared'
-import { useDisplay } from 'vuetify'
 import { localized } from '~/utils/localized'
 
 /**
@@ -18,8 +17,6 @@ const emit = defineEmits<{ 'update:modelValue': [boolean]; assigned: [TaskWithCo
 
 const { t, locale } = useI18n()
 const api = useApi()
-const { xs } = useDisplay()
-const titleId = `assign-title-${useId()}`
 const chosen = ref<string | null>(null)
 const loaded = ref<ProjectMember[]>([])
 const loading = ref(false)
@@ -77,40 +74,35 @@ async function assign() {
 </script>
 
 <template>
-  <v-dialog :model-value="modelValue" :aria-labelledby="titleId" max-width="480" :fullscreen="xs" :persistent="busy" @update:model-value="v => emit('update:modelValue', v)">
-    <v-card data-testid="assign-dialog">
-      <v-card-title :id="titleId" class="text-wrap">{{ t('task.assignTitle', { title: localized(task.title, locale) }) }}</v-card-title>
-      <v-card-text>
-        <v-autocomplete
-          v-model="chosen"
-          :items="items"
-          :label="t('task.assignee')"
-          prepend-inner-icon="mdi-account-search-outline"
-          auto-select-first
-          :loading="loading"
-          data-testid="assignee-select"
-        >
-          <template #item="{ props: itemProps, item }">
-            <v-list-item v-bind="itemProps" :data-testid="`assignee-option-${item.raw.value}`">
-              <template #append>
-                <span class="d-flex align-center ga-1">
-                  <v-chip v-for="r in item.raw.roles" :key="r" size="x-small" variant="tonal">{{ r }}</v-chip>
-                  <span v-if="item.raw.open !== undefined" class="text-caption text-medium-emphasis ml-2 tabular-nums">
-                    {{ t('task.openLoad', { n: item.raw.open }) }}
-                  </span>
-                </span>
-              </template>
-              <v-list-item-subtitle v-if="item.raw.value === task.proposedAssigneeId">{{ t('task.proposedAssignee') }}</v-list-item-subtitle>
-            </v-list-item>
+  <AppDialog :model-value="modelValue" :busy="busy" data-testid="assign-dialog" @update:model-value="v => emit('update:modelValue', v)">
+    <template #title>{{ t('task.assignTitle', { title: localized(task.title, locale) }) }}</template>
+    <v-autocomplete
+      v-model="chosen"
+      :items="items"
+      :label="t('task.assignee')"
+      prepend-inner-icon="mdi-account-search-outline"
+      auto-select-first
+      :loading="loading"
+      data-testid="assignee-select"
+    >
+      <template #item="{ props: itemProps, item }">
+        <v-list-item v-bind="itemProps" :data-testid="`assignee-option-${item.raw.value}`">
+          <template #append>
+            <span class="d-flex align-center ga-1">
+              <v-chip v-for="r in item.raw.roles" :key="r" size="x-small" variant="tonal">{{ r }}</v-chip>
+              <span v-if="item.raw.open !== undefined" class="text-caption text-medium-emphasis ml-2 tabular-nums">
+                {{ t('task.openLoad', { n: item.raw.open }) }}
+              </span>
+            </span>
           </template>
-        </v-autocomplete>
-        <v-alert v-if="error" type="error" class="mt-3" data-testid="assign-error">{{ error }}</v-alert>
-      </v-card-text>
-      <v-card-actions>
-        <v-spacer />
-        <v-btn variant="text" :disabled="busy" @click="close">{{ t('common.cancel') }}</v-btn>
-        <v-btn color="primary" variant="flat" :disabled="!chosen" :loading="busy" data-testid="assign-btn" @click="assign">{{ t('task.assign') }}</v-btn>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
+          <v-list-item-subtitle v-if="item.raw.value === task.proposedAssigneeId">{{ t('task.proposedAssignee') }}</v-list-item-subtitle>
+        </v-list-item>
+      </template>
+    </v-autocomplete>
+    <v-alert v-if="error" type="error" variant="tonal" density="compact" class="mt-3" data-testid="assign-error">{{ error }}</v-alert>
+    <template #actions>
+      <v-btn variant="text" :disabled="busy" @click="close">{{ t('common.cancel') }}</v-btn>
+      <v-btn color="primary" variant="flat" :disabled="!chosen" :loading="busy" data-testid="assign-btn" @click="assign">{{ t('task.assign') }}</v-btn>
+    </template>
+  </AppDialog>
 </template>

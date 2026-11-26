@@ -92,26 +92,20 @@ async function decide(decision: 'accept' | 'reject') {
       {{ t('todo.chooseProjectFirst') }}
     </div>
     <v-alert v-if="error" type="error" density="compact" class="mt-2" data-testid="proposal-error">{{ error }}</v-alert>
-    <v-dialog v-model="dismissOpen" max-width="420">
-      <v-card>
-        <v-card-title>{{ dismissLabel ?? t('chat.card.dismiss') }}</v-card-title>
-        <v-card-text>
-          <v-textarea v-model="note" :label="noteRequired ? t('todo.dismissNoteRequired') : t('chat.card.dismissNote')" rows="2" auto-grow data-testid="dismiss-note" />
-        </v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" @click="dismissOpen = false">{{ t('common.cancel') }}</v-btn>
-          <v-btn
-            color="primary"
-            variant="flat"
-            :loading="busy"
-            :disabled="noteRequired && !note.trim()"
-            data-testid="dismiss-submit"
-            @click="decide('reject')"
-          >{{ dismissLabel ?? t('chat.card.dismiss') }}</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <AppDialog v-model="dismissOpen" :title="dismissLabel ?? t('chat.card.dismiss')" :busy="busy" :dirty="!!note.trim()" data-testid="dismiss-dialog">
+      <v-textarea v-model="note" :label="noteRequired ? t('todo.dismissNoteRequired') : t('chat.card.dismissNote')" rows="2" auto-grow autofocus data-testid="dismiss-note" />
+      <template #actions>
+        <v-btn variant="text" :disabled="busy" @click="dismissOpen = false">{{ t('common.cancel') }}</v-btn>
+        <v-btn
+          color="primary"
+          variant="flat"
+          :loading="busy"
+          :disabled="noteRequired && !note.trim()"
+          data-testid="dismiss-submit"
+          @click="decide('reject')"
+        >{{ dismissLabel ?? t('chat.card.dismiss') }}</v-btn>
+      </template>
+    </AppDialog>
   </div>
 </template>
 

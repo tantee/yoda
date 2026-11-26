@@ -29,6 +29,14 @@ export function formatDateTime(v: Input, locale: string): string {
   return d ? fmt(locale, 'dt', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }).format(d) : ''
 }
 
+/** Meeting times (agenda header): weekday and month spelled out, e.g. `วันพุธที่ 25 พฤศจิกายน 2569 เวลา 14:05`. */
+export function formatDateTimeLong(v: Input, locale: string): string {
+  const d = toDate(v)
+  return d
+    ? fmt(locale, 'dtl', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }).format(d)
+    : ''
+}
+
 export function formatDate(v: Input, locale: string): string {
   const d = toDate(v)
   return d ? fmt(locale, 'd', { day: 'numeric', month: 'short', year: 'numeric' }).format(d) : ''

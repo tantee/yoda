@@ -82,5 +82,7 @@ export function requestEventText(
   if (e.kind === 'expected_date') {
     return e.date ? { key: 'requests.event.expected_date', params: { date: date(e.date) } } : { key: 'requests.event.expected_date_cleared', params: {} }
   }
+  // Someone else (staff acting for them) answered or accepted: not "you".
+  if ((e.kind === 'answered' || e.kind === 'accepted') && !e.byYou) return { key: `requests.event.${e.kind}Other`, params: {} }
   return { key: `requests.event.${e.kind}`, params: {} }
 }

@@ -3,7 +3,7 @@ html { font-size: 16px; }
 body { font-family: 'IBM Plex Sans Thai', 'IBM Plex Sans', 'Leelawadee UI', 'Thonburi', system-ui, sans-serif; }
 
 /* Thai has no case and needs no tracking: never uppercase, zero letter-spacing everywhere. */
-.v-application, .v-btn, .v-tab, .v-chip, .v-overlay-container { letter-spacing: 0 !important; }
+.v-application, .v-btn, .v-tab, .v-chip, .v-overlay-container, .v-picker-title { letter-spacing: 0 !important; }
 .text-uppercase, .text-overline { text-transform: none !important; }
 
 /* Tabular numbers for counts, times and money. */

@@ -167,16 +167,16 @@ const { dateTime: fmt } = useDateFormat()
       </div>
     </div>
 
-    <v-dialog v-model="confirmOpen" max-width="480">
-      <v-card :title="t('status.weekly.confirmTitle')" data-testid="weekly-confirm-dialog">
-        <v-card-text>{{ t('status.weekly.confirm', { week: weekRange(currentWeek) }) }}</v-card-text>
-        <v-card-actions>
-          <v-spacer />
-          <v-btn variant="text" @click="confirmOpen = false">{{ t('common.cancel') }}</v-btn>
-          <v-btn color="primary" variant="flat" :loading="busy" data-testid="weekly-confirm" @click="regenerate">{{ t('status.weekly.regenerate') }}</v-btn>
-        </v-card-actions>
-      </v-card>
-    </v-dialog>
+    <ConfirmDialog
+      v-model="confirmOpen"
+      :title="t('status.weekly.confirmTitle')"
+      :text="t('status.weekly.confirm', { week: weekRange(currentWeek) })"
+      :confirm-label="t('status.weekly.regenerate')"
+      :busy="busy"
+      confirm-testid="weekly-confirm"
+      data-testid="weekly-confirm-dialog"
+      @confirm="regenerate"
+    />
   </v-card>
 </template>
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type { Discussion } from '@yoda/shared'
-import { briefFailKey, sortDiscussions, voteSummary } from '../app/utils/discussions'
+import type { Discussion, DiscussionResponse } from '@yoda/shared'
+import { briefFailKey, sortDiscussions, voteShares, voteSummary, votersByOption } from '../app/utils/discussions'
 
 let n = 0
 function d(over: Partial<Discussion>): Discussion {
@@ -67,5 +67,39 @@ describe('briefFailKey', () => {
     expect(briefFailKey('budget_exceeded')).toBe('discussions.failReason.budget_exceeded')
     expect(briefFailKey('weird')).toBe('discussions.failReason.ai_failed')
     expect(briefFailKey(null)).toBe('discussions.failReason.ai_failed')
+  })
+})
+
+describe('voteShares', () => {
+  const brief = (keys: string[], recommendedKey: string | null = null) => ({
+    context: '', recommendation: '', recommendedKey, source: 'ai' as const, status: 'ready' as const, failReason: null,
+    options: keys.map(k => ({ key: k, title: `T${k}`, pros: `P${k}`, cons: `C${k}` })),
+  })
+  it('gives each option its votes and rounded share, with my vote, the recommendation and the decision marked', () => {
+    const r = voteShares(d({ brief: brief(['a', 'b', 'c'], 'c'), voteCounts: { a: 1, c: 2 }, myVote: 'c', decidedOptionKey: 'a' }))
+    expect(r.total).toBe(3)
+    expect(r.options.map(o => [o.key, o.votes, o.percent, o.recommended, o.mine, o.decided])).toEqual([
+      ['a', 1, 33, false, false, true],
+      ['b', 0, 0, false, false, false],
+      ['c', 2, 67, true, true, false],
+    ])
+    expect(r.options[0]).toMatchObject({ title: 'Ta', pros: 'Pa', cons: 'Ca' })
+  })
+  it('is all zero without votes and empty without a brief', () => {
+    expect(voteShares(d({ brief: brief(['a']) })).options[0]!.percent).toBe(0)
+    expect(voteShares(d({}))).toEqual({ total: 0, options: [] })
+  })
+  it('ignores votes for options no longer in the brief', () => {
+    expect(voteShares(d({ brief: brief(['a']), voteCounts: { a: 1, gone: 3 } })).options[0]!.percent).toBe(100)
+  })
+})
+
+describe('votersByOption', () => {
+  const r = (authorId: string, kind: 'vote' | 'opinion', optionKey: string | null): DiscussionResponse => ({
+    id: crypto.randomUUID(), discussionId: 'd', authorId, authorName: `N${authorId}`, kind, optionKey, text: '', createdAt: '2026-11-25T00:00:00Z',
+  })
+  it('counts each person once, at their latest vote, and skips opinions', () => {
+    expect(votersByOption([r('1', 'vote', 'a'), r('2', 'vote', 'a'), r('1', 'opinion', null), r('1', 'vote', 'b')])).toEqual({ a: ['N2'], b: ['N1'] })
+    expect(votersByOption([])).toEqual({})
   })
 })

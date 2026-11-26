@@ -49,29 +49,42 @@ async function save() {
 </script>
 
 <template>
-  <section data-testid="brief-editor">
-    <h2 class="text-h6 mb-2">{{ t('discussions.brief.edit') }}</h2>
-    <v-textarea v-model="context" :label="t('discussions.brief.context')" rows="3" auto-grow data-testid="brief-context" />
-    <v-card v-for="(o, i) in options" :key="o.key" variant="outlined" class="mb-2" data-testid="brief-option-edit">
-      <v-card-text>
-        <div class="d-flex ga-2">
-          <v-text-field v-model="o.title" :label="t('discussions.optionTitle')" density="compact" maxlength="200" hide-details="auto" />
-          <v-btn icon="mdi-close" variant="text" size="small" :title="t('discussions.removeOption')" @click="removeOption(i)" />
+  <v-card data-testid="brief-editor">
+    <div class="card-head"><h2>{{ t('discussions.brief.edit') }}</h2></div>
+    <div class="card-body">
+      <v-textarea v-model="context" :label="t('discussions.brief.context')" rows="3" auto-grow class="mb-4" data-testid="brief-context" />
+      <h3 class="text-body-2 font-weight-medium mb-2">{{ t('discussions.brief.options') }}</h3>
+      <div v-for="(o, i) in options" :key="o.key" class="brief-opt" data-testid="brief-option-edit">
+        <div class="d-flex ga-2 align-start">
+          <v-text-field v-model="o.title" :label="t('discussions.optionTitleN', { n: i + 1 })" maxlength="200" />
+          <v-btn icon="mdi-close" variant="text" size="small" class="mt-1" :aria-label="t('discussions.removeOption')" :title="t('discussions.removeOption')" @click="removeOption(i)" />
         </div>
-        <v-textarea v-model="o.pros" :label="t('discussions.brief.pros')" rows="1" auto-grow density="compact" class="mt-2" hide-details />
-        <v-textarea v-model="o.cons" :label="t('discussions.brief.cons')" rows="1" auto-grow density="compact" class="mt-2" hide-details />
-      </v-card-text>
-    </v-card>
-    <v-btn size="small" variant="text" prepend-icon="mdi-plus" :disabled="options.length >= 8" data-testid="brief-add-option" @click="addOption">
-      {{ t('discussions.addOption') }}
-    </v-btn>
-    <v-select v-model="recommendedKey" :items="recommendItems" :label="t('discussions.brief.recommended')" class="mt-2" />
-    <v-textarea v-model="recommendation" :label="t('discussions.brief.recommendation')" rows="2" auto-grow />
-    <v-alert v-if="!valid" type="warning" density="compact" class="mb-2">{{ t('discussions.brief.noOptionTitle') }}</v-alert>
-    <v-alert v-if="error" type="error" density="compact" class="mb-2" data-testid="brief-error">{{ error }}</v-alert>
-    <div class="d-flex ga-2">
-      <v-btn color="primary" :loading="busy" :disabled="!valid" data-testid="brief-save" @click="save">{{ t('discussions.brief.save') }}</v-btn>
-      <v-btn variant="text" @click="emit('cancel')">{{ t('common.cancel') }}</v-btn>
+        <div class="brief-opt__pc">
+          <v-textarea v-model="o.pros" :label="t('discussions.brief.pros')" rows="1" auto-grow hide-details />
+          <v-textarea v-model="o.cons" :label="t('discussions.brief.cons')" rows="1" auto-grow hide-details />
+        </div>
+      </div>
+      <v-btn size="small" variant="text" color="primary" prepend-icon="mdi-plus" :disabled="options.length >= 8" data-testid="brief-add-option" @click="addOption">
+        {{ t('discussions.addOption') }}
+      </v-btn>
+      <v-select v-model="recommendedKey" :items="recommendItems" :label="t('discussions.brief.recommended')" class="mt-4 mb-3" />
+      <v-textarea v-model="recommendation" :label="t('discussions.brief.recommendation')" rows="2" auto-grow />
+      <p v-if="!valid" class="text-caption text-error d-flex align-center ga-1 mt-2 mb-0">
+        <v-icon icon="mdi-alert-circle-outline" size="14" aria-hidden="true" />{{ t('discussions.brief.noOptionTitle') }}
+      </p>
+      <v-alert v-if="error" type="error" variant="tonal" density="compact" class="mt-2" data-testid="brief-error">{{ error }}</v-alert>
     </div>
-  </section>
+    <v-card-actions class="brief-actions">
+      <v-spacer />
+      <v-btn variant="text" @click="emit('cancel')">{{ t('common.cancel') }}</v-btn>
+      <v-btn color="primary" variant="flat" :loading="busy" :disabled="!valid" data-testid="brief-save" @click="save">{{ t('discussions.brief.save') }}</v-btn>
+    </v-card-actions>
+  </v-card>
 </template>
+
+<style scoped>
+.brief-opt { border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity)); border-radius: 8px; padding: 12px; margin-bottom: 8px; }
+.brief-opt__pc { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 8px; }
+@media (max-width: 599px) { .brief-opt__pc { grid-template-columns: minmax(0, 1fr); } }
+.brief-actions { padding: 12px 16px; border-top: 1px solid rgba(var(--v-border-color), var(--v-border-opacity)); }
+</style>

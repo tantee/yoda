@@ -25,8 +25,10 @@ const requesterId = ref<string | null>(null)
 const people = ref<Person[]>([])
 const error = ref('')
 const busy = ref(false)
+const tried = ref(false)
+const dirty = computed(() => !!title.value.trim() || !!description.value.trim())
 
-const templateItems = computed(() => props.templates.map(x => ({ title: localized(x.name, locale.value), value: x.key })))
+const templateItems = computed(() => props.templates.map(x => ({ title: localized(x.name, locale.value), value: x.key, steps: x.steps.map(st => localized(st.name, locale.value)).join(' · ') })))
 const peopleItems = computed(() => people.value.map(p => ({ title: p.displayName, subtitle: p.username, value: p.id })))
 const canSubmit = computed(() => !!title.value.trim() && !!templateKey.value && (!props.ownerRequired || !!ownerId.value))
 
@@ -39,12 +41,14 @@ watch(() => props.modelValue, (open) => {
   ownerId.value = props.defaultOwnerId ?? null
   requesterId.value = null
   error.value = ''
+  tried.value = false
   if (!people.value.length) {
     api<Person[]>('/people').then((list) => { people.value = list }).catch(() => { people.value = [] })
   }
 })
 
 async function submit() {
+  tried.value = true
   if (!canSubmit.value) return
   error.value = ''
   busy.value = true
@@ -69,13 +73,39 @@ async function submit() {
 </script>
 
 <template>
-  <v-dialog :model-value="modelValue" max-width="560" @update:model-value="emit('update:modelValue', $event)">
-    <v-card :title="t('workItems.new')">
-      <v-card-text class="d-flex flex-column ga-2">
-        <v-alert v-if="error" type="error" data-testid="create-error">{{ error }}</v-alert>
-        <v-text-field v-model="title" :label="t('workItems.title')" maxlength="200" data-testid="wi-title" />
-        <v-textarea v-model="description" :label="t('workItems.description')" rows="3" auto-grow data-testid="wi-description" />
-        <v-select v-model="templateKey" :items="templateItems" :label="t('workItems.template')" data-testid="wi-template" />
+  <AppDialog
+    :model-value="modelValue"
+    :title="t('workItems.new')"
+    :busy="busy"
+    :dirty="dirty"
+    scrollable
+    data-testid="create-dialog"
+    @update:model-value="emit('update:modelValue', $event)"
+  >
+    <div class="wi-form">
+      <v-alert v-if="error" type="error" variant="tonal" density="compact" data-testid="create-error">{{ error }}</v-alert>
+      <v-text-field
+        v-model="title"
+        :label="t('workItems.titleRequired')"
+        maxlength="200"
+        autofocus
+        :error-messages="tried && !title.trim() ? [t('workItems.titleMissing')] : []"
+        data-testid="wi-title"
+      />
+      <v-textarea v-model="description" :label="t('workItems.description')" rows="3" auto-grow data-testid="wi-description" />
+      <fieldset class="wi-templates">
+        <legend class="text-body-2 font-weight-medium mb-2">{{ t('workItems.template') }}</legend>
+        <v-radio-group v-model="templateKey" hide-details data-testid="wi-template">
+          <label v-for="tpl in templateItems" :key="tpl.value" class="wi-template" :class="{ 'wi-template--on': templateKey === tpl.value }" :data-testid="`wi-template-${tpl.value}`">
+            <v-radio :value="tpl.value" density="compact" />
+            <span class="wi-template__body">
+              <span class="font-weight-medium">{{ tpl.title }}</span>
+              <span class="text-caption text-medium-emphasis">{{ tpl.steps }}</span>
+            </span>
+          </label>
+        </v-radio-group>
+      </fieldset>
+      <div class="wi-pair">
         <v-select
           v-model="priority"
           :items="PRIORITIES.map(p => ({ title: t(`priority.${p}`), value: p }))"
@@ -87,25 +117,37 @@ async function submit() {
           :items="members"
           item-title="displayName"
           item-value="personId"
-          :label="t('workItems.owner')"
+          :label="ownerRequired ? t('workItems.ownerRequired') : t('workItems.owner')"
           :clearable="!ownerRequired"
+          :error-messages="tried && ownerRequired && !ownerId ? [t('workItems.ownerMissing')] : []"
           data-testid="wi-owner"
         />
-        <v-autocomplete
-          v-model="requesterId"
-          :items="peopleItems"
-          :label="t('workItems.requester')"
-          :hint="t('workItems.requesterHint')"
-          persistent-hint
-          clearable
-          data-testid="wi-requester"
-        />
-      </v-card-text>
-      <v-card-actions>
-        <v-spacer />
-        <v-btn @click="emit('update:modelValue', false)">{{ t('common.cancel') }}</v-btn>
-        <v-btn color="primary" :disabled="!canSubmit" :loading="busy" data-testid="wi-submit" @click="submit">{{ t('workItems.create') }}</v-btn>
-      </v-card-actions>
-    </v-card>
-  </v-dialog>
+      </div>
+      <v-autocomplete
+        v-model="requesterId"
+        :items="peopleItems"
+        :label="t('workItems.requester')"
+        :hint="t('workItems.requesterHint')"
+        persistent-hint
+        clearable
+        data-testid="wi-requester"
+      />
+    </div>
+    <template #actions>
+      <v-btn variant="text" :disabled="busy" @click="emit('update:modelValue', false)">{{ t('common.cancel') }}</v-btn>
+      <v-btn color="primary" variant="flat" :loading="busy" data-testid="wi-submit" @click="submit">{{ t('workItems.create') }}</v-btn>
+    </template>
+  </AppDialog>
 </template>
+
+<style scoped>
+.wi-form { display: flex; flex-direction: column; gap: 16px; }
+.wi-templates { border: 0; padding: 0; margin: 0; }
+.wi-templates :deep(.v-selection-control-group) { display: grid; gap: 8px; }
+.wi-template { display: flex; align-items: flex-start; gap: 4px; padding: 6px 12px 6px 4px; cursor: pointer; border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity)); border-radius: 8px; }
+.wi-template--on { border-color: rgb(var(--v-theme-primary)); background: rgb(var(--v-theme-primary-soft)); }
+.wi-template__body { display: flex; flex-direction: column; min-width: 0; padding-top: 6px; overflow-wrap: anywhere; }
+.wi-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 599px) { .wi-pair { grid-template-columns: minmax(0, 1fr); } }
+.wi-template :deep(.v-radio) { flex: none; width: auto; }
+</style>

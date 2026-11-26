@@ -95,6 +95,12 @@ describe('requestEventText', () => {
   it('uses the kind for everything else', () => {
     expect(requestEventText(ev({ kind: 'question' }), step, date, 'th')).toEqual({ key: 'requests.event.question', params: {} })
   })
+  it('words answers and acceptance by the requester or by someone else', () => {
+    expect(requestEventText(ev({ kind: 'answered', byYou: true }), step, date, 'th').key).toBe('requests.event.answered')
+    expect(requestEventText(ev({ kind: 'accepted', byYou: true }), step, date, 'th').key).toBe('requests.event.accepted')
+    expect(requestEventText(ev({ kind: 'answered', byYou: false }), step, date, 'th').key).toBe('requests.event.answeredOther')
+    expect(requestEventText(ev({ kind: 'accepted', byYou: false }), step, date, 'th').key).toBe('requests.event.acceptedOther')
+  })
 })
 
 describe('plainSteps', () => {

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { AccountType, AgentRunState, RunnerCapability, RunnerKind, RunnerMode } from '@yoda/shared'
-import { heartbeatAgeMinutes, waitingFor, withinHours } from '../app/utils/runners'
+import { heartbeatAgeMinutes, runnerStatus, sortRunners, waitingFor, withinHours } from '../app/utils/runners'
 import { isStaffPath, navItemsFor } from '../app/utils/nav'
 
 const load = (f: string) => JSON.parse(readFileSync(new URL(`../i18n/locales/${f}`, import.meta.url), 'utf8'))
@@ -111,5 +111,18 @@ describe('runner labels', () => {
   it('th is the Thai text, not a copy of en', () => {
     expect(lookup(LOCALES.th, 'runners.tokenOnce')).not.toBe(lookup(LOCALES.en, 'runners.tokenOnce'))
     expect(lookup(LOCALES.th, 'runners.settings.personalCaveat')).not.toBe(lookup(LOCALES.en, 'runners.settings.personalCaveat'))
+  })
+})
+
+describe('runnerStatus and sortRunners', () => {
+  const r = (id: string, paused: boolean, revokedAt: string | null) => ({ id, paused, revokedAt })
+  it('names the status: revoked over paused over active', () => {
+    expect(runnerStatus(r('a', false, null))).toBe('active')
+    expect(runnerStatus(r('a', true, null))).toBe('paused')
+    expect(runnerStatus(r('a', true, '2026-11-01T00:00:00Z'))).toBe('revoked')
+  })
+  it('puts revoked runners last and keeps the rest in order', () => {
+    const list = [r('x', false, '2026-11-01T00:00:00Z'), r('a', false, null), r('y', false, '2026-11-02T00:00:00Z'), r('b', true, null)]
+    expect(sortRunners(list).map(x => x.id)).toEqual(['a', 'b', 'x', 'y'])
   })
 })
