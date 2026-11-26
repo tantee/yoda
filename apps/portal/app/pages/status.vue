@@ -62,7 +62,7 @@ const showIdle = ref(false)
         {{ t('status.totals.departmentAiSpend', { amount: usd(status.departmentAiSpendUsd) }) }}
       </p>
       <div v-else class="mb-4" />
-      <EmptyState v-if="!status.projects.length" icon="mdi-folder-outline" :title="t('status.empty')" data-testid="status-empty" />
+      <EmptyState v-if="!status.projects.length" wisdom="empty" icon="mdi-folder-outline" :title="t('status.empty')" data-testid="status-empty" />
       <template v-else>
         <div class="dept-grid">
           <StatusProjectCard v-for="p in busy" :key="p.projectId" :project="p" />

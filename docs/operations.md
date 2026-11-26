@@ -78,16 +78,16 @@ Plex Sans (bundled in the theme with their OFL licence, no CDN), Thai and Englis
 Keycloak's `base` theme and is built for Keycloak 26 (the dev version). Install it on the hospital Keycloak in one
 of two ways:
 
-- **Copy the folder.** Copy `infra/keycloak/themes/yoda` to `/opt/keycloak/themes/yoda` on every Keycloak node
-  (or mount it there read-only in a container). A theme folder needs no build step.
+- **Copy the folders.** Copy both theme folders, `infra/keycloak/themes/yoda` and `infra/keycloak/themes/yoda-plain`
+  (the same theme without the fun touches, see below), to `/opt/keycloak/themes/` on every Keycloak node (or mount
+  `infra/keycloak/themes` there read-only in a container). A theme folder needs no build step.
 - **Theme JAR** (when the server is built or images are baked). From `infra/keycloak/themes`, add a
-  `META-INF/keycloak-themes.json` of `{"themes": [{"name": "yoda", "types": ["login"]}]}` and zip it with the
-  theme under `theme/`:
+  `META-INF/keycloak-themes.json` listing both themes and zip it with both theme folders under `theme/`:
 
   ```bash
   mkdir -p /tmp/yoda-theme/META-INF /tmp/yoda-theme/theme
-  cp -r infra/keycloak/themes/yoda /tmp/yoda-theme/theme/
-  echo '{"themes": [{"name": "yoda", "types": ["login"]}]}' > /tmp/yoda-theme/META-INF/keycloak-themes.json
+  cp -r infra/keycloak/themes/yoda infra/keycloak/themes/yoda-plain /tmp/yoda-theme/theme/
+  echo '{"themes": [{"name": "yoda", "types": ["login"]}, {"name": "yoda-plain", "types": ["login"]}]}' > /tmp/yoda-theme/META-INF/keycloak-themes.json
   (cd /tmp/yoda-theme && zip -r ../yoda-login-theme.jar META-INF theme)
   ```
 
@@ -108,9 +108,8 @@ runtime, so the sign-in page has its own switch. Pick one:
 
 - [ ] **Environment variable:** set `YODA_LOGIN_FUN_MODE=false` on the Keycloak server (read through the theme
       property `funMode=${env.YODA_LOGIN_FUN_MODE:true}`), then restart Keycloak.
-- [ ] **Plain theme:** also copy `infra/keycloak/themes/yoda-plain` (a two-line child of `yoda` with
-      `funMode=false`) and choose `yoda-plain` instead of `yoda` as the login theme. In a JAR, add
-      `{"name": "yoda-plain", "types": ["login"]}` to `keycloak-themes.json` and copy the folder under `theme/` too.
+- [ ] **Plain theme:** choose `yoda-plain` instead of `yoda` as the login theme (both folders are installed
+      above; `yoda-plain` is a two-line child of `yoda` with `funMode=false`).
 
 Caching: production Keycloak caches themes and templates (`--spi-theme-cache-themes`, `--spi-theme-cache-templates`
 and `--spi-theme-static-max-age` are on by default), so after updating the files restart Keycloak (every node) and,

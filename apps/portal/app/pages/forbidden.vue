@@ -13,7 +13,7 @@ const title = computed(() => {
 </script>
 
 <template>
-  <EmptyState :title="title" :text="t('shell.forbidden.text')" icon="mdi-lock-outline" :wisdom="false" data-testid="forbidden">
+  <EmptyState :title="title" :text="t('shell.forbidden.text')" icon="mdi-lock-outline" data-testid="forbidden">
     <v-btn color="primary" :to="me ? homeFor(me) : '/'" data-testid="go-home">{{ t('shell.home') }}</v-btn>
   </EmptyState>
 </template>

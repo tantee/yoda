@@ -198,6 +198,7 @@ const createIsMember = computed(() => !!createProject.value?.members.some(m => m
     <template v-if="todo && counts && view">
       <EmptyState
         v-if="isEmpty"
+        wisdom="empty"
         icon="mdi-check-circle-outline"
         :title="t('todo.empty')"
         :text="t('todo.emptyText')"

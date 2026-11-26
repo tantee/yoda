@@ -6,12 +6,13 @@ import { wiseLine, type WiseKind } from '~/utils/funMode'
 
 /**
  * An empty list or section (proposal §7.1): icon, one-line title, what to do, and the action in the slot.
- * `secondary` is an optional extra line. Without it, fun mode adds a wise-master line of the `wisdom` kind
- * (rotating by page); `wisdom: false` keeps the state plain.
+ * `secondary` is an optional extra line. Fun mode adds a wise-master line (rotating by page) only where a page opts
+ * in with `wisdom`: whole-page empty states, 404 and error pages. Never in tables, lists or filtered results
+ * (owner rule; test/funMode.test.ts lists every call site).
  */
 const props = withDefaults(defineProps<{ title: string; text?: string; secondary?: string; icon?: string; wisdom?: WiseKind | false }>(), {
   icon: 'mdi-inbox-outline',
-  wisdom: 'empty',
+  wisdom: false,
 })
 const { t, locale } = useI18n()
 const route = useRoute()

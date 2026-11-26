@@ -53,7 +53,7 @@ const groups = computed(() => answersByRequest(answers.value ?? []))
 
     <template v-if="answers">
       <v-card v-if="!answers.length" data-testid="answers-empty">
-        <EmptyState icon="mdi-comment-check-outline" :title="t('answers.empty')" :text="t('answers.emptyText')">
+        <EmptyState icon="mdi-comment-check-outline" wisdom="empty" :title="t('answers.empty')" :text="t('answers.emptyText')">
           <v-btn variant="outlined" to="/requests">{{ t('nav.requests') }}</v-btn>
         </EmptyState>
       </v-card>

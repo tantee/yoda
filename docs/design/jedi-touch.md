@@ -10,7 +10,7 @@ where it appears, why it is original and how to switch it off.
 | --- | --- | --- | --- |
 | Logo tile in the side menu | Blue tile with a geometric "Y". The stem is drawn as a soft light blade, with a small four-point star beside it. The star twinkles once on hover, but not when reduced motion is set. | The same tile and "Y", static, with no blade or star | `apps/portal/app/components/AppMark.vue` |
 | Favicon (portal and sign-in page) | The static mark | The static mark | `apps/portal/public/favicon.svg`, `infra/keycloak/themes/yoda/login/resources/img/favicon.svg` |
-| Empty states | One extra line in inverted word order under the text, chosen per page. For example: "Empty, this list is. Rest a moment, you may." / "ว่างเปล่า รายการนี้ พักสักครู่ ท่านทำได้" | No extra line | `EmptyState.vue` (prop `wisdom`, default `empty`; set to `false` on the forbidden page) |
+| Whole-page empty states (opt-in) | One extra line in inverted word order under the text, chosen per page. For example: "Empty, this list is. Rest a moment, you may." / "ว่างเปล่า รายการนี้ พักสักครู่ ท่านทำได้" | No extra line | `EmptyState.vue` (prop `wisdom`, default `false`; only to-do, my requests, questions for me, status, agendas and chat opt in with `wisdom="empty"`) |
 | Loading (skeletons) | A caption under the placeholder, hidden from screen readers. Small placeholders inside a page that has already loaded pass `quiet`. | No caption | `SkeletonList.vue`, `SkeletonDetail.vue` |
 | 404, "not found" and error pages | A not-found line or an error line | No extra line | `app/error.vue` and the not-found states of the detail pages |
 | Easter egg | ↑ ↑ ↓ ↓ ← → ← → B A shows a toast: "May the source be with you" / "ขอให้ซอร์สโค้ดจงสถิตอยู่กับท่าน". Keys typed in fields or with a modifier are ignored. Nothing is sent to the server. | No key listener | `composables/useKonami.ts`, `layouts/default.vue` |
@@ -20,8 +20,12 @@ All copy lives in i18n under `fun.*` in `apps/portal/i18n/locales/{th,en}.json`,
 bundles. There are 10 empty lines, 6 loading lines, 3 not-found lines and 3 error lines, plus the toast, each in Thai
 and English. Only `app/utils/funMode.ts` names the `fun.*` keys, and a test checks this.
 
-**Never in:** task data, tables, notifications, emails and core. Tests (`apps/portal/test/funMode.test.ts`) check that:
+**Never in:** task data, tables, lists, tabs or filtered results, notifications, emails and core. For example, the
+to-do filters, admin people, the project work-items table, knowledge, runners, the project list tabs, discussion
+tabs and agenda items all keep their empty states plain. Tests (`apps/portal/test/funMode.test.ts`) check that:
 
+- every `EmptyState` call site is listed with the line kind it asks for, so a table or filter state cannot opt in
+  unnoticed;
 - only the state components and the layout use the fun utilities;
 - no fun line appears anywhere in `apps/core/src` or `packages/shared/src`, where notifications and emails come from.
 
@@ -32,8 +36,9 @@ and English. Only `app/utils/funMode.ts` names the `fun.*` keys, and a test chec
   Every signed-in user, requesters included, can read it at `GET /ui-config`. The setting is cosmetic. Until it
   loads, or if loading fails, the portal treats it as off.
 - **Sign-in page:** the portal setting cannot reach Keycloak, so the page has its own switch. Either set
-  `YODA_LOGIN_FUN_MODE=false` on the Keycloak server, or choose the `yoda-plain` login theme. The theme property
-  `funMode` reads that variable. See `docs/operations.md` §2, "Login theme".
+  `YODA_LOGIN_FUN_MODE=false` on the Keycloak server (the theme property `funMode` reads it), or choose the
+  `yoda-plain` login theme. `docs/operations.md` §2, "Login theme", says to install both theme folders, `yoda` and
+  `yoda-plain`.
 
 ## Legal guard-rail checklist
 
@@ -46,8 +51,9 @@ and English. Only `app/utils/funMode.ts` names the `fun.*` keys, and a test chec
 - [x] **No franchise names in the UI** beyond the product name "Yoda". A test scans every portal string, the
   Keycloak messages and the SVGs for franchise and character names and for well-known film lines.
 - [x] **No likeness or images:** no character, no ears, no silhouettes, no logos.
-- [x] **No film quotes.** The toast "May the source be with you" is the owner's pun on a common phrase. It uses
-  "source", as in source code, and appears only as a hidden easter egg.
+- [x] **No film quotes.** No line quotes a film. The one deliberate nod is the toast "May the source be with you"
+  (th "ขอให้ซอร์สโค้ดจงสถิตอยู่กับท่าน"). The owner asked for this pun on a famous phrase; it is not a direct
+  quote. It swaps in "source", as in source code, and appears only as a hidden easter egg.
 - [x] **No franchise fonts or sounds.** The fonts are IBM Plex Sans Thai and IBM Plex Sans (OFL). The feature has
   no audio.
 - [x] **Nothing implies endorsement.** There is no franchise name or trademark, and nothing says "official" or

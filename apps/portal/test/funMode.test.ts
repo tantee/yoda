@@ -66,13 +66,14 @@ describe('fun mode off: nothing from the gimmick renders', () => {
   it('unknown counts as off', () => {
     expect(useFunMode().enabled.value).toBe(false)
   })
-  it('EmptyState: a line only in fun mode; explicit secondary always; wisdom false stays plain', async () => {
+  it('EmptyState: a line only in fun mode and only when the page opts in; explicit secondary always', async () => {
     setFun(false)
-    expect(await render(EmptyState, { title: 'x' })).not.toContain('empty-secondary')
+    expect(await render(EmptyState, { title: 'x', wisdom: 'empty' })).not.toContain('empty-secondary')
     expect(await render(EmptyState, { title: 'x', wisdom: 'notFound' })).not.toContain('fun.')
     expect(await render(EmptyState, { title: 'x', secondary: 'given' })).toContain('given')
     setFun(true)
-    expect(await render(EmptyState, { title: 'x' })).toContain(wiseKey('empty', '/todo'))
+    expect(await render(EmptyState, { title: 'x' })).not.toContain('empty-secondary')
+    expect(await render(EmptyState, { title: 'x', wisdom: 'empty' })).toContain(wiseKey('empty', '/todo'))
     expect(await render(EmptyState, { title: 'x', wisdom: 'notFound' })).toContain(wiseKey('notFound', '/todo'))
     expect(await render(EmptyState, { title: 'x', wisdom: 'error' })).toContain(wiseKey('error', '/todo'))
     expect(await render(EmptyState, { title: 'x', wisdom: false })).not.toContain('empty-secondary')
@@ -180,6 +181,51 @@ describe('the gimmick stays on its own surfaces', () => {
       'app/composables/useKonami.ts',
       'app/layouts/default.vue',
     ])
+  })
+  it('EmptyState lines only on whole-page, 404 and error states: never in tables, lists or filtered results', () => {
+    // Every EmptyState call site, by file and test id (or title), with the wisdom it asks for. A new call site fails
+    // here until it is classified; table, list and filter states must stay plain (no wisdom attribute).
+    const sites: Record<string, string> = {}
+    for (const f of files(join(root, 'app'), /\.vue$/)) {
+      const src = readFileSync(f, 'utf8')
+      for (const m of src.matchAll(/<EmptyState\b([^>]*)>/g)) {
+        const attrs = m[1]!
+        const id = /data-testid="([^"]+)"/.exec(attrs)?.[1] ?? /:title="([^"]+)"/.exec(attrs)?.[1]
+        const wisdom = /(?:^|\s):?wisdom="([^"]+)"/.exec(attrs)?.[1] ?? 'none'
+        let key = `${f.slice(root.length)} ${id}`
+        if (key in sites) key += ' #2'
+        sites[key] = wisdom
+      }
+    }
+    expect(sites).toEqual({
+      // whole-page states: opted in
+      'app/pages/todo/index.vue todo-empty': 'empty',
+      'app/pages/requests/index.vue requests-empty': 'empty',
+      'app/pages/status.vue status-empty': 'empty',
+      'app/pages/agendas/index.vue agendas-empty': 'empty',
+      'app/pages/chat.vue chat-empty': 'empty',
+      "app/pages/answers.vue t('answers.empty')": 'empty',
+      // 404 and errors
+      'app/error.vue not-found': 'notFound',
+      'app/error.vue error-page': 'error',
+      'app/pages/projects/[id].vue load-error': 'notFound',
+      'app/pages/work-items/[id].vue load-error': 'notFound',
+      'app/pages/discussions/[id].vue load-error': 'notFound',
+      'app/pages/agendas/[id]/index.vue load-error': 'notFound',
+      "app/pages/requests/[id].vue t('requests.notFound')": 'notFound',
+      // tables, lists, tabs and filtered results: plain
+      'app/pages/todo/index.vue todo-filter-empty': 'none',
+      'app/pages/admin/people.vue people-empty': 'none',
+      'app/components/project/WorkItemsTab.vue items-empty': 'none',
+      'app/components/project/WorkItemsTab.vue items-filter-empty': 'none',
+      'app/components/project/KnowledgeTab.vue knowledge-empty': 'none',
+      'app/components/project/KnowledgeTab.vue knowledge-empty #2': 'none',
+      'app/pages/runners.vue runners-empty': 'none',
+      'app/pages/projects/index.vue projects-empty': 'none',
+      'app/pages/discussions/index.vue discussions-empty': 'none',
+      'app/pages/agendas/[id]/index.vue agenda-empty': 'none',
+      'app/pages/forbidden.vue forbidden': 'none',
+    })
   })
   it('no fun line appears in core or shared code (notifications, emails, task data)', () => {
     const lines = ['th', 'en'].flatMap((l) => {

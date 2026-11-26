@@ -72,7 +72,7 @@ function waitingAsk(r: MyRequest): string {
 
     <template v-if="requests">
       <v-card v-if="!requests.length">
-        <EmptyState icon="mdi-clipboard-text-outline" :title="t('requests.empty')" :text="t('requests.emptyText')" data-testid="requests-empty">
+        <EmptyState icon="mdi-clipboard-text-outline" wisdom="empty" :title="t('requests.empty')" :text="t('requests.emptyText')" data-testid="requests-empty">
           <v-btn color="primary" to="/chat" prepend-icon="mdi-message-text-outline">{{ t('requests.startChat') }}</v-btn>
         </EmptyState>
       </v-card>

@@ -94,6 +94,7 @@ async function create() {
     <v-card v-else-if="!loaded" data-testid="agendas-loading"><SkeletonList :rows="3" /></v-card>
     <EmptyState
       v-else-if="!agendas.length"
+      wisdom="empty"
       icon="mdi-calendar-text-outline"
       :title="t('discussions.agenda.empty')"
       :text="t('discussions.agenda.emptyText')"

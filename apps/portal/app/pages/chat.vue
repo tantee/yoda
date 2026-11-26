@@ -223,7 +223,7 @@ onBeforeUnmount(() => {
             @decided="refreshProposals"
           >
             <template v-if="selected.kind === 'personal' || selected.kind === 'intake'" #empty>
-              <EmptyState :title="t('chat.emptyAssistant')" :text="t('chat.emptyAssistantHint')" icon="mdi-robot-outline" data-testid="chat-empty">
+              <EmptyState wisdom="empty" :title="t('chat.emptyAssistant')" :text="t('chat.emptyAssistantHint')" icon="mdi-robot-outline" data-testid="chat-empty">
                 <div class="d-flex flex-wrap justify-center ga-2">
                   <v-chip v-for="k in suggestions" :key="k" size="small" variant="outlined" prepend-icon="mdi-lightbulb-on-outline">{{ t(k) }}</v-chip>
                 </div>
