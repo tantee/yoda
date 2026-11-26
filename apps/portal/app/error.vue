@@ -7,12 +7,14 @@ import { homeFor } from '~/utils/nav'
  * login redirect the URL fragment holds OAuth parameters, and Nuxt's 404 message echoes the path.
  */
 const props = defineProps<{ error: NuxtError }>()
-const { t } = useI18n()
+const { t, locale } = useI18n()
 const { me, refresh } = useMe()
 const meError = useState<string>('meError', () => '')
 const notFound = computed(() => props.error?.statusCode === 404)
 const status = computed(() => (props.error?.statusCode && props.error.statusCode >= 500 ? props.error.statusCode : null))
 
+// app.vue (which sets the page language) is not rendered for errors.
+useHead({ htmlAttrs: { lang: locale } })
 useHead({ title: () => (notFound.value ? t('shell.notFound.title') : t('shell.error.title')) })
 
 onMounted(async () => {
@@ -41,6 +43,7 @@ function reload() {
         :title="t('shell.notFound.title')"
         :text="t('shell.notFound.text')"
         icon="mdi-map-marker-question-outline"
+        wisdom="notFound"
         data-testid="not-found"
       >
         <v-btn color="primary" data-testid="go-home" @click="home">{{ t('shell.home') }}</v-btn>
@@ -50,6 +53,7 @@ function reload() {
         :title="t('shell.error.title')"
         :text="status ? `${t('shell.error.text')} (${t('shell.error.status', { status })})` : t('shell.error.text')"
         icon="mdi-alert-circle-outline"
+        wisdom="error"
         data-testid="error-page"
       >
         <v-btn variant="outlined" prepend-icon="mdi-refresh" @click="reload">{{ t('shell.error.reload') }}</v-btn>

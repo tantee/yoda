@@ -7,7 +7,10 @@
   - .yoda-brand__sky: an empty decorative layer behind the brand panel (aria-hidden).
   - #yoda-tagline: one line of copy under the product name (message key yodaTagline).
   - body classes come from properties.kcBodyClass, so a theme property can add a modifier class.
+  Fun touches (docs/design/jedi-touch.md): when the theme property funMode is "true" the body gets yoda-fun
+  (starfield in .yoda-brand__sky), the mark is mark-fun.svg and one playful line (yodaWisdom) follows the tagline.
 -->
+<#assign yodaFun = (properties.funMode!'false')?trim == 'true'>
 <#macro registrationLayout bodyClass="" displayInfo=false displayMessage=true displayRequiredFields=false>
 <!DOCTYPE html>
 <html class="${properties.kcHtmlClass!}" lang="${(locale.currentLanguageTag)!'en'}" dir="${((locale.rtl)!false)?then('rtl','ltr')}">
@@ -61,18 +64,19 @@
     </script>
 </head>
 
-<body class="${properties.kcBodyClass!}<#if bodyClass?has_content> ${bodyClass}</#if>">
+<body class="${properties.kcBodyClass!}<#if yodaFun> yoda-fun</#if><#if bodyClass?has_content> ${bodyClass}</#if>">
 <div class="${properties.kcLoginClass!}">
     <header id="kc-header" class="${properties.kcHeaderClass!}">
         <div class="yoda-brand__sky" aria-hidden="true"></div>
         <div id="kc-header-wrapper" class="${properties.kcHeaderWrapperClass!}">
-            <img class="yoda-mark" src="${url.resourcesPath}/img/mark.svg" alt="" width="40" height="40" />
+            <img class="yoda-mark" src="${url.resourcesPath}/img/<#if yodaFun>mark-fun<#else>mark</#if>.svg" alt="" width="40" height="40" />
             <div class="yoda-brand__text">
                 <p class="yoda-brand__name">${msg("yodaProductName")}</p>
                 <p class="yoda-brand__sub">${msg("yodaProductSub")}</p>
             </div>
         </div>
         <p id="yoda-tagline" class="yoda-brand__tagline">${msg("yodaTagline")}</p>
+        <#if yodaFun><p id="yoda-wisdom" class="yoda-brand__wisdom">${msg("yodaWisdom")}</p></#if>
     </header>
 
     <main class="yoda-main">

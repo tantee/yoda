@@ -90,7 +90,7 @@ const EVENT_ICONS: Record<string, string> = {
     <ErrorState v-if="loadError && !request" :error="loadFailure" class="mb-4" data-testid="load-error" @retry="load" />
     <v-alert v-else-if="loadError" type="error" class="mb-4" data-testid="load-error">{{ loadError }}</v-alert>
     <v-card v-else-if="missing" data-testid="request-missing">
-      <EmptyState icon="mdi-file-question-outline" :title="t('requests.notFound')" :text="t('requests.notFoundText')">
+      <EmptyState icon="mdi-file-question-outline" wisdom="notFound" :title="t('requests.notFound')" :text="t('requests.notFoundText')">
         <v-btn color="primary" to="/requests">{{ t('requests.back') }}</v-btn>
       </EmptyState>
     </v-card>

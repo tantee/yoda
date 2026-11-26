@@ -127,6 +127,7 @@ async function saved() {
     <EmptyState
       v-if="!d && notFound"
       icon="mdi-forum-remove-outline"
+      wisdom="notFound"
       :title="t('discussions.notFound')"
       :text="t('discussions.notFoundText')"
       data-testid="load-error"

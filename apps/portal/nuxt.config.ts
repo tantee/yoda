@@ -8,7 +8,11 @@ export default defineNuxtConfig({
   app: {
     head: {
       // The Thai 400 face is on every page (proposal §3.2: preload that one file only).
-      link: [{ rel: 'preload', href: '/fonts/ibm-plex-sans-thai-thai-400-normal.woff2', as: 'font', type: 'font/woff2', crossorigin: '' }],
+      link: [
+        { rel: 'preload', href: '/fonts/ibm-plex-sans-thai-thai-400-normal.woff2', as: 'font', type: 'font/woff2', crossorigin: '' },
+        // The static mark (docs/design/jedi-touch.md), the same whether fun mode is on or off.
+        { rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' },
+      ],
     },
   },
   modules: [

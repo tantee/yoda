@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="40" height="40">
+  <!-- Yoda's original mark in fun mode (same as the portal's AppMark): the Y's stem as a soft light blade, a small star. -->
+  <defs>
+    <linearGradient id="blade" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#6FA8FF"/>
+    </linearGradient>
+  </defs>
+  <rect width="32" height="32" rx="7.5" fill="#1F5FBF"/>
+  <path d="M9.5 7.5 L16 15.5 L22.5 7.5" fill="none" stroke="#FFFFFF" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M16 15.5 V25.5" stroke="#6FA8FF" stroke-opacity=".45" stroke-width="6" stroke-linecap="round"/>
+  <path d="M16 15.5 V25.5" stroke="url(#blade)" stroke-width="3" stroke-linecap="round"/>
+  <path d="M24.5 18.5 Q25 21.5 28 22 Q25 22.5 24.5 25.5 Q24 22.5 21 22 Q24 21.5 24.5 18.5 Z" fill="#FFFFFF"/>
+</svg>

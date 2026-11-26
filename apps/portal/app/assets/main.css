@@ -11,6 +11,9 @@ b, strong, .font-weight-bold { font-weight: 600 !important; }
 /* Tabular numbers for counts, times and money. */
 .tabular-nums, .v-table td, .v-badge__badge { font-variant-numeric: tabular-nums; }
 
+/* Fun-mode caption under loading placeholders (docs/design/jedi-touch.md). */
+.skeleton-caption { margin: 12px 16px; text-align: center; font-size: .75rem; color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity)); }
+
 /* Visible focus ring on every interactive element (Vuetify's overlay alone is not enough). */
 /* Vuetify sets `outline: none` on buttons, chips, list items and link cards, so those are named here too. */
 :focus-visible, .v-btn:focus-visible, .v-chip:focus-visible, .v-card--link:focus-visible, .v-list-item:focus-visible {

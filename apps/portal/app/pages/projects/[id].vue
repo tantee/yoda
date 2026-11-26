@@ -129,6 +129,7 @@ useLiveEvents((e) => {
     <EmptyState
       v-if="loadError && !project && notFound"
       icon="mdi-folder-lock-outline"
+      wisdom="notFound"
       :title="t('projects.notFound')"
       :text="t('projects.notFoundHint')"
       data-testid="load-error"

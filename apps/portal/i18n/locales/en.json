@@ -598,7 +598,12 @@
     "byProject": "By project",
     "project": "Project",
     "projectBudget": "Project budget",
-    "departmentCalls": "Department-wide (no project)"
+    "departmentCalls": "Department-wide (no project)",
+    "funCard": "Fun touches",
+    "funMode": "Playful touches in the portal",
+    "funHint": "A small star on the logo, a playful line on empty, loading and error pages, and a hidden keyboard surprise. Never in work data, tables, notifications or email. The sign-in page has its own switch (see the operations guide).",
+    "funOn": "Fun touches are on",
+    "funOff": "Fun touches are off"
   },
   "chat": {
     "threads": "Conversations",
@@ -1537,5 +1542,38 @@
   "timeline": {
     "today": "Today, {date}",
     "yesterday": "Yesterday, {date}"
+  },
+  "fun": {
+    "empty": [
+      "Empty, this list is. Rest a moment, you may.",
+      "Nothing here, there is. Yet.",
+      "Quiet, the queue is today.",
+      "Clear, the road ahead looks.",
+      "Waiting for work, this page is.",
+      "Calm before the next request, this is.",
+      "All done here, it seems.",
+      "Start something new here, you can.",
+      "Peaceful, an empty inbox is.",
+      "Room for new work, there still is."
+    ],
+    "loading": [
+      "Loading, the work is. A moment, give it.",
+      "Fetching the details, we are.",
+      "Arriving soon, your data is.",
+      "Gathering the tasks, the server is.",
+      "Short, this wait will be.",
+      "On its way, the page is."
+    ],
+    "notFound": [
+      "Lost, this page is. Home, the way back is.",
+      "Here, no such page there is.",
+      "Wandered off the map, this link has."
+    ],
+    "error": [
+      "Stumbled, the system has. Again, try it.",
+      "Troubled, the server is. Reload, you should.",
+      "Back to normal soon, all will be."
+    ],
+    "konami": "May the source be with you"
   }
 }

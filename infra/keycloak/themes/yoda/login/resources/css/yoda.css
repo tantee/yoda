@@ -49,13 +49,54 @@ a:hover { color: var(--yoda-primary-darken); }
   position: absolute; inset: 0; pointer-events: none;
   background: radial-gradient(120% 80% at 15% 10%, rgba(111, 168, 255, .16), transparent 60%);
 }
-.yoda-brand__inner, .yoda-brand__tagline { position: relative; }
+.yoda-brand__inner, .yoda-brand__tagline, .yoda-brand__wisdom { position: relative; }
 .yoda-brand__inner { display: flex; align-items: center; gap: 14px; }
 .yoda-mark { display: block; flex: none; width: 48px; height: 48px; }
 .yoda-brand__text { min-width: 0; }
 .yoda-brand__name { margin: 0; font-size: 1.5rem; font-weight: 600; line-height: 1.3; color: #fff; }
 .yoda-brand__sub { margin: 0; font-size: .9375rem; color: var(--yoda-on-nav); }
 .yoda-brand__tagline { margin: 0; max-width: 40ch; font-size: 1rem; color: var(--yoda-on-nav); }
+
+/*
+ * Fun touches (body.yoda-fun, theme property funMode; docs/operations.md §2): a sparse CSS-only starfield in the
+ * sky layer and one playful line. Stars are tiny radial gradients in the nav accent; two layers drift in opacity
+ * only, slowly, and stand still for prefers-reduced-motion. The wisdom line meets AA on the navy (#8BA0BF: 5.8).
+ */
+.yoda-brand__wisdom { margin: -8px 0 0; max-width: 40ch; font-size: .875rem; font-style: italic; color: var(--yoda-nav-label); }
+.yoda-brand__wisdom:lang(th) { font-style: normal; }
+.yoda-fun .yoda-brand__sky::before, .yoda-fun .yoda-brand__sky::after {
+  content: ''; position: absolute; inset: 0; background-repeat: repeat;
+}
+.yoda-fun .yoda-brand__sky::before {
+  background-image:
+    radial-gradient(1px 1px at 12% 18%, rgba(255, 255, 255, .85), transparent 60%),
+    radial-gradient(1px 1px at 68% 9%, rgba(255, 255, 255, .7), transparent 60%),
+    radial-gradient(1.5px 1.5px at 84% 46%, rgba(111, 168, 255, .9), transparent 60%),
+    radial-gradient(1px 1px at 33% 72%, rgba(255, 255, 255, .6), transparent 60%),
+    radial-gradient(1px 1px at 52% 38%, rgba(195, 208, 226, .8), transparent 60%),
+    radial-gradient(1.5px 1.5px at 7% 88%, rgba(111, 168, 255, .7), transparent 60%),
+    radial-gradient(1px 1px at 91% 81%, rgba(255, 255, 255, .7), transparent 60%);
+  background-size: 360px 300px;
+  opacity: .9;
+}
+.yoda-fun .yoda-brand__sky::after {
+  background-image:
+    radial-gradient(1px 1px at 24% 54%, rgba(255, 255, 255, .7), transparent 60%),
+    radial-gradient(1.5px 1.5px at 76% 24%, rgba(255, 255, 255, .8), transparent 60%),
+    radial-gradient(1px 1px at 44% 92%, rgba(111, 168, 255, .8), transparent 60%),
+    radial-gradient(1px 1px at 61% 63%, rgba(255, 255, 255, .5), transparent 60%),
+    radial-gradient(1px 1px at 3% 33%, rgba(195, 208, 226, .7), transparent 60%);
+  background-size: 260px 220px;
+  opacity: .5;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .yoda-fun .yoda-brand__sky::before { animation: yoda-twinkle 7s ease-in-out infinite alternate; }
+  .yoda-fun .yoda-brand__sky::after { animation: yoda-twinkle 11s ease-in-out -4s infinite alternate-reverse; }
+}
+@keyframes yoda-twinkle {
+  from { opacity: .35; }
+  to { opacity: .95; }
+}
 
 .yoda-main { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: 48px 24px; min-width: 0; }
 .yoda-card {
@@ -184,6 +225,7 @@ textarea.yoda-input { min-height: 96px; }
   .yoda-mark { width: 40px; height: 40px; }
   .yoda-brand__name { font-size: 1.25rem; }
   .yoda-brand__tagline { font-size: .875rem; }
+  .yoda-brand__wisdom { margin-top: -2px; font-size: .8125rem; }
   .yoda-main { justify-content: flex-start; padding: 24px 16px; }
   .yoda-card { padding: 20px 20px 24px; }
 }

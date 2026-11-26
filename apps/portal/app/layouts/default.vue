@@ -1,6 +1,8 @@
 <script setup lang="ts">
+import type { UiConfig } from '@yoda/shared'
 import { useDisplay } from 'vuetify'
 import { buildCrumbs, type MetaCrumb } from '~/utils/breadcrumbs'
+import { KONAMI_TOAST_KEY } from '~/utils/funMode'
 import { bottomLabelKey, bottomNavFor, isNavActive, navCount, navGroupsFor } from '~/utils/nav'
 
 const { me } = useMe()
@@ -53,6 +55,18 @@ const crumbs = computed(() =>
 useHead({
   title: () => crumbs.value.at(-1)?.label ?? '',
   titleTemplate: (title?: string) => (title ? `${title} · ${t('app.name')}` : t('app.title')),
+})
+
+// Fun mode (cosmetic, admin switch): read once per sign-in; off until known. The easter egg only listens while on.
+const { enabled: funMode, set: setFunMode } = useFunMode()
+const api = useApi()
+watch(() => me.value?.id, (id) => {
+  if (!id) return
+  api<UiConfig>('/ui-config').then(c => setFunMode(c.funMode), () => setFunMode(false))
+}, { immediate: true })
+const konamiToast = ref(false)
+useKonami(funMode, () => {
+  konamiToast.value = true
 })
 
 // Badges: on sign-in, on navigation and every minute (no extra live stream); at most every 20 s.
@@ -128,6 +142,9 @@ onBeforeUnmount(() => {
       <span>{{ t(bottomLabelKey(i)) }}</span>
     </v-btn>
   </v-bottom-navigation>
+  <v-snackbar v-model="konamiToast" :timeout="4000" color="nav" location="top" data-testid="konami-toast">
+    <span class="d-inline-flex align-center ga-2"><AppMark :size="20" />{{ t(KONAMI_TOAST_KEY) }}</span>
+  </v-snackbar>
 </template>
 
 <style scoped>

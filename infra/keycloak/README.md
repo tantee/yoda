@@ -5,3 +5,7 @@ realm uses it (`loginTheme: yoda`, Thai default, English). `start-dev` turns the
 reload. The realm import only runs when the realm does not exist yet: on an older dev container, pick the theme in
 Realm settings → Themes, or recreate the container. Installing it on a production Keycloak: `docs/operations.md`
 §2 "Login theme".
+
+`themes/yoda-plain` is the same theme without the fun touches (static mark, no starfield, no playful line); the
+`yoda` theme also turns them off when Keycloak runs with `YODA_LOGIN_FUN_MODE=false`. See
+`docs/design/jedi-touch.md`.

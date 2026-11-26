@@ -12,6 +12,10 @@ const loadFailure = ref<unknown>(null)
 const budgetError = ref('')
 const saved = ref(false)
 const busy = ref(false)
+const funBusy = ref(false)
+const funError = ref('')
+const funSaved = ref(false)
+const { set: setFunMode } = useFunMode()
 
 const usage = computed(() => settings.value?.usage ?? null)
 const percent = computed(() => usagePercent(usage.value))
@@ -66,6 +70,25 @@ async function save() {
   }
 }
 
+/** The fun-mode switch saves at once and updates the shell (mark, lines, easter egg) without a reload. */
+async function saveFun(on: boolean | null) {
+  if (!settings.value || on === null) return
+  funBusy.value = true
+  funError.value = ''
+  funSaved.value = false
+  try {
+    const body: DepartmentAiSettingsPatch = { funMode: !!on }
+    const s = await api<DepartmentAiSettings>('/admin/ai-settings', { method: 'PATCH', body })
+    settings.value = { ...settings.value, funMode: s.funMode }
+    setFunMode(s.funMode)
+    funSaved.value = true
+  } catch (e) {
+    funError.value = t(errorKey(e))
+  } finally {
+    funBusy.value = false
+  }
+}
+
 onMounted(load)
 </script>
 
@@ -101,6 +124,29 @@ onMounted(load)
               <p v-if="saved" class="text-caption text-success d-flex align-center ga-1 mt-1 mb-0" data-testid="ai-saved"><v-icon icon="mdi-check" size="14" aria-hidden="true" />{{ t('ai.saved') }}</p>
             </div>
           </div>
+        </div>
+      </v-card>
+
+      <v-card class="mb-4" data-testid="fun-card">
+        <div class="card-head"><h2>{{ t('ai.funCard') }}</h2></div>
+        <div class="card-body">
+          <div class="d-flex align-center ga-4">
+            <v-switch
+              :model-value="settings.funMode"
+              :label="t('ai.funMode')"
+              :loading="funBusy"
+              :disabled="funBusy"
+              color="primary"
+              inset
+              hide-details
+              data-testid="fun-switch"
+              @update:model-value="saveFun"
+            />
+            <AppMark :size="32" :fun="settings.funMode" />
+          </div>
+          <p class="text-caption text-medium-emphasis mt-1 mb-0 admin-fun-hint">{{ t('ai.funHint') }}</p>
+          <p v-if="funSaved" class="text-caption text-success d-flex align-center ga-1 mt-1 mb-0" role="status" data-testid="fun-saved"><v-icon icon="mdi-check" size="14" aria-hidden="true" />{{ settings.funMode ? t('ai.funOn') : t('ai.funOff') }}</p>
+          <p v-if="funError" class="text-caption text-error mt-1 mb-0" role="alert" data-testid="fun-error">{{ funError }}</p>
         </div>
       </v-card>
 
@@ -166,5 +212,6 @@ onMounted(load)
 .admin-grid { display: grid; grid-template-columns: 200px minmax(0, 680px); gap: 16px 24px; align-items: start; }
 @media (max-width: 767px) { .admin-grid { grid-template-columns: minmax(0, 1fr); gap: 8px; } }
 .admin-budget { flex: 1 1 200px; max-width: 280px; }
+.admin-fun-hint { max-width: 680px; }
 .ai-split-head { border-top: 1px solid rgba(var(--v-border-color), var(--v-border-opacity)); }
 </style>

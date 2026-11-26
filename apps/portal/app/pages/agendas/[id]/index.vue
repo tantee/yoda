@@ -131,7 +131,7 @@ async function deleteAgenda() {
 <template>
   <div>
     <div class="no-print">
-      <EmptyState v-if="!agenda && notFound" icon="mdi-calendar-remove-outline" :title="t('discussions.agenda.notFound')" data-testid="load-error">
+      <EmptyState v-if="!agenda && notFound" icon="mdi-calendar-remove-outline" wisdom="notFound" :title="t('discussions.agenda.notFound')" data-testid="load-error">
         <v-btn color="primary" variant="flat" to="/agendas">{{ t('discussions.agenda.backToList') }}</v-btn>
       </EmptyState>
       <ErrorState v-else-if="!agenda && loadError" :error="loadFailure" data-testid="load-error" @retry="load" />

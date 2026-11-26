@@ -112,7 +112,7 @@ onMounted(loadUsage)
         <span v-if="usage" class="text-body-2 text-medium-emphasis">{{ monthLabel(usage.month) }}</span>
       </div>
       <div class="card-body">
-        <SkeletonList v-if="!usage && !error" :rows="1" :two-line="false" />
+        <SkeletonList v-if="!usage && !error" :rows="1" :two-line="false" quiet />
         <div v-if="usage" class="ai-usage" data-testid="ai-usage">
           <div class="d-flex flex-wrap align-baseline ga-2">
             <strong class="text-h5 tabular-nums" data-testid="ai-spend">{{ money(usage.costUsd) }}</strong>

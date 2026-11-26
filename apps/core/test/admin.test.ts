@@ -86,3 +86,48 @@ describe('/admin/ai-settings', () => {
     }
   })
 })
+
+describe('fun mode (Task 9)', () => {
+  it('is on by default; an admin switches it off and on without touching the budget', async () => {
+    const get = await app.inject({ url: '/admin/ai-settings', headers: auth(boss) })
+    expect(get.json()).toMatchObject({ funMode: true, aiBudgetUsd: null })
+
+    await app.inject({ method: 'PATCH', url: '/admin/ai-settings', headers: auth(boss), payload: { aiBudgetUsd: 5 } })
+    const off = await app.inject({ method: 'PATCH', url: '/admin/ai-settings', headers: auth(boss), payload: { funMode: false } })
+    expect(off.statusCode).toBe(200)
+    expect(off.json()).toMatchObject({ funMode: false, aiBudgetUsd: 5 })
+    const [row] = await (await testDb()).select().from(departmentSettings)
+    expect(row).toMatchObject({ funMode: false, aiBudgetUsd: '5.00', updatedBy: boss.id })
+
+    // A budget change leaves fun mode as it is.
+    const budget = await app.inject({ method: 'PATCH', url: '/admin/ai-settings', headers: auth(boss), payload: { aiBudgetUsd: 6 } })
+    expect(budget.json()).toMatchObject({ funMode: false, aiBudgetUsd: 6 })
+    const on = await app.inject({ method: 'PATCH', url: '/admin/ai-settings', headers: auth(boss), payload: { funMode: true } })
+    expect(on.json()).toMatchObject({ funMode: true, aiBudgetUsd: 6 })
+  })
+
+  it('only admins can switch it; non-boolean values are rejected', async () => {
+    for (const who of [pm, requester]) {
+      const res = await app.inject({ method: 'PATCH', url: '/admin/ai-settings', headers: auth(who), payload: { funMode: false } })
+      expect(res.statusCode).toBe(403)
+    }
+    const bad = await app.inject({ method: 'PATCH', url: '/admin/ai-settings', headers: auth(boss), payload: { funMode: 'no' } })
+    expect(bad.statusCode).toBe(400)
+    const [row] = await (await testDb()).select().from(departmentSettings)
+    expect(row!.funMode).toBe(true)
+  })
+
+  it('GET /ui-config shows the switch read-only to every signed-in user, requesters included', async () => {
+    for (const who of [boss, pm, requester]) {
+      const res = await app.inject({ url: '/ui-config', headers: auth(who) })
+      expect(res.statusCode).toBe(200)
+      expect(res.json()).toEqual({ funMode: true })
+    }
+    await app.inject({ method: 'PATCH', url: '/admin/ai-settings', headers: auth(boss), payload: { funMode: false } })
+    expect((await app.inject({ url: '/ui-config', headers: auth(requester) })).json()).toEqual({ funMode: false })
+    expect((await app.inject({ url: '/ui-config' })).statusCode).toBe(401)
+    // Read-only: there is no write route next to it.
+    const put = await app.inject({ method: 'PATCH', url: '/ui-config', headers: auth(requester), payload: { funMode: true } })
+    expect(put.statusCode).toBe(404)
+  })
+})

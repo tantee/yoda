@@ -228,7 +228,7 @@ useLiveEvents((e) => {
 <template>
   <div>
     <template v-if="loadError && !item">
-      <EmptyState v-if="notFound" :title="t('workItems.notFound')" :text="t('workItems.notFoundHint')" icon="mdi-file-search-outline" data-testid="load-error">
+      <EmptyState v-if="notFound" wisdom="notFound" :title="t('workItems.notFound')" :text="t('workItems.notFoundHint')" icon="mdi-file-search-outline" data-testid="load-error">
         <v-btn color="primary" variant="flat" to="/projects">{{ t('workItems.toProjects') }}</v-btn>
       </EmptyState>
       <ErrorState v-else :error="loadFailure" data-testid="load-error" @retry="load" />
@@ -394,7 +394,7 @@ useLiveEvents((e) => {
             </div>
             <ErrorState v-if="timelineError" :error="timelineError" :title="t('workItems.timelineFailed')" data-testid="timeline-error" @retry="loadTimeline" />
             <v-card v-else class="wi-timeline">
-              <SkeletonList v-if="!timelineLoaded" :rows="4" data-testid="timeline-loading" />
+              <SkeletonList v-if="!timelineLoaded" :rows="4" quiet data-testid="timeline-loading" />
               <p v-else-if="!timeline.events.length" class="text-body-2 text-medium-emphasis pa-4 ma-0">{{ timelineKind === 'key' ? t('workItems.timelineEmptyKey') : t('workItems.timelineEmpty') }}</p>
               <EventTimeline v-else :events="timeline.events" :task-titles="taskTitles" class="px-4 pb-2" />
               <div v-if="timeline.nextBefore !== null" class="wi-timeline__more">

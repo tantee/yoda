@@ -102,6 +102,16 @@ Then, in the admin console for the realm Yoda uses:
 - [ ] **Realm settings → Localization:** internationalisation on, supported locales `th` and `en`, default `th`.
       The portal sends its language as `ui_locales`, so the page follows the language chosen in the portal.
 
+Fun touches on the sign-in page (docs/design/jedi-touch.md): the theme shows a faint starfield, the fun mark and
+one playful line by default. The portal's admin switch (Admin → AI → Fun touches) cannot reach Keycloak at
+runtime, so the sign-in page has its own switch. Pick one:
+
+- [ ] **Environment variable:** set `YODA_LOGIN_FUN_MODE=false` on the Keycloak server (read through the theme
+      property `funMode=${env.YODA_LOGIN_FUN_MODE:true}`), then restart Keycloak.
+- [ ] **Plain theme:** also copy `infra/keycloak/themes/yoda-plain` (a two-line child of `yoda` with
+      `funMode=false`) and choose `yoda-plain` instead of `yoda` as the login theme. In a JAR, add
+      `{"name": "yoda-plain", "types": ["login"]}` to `keycloak-themes.json` and copy the folder under `theme/` too.
+
 Caching: production Keycloak caches themes and templates (`--spi-theme-cache-themes`, `--spi-theme-cache-templates`
 and `--spi-theme-static-max-age` are on by default), so after updating the files restart Keycloak (every node) and,
 if a browser still shows the old look, clear its cache: static files are cached for 30 days by default. Never turn
