@@ -200,7 +200,11 @@ export async function checkSecondFactor(
 }
 
 export type SignInResult =
-  | { ok: true; admin: AdminRow; factor: 'totp' | 'recovery_code' | 'password' }
+  /**
+   * `password_keyless`: TOTP is enrolled but the master key cannot open it (wrong or missing key): the password
+   * alone opens a status-only session (7.4), so the state can be seen and the fix is made on the host.
+   */
+  | { ok: true; admin: AdminRow; factor: 'totp' | 'recovery_code' | 'password' | 'password_keyless' }
   | {
       ok: false
       code: 'invalid_credentials' | 'locked' | 'second_factor_required' | 'invalid_code' | 'unavailable'
@@ -267,8 +271,12 @@ export async function signIn(
     if (!admin) guard.fail(username, now.getTime())
     return { ok: false, code: 'invalid_credentials' }
   }
-  let factor: 'totp' | 'recovery_code' | 'password' = 'password'
-  if (admin.totpEnabled) {
+  let factor: 'totp' | 'recovery_code' | 'password' | 'password_keyless' = 'password'
+  if (admin.totpEnabled && settings.secretsUnavailable) {
+    // No second factor can be checked without the master key. The session this opens is status-only (the routes
+    // refuse everything else while the key is unusable), and every portal admin is told of the sign-in.
+    factor = 'password_keyless'
+  } else if (admin.totpEnabled) {
     const r = await checkSecondFactor(db, settings, admin, input, now)
     if (r === 'missing') return { ok: false, code: 'second_factor_required' }
     if (r === 'unavailable') return { ok: false, code: 'unavailable' }

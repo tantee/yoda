@@ -113,6 +113,11 @@ export const RecoverySession = LocalSession.extend({
   admin: BreakGlassView,
   /** Only the password and TOTP calls are open until the reset is finished. */
   restricted: z.boolean(),
+  /**
+   * The master key is wrong or missing (7.4): the session sees the status only (and may change a temporary
+   * password); everything else, TOTP enrolment too, waits for the key to be fixed on the install host.
+   */
+  statusOnly: z.boolean(),
   /** New recovery codes, shown once, when this call finished a reset from the install host. */
   recoveryCodes: z.array(z.string()).optional(),
 })
@@ -186,6 +191,27 @@ export const TotpConfirmBody = z.object({
   currentTotpCode: TotpCode.optional(),
   recoveryCode: RecoveryCodeInput.optional(),
 })
+
+/** Portal admins as /recovery sees them (§7.4, T4): grant and revoke need the current second factor. */
+export const RecoveryAdmins = z.object({
+  admins: z.array(z.object({ username: z.string(), displayName: z.string(), lastSeenAt: z.string() })),
+  /** Usernames that become admin at their first sign-in (`oidc.bootstrapAdmins`): another identity provider. */
+  preGranted: z.array(z.string()),
+  /** BOOTSTRAP_ADMINS is set in env: pre-grants are managed there. */
+  preGrantLocked: z.boolean(),
+})
+export type RecoveryAdmins = z.infer<typeof RecoveryAdmins>
+
+export const RecoveryAdminBody = z.object({
+  username: z.string().trim().min(1).max(200),
+  totpCode: TotpCode.optional(),
+  recoveryCode: RecoveryCodeInput.optional(),
+})
+export type RecoveryAdminBody = z.infer<typeof RecoveryAdminBody>
+
+/** For the banner on admin pages (§7.4): a break-glass session is open right now. */
+export const RecoveryActivity = z.object({ active: z.boolean(), username: z.string().nullable(), since: z.string().nullable() })
+export type RecoveryActivity = z.infer<typeof RecoveryActivity>
 
 export const RecoveryCodesBody = z.object({ totpCode: TotpCode.optional(), recoveryCode: RecoveryCodeInput.optional() })
 export const RecoveryCodesResult = z.object({ recoveryCodes: z.array(z.string()) })

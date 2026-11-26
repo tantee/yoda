@@ -157,7 +157,8 @@ export async function finishTestSignIn(
   pending: OidcPending,
   flow: NonNullable<SessionData['oidc']>,
   input: { code: string; state: string; now: Date },
-  opts: { requireAdmin?: boolean; staffGroup?: string } = {},
+  /** `preGranted`: usernames that become admin at their first sign-in (`oidc.bootstrapAdmins`, granted at /recovery). */
+  opts: { requireAdmin?: boolean; staffGroup?: string; preGranted?: readonly string[] } = {},
 ): Promise<{ ok: boolean; checks: SettingsTestCheck[]; username: string | null; claims: TokenClaims | null }> {
   const checks: SettingsTestCheck[] = []
   const v = pending.values
@@ -262,7 +263,7 @@ export async function finishTestSignIn(
           sql`select exists (select 1 from ${people} where ${people.isAdmin} and ${people.username} = ${username}) as admin,
             exists (select 1 from ${people} where ${people.isAdmin}) as any`,
         )
-        if (r?.any && !r.admin) throw new Failed('not_admin')
+        if (r?.any && !r.admin && !(opts.preGranted ?? []).includes(username)) throw new Failed('not_admin')
       }),
     )
   }
@@ -317,18 +318,23 @@ export async function applyPending(
 ): Promise<OidcRollback> {
   const previous = currentOidc(deps.config, deps.settings)
   const rollback: OidcRollback = { values: previous, appliedAt: now.toISOString(), until: new Date(now.getTime() + ROLLBACK_MS).toISOString() }
-  // Claim the tested pending change first (one conditional update): a change restaged since the test is refused,
-  // and two applies cannot both win. Put back if writing the settings fails.
-  const [claimed] = await deps.db
-    .update(setupState)
-    .set({ oidcPending: null, oidcRollback: rollback })
-    .where(and(samePending(pending), sql`${setupState.oidcPending}->>'testedAt' = ${pending.testedAt ?? ''}`))
-    .returning({ id: setupState.id })
-  if (!claimed) throw new PendingChangedError()
+  // Claim the tested pending change first (one conditional update, under the row lock): a change restaged since
+  // the test is refused, and two applies cannot both win. If writing the settings fails, both the pending change
+  // and the rollback snapshot from before are put back, so a failed apply never loses the way back.
+  const before = await deps.db.transaction(async (tx) => {
+    const [row] = await tx.select({ rollback: setupState.oidcRollback }).from(setupState).where(eq(setupState.id, 1)).for('update')
+    const [claimed] = await tx
+      .update(setupState)
+      .set({ oidcPending: null, oidcRollback: rollback })
+      .where(and(samePending(pending), sql`${setupState.oidcPending}->>'testedAt' = ${pending.testedAt ?? ''}`))
+      .returning({ id: setupState.id })
+    if (!claimed) throw new PendingChangedError()
+    return (row?.rollback ?? null) as OidcRollback | null
+  })
   try {
     await writeOidc(deps.settings, pending.values, actor)
   } catch (err) {
-    await deps.db.update(setupState).set({ oidcPending: pending }).where(eq(setupState.id, 1))
+    await deps.db.update(setupState).set({ oidcPending: pending, oidcRollback: before }).where(eq(setupState.id, 1))
     throw err
   }
   await deps.settings.audit({ action: 'oidc.apply_pending', actor, newValue: { issuer: pending.values.issuer, clientId: pending.values.clientId, jwksUrl: pending.values.jwksUrl, testedUsername: pending.testedUsername } })

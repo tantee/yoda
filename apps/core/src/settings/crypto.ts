@@ -197,3 +197,83 @@ export function openBlob(mk: MasterKey, aad: string, blob: Buffer, keyId: string
 export function deriveKey(mk: MasterKey, info: string): Buffer {
   return Buffer.from(hkdfSync('sha256', mk.key, Buffer.alloc(0), info, 32))
 }
+
+/** A new random master key (rotation). */
+export function generateMasterKey(): MasterKey {
+  return masterKey(randomBytes(32))
+}
+
+/** The key as `YODA_MASTER_KEY` and the key file hold it: base64 of the 32 bytes. */
+export function encodeMasterKey(mk: MasterKey): string {
+  return mk.key.toString('base64')
+}
+
+/**
+ * Rotation (§3.5): the data key is unwrapped with whichever of `from` the envelope names and wrapped again under
+ * `to` (a new nonce). The ciphertext and its nonce stay as they are. Throws `SecretDecryptError` when no key in
+ * `from` opens it, or when it does not belong to `settingKey`, so nothing unreadable is carried over silently.
+ */
+export function rewrapEnvelope(from: MasterKey[], to: MasterKey, settingKey: string, env: Envelope): Envelope {
+  const mk = from.find((k) => k.id === env.keyId)
+  if (!mk) throw new SecretDecryptError(env.keyId)
+  let dek: Buffer | undefined
+  try {
+    dek = open(mk.key, env.dekNonce, env.wrappedDek, `yoda-dek:${settingKey}`)
+    // The ciphertext must open too: a row whose data key unwraps but whose body was tampered with is not kept.
+    open(dek, env.nonce, env.ciphertext, `yoda-setting:${settingKey}`).fill(0)
+    const dekNonce = randomBytes(12)
+    return { keyId: to.id, wrappedDek: seal(to.key, dekNonce, dek, `yoda-dek:${settingKey}`), dekNonce, nonce: env.nonce, ciphertext: env.ciphertext }
+  } catch {
+    throw new SecretDecryptError(env.keyId)
+  } finally {
+    dek?.fill(0)
+  }
+}
+
+/** `rewrapEnvelope` for a `sealBlob` (the break-glass TOTP seed). */
+export function rewrapBlob(from: MasterKey[], to: MasterKey, aad: string, blob: Buffer, keyId: string): { blob: Buffer; keyId: string } {
+  if (blob.length < 1 + 12 + 48 + 12 + TAG || blob[0] !== BLOB_VERSION) throw new SecretDecryptError(keyId)
+  const e = rewrapEnvelope(from, to, aad, {
+    keyId,
+    dekNonce: blob.subarray(1, 13),
+    wrappedDek: blob.subarray(13, 61),
+    nonce: blob.subarray(61, 73),
+    ciphertext: blob.subarray(73),
+  })
+  return { blob: Buffer.concat([Buffer.from([BLOB_VERSION]), e.dekNonce, e.wrappedDek, e.nonce, e.ciphertext]), keyId: e.keyId }
+}
+
+/**
+ * The key a rotation replaced, kept as `<YODA_MASTER_KEY_FILE>.prev` until `rotate-master-key --finish`: core
+ * decrypts with it (never encrypts), so a value written by a core that still had the old key stays readable.
+ * Null when there is no such file or it is not a valid key. Never throws.
+ */
+export function loadPreviousMasterKey(env: NodeJS.ProcessEnv, readFile: (path: string) => string = (p) => readFileSync(p, 'utf8')): MasterKey | null {
+  if (!env.YODA_MASTER_KEY_FILE) return null
+  const r = loadMasterKey({ YODA_MASTER_KEY_FILE: `${env.YODA_MASTER_KEY_FILE}.prev` }, readFile)
+  return r.status === 'ok' ? r.key : null
+}
+
+export type MasterKeySetup = {
+  masterKey: MasterKeyLoad
+  previousKey: MasterKey | null
+  /** Re-reads the key file (a rotation while running); absent when the key came from YODA_MASTER_KEY. */
+  keyLoader?: () => MasterKeyLoad
+  /** Where the key came from: rotation writes the file, and cannot change an env value. */
+  source: 'env' | 'file' | null
+  file: string | null
+}
+
+/** Everything `SettingsStore.open` needs about the key, read once at boot; removes YODA_MASTER_KEY from `env`. */
+export function takeMasterKeySetup(env: NodeJS.ProcessEnv): MasterKeySetup {
+  const fromEnv = !!env.YODA_MASTER_KEY?.trim()
+  const file = env.YODA_MASTER_KEY_FILE || null
+  const masterKey = takeMasterKey(env)
+  return {
+    masterKey,
+    previousKey: loadPreviousMasterKey(env),
+    ...(!fromEnv && file ? { keyLoader: () => loadMasterKey({ YODA_MASTER_KEY_FILE: file }) } : {}),
+    source: fromEnv ? 'env' : file ? 'file' : null,
+    file,
+  }
+}

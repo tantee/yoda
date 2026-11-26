@@ -25,6 +25,8 @@ export type BootPlan =
   | { kind: 'local' }
   /** Setup is not done: the route middleware sends every other page to /setup. */
   | { kind: 'setup' }
+  /** Forced recovery mode (`yoda-admin recovery on`): every page goes to /recovery. */
+  | { kind: 'recovery' }
   | { kind: 'keycloak'; options: KeycloakOptions }
   /** Setup is done but there is nothing to sign in with (an issuer that is not a Keycloak realm, no overrides). */
   | { kind: 'error'; error: BootError }
@@ -46,6 +48,7 @@ export function bootPlan(path: string, pub: PublicConfig | null, env: KeycloakEn
   if (isLocalAuthPath(path)) return { kind: 'local' }
   if (!pub) return { kind: 'error', error: 'config_unavailable' }
   if (pub.setup === 'required') return { kind: 'setup' }
+  if (pub.recoveryForced) return { kind: 'recovery' }
   const options = keycloakOptions(env, pub)
   return options ? { kind: 'keycloak', options } : { kind: 'error', error: 'not_configured' }
 }
@@ -53,7 +56,8 @@ export function bootPlan(path: string, pub: PublicConfig | null, env: KeycloakEn
 /** Where the route middleware sends a navigation before anything else runs; null = carry on. */
 export function bootRedirect(path: string, pub: PublicConfig | null, bootError: BootError | null): string | null {
   if (isLocalAuthPath(path) || bootError || !pub) return null
-  return pub.setup === 'required' ? '/setup' : null
+  if (pub.setup === 'required') return '/setup'
+  return pub.recoveryForced ? '/recovery' : null
 }
 
 /** The portal values read once by the shell and pages; a non-empty NUXT_PUBLIC_* value still wins. */

@@ -10,6 +10,7 @@ const pub = (over: Partial<PublicConfig> = {}): PublicConfig => ({
   funMode: true,
   setup: 'done',
   recovery: false,
+  recoveryForced: false,
   version: '1.0.0',
   ...over,
 })
@@ -39,6 +40,15 @@ describe('portal boot with /public-config', () => {
     expect(bootRedirect('/setup', pub({ setup: 'required' }), null)).toBeNull()
     expect(bootRedirect('/requests', pub(), null)).toBeNull()
     expect(bootRedirect('/requests', null, 'config_unavailable')).toBeNull()
+  })
+
+  it('sends every page to /recovery in forced recovery mode, without Keycloak; a key problem alone does not', () => {
+    const forced = pub({ recovery: true, recoveryForced: true })
+    expect(bootPlan('/', forced, noEnv)).toEqual({ kind: 'recovery' })
+    expect(bootRedirect('/admin/settings', forced, null)).toBe('/recovery')
+    expect(bootRedirect('/recovery', forced, null)).toBeNull()
+    expect(bootPlan('/', pub({ recovery: true }), noEnv).kind).toBe('keycloak')
+    expect(bootRedirect('/requests', pub({ recovery: true }), null)).toBeNull()
   })
 
   it('shows the retry screen when the config cannot be read, and the not-configured screen without sign-in', () => {

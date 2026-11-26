@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { OidcCheckResult, OidcPending, OidcSignInStart, RecoveryCodesResult, RecoverySession, RecoveryStatus, TotpEnrolment } from '@yoda/shared'
+import type { OidcCheckResult, OidcPending, OidcSignInStart, RecoveryAdmins, RecoveryCodesResult, RecoverySession, RecoveryStatus, TotpEnrolment } from '@yoda/shared'
 import TestResult from '~/components/settings/TestResult.vue'
 import { formatCode, oidcCallback, oidcCallbackError, recoveryClient, recoveryError, sessionLost } from '~/utils/recovery'
 
@@ -46,9 +46,33 @@ async function run<T>(name: string, fn: () => Promise<T>): Promise<T | undefined
   }
 }
 
+/** A restricted session gets no status, except a status-only one (the master key is not usable). */
 async function loadStatus() {
-  if (!session.value || session.value.restricted) return
+  if (!session.value || (session.value.restricted && !session.value.statusOnly)) return
   status.value = await api<RecoveryStatus>('/status')
+  if (!session.value.restricted) admins.value = await api<RecoveryAdmins>('/admins')
+}
+
+// ── Portal admins: grant and revoke (step-up with the current second factor) ──
+const admins = ref<RecoveryAdmins | null>(null)
+const adminForm = reactive({ username: '', totpCode: '' })
+
+async function grantAdmin() {
+  const username = adminForm.username.trim()
+  await run('grant', async () => {
+    admins.value = await api<RecoveryAdmins>('/admins', { method: 'POST', body: { username, ...(adminForm.totpCode ? { totpCode: adminForm.totpCode } : {}) } })
+    adminForm.username = ''
+    adminForm.totpCode = ''
+    notice.value = t('recovery.admins.granted', { username })
+  })
+}
+
+async function revokeAdmin(username: string) {
+  await run(`revoke:${username}`, async () => {
+    admins.value = await api<RecoveryAdmins>('/admins/revoke', { method: 'POST', body: { username, ...(adminForm.totpCode ? { totpCode: adminForm.totpCode } : {}) } })
+    adminForm.totpCode = ''
+    notice.value = t('recovery.admins.revoked', { username })
+  })
 }
 
 // ── Sign-in ──
@@ -76,6 +100,7 @@ async function signOut() {
     await api('/session', { method: 'DELETE' })
     session.value = null
     status.value = null
+    admins.value = null
   })
 }
 
@@ -313,14 +338,28 @@ function switchLocale() {
 
         <!-- A reset from the install host is not finished: password first, then TOTP. -->
         <v-card v-if="session.restricted" class="pa-6 recovery__card" data-testid="recovery-restricted">
-          <h2 class="text-subtitle-1 font-weight-medium mb-1">{{ t('recovery.reset.title') }}</h2>
-          <p class="text-body-2 text-medium-emphasis mb-4">{{ t('recovery.reset.help') }}</p>
+          <template v-if="session.statusOnly">
+            <h2 class="text-subtitle-1 font-weight-medium mb-1">{{ t('recovery.statusOnly.title') }}</h2>
+            <p class="text-body-2 text-medium-emphasis mb-4" data-testid="recovery-status-only">{{ t('recovery.statusOnly.help') }}</p>
+            <dl v-if="status" class="recovery__facts text-body-2 mb-4">
+              <dt>{{ t('recovery.status.masterKey') }}</dt>
+              <dd>
+                <v-chip size="small" color="error" variant="tonal" data-testid="recovery-master-key">{{ t(`recovery.status.key.${status.masterKey.status}`) }}</v-chip>
+              </dd>
+              <dt>{{ t('recovery.status.setup') }}</dt>
+              <dd>{{ t(`recovery.status.setupState.${status.setup}`) }}</dd>
+            </dl>
+          </template>
+          <template v-else>
+            <h2 class="text-subtitle-1 font-weight-medium mb-1">{{ t('recovery.reset.title') }}</h2>
+            <p class="text-body-2 text-medium-emphasis mb-4">{{ t('recovery.reset.help') }}</p>
+          </template>
           <v-form v-if="session.admin.mustChangePassword" @submit.prevent="changePassword">
             <v-text-field v-model="pw.newPassword" :label="t('recovery.account.newPassword')" :hint="t('recovery.account.passwordRule')" persistent-hint type="password" autocomplete="new-password" data-testid="recovery-new-password" />
             <v-text-field v-model="pw.confirm" :label="t('recovery.account.confirmPassword')" type="password" autocomplete="new-password" :error-messages="pwMismatch ? t('recovery.account.mismatch') : ''" data-testid="recovery-confirm-password" />
             <v-btn type="submit" color="primary" :loading="busy === 'password'" :disabled="pw.newPassword.length < 14 || pw.newPassword !== pw.confirm" data-testid="recovery-save-password">{{ t('recovery.account.savePassword') }}</v-btn>
           </v-form>
-          <div v-else-if="session.admin.mustEnrolTotp">
+          <div v-else-if="session.admin.mustEnrolTotp && !session.statusOnly">
             <v-btn v-if="!enrolment" color="primary" :loading="busy === 'totp'" data-testid="recovery-totp-start" @click="startTotp">{{ t('recovery.totp.start') }}</v-btn>
             <template v-else>
               <TotpEnrol :enrolment="enrolment" class="mb-4" />
@@ -401,6 +440,34 @@ function switchLocale() {
             </div>
           </v-card>
 
+          <!-- Portal admins -->
+          <v-card v-if="admins" class="pa-5 mb-4" data-testid="recovery-admins">
+            <h2 class="text-subtitle-1 font-weight-medium mb-1">{{ t('recovery.admins.title') }}</h2>
+            <p class="text-body-2 text-medium-emphasis mb-3">{{ t('recovery.admins.help') }}</p>
+            <h3 class="text-body-1 font-weight-medium mb-2">{{ t('recovery.admins.list') }}</h3>
+            <p v-if="!admins.admins.length && !admins.preGranted.length" class="text-body-2 text-medium-emphasis mb-3" data-testid="recovery-admins-none">{{ t('recovery.admins.none') }}</p>
+            <ul class="recovery__list mb-4">
+              <li v-for="a in admins.admins" :key="a.username" :data-testid="`recovery-admin-${a.username}`">
+                <span class="recovery__value">{{ a.username }}</span>
+                <span class="text-medium-emphasis">{{ a.displayName }} · {{ t('recovery.admins.lastSeen', { at: dateTime(a.lastSeenAt) }) }}</span>
+                <v-btn variant="text" size="small" color="error" :loading="busy === `revoke:${a.username}`" :data-testid="`recovery-admin-revoke-${a.username}`" @click="revokeAdmin(a.username)">{{ t('recovery.admins.revoke') }}</v-btn>
+              </li>
+              <li v-for="u in admins.preGranted" :key="`pre:${u}`" :data-testid="`recovery-admin-pre-${u}`">
+                <span class="recovery__value">{{ u }}</span>
+                <v-chip size="x-small" variant="tonal">{{ t('recovery.admins.preGranted') }}</v-chip>
+                <v-btn variant="text" size="small" color="error" :loading="busy === `revoke:${u}`" :disabled="admins.preGrantLocked" :data-testid="`recovery-admin-revoke-${u}`" @click="revokeAdmin(u)">{{ t('recovery.admins.revoke') }}</v-btn>
+              </li>
+            </ul>
+            <v-alert v-if="admins.preGrantLocked" type="info" variant="tonal" density="compact" class="mb-3" data-testid="recovery-admins-locked">{{ t('recovery.admins.locked') }}</v-alert>
+            <v-form class="recovery__grid" @submit.prevent="grantAdmin">
+              <v-text-field v-model="adminForm.username" :label="t('recovery.admins.username')" autocapitalize="none" spellcheck="false" data-testid="recovery-admin-username" />
+              <v-text-field v-if="breakGlass.totpEnabled" v-model="adminForm.totpCode" :label="t('recovery.account.currentTotp')" inputmode="numeric" maxlength="6" data-testid="recovery-admin-totp" />
+              <div>
+                <v-btn type="submit" variant="outlined" :loading="busy === 'grant'" :disabled="!adminForm.username.trim()" data-testid="recovery-admin-grant">{{ t('recovery.admins.grant') }}</v-btn>
+              </div>
+            </v-form>
+          </v-card>
+
           <!-- The break-glass account -->
           <v-card class="pa-5 mb-4" data-testid="recovery-account">
             <h2 class="text-subtitle-1 font-weight-medium mb-3">{{ t('recovery.account.title') }}</h2>
@@ -462,5 +529,7 @@ function switchLocale() {
 .recovery__actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .recovery__inline { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .recovery__inline .v-text-field { max-width: 220px; }
+.recovery__list { list-style: none; padding: 0; margin: 0; display: grid; gap: 4px; }
+.recovery__list li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
 .recovery__pending { border-top: 1px solid rgba(var(--v-border-color), var(--v-border-opacity)); padding-top: 16px; }
 </style>

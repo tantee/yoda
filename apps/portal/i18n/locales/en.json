@@ -2252,7 +2252,29 @@
       "invalidState": "That cannot be done in the current state. Reload the page.",
       "validation": "Check the values you entered.",
       "generic": "Something went wrong. Try again."
+    },
+    "statusOnly": {
+      "title": "Status only: the master key is not usable",
+      "help": "The master key on the install host does not open the stored secrets, so the authenticator cannot be checked and nothing can be changed here. On the host, run yoda-admin status; put the right key back from the recovery kit (docs/operations.md, section 4a), or, if it is lost for good, run yoda-admin reset-master-key --yes."
+    },
+    "admins": {
+      "title": "Portal admins",
+      "help": "Who may administer the portal. Grant admin when sign-in moved to another identity provider and the usernames differ, or when no admin is left. A username nobody has signed in with yet becomes admin at its first sign-in. Every change is recorded and every admin is told.",
+      "list": "Admins",
+      "none": "No portal admin.",
+      "preGranted": "Admin at first sign-in",
+      "username": "Username (as the identity provider sends it)",
+      "grant": "Grant admin",
+      "revoke": "Revoke",
+      "locked": "BOOTSTRAP_ADMINS is set on the install host: first-sign-in grants are managed there.",
+      "granted": "Admin granted to {username}.",
+      "revoked": "Admin revoked from {username}.",
+      "lastSeen": "last seen {at}"
     }
+  },
+  "recoveryBanner": {
+    "title": "A break-glass session is open",
+    "text": "{username} signed in at /recovery at {at}. If this is not you or your team, check the settings audit log now."
   },
   "setup": {
     "title": "Yoda setup",

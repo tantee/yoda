@@ -93,6 +93,7 @@ export async function buildPublicConfig(
     funMode: fun,
     setup: setupState(config, s),
     recovery: s?.recovery ?? false,
+    recoveryForced: s?.recoveryForced ?? false,
     version: VERSION,
   })
 }

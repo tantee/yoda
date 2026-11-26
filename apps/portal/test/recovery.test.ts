@@ -37,6 +37,8 @@ describe('recovery client', () => {
     expect(recoveryError({ data: { error: 'invalid_credentials' } })).toEqual({ key: 'recovery.error.invalidCredentials' })
     expect(recoveryError({ data: { error: 'rate_limited', reason: 'locked', retryAfter: 125 } })).toEqual({ key: 'recovery.error.locked', named: { minutes: 3 } })
     expect(recoveryError({ data: { error: 'rate_limited', retryAfter: 10 } })).toEqual({ key: 'recovery.error.rateLimited', named: { minutes: 1 } })
+    expect(recoveryError({ data: { error: 'forbidden', reason: 'secrets_unavailable' } })).toEqual({ key: 'recovery.error.secretsUnavailable' })
+    expect(recoveryError({ data: { error: 'forbidden', reason: 'enrolment_required' } })).toEqual({ key: 'recovery.error.generic' })
     expect(recoveryError({ data: { error: 'nope' } })).toEqual({ key: 'recovery.error.generic' })
     expect(recoveryError(new Error('x'))).toEqual({ key: 'recovery.error.generic' })
     expect(sessionLost({ statusCode: 401, data: { error: 'unauthorized' } })).toBe(true)

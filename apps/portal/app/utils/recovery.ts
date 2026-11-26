@@ -58,6 +58,8 @@ export function recoveryError(e: unknown): { key: string; named?: Record<string,
   if (code === 'rate_limited' && data?.retryAfter) {
     return { key: data.reason === 'locked' ? 'recovery.error.locked' : 'recovery.error.rateLimited', named: { minutes: Math.max(1, Math.ceil(data.retryAfter / 60)) } }
   }
+  // A status-only session (the master key is not usable) asked for more than the status.
+  if (code === 'forbidden' && data?.reason === 'secrets_unavailable') return { key: 'recovery.error.secretsUnavailable' }
   if (code && ERRORS[code]) return { key: ERRORS[code]! }
   return { key: 'recovery.error.generic' }
 }

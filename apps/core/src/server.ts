@@ -8,7 +8,7 @@ import { LiveBus } from './live/bus.js'
 import { registerJobHandlers } from './jobs/handlers.js'
 import { createPgBossQueue } from './jobs/queue.js'
 import { seedTemplates } from './workflow/seed.js'
-import { takeMasterKey } from './settings/crypto.js'
+import { takeMasterKeySetup } from './settings/crypto.js'
 import { LiveSettings } from './settings/live.js'
 import { SettingsStore } from './settings/store.js'
 import { internalAddresses } from './settings/outbound.js'
@@ -21,7 +21,7 @@ import { setupState } from './setup-state.js'
 applyBootstrapFile(process.env)
 
 // Read the master key first and drop YODA_MASTER_KEY from process.env, so it does not linger there.
-const masterKey = takeMasterKey(process.env)
+const key = takeMasterKeySetup(process.env)
 const config = loadConfig(process.env)
 const db = createDb(config.databaseUrl)
 // Dev and a plain `docker run` migrate here; production compose sets MIGRATE_ON_START=false and runs the
@@ -33,7 +33,10 @@ if (config.migrateOnStart) {
 await seedTemplates(db)
 // Imports env into the settings table (D4) and checks the master key; a missing or wrong key is a recovery
 // state shown on /health, not a crash.
-const settings = await SettingsStore.open({ db, env: process.env, masterKey })
+const settings = await SettingsStore.open({ db, env: process.env, masterKey: key.masterKey, previousKey: key.previousKey, keyLoader: key.keyLoader })
+// §12 T14: which values env forces (names only), so nobody wonders why the UI shows them locked.
+if (settings.envLockedNames.length) console.log(`settings: set by environment (locked in System settings): ${settings.envLockedNames.join(', ')}`)
+if (settings.previousKeyId) console.warn(`settings: the previous master key ${settings.previousKeyId} is still loaded; finish the rotation with yoda-admin rotate-master-key --finish`)
 if (settings.recovery) console.warn(`settings: recovery state (master key ${settings.keyStatus}); stored secrets unavailable`)
 // Live apply (§5.3): `deps.config` and the clients built from settings (JWKS, AI models, GitLab, SMTP) follow
 // every change, here or on another instance (NOTIFY), without a restart. Bootstrap-only values stay from env.

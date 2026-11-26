@@ -2,6 +2,7 @@ import {
   OidcCallbackBody,
   OidcValues,
   PasswordChangeBody,
+  RecoveryAdminBody,
   RecoveryCodesBody,
   RecoverySignInBody,
   TotpConfirmBody,
@@ -10,16 +11,18 @@ import {
   type OidcCheckResult,
   type OidcPending,
   type OidcSignInStart,
+  type RecoveryActivity,
+  type RecoveryAdmins,
   type RecoveryCodesResult,
   type RecoverySession,
   type RecoveryStatus,
   type SettingKey,
   type TotpEnrolment,
 } from '@yoda/shared'
-import { and, eq, ne, sql } from 'drizzle-orm'
+import { and, desc, eq, gt, ne, sql } from 'drizzle-orm'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
-import { HttpError, invalidState } from '../auth/plugin.js'
-import { departmentSettings, localSessions } from '../db/schema.js'
+import { HttpError, invalidState, requireAdmin } from '../auth/plugin.js'
+import { departmentSettings, localAdmins, localSessions, people } from '../db/schema.js'
 import {
   adminById,
   adminView,
@@ -60,6 +63,7 @@ import {
   isHttps,
   requireSession,
   revokeSessions,
+  SESSION_TTL,
   sessionView,
   setSessionCookie,
   updateSessionData,
@@ -95,7 +99,9 @@ const actorOf = (request: FastifyRequest, admin: AdminRow): SettingActor => ({
   ...whereFrom(request),
 })
 
-const restrictedOf = (s: SettingsStore, admin: AdminRow, host: string) => admin.mustChangePassword || (!admin.totpEnabled && totpRequired(s, host))
+/** A reset not finished, or (status-only) a master key that cannot open the second factor or seal a new one. */
+const restrictedOf = (s: SettingsStore, admin: AdminRow, host: string) =>
+  admin.mustChangePassword || (!admin.totpEnabled && totpRequired(s, host)) || s.secretsUnavailable
 
 export function recoveryRoutes(app: FastifyInstance): void {
   // §8.4: 5 sign-ins per IP per 15 min (the per-account backoff is in break-glass.ts); tests 10 / min, 60 / hour.
@@ -111,15 +117,20 @@ export function recoveryRoutes(app: FastifyInstance): void {
 
   const publicUrl = (s: SettingsStore): string => s.get('org.publicUrl') ?? 'http://localhost:3000'
 
-  /** The recovery session and its admin; restricted sessions (a reset not finished) only reach `allowRestricted` routes. */
-  async function signed(request: FastifyRequest, opts: { allowRestricted?: boolean } = {}): Promise<Signed> {
+  /**
+   * The recovery session and its admin; restricted sessions (a reset not finished) only reach `allowRestricted`
+   * routes, and `statusOnly` ones too while the master key is unusable (7.4: the state can be seen, not changed).
+   */
+  async function signed(request: FastifyRequest, opts: { allowRestricted?: boolean; statusOnly?: boolean } = {}): Promise<Signed> {
     const store = storeOf(app)
     if (setupState(app.deps.config, store) === 'required') throw new HttpError(503, { error: 'setup_required' })
     const session = await requireSession(app.deps.db, request, 'recovery', { now: nowOf(app), publicUrl: publicUrl(store) })
     const admin = session.row.adminId ? await adminById(app.deps.db, session.row.adminId) : undefined
     if (!admin) throw new HttpError(401, { error: 'unauthorized', reason: 'session' })
     const restricted = restrictedOf(store, admin, request.hostname)
-    if (restricted && !opts.allowRestricted) throw new HttpError(403, { error: 'forbidden', reason: 'enrolment_required' })
+    if (restricted && !opts.allowRestricted && !(opts.statusOnly && store.secretsUnavailable)) {
+      throw new HttpError(403, { error: 'forbidden', reason: store.secretsUnavailable ? 'secrets_unavailable' : 'enrolment_required' })
+    }
     return { session, admin, store, restricted, host: request.hostname }
   }
 
@@ -128,6 +139,7 @@ export function recoveryRoutes(app: FastifyInstance): void {
       ...sessionView(s.session.row, s.session.value, 'recovery', !isHttps(request)),
       admin: await adminView(app.deps.db, s.store, s.admin, request.hostname),
       restricted: s.restricted,
+      statusOnly: s.store.secretsUnavailable,
       ...(recoveryCodes ? { recoveryCodes } : {}),
     }
   }
@@ -187,7 +199,14 @@ export function recoveryRoutes(app: FastifyInstance): void {
     const secure = isHttps(request)
     if (!secure) request.log.warn('recovery: session over plain HTTP; the cookie is not Secure (D8)')
     setSessionCookie(reply, 'recovery', value, secure)
-    await used(request, r.admin, store, 'recovery.signin', 'เข้าสู่ระบบหน้ากู้คืน (/recovery)', { factor: r.factor })
+    await used(
+      request,
+      r.admin,
+      store,
+      'recovery.signin',
+      r.factor === 'password_keyless' ? 'เข้าสู่ระบบหน้ากู้คืนด้วยรหัสผ่านอย่างเดียว (กุญแจหลักใช้ไม่ได้ ดูสถานะได้อย่างเดียว)' : 'เข้าสู่ระบบหน้ากู้คืน (/recovery)',
+      { factor: r.factor },
+    )
     return sessionBody(request, { session: { row, value }, admin: r.admin, store, restricted: restrictedOf(store, r.admin, request.hostname), host: request.hostname })
   })
 
@@ -208,7 +227,7 @@ export function recoveryRoutes(app: FastifyInstance): void {
   // ── Status and fun mode ──────────────────────────────────────────────────────────────────────────────────────
 
   app.get('/recovery/status', PUBLIC, async (request, reply): Promise<RecoveryStatus> => {
-    const s = await signed(request)
+    const s = await signed(request, { statusOnly: true })
     reply.header('cache-control', 'no-store')
     return status(s)
   })
@@ -302,7 +321,7 @@ export function recoveryRoutes(app: FastifyInstance): void {
     // another session) is a different change and needs its own test.
     if (flow.stagedAt !== pending.stagedAt) throw invalidState('pending_changed')
     const now = nowOf(app)
-    const r = await finishTestSignIn({ db: app.deps.db, policy: policy() }, pending, flow, { ...body, now })
+    const r = await finishTestSignIn({ db: app.deps.db, policy: policy() }, pending, flow, { ...body, now }, { preGranted: s.store.get('oidc.bootstrapAdmins') ?? [] })
     const result = r.ok ? 'ok' : (r.checks.find((c) => !c.ok)?.code ?? 'failed')
     await s.store.recordTest('signin', 'oidc.signin', result, actorOf(request, s.admin))
     let next: OidcPending | null = pending
@@ -352,6 +371,86 @@ export function recoveryRoutes(app: FastifyInstance): void {
       key: `oidc.rollback:${request.id}:${nowOf(app).getTime()}`,
     })
     return status(s)
+  })
+
+  // ── Portal admins (T4, CARRY c): grant and revoke when sign-in changed or no admin is left ────────────────────
+
+  async function adminsView(store: SettingsStore): Promise<RecoveryAdmins> {
+    const rows = await app.deps.db
+      .select({ username: people.username, displayName: people.displayName, lastSeenAt: people.lastSeenAt })
+      .from(people)
+      .where(eq(people.isAdmin, true))
+      .orderBy(people.username)
+    return {
+      admins: rows.map((r) => ({ ...r, lastSeenAt: r.lastSeenAt.toISOString() })),
+      preGranted: [...(store.get('oidc.bootstrapAdmins') ?? [])].sort(),
+      preGrantLocked: !store.recoveryWritable('oidc.bootstrapAdmins'),
+    }
+  }
+
+  app.get('/recovery/admins', PUBLIC, async (request, reply): Promise<RecoveryAdmins> => {
+    const s = await signed(request)
+    reply.header('cache-control', 'no-store')
+    return adminsView(s.store)
+  })
+
+  /**
+   * Makes a person a portal admin (step-up). Someone who has signed in already is granted at once; a username not
+   * seen yet (another identity provider, other usernames) is pre-granted: admin at the first sign-in, and the
+   * test sign-in of a pending sign-in change counts them as admin. Audited; every portal admin, the new one too,
+   * is told.
+   */
+  app.post('/recovery/admins', PUBLIC, async (request, reply): Promise<RecoveryAdmins> => {
+    const s = await signed(request)
+    const body = RecoveryAdminBody.parse(request.body)
+    await secondFactor(request, reply, s, body)
+    const username = body.username
+    const granted = await app.deps.db.update(people).set({ isAdmin: true }).where(eq(people.username, username)).returning({ id: people.id })
+    if (!granted.length) {
+      if (!s.store.recoveryWritable('oidc.bootstrapAdmins')) throw new HttpError(409, { error: 'setting_locked', key: 'oidc.bootstrapAdmins', reason: 'env', envName: 'BOOTSTRAP_ADMINS' })
+      const list = s.store.get('oidc.bootstrapAdmins') ?? []
+      if (!list.includes(username)) await s.store.setFromRecovery('oidc.bootstrapAdmins', [...list, username], actorOf(request, s.admin))
+    }
+    await used(request, s.admin, s.store, 'recovery.admin_grant', `ให้สิทธิ์ผู้ดูแลพอร์ทัลแก่ ${username}${granted.length ? '' : ' (เมื่อเข้าสู่ระบบครั้งแรก)'}`, {
+      username,
+      preGranted: !granted.length,
+    })
+    return adminsView(s.store)
+  })
+
+  /** Takes portal admin away from a username, and its pre-grant (step-up); audited, admins told. */
+  app.post('/recovery/admins/revoke', PUBLIC, async (request, reply): Promise<RecoveryAdmins> => {
+    const s = await signed(request)
+    const body = RecoveryAdminBody.parse(request.body)
+    await secondFactor(request, reply, s, body)
+    const username = body.username
+    // Told before the change, so the person losing admin hears of it too.
+    await used(request, s.admin, s.store, 'recovery.admin_revoke', `ถอนสิทธิ์ผู้ดูแลพอร์ทัลของ ${username}`, { username })
+    await app.deps.db.update(people).set({ isAdmin: false }).where(eq(people.username, username))
+    const list = s.store.get('oidc.bootstrapAdmins') ?? []
+    if (list.includes(username) && s.store.recoveryWritable('oidc.bootstrapAdmins')) {
+      await s.store.setFromRecovery('oidc.bootstrapAdmins', list.filter((u) => u !== username), actorOf(request, s.admin))
+    }
+    return adminsView(s.store)
+  })
+
+  /** For portal admins (bearer): a break-glass session is open now; the admin pages show a banner (7.4). */
+  app.get('/admin/recovery-activity', async (request): Promise<RecoveryActivity> => {
+    requireAdmin(request)
+    const [row] = await app.deps.db
+      .select({ username: localAdmins.username, since: localSessions.createdAt })
+      .from(localSessions)
+      .innerJoin(localAdmins, eq(localAdmins.id, localSessions.adminId))
+      .where(
+        and(
+          eq(localSessions.kind, 'recovery'),
+          gt(localSessions.expiresAt, nowOf(app)),
+          gt(localSessions.lastSeen, new Date(nowOf(app).getTime() - SESSION_TTL.recovery.idleMs)),
+        ),
+      )
+      .orderBy(desc(localSessions.createdAt))
+      .limit(1)
+    return { active: !!row, username: row?.username ?? null, since: row?.since.toISOString() ?? null }
   })
 
   // ── The break-glass account itself ───────────────────────────────────────────────────────────────────────────

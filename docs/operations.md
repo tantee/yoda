@@ -356,8 +356,9 @@ in your shell overrides `release.env`, so leave it unset.
 5. **Store the recovery kit.** The last step gives one file, `yoda-recovery-<install-id>.txt`: the master key,
    the break-glass username and its recovery codes. It is shown once. Print it or put it in the organisation's
    password vault, **off this host and apart from the backups**: anyone with it and a database backup can read
-   every secret. Setup finishes only once you confirm you stored it; a new kit can be made later in System
-   settings → Security (it replaces the recovery codes).
+   every secret. Setup finishes only once you confirm you stored it; a new kit can be made later on the host
+   with `dc exec -T core yoda-admin recovery-kit > yoda-recovery-kit.txt` (it replaces the recovery codes;
+   section 10).
 6. Finish the services around it:
    - [ ] **AI budgets.** In Admin → AI budget set the department's monthly budget, and on each project's AI
          settings tab its budget or no-AI. A model that is not in `apps/core/src/ai/prices.json` is logged at
@@ -407,7 +408,8 @@ restore `/var/lib/yoda` from your recovery kit or set `POSTGRES_PASSWORD`. Read 
   as `YODA_MASTER_KEY=<key>` before the first deploy (`init` copies it into the volume; remove the line again
   afterwards if you like, the volume keeps it), then restore the backup (section 6). Without the key the secrets
   must be re-entered.
-- **Rotating the master key:** see section 10.
+- **Rotating the master key:** see section 10 ("Master key rotation"). A rotation keeps the replaced key as
+  `core/master-key.prev` (decrypt-only) until `yoda-admin rotate-master-key --finish` deletes it.
 
 ## 5. Upgrade and rollback
 
@@ -505,7 +507,7 @@ deploy job. Owner setup, once:
   `deploy.sh`. `init` copies the Postgres password, the storage keys and `YODA_MASTER_KEY` from `.env` into the
   bootstrap volume, core imports the other values into System settings and marks setup done, and those values
   show **Set by environment** until you delete their lines from `.env` (section 3). Nothing else changes. Make a
-  recovery kit in System settings → Security afterwards.
+  recovery kit afterwards: `dc exec -T core yoda-admin recovery-kit > yoda-recovery-kit.txt` (section 10).
 - **Backups:** the prod compose no longer passes `BACKUP_AT=02:00` / `BACKUP_KEEP_DAYS=14` by default; the
   `backup` container reads System settings → Backups (same defaults). A value in `.env` still wins.
 
@@ -704,12 +706,43 @@ environment changed). Rotate on a schedule, when a person with access leaves, an
 | LINE token / secret | Issue a new long-lived token (or reissue the channel secret) in LINE Developers, enter it in System settings → LINE, then revoke the old token. |
 | Telegram token | Save first, revoke after: BotFather `/revoke` gives the new token at once, so enter it in System settings → Telegram straight away and press **Register webhook**. |
 | Telegram webhook secret | Generate a new one in System settings → Telegram and press **Register webhook**. |
-| Master key | Not rotated in place yet (a `yoda-admin rotate-master-key` command is planned). After a leak: make a new recovery kit, and rotate every secret above, since the old key could read them. |
-| Break-glass admin | Change its password (and the authenticator) at `/recovery`; System settings → Security makes a new recovery kit, which replaces the recovery codes. Lost password or authenticator: `dc exec core yoda-admin reset-break-glass` prints a temporary password (section 11). |
+| Master key | `dc exec -T core yoda-admin rotate-master-key > yoda-recovery-kit.txt`, then store the new kit (see "Master key rotation" below). After a leak, also rotate every secret above: whoever had the old key and a database copy could read them. |
+| Break-glass admin | Change its password (and the authenticator) at `/recovery`. `dc exec -T core yoda-admin recovery-kit > yoda-recovery-kit.txt` makes a new recovery kit, which replaces the recovery codes. Lost password or authenticator: `dc exec core yoda-admin reset-break-glass` prints a temporary password (section 11). |
 | Runner tokens | Revoke and re-create in the Runners page; update the runner's config or `YODA_RUNNER_TOKEN`. |
 | Deploy SSH key | New key pair, add the public key to `authorized_keys`, update `DEPLOY_SSH_KEY`, remove the old public key. |
 | Registry deploy token | Create a new `read_registry` token, `docker login registry.example.org` on the host, revoke the old one. |
 | Release signing key, upload token | New key or token as in section 5 ("Release bundle"); embed the new public key in `install.sh` before the next tag. |
+
+### Master key rotation
+
+The master key wraps the data key of every secret in System settings and the break-glass authenticator seed
+(proposal §3.5). Rotate it on a schedule, when someone who held a recovery kit leaves, and after a suspected leak.
+
+1. **Try it:** `dc exec core yoda-admin rotate-master-key --dry-run` does every step inside a transaction that is
+   rolled back and prints what it would change (how many secrets and seeds). Nothing is written.
+2. **Rotate:** `dc exec -T core yoda-admin rotate-master-key > yoda-recovery-kit.txt`. In one database
+   transaction it re-wraps every data key and the TOTP seed under a new random key (the ciphertexts stay), replaces
+   the break-glass recovery codes (they are keyed by the master key and cannot be carried over), ends every
+   setup and recovery session, writes the key canary with the new key id and records `master_key.rotated` in the
+   audit log (key ids and counts only). The new key goes to `core/master-key.next` before the transaction and
+   becomes `core/master-key` after it; the old key is kept as `core/master-key.prev`. Anything the current key
+   cannot open stops the rotation and nothing changes; the command names the settings (clear or re-enter them in
+   System settings first).
+3. **Store the new kit.** Standard output carries only the new recovery kit (the new key and the new recovery
+   codes); messages go to standard error. The old kit and its codes no longer work. Move the file off the host
+   as in section 4 step 5, then delete it there.
+4. **Running cores switch by themselves** on the change notification (they read the key file again and keep the
+   old key, decrypt-only). If `.env` sets `YODA_MASTER_KEY`, replace it with the new key now or remove the line:
+   `init` copies `.env` over the key file on every start. (If it is forgotten, core notices that the key in
+   `.prev` opens the canary, uses it and logs a warning until `.env` is fixed.)
+5. **Finish:** once every core runs with the new key, `dc exec core yoda-admin rotate-master-key --finish`
+   re-wraps anything still under the old key (a value saved by a core in the seconds before it switched) and
+   deletes `core/master-key.prev`. `yoda-admin status` shows a previous key until then.
+
+Audit fingerprints of secrets are keyed by the master key too: changes recorded before and after a rotation
+cannot be compared by fingerprint (the log still shows who changed what, and when). If the command stops between
+the commit and moving the files (it says so), the new key is in the kit and in `core/master-key.next`; finish
+by hand with `mv master-key master-key.prev && mv master-key.next master-key` inside `/var/lib/yoda/core`.
 
 **Save first, revoke after (LINE and Telegram).** While core still holds a revoked token, deliveries fail with
 401, which counts as a **permanent** failure: those messages are not retried for that channel, although the
@@ -752,11 +785,24 @@ after it). For a value still in `.env`, the same holds with `dc up -d --no-build
   real sign-in, apply them, or roll back to the last working ones. Lost the break-glass password or
   authenticator: `dc exec core yoda-admin reset-break-glass` (on the host) prints a temporary password once;
   the next sign-in must set a new password and authenticator first. `dc exec core yoda-admin status` shows the
-  setup, master key and break-glass state without secrets.
+  setup, master key and break-glass state without secrets. Every portal admin page shows a banner while a
+  break-glass session is open. If nobody can be admin under the sign-in in effect (another identity provider
+  with other usernames, or no admin left), grant admin at `/recovery` → **Portal admins**: a username that has
+  not signed in yet becomes admin at its first sign-in, and counts as admin for the test sign-in of a pending
+  change.
+- **Maintenance lock-down.** `dc exec core yoda-admin recovery on` forces recovery mode: the portal shows only
+  `/recovery` and the portal API answers 503 (`recovery_mode`); webhooks keep working. `... recovery off` ends it.
+  Both are audited and the admins are told.
 - **Wrong or missing master key** (recovery mode): core starts, but the secrets saved in System settings cannot
-  be read; System settings → Security and `/health` say so, and those settings show **unavailable**. Put the
-  right key back (from the recovery kit: `YODA_MASTER_KEY=<key>` in `.env`, then `dc up -d --no-build`; section
-  4a), or enter each secret again. Never delete the bootstrap volume to "fix" it.
+  be read; System settings → Security and `/health` say so, and those settings show **unavailable**. The
+  break-glass account can still sign in at `/recovery` with its password alone, to a **status-only** session
+  (the authenticator cannot be checked without the key, so nothing can be changed there; the admins are told).
+  Put the right key back (from the recovery kit: `YODA_MASTER_KEY=<key>` in `.env`, then `dc up -d --no-build`;
+  section 4a). If the key is lost for good, `dc exec core yoda-admin reset-master-key --yes` makes the key core
+  has now the master key: it lists and drops the secrets the old key encrypted, removes the break-glass
+  authenticator and recovery codes, and core leaves recovery mode without a restart. Then enter the secrets
+  again, sign in at `/recovery` (password, then a new authenticator), run `yoda-admin recovery-kit` and store the
+  kit. Never delete the bootstrap volume to "fix" it.
 - **A setting shows "Set by environment" and cannot be edited.** Its variable is in `.env` (the lock names it),
   or the prod compose passes it with a default. Remove the line from `.env` and `dc up -d --no-build`; the value
   imported from env stays in effect, now editable (section 3).

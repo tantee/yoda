@@ -49,6 +49,7 @@ export class HttpError extends Error {
         | 'second_factor_required'
         | 'invalid_code'
         | 'weak_password'
+        | 'recovery_mode'
       /** Machine-readable detail for some errors (runner claims: why `invalid_state`; a setting's lock reason). */
       reason?: string
       /** The setting an error is about (settings API). */
@@ -132,7 +133,8 @@ async function verifyRequest(request: FastifyRequest, deps: Pick<AppDeps, 'jwks'
  *
  * Setup mode first (§4.1): while setup is required, every route not marked `setupMode: true` answers
  * 503 `setup_required`, before any token is looked at. The setup and recovery routes are `public` to this hook:
- * they check their own cookie session (local/session.ts), and that cookie opens nothing else.
+ * they check their own cookie session (local/session.ts), and that cookie opens nothing else. In forced recovery
+ * mode every authenticated route answers 503 `recovery_mode`.
  */
 export function registerAuth(app: FastifyInstance): void {
   app.decorateRequest('me', null as unknown as Me)
@@ -144,6 +146,9 @@ export function registerAuth(app: FastifyInstance): void {
     const route = request.routeOptions.config
     if (route?.setupMode !== true && setupState(deps.config, deps.settings) === 'required') throw setupRequired()
     if (route?.public === true) return
+    // Forced recovery mode (`yoda-admin recovery on`, 7.4): the portal API is closed; /recovery, the public routes
+    // and the webhooks (public too) keep working.
+    if (deps.settings?.recoveryForced) throw new HttpError(503, { error: 'recovery_mode' })
     // One snapshot of the settings for the whole check (the issuer, client id and JWKS are swapped together).
     const config = deps.config
     if (!config.oidcIssuer) throw notConfigured()

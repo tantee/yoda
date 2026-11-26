@@ -121,6 +121,7 @@ describe('buildPublicConfig', () => {
       funMode: true,
       setup: 'done',
       recovery: true,
+      recoveryForced: false,
       version: '1.0.0',
     })
   })

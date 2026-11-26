@@ -45,6 +45,8 @@ export const PublicConfig = z.object({
   setup: z.enum(['required', 'done']),
   /** The master key is wrong or missing while secrets are stored (the /recovery route, Task 7). */
   recovery: z.boolean(),
+  /** `yoda-admin recovery on` (7.4): the portal shows only /recovery and the portal API answers 503 `recovery_mode`. */
+  recoveryForced: z.boolean().default(false),
   version: z.string(),
 })
 export type PublicConfig = z.infer<typeof PublicConfig>

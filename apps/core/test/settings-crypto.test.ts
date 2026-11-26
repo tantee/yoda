@@ -7,11 +7,18 @@ import {
   SecretDecryptError,
   checkCanary,
   decryptSecret,
+  encodeMasterKey,
   encryptSecret,
   fingerprint,
+  generateMasterKey,
   keyId,
   loadMasterKey,
+  loadPreviousMasterKey,
   makeCanary,
+  openBlob,
+  rewrapBlob,
+  rewrapEnvelope,
+  sealBlob,
   takeMasterKey,
   masterKey,
 } from '../src/settings/crypto.js'
@@ -153,5 +160,59 @@ describe('loadMasterKey', () => {
     const junk = loadMasterKey({ YODA_MASTER_KEY: 'zzz junk-key-value!' })
     expect(junk.status).toBe('malformed')
     expect(JSON.stringify(junk)).not.toContain('junk-key-value')
+  })
+})
+
+describe('master key rotation primitives (§3.5)', () => {
+  it('re-wraps only the data key: same ciphertext, new key id, opens with the new key and not the old', () => {
+    const e = encryptSecret(KEY_A, 'smtp.password', 'placeholder-value')
+    const r = rewrapEnvelope([KEY_A], KEY_B, 'smtp.password', e)
+    expect(r.keyId).toBe(KEY_B.id)
+    expect(r.ciphertext.equals(e.ciphertext)).toBe(true)
+    expect(r.nonce.equals(e.nonce)).toBe(true)
+    expect(r.wrappedDek.equals(e.wrappedDek)).toBe(false)
+    expect(decryptSecret(KEY_B, 'smtp.password', r)).toBe('placeholder-value')
+    expect(() => decryptSecret(KEY_A, 'smtp.password', r)).toThrow(SecretDecryptError)
+    // The setting key still binds it.
+    expect(() => decryptSecret(KEY_B, 'line.channelSecret', r)).toThrow(SecretDecryptError)
+  })
+
+  it('refuses to re-wrap an envelope no given key opens, or one moved onto another setting', () => {
+    const e = encryptSecret(KEY_A, 'smtp.password', 'placeholder-value')
+    expect(() => rewrapEnvelope([KEY_B], KEY_B, 'smtp.password', e)).toThrow(SecretDecryptError)
+    expect(() => rewrapEnvelope([KEY_A], KEY_B, 'line.channelSecret', e)).toThrow(SecretDecryptError)
+  })
+
+  it('re-wraps a sealed blob (TOTP seed) for the new key', () => {
+    const sealed = sealBlob(KEY_A, 'local_admin.totp:x', 'JBSWY3DPEHPK3PXP')
+    const r = rewrapBlob([KEY_A], KEY_B, 'local_admin.totp:x', sealed.blob, sealed.keyId)
+    expect(r.keyId).toBe(KEY_B.id)
+    expect(openBlob(KEY_B, 'local_admin.totp:x', r.blob, r.keyId)).toBe('JBSWY3DPEHPK3PXP')
+    expect(() => openBlob(KEY_A, 'local_admin.totp:x', r.blob, KEY_A.id)).toThrow(SecretDecryptError)
+  })
+
+  it('decrypts with a keyring by key id (the previous key during a rotation)', () => {
+    const old = encryptSecret(KEY_A, 'smtp.password', 'old-placeholder')
+    expect(decryptSecret([KEY_B, KEY_A], 'smtp.password', old)).toBe('old-placeholder')
+  })
+
+  it('generates a new random 32-byte key, as base64', () => {
+    const a = generateMasterKey()
+    const b = generateMasterKey()
+    expect(a.key.length).toBe(32)
+    expect(a.id).not.toBe(b.id)
+    expect(encodeMasterKey(a)).toMatch(/^[A-Za-z0-9+/]{43}=$/)
+    expect(loadMasterKey({ YODA_MASTER_KEY: encodeMasterKey(a) })).toMatchObject({ status: 'ok', key: { id: a.id } })
+  })
+
+  it('loads the previous key from `<file>.prev` when it is there and valid; otherwise none', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'yoda-mk-'))
+    const file = join(dir, 'master-key')
+    expect(loadPreviousMasterKey({ YODA_MASTER_KEY_FILE: file })).toBeNull()
+    writeFileSync(`${file}.prev`, `${encodeMasterKey(KEY_A)}\n`, { mode: 0o600 })
+    expect(loadPreviousMasterKey({ YODA_MASTER_KEY_FILE: file })?.id).toBe(KEY_A.id)
+    writeFileSync(`${file}.prev`, 'not-a-key\n', { mode: 0o600 })
+    expect(loadPreviousMasterKey({ YODA_MASTER_KEY_FILE: file })).toBeNull()
+    expect(loadPreviousMasterKey({})).toBeNull()
   })
 })
