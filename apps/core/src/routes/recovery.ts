@@ -298,6 +298,9 @@ export function recoveryRoutes(app: FastifyInstance): void {
     const { oidc: flow, ...rest } = data
     await updateSessionData(app.deps.db, s.session.row.idHash, rest)
     const pending = await pendingOrFail()
+    // The sign-in tests the staging it started for: one restaged meanwhile (even with the same values, by this or
+    // another session) is a different change and needs its own test.
+    if (flow.stagedAt !== pending.stagedAt) throw invalidState('pending_changed')
     const now = nowOf(app)
     const r = await finishTestSignIn({ db: app.deps.db, policy: policy() }, pending, flow, { ...body, now })
     const result = r.ok ? 'ok' : (r.checks.find((c) => !c.ok)?.code ?? 'failed')

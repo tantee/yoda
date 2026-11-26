@@ -348,6 +348,12 @@ describe('the pending OIDC change test sign-in (fake provider)', () => {
     const back2 = idp.authorize(s2.authorizeUrl, { username: 'somchai' })
     const changed = await finishTestSignIn({ db: noAdmins, policy }, pendingFor({ clientId: 'other' }), s2.data, { ...back2, now: now() })
     expect(changed.checks[0]).toMatchObject({ id: 'state', ok: false, code: 'pending_changed' })
+    // Restaged with the very same values: still another staging, so not this test's.
+    const s3 = await startTestSignIn(pending, { publicUrl: 'https://portal.example.org', policy, now: now() })
+    const back3 = idp.authorize(s3.authorizeUrl, { username: 'somchai' })
+    const restaged = { ...pending, stagedAt: new Date(Date.now() + 1000).toISOString() }
+    const r3 = await finishTestSignIn({ db: noAdmins, policy }, restaged, s3.data, { ...back3, now: now() })
+    expect(r3.checks[0]).toMatchObject({ id: 'state', ok: false, code: 'pending_changed' })
   })
 
   it('never returns a token or a server text in the result', async () => {

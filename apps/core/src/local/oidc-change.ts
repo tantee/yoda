@@ -110,6 +110,7 @@ export async function startTestSignIn(
     redirectUri: recoveryRedirectUri(opts.publicUrl),
     startedAt: opts.now.toISOString(),
     valuesHash: valuesHash(pending.values),
+    stagedAt: pending.stagedAt,
   }
   const url = new URL(endpoints.authorize)
   url.searchParams.set('client_id', pending.values.clientId)
@@ -160,7 +161,7 @@ export async function finishTestSignIn(
     await check('state', async () => {
       if (!same(flow.state, input.state)) throw new Failed('state_mismatch')
       if (!fresh) throw new Failed('expired')
-      if (flow.valuesHash !== valuesHash(v)) throw new Failed('pending_changed')
+      if (flow.valuesHash !== valuesHash(v) || flow.stagedAt !== pending.stagedAt) throw new Failed('pending_changed')
     }),
   )
   if (!checks[0]!.ok) return { ok: false, checks, username: null }
