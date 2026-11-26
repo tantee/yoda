@@ -120,10 +120,11 @@ describe('.gitlab-ci.yml', () => {
     expect(script).toContain('ops/deploy/deploy.sh')
   })
 
-  it('copies the compose files and the deploy script, not the dev init.sql', () => {
+  it('copies the compose files, the deploy script and the runbook files, not the dev init.sql or .env', () => {
     const copy = (ci.deploy!.script ?? []).find((l) => /\btar -cf\b/.test(l)) ?? ''
-    for (const f of ['docker-compose.yml', 'docker-compose.prod.yml', 'ops/deploy/deploy.sh']) expect(copy).toContain(f)
+    for (const f of ['docker-compose.yml', 'docker-compose.prod.yml', 'ops/deploy/deploy.sh', 'docs/operations.md', '.env.example', 'CHANGELOG.md']) expect(copy).toContain(f)
     expect(copy).not.toContain('init.sql')
+    expect(copy.split(/\s+/)).not.toContain('.env')
   })
 
   it('fails the deploy when any part of the copy pipeline fails', () => {

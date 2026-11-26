@@ -36,7 +36,12 @@ Evidence is given as `file:line` at the time of the review (Task 10). Paths are 
 - **Setup token required.** It is 100 bits, stored as a SHA-256 hash only and written to a `0600` file
   (`apps/core/src/local/setup-token.ts:74`). It is single use (`burnSetupToken`, `:112`) and expires after 24 h
   (`:15`).
-- **Rate limits.** 5 tries per IP per 15 min, plus a global cap (`apps/core/src/routes/setup.ts:49`).
+- **Rate limits.** 5 tries per IP per 15 min, plus a global cap of 50 per hour (`apps/core/src/routes/setup.ts:51`).
+  - **Note on the global cap.** It is per core process and in memory. Anyone who reaches `/setup` can use it up
+    with wrong tokens and so keep the real installer out for up to an hour (availability only: 50 guesses an hour
+    against a 100-bit token are no risk). The way out is documented: wait, or restart core (`dc restart core`),
+    which resets the limiter and issues a new token. Accepted, because the ports are loopback-only by default and
+    the window is the short setup period. The same per-IP limit covers `POST /setup/totp/confirm`.
 - **Ports.** Core and the portal publish on 127.0.0.1 by default (`docker-compose.prod.yml:74`, `:205`).
 - **Setup mode.** Every non-setup route answers 503 until setup is done (`apps/core/src/auth/plugin.ts`, the
   `setupMode` gate).
@@ -109,6 +114,10 @@ Evidence is given as `file:line` at the time of the review (Task 10). Paths are 
   - Audit fingerprints are HMACs under a key derived from the master key (`crypto.ts:124`).
   - Recovery codes are HMACs as well (`apps/core/src/local/codes.ts:43`).
   - The setup token is stored as SHA-256 only.
+- **The recovery kit** holds the master key and, since the PR B fix wave, the Postgres password and the storage
+  keys (section 3 of the kit) so a lost bootstrap volume can be rebuilt. Postgres and RustFS publish no ports, so
+  those add host-side access only; the kit was already "anyone with it and a dump reads every secret", and the
+  runbook keeps it off the host and apart from the backups (`(umask 077; …)` when it is written on the host).
 - **Rotation.** A key copied together with a dump can now be retired: `yoda-admin rotate-master-key`
   (`apps/core/src/local/master-key.ts:65`).
 - **Accepted.** The row version is not in the AAD, so a DB writer could put back an older ciphertext of the same
@@ -132,7 +141,12 @@ stays a later option. Rotation re-wraps the data keys only (`crypto.ts:216`), so
   - Running cores leave recovery on the next reload, without a restart (`store.ts`, `load`).
   - A status-only `/recovery` session shows the state meanwhile (T3).
 - **Restore after a backup.** `restore.sh` now names the key id the restored database needs
-  (`ops/backup/restore.sh`, step 4).
+  (`ops/backup/restore.sh`, step 4). A backup from before a rotation needs the old key: the runbook keeps the old
+  kit until those backups age out (`docs/operations.md` §6, §10).
+- **Lost bootstrap volume, surviving database.** `init` refuses to generate a password for an existing database
+  and points to the kit's section 3 or the Postgres password reset (`docs/operations.md` §4a). A second, different
+  `.env` replacement is refused while `<file>.prev` holds another value, so no stored key is overwritten
+  (`apps/core/src/init.ts`).
 
 ### T8: a stolen admin session exfiltrates a token by moving its endpoint — mitigated
 

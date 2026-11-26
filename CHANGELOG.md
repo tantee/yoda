@@ -5,17 +5,67 @@ image tag the deploy job runs. Upgrade steps: [docs/operations.md](docs/operatio
 
 ## Unreleased
 
+### System settings (in the portal)
+
+- One rail item, **System settings** (การตั้งค่าระบบ), for every setting that used to be a variable: general and
+  organisation, sign-in, email, LINE, Telegram, GitLab, AI, runners, backups, storage (read-only) and security.
+  The GitLab and channel pages moved there.
+- Precedence is env > database > default. A value set in env shows **Set by environment** with the variable name
+  and cannot be edited; bootstrap values (database, master key, ports, S3, API base URLs) are never editable.
+- Secrets are stored encrypted (AES-256-GCM per secret under a master key, with a key canary); they are never
+  shown again after saving (only "set", the last 4 characters where safe, the time). Saving one needs a recent
+  sign-in. Env values, secrets too, are imported into the database on start (`YODA_SETTINGS_IMPORT=false` turns
+  that off).
+- Changes apply live on every core instance (no restart, except the AI workers and MCP); each category has a
+  **Test** through an outbound policy (private addresses allowed, cloud metadata, loopback and compose names
+  blocked); an audit log of every change (hashes only, kept forever).
+- `GET /api/public-config`: the portal reads where to sign in, the organisation line and its links from core.
+  `NUXT_PUBLIC_KEYCLOAK_*` and the other `NUXT_PUBLIC_*` values default to `''` and are deprecated overrides (a
+  value still wins; a Keycloak mismatch with `OIDC_ISSUER` is logged at boot).
+
+### Setup wizard, break-glass admin and /recovery
+
+- A fresh install starts in setup mode: `/setup` (Thai by default) takes a setup token
+  (`yoda-admin setup-token`), then the organisation and public URL, the break-glass admin (password, TOTP unless
+  the URL is localhost), sign-in with a test (Keycloak issuers only, `/realms/<realm>`), a system check, the
+  optional channels, the recovery kit and the claim (the first admin signs in through Keycloak).
+- The recovery kit is one file: the master key, the break-glass recovery codes, and the Postgres password and
+  storage keys for a lost bootstrap volume.
+- `/recovery`: the break-glass account (password plus TOTP or a recovery code) can stage, check, test and apply
+  new sign-in settings, roll back for 7 days, grant or revoke portal admins (with pre-grants for new usernames),
+  and turn fun mode off. Every use notifies the portal admins; admin pages show a banner while a session is
+  open. A wrong master key gives a status-only session.
+- `yoda-admin` (`docker compose exec core yoda-admin …`): `setup-token`, `create-break-glass` (for installs set
+  up from `.env`), `reset-break-glass`, `status`, `recovery-kit`, `rotate-master-key` (`--dry-run`, `--finish`),
+  `reset-master-key --yes` and `recovery on|off`.
+- Master key rotation re-wraps every secret and the TOTP seed in one transaction, gives a new kit, and running
+  cores switch without a restart (the old key stays decrypt-only until `--finish`).
+
 ### Installer and release bundle
 
 - `install.sh` installs a pinned release on a fresh host from the internal file server: it checks the
   prerequisites, verifies the bundle's minisign signature and SHA-256, unpacks it with an empty `.env` and
   deploys. A `release-bundle` CI job builds and signs the bundle on tags.
+- The one-shot `init` service generates the Postgres password, the storage keys and the master key into the
+  `yoda-bootstrap` volume (a value in `.env` wins and is copied there; a replaced value is kept as `.prev`).
 - `deploy.sh` creates an empty `.env` when there is none, runs `init` before the migrations and prints the setup
-  wizard's address and the setup-token command while setup is not finished.
+  wizard's address and the setup-token command while setup is not finished. The deploy job also copies the
+  runbook, `.env.example` and the changelog.
 - Backups read the backup time and days kept from System settings → Backups (a change applies within a minute);
-  `BACKUP_AT` / `BACKUP_KEEP_DAYS` in `.env` still win. **Upgrade note:** the prod compose no longer sets them by
-  default.
+  `BACKUP_AT` / `BACKUP_KEEP_DAYS` in `.env` still win.
 - The runbook and `.env.example` now start from "nothing is required"; env values are advanced overrides.
+
+### Upgrade notes
+
+- **`YODA_IMAGE_PREFIX` is required** (no Docker Hub fallback): `install.sh` and `deploy.sh` pin it in
+  `release.env`; an older install keeps it in `.env`.
+- **`YODA_TRUSTED_PROXY_HOPS`**: set `2` when a reverse proxy is in front of the portal (and pass `Host` and the
+  `X-Forwarded-*` headers), so client addresses and the detected public URL are right.
+- **An env-based install upgrades unchanged**: values are imported, setup is marked done, the env values stay
+  locked until removed from `.env`. Then create the break-glass account and the recovery kit
+  (`yoda-admin create-break-glass`, then `yoda-admin recovery-kit`).
+- The prod compose passes every UI-editable setting with an empty default, so only a variable in `.env` locks a
+  setting; it no longer sets `BACKUP_AT` / `BACKUP_KEEP_DAYS` defaults.
 
 ## 1.0.0 — 2026-11-25
 

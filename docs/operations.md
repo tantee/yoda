@@ -383,7 +383,8 @@ in your shell overrides `release.env`, so leave it unset.
 "Advanced overrides" part of `.env.example` (never copy its development part): `DATABASE_URL` for an external
 Postgres, `S3_ENDPOINT` and the S3 keys for an external bucket, or any setting from section 3 you want fixed from
 outside the UI (it then shows locked). An install whose `.env` sets `OIDC_ISSUER` skips the wizard: setup counts
-as done, and the first admins come from `BOOTSTRAP_ADMINS`. To run the server runner too, add
+as done, and the first admins come from `BOOTSTRAP_ADMINS`. It has no break-glass account then: create it with
+`dc exec core yoda-admin create-break-glass` and make the recovery kit (section 5, upgrade notes). To run the server runner too, add
 `COMPOSE_PROFILES=runner` (and create `runner-config.json`, section 8).
 
 ## 4a. Bootstrap volume and master key
@@ -514,7 +515,8 @@ deploy job. Owner setup, once:
 
 1. Read `CHANGELOG.md` for the release, especially new required variables; add them to the host's `.env`
    yourself (most new options are System settings now). **The deploy never changes `.env`** (it only creates an
-   empty one when there is none): it replaces the compose files and `ops/deploy/deploy.sh`, and rewrites
+   empty one when there is none): it replaces the compose files, `ops/deploy/deploy.sh` and the runbook files
+   (`docs/operations.md`, `.env.example`, `CHANGELOG.md`), and rewrites
    `release.env`, keeping a `YODA_IMAGE_PREFIX` pinned there.
 2. **Take a backup** on the host, every time: `cd /srv/yoda && dc run --rm backup --now`
    (wait for it to finish; it is the restore point if the upgrade or a later rollback goes wrong).
@@ -552,9 +554,10 @@ deploy job. Owner setup, once:
   3. Make the recovery kit and store it off the host (section 4 step 5):
      `(umask 077; dc exec -T core yoda-admin recovery-kit > yoda-recovery-kit.txt)`.
   `yoda-admin rotate-master-key` works on such an install too.
-- **Refresh the runbook and `.env.example`.** The deploy job and `deploy.sh` update only the compose files and
-  `deploy.sh`; copy `docs/operations.md` and `.env.example` from the new release bundle (or the release tag) into
-  the deploy directory after an upgrade, so the runbook on the host matches the release it runs.
+- **The runbook and `.env.example` on the host.** The deploy job copies `docs/operations.md`, `.env.example` and
+  `CHANGELOG.md` with the compose files (never `.env`). After an upgrade by hand with `deploy.sh`, copy them from
+  the new release bundle (or the release tag) into the deploy directory yourself, so the runbook on the host
+  matches the release it runs.
 - **Backups:** the prod compose no longer passes `BACKUP_AT=02:00` / `BACKUP_KEEP_DAYS=14` by default; the
   `backup` container reads System settings → Backups (same defaults). A value in `.env` still wins.
 
