@@ -5,7 +5,7 @@ import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { forbidden, lastPm, notStaff, notFound, requireAdmin, requireStaff } from '../auth/plugin.js'
 import type { Db, Tx } from '../db/client.js'
-import { events, people, projectMembers, projects } from '../db/schema.js'
+import { people, projectMembers, projects } from '../db/schema.js'
 import { canManageProject, lockProject } from '../projects/access.js'
 import { runWork } from '../work/context.js'
 import { resumeProjectAi, unassignMemberTasks } from '../work/engine.js'
@@ -61,7 +61,10 @@ async function openTaskCounts(db: Db, personIds: string[]): Promise<Map<string, 
   return new Map(rows.map((r) => [r.person_id, r.n]))
 }
 
-/** PM names, member counts and newest event time of `rows`, for the projects list (three grouped queries). */
+/**
+ * PM names, member counts and newest event time of `rows`, for the projects list: one query for the members, one
+ * for the last activity (a max per project, answered from `events_project_created_idx`).
+ */
 async function listExtras(db: Db, rows: ProjectRow[]): Promise<ProjectListItem[]> {
   const ids = rows.map((r) => r.id)
   if (!ids.length) return []
@@ -73,22 +76,27 @@ async function listExtras(db: Db, rows: ProjectRow[]): Promise<ProjectListItem[]
       .innerJoin(people, eq(people.id, projectMembers.personId))
       .where(sql`${projectMembers.projectId} in (${inIds})`)
       .orderBy(asc(people.displayName), asc(people.id)),
-    db
-      .select({ projectId: events.projectId, at: sql<string>`max(${events.createdAt})` })
-      .from(events)
-      .where(sql`${events.projectId} in (${inIds})`)
-      .groupBy(events.projectId),
+    db.execute<{ project_id: string; at: string | Date | null }>(sql`
+      SELECT p.id AS project_id, (SELECT max(e.created_at) FROM events e WHERE e.project_id = p.id) AS at
+      FROM unnest(ARRAY[${inIds}]) AS p(id)
+    `),
   ])
-  const lastAt = new Map(last.map((r) => [r.projectId, new Date(r.at).toISOString()]))
-  return rows.map((row) => {
-    const mine = members.filter((m) => m.projectId === row.id)
-    return ProjectListItem.parse({
+  const byProject = new Map<string, { pms: string[]; count: number }>()
+  for (const m of members) {
+    const g = byProject.get(m.projectId) ?? { pms: [], count: 0 }
+    g.count++
+    if (m.roles.includes('PM')) g.pms.push(m.name)
+    byProject.set(m.projectId, g)
+  }
+  const lastAt = new Map(last.map((r) => [r.project_id, r.at === null ? null : new Date(r.at).toISOString()]))
+  return rows.map((row) =>
+    ProjectListItem.parse({
       ...toProject(row),
-      pmNames: mine.filter((m) => m.roles.includes('PM')).map((m) => m.name),
-      memberCount: mine.length,
+      pmNames: byProject.get(row.id)?.pms ?? [],
+      memberCount: byProject.get(row.id)?.count ?? 0,
       lastActivityAt: lastAt.get(row.id) ?? null,
-    })
-  })
+    }),
+  )
 }
 
 const ProjectParams = z.object({ id: z.string().uuid() })

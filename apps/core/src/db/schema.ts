@@ -215,6 +215,8 @@ export const events = pgTable(
   },
   (t) => [
     index('events_work_item_seq_idx').on(t.workItemId, t.seq),
+    // The projects list's last activity: newest event per project.
+    index('events_project_created_idx').on(t.projectId, t.createdAt),
     // The daily task cap counts today's automatic assignments (work/assign.ts).
     index('events_auto_assigned_idx')
       .on(t.createdAt)
