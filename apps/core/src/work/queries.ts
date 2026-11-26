@@ -2,6 +2,9 @@ import {
   ACTIVE_TASK_STATES,
   KEY_EVENT_TYPES,
   MyRequest,
+  MyRequestDetail,
+  REQUEST_TIMELINE_LIMIT,
+  RequestEvent,
   Task,
   TaskWithContext,
   Todo,
@@ -681,12 +684,16 @@ export async function getMyAnswers(db: Conn, me: Me): Promise<TaskWithContext[]>
 
 /** Work items `me` asked for (requester_id = me), newest first, in plain-language status. */
 export async function getMyRequests(db: Conn, me: Me): Promise<MyRequest[]> {
+  return myRequestRows(db, me, eq(workItems.requesterId, me.id))
+}
+
+async function myRequestRows(db: Conn, me: Me, where: SQL): Promise<MyRequest[]> {
   const rows = await db
     .select({ w: workItems, projectName: projects.name, definition: workflowTemplates.definition })
     .from(workItems)
     .innerJoin(projects, eq(projects.id, workItems.projectId))
     .innerJoin(workflowTemplates, eq(workflowTemplates.id, workItems.templateId))
-    .where(eq(workItems.requesterId, me.id))
+    .where(where)
     .orderBy(desc(workItems.createdAt), desc(workItems.id))
   if (!rows.length) return []
   const waiting = new Set(
@@ -704,6 +711,7 @@ export async function getMyRequests(db: Conn, me: Me): Promise<MyRequest[]> {
         )
     ).map((t) => t.id),
   )
+  const contacts = await names(db, rows.map((r) => r.w.ownerId))
   return rows.map(({ w, projectName, definition }) => {
     const def = definition as WorkflowTemplateDef
     const status: RequestStatus =
@@ -722,8 +730,112 @@ export async function getMyRequests(db: Conn, me: Me): Promise<MyRequest[]> {
       status,
       currentStepName: step?.name ?? null,
       updatedAt: w.updatedAt.toISOString(),
+      currentStepKey: step?.key ?? null,
+      steps: stepsOf(def, w),
+      targetDate: w.targetDate,
+      contactName: contacts.get(w.ownerId) ?? null,
     })
   })
+}
+
+/** Work item events a requester may see on their own request; task events only for their own REQUESTER tasks. */
+const REQUEST_ITEM_EVENTS = [
+  'work_item.created', 'work_item.step_advanced', 'work_item.reopened', 'work_item.target_date_changed',
+  'work_item.done', 'work_item.cancelled',
+] as const
+const REQUEST_TASK_EVENTS = ['task.created', 'task.accepted', 'task.rejected'] as const
+
+/**
+ * The caller's own request (404 otherwise, staff included: this is the requester view) with its plain-language
+ * timeline and the delivery summary. Nothing here carries staff ids, reasons, payloads or internal tasks; the only
+ * staff name is the contact person (the owner), as in the list.
+ */
+export async function getMyRequestDetail(db: Conn, me: Me, id: string): Promise<MyRequestDetail> {
+  const [request] = await myRequestRows(db, me, and(eq(workItems.id, id), eq(workItems.requesterId, me.id))!)
+  if (!request) throw notFound()
+  const [item] = await db
+    .select({ definition: workflowTemplates.definition })
+    .from(workItems)
+    .innerJoin(workflowTemplates, eq(workflowTemplates.id, workItems.templateId))
+    .where(eq(workItems.id, id))
+  const def = item!.definition as WorkflowTemplateDef
+  const stepName = (key: unknown) => def.steps.find((s) => s.key === key)?.name ?? null
+
+  const rows = await db
+    .select({ e: events, taskType: tasks.type })
+    .from(events)
+    .leftJoin(tasks, eq(tasks.id, events.taskId))
+    .where(
+      and(
+        eq(events.workItemId, id),
+        or(
+          inArray(events.type, [...REQUEST_ITEM_EVENTS]),
+          and(inArray(events.type, [...REQUEST_TASK_EVENTS]), eq(tasks.role, 'REQUESTER'), eq(tasks.assigneeId, me.id)),
+        ),
+      ),
+    )
+    .orderBy(desc(events.seq))
+    .limit(REQUEST_TIMELINE_LIMIT)
+  const timeline: RequestEvent[] = []
+  for (const { e, taskType } of rows) {
+    const payload = (e.payload ?? {}) as Record<string, unknown>
+    const approval = taskType === 'approval'
+    const byYou = e.actorId === me.id
+    let kind: RequestEvent['kind'] | null = null
+    let stepKey: string | null = null
+    let date: string | null = null
+    switch (e.type) {
+      case 'work_item.created': kind = 'received'; break
+      case 'work_item.step_advanced':
+        // The last step's advance is followed by work_item.done.
+        if (typeof payload.to === 'string') { kind = 'step'; stepKey = payload.to }
+        break
+      case 'work_item.reopened':
+        if (typeof payload.to === 'string') { kind = 'reopened'; stepKey = payload.to }
+        break
+      case 'work_item.target_date_changed':
+        kind = 'expected_date'
+        date = typeof payload.to === 'string' ? payload.to : null
+        break
+      case 'work_item.done': kind = 'done'; break
+      case 'work_item.cancelled': kind = 'cancelled'; break
+      case 'task.created': kind = approval ? 'delivery' : 'question'; break
+      case 'task.accepted': kind = approval ? 'accepted' : 'answered'; break
+      // Only the requester's own "changes" decision; a task closed by a step reopen is not theirs.
+      case 'task.rejected': kind = byYou ? 'changes' : null; break
+    }
+    if (!kind) continue
+    timeline.push(
+      RequestEvent.parse({ kind, at: e.createdAt.toISOString(), stepKey, stepName: stepKey ? stepName(stepKey) : null, date, byYou }),
+    )
+  }
+  return MyRequestDetail.parse({ ...request, timeline, delivered: await deliveredText(db, me, id, def) })
+}
+
+/**
+ * What the requester already sees as the input of their latest delivery acceptance (a REQUESTER approval task
+ * assigned to them): the latest accepted attempt of its last dependency, as text only. Null without one.
+ */
+async function deliveredText(db: Conn, me: Me, workItemId: string, def: WorkflowTemplateDef): Promise<string | null> {
+  const [accept] = await db
+    .select()
+    .from(tasks)
+    .where(and(eq(tasks.workItemId, workItemId), eq(tasks.role, 'REQUESTER'), eq(tasks.type, 'approval'), eq(tasks.assigneeId, me.id)))
+    .orderBy(desc(tasks.createdAt), desc(tasks.attempt))
+    .limit(1)
+  if (!accept) return null
+  const depKey = templateTask(def, accept).dependsOn.at(-1)
+  if (!depKey) return null
+  const [dep] = await db
+    .select({ result: tasks.result })
+    .from(tasks)
+    .where(
+      and(eq(tasks.workItemId, workItemId), eq(tasks.templateTaskKey, depKey), eq(tasks.state, 'accepted'), isNull(tasks.supersededAt)),
+    )
+    .orderBy(desc(tasks.attempt))
+    .limit(1)
+  const text = (dep?.result as { text?: unknown } | null)?.text
+  return typeof text === 'string' && text.trim() ? text : null
 }
 
 /** Latest version of every template, sorted by key. */

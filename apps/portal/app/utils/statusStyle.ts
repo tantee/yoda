@@ -94,11 +94,11 @@ export const STATUS_STYLES = Object.fromEntries(
 ) as { [K in StatusKind]: Record<StatusValue<K>, StatusStyle> }
 
 /**
- * Who reads the chip. Requesters keep the wording they had before the refresh until the requester glossary is
- * reviewed (Task 6): their task and request labels come from the older `task.state.*` / `requests.status.*` keys.
+ * Who reads the chip. Requesters get the plain-language glossary (proposal §8.3; wording pending a nurse review):
+ * task states from `chip.requesterTask.*` ("รอคุณตอบ", "ตอบแล้ว"); request states are requester wording already.
  */
 export type StatusAudience = 'staff' | 'requester'
-const REQUESTER_LABELS: Partial<Record<StatusKind, string>> = { task: 'task.state', request: 'requests.status' }
+const REQUESTER_LABELS: Partial<Record<StatusKind, string>> = { task: 'chip.requesterTask' }
 
 /** The look of one state; an unknown value (a newer core) shows neutral with its raw key. */
 export function statusStyle(kind: StatusKind, value: string, audience: StatusAudience = 'staff'): StatusStyle {

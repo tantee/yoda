@@ -371,5 +371,48 @@ export const MyRequest = z.object({
   status: RequestStatus,
   currentStepName: LocalizedText.nullable(),
   updatedAt: z.string(),
+  /** The step key (the portal's plain-language step wording is keyed by it); null once done or cancelled. */
+  currentStepKey: z.string().nullable().default(null),
+  /** The template's steps with done / current / pending, for the requester's step track. */
+  steps: z.array(WorkItemStep).default([]),
+  /** The expected finish date (`YYYY-MM-DD`), when the team set one. */
+  targetDate: z.string().nullable().default(null),
+  /** The contact person (the item's owner, proposal §8.3 "ผู้ติดต่อ"): display name only, never an id. */
+  contactName: z.string().nullable().default(null),
 })
 export type MyRequest = z.infer<typeof MyRequest>
+
+/**
+ * One row of the requester timeline, in plain words and without staff names: the request was received, moved
+ * to a step (or back), the team asked a question or handed over the delivery, the requester answered, accepted
+ * or asked for changes, the expected date changed, the request ended. `byYou` when the requester did it.
+ */
+export const RequestEventKind = z.enum([
+  'received', 'step', 'reopened', 'question', 'delivery', 'answered', 'accepted', 'changes', 'expected_date', 'done',
+  'cancelled',
+])
+export type RequestEventKind = z.infer<typeof RequestEventKind>
+
+export const RequestEvent = z.object({
+  kind: RequestEventKind,
+  at: z.string(),
+  /** `step` / `reopened`: the step moved to. */
+  stepKey: z.string().nullable(),
+  stepName: LocalizedText.nullable(),
+  /** `expected_date`: the new date (`YYYY-MM-DD`) or null when cleared. */
+  date: z.string().nullable(),
+  byYou: z.boolean(),
+})
+export type RequestEvent = z.infer<typeof RequestEvent>
+
+/**
+ * `GET /me/requests/:id`: the caller's own request (404 for anyone else) with its requester timeline (newest
+ * first, at most `REQUEST_TIMELINE_LIMIT` rows) and `delivered`: the result text the requester already sees as
+ * the input of their delivery acceptance (the latest accepted attempt of its last dependency), else null.
+ */
+export const MyRequestDetail = MyRequest.extend({
+  timeline: z.array(RequestEvent),
+  delivered: z.string().nullable(),
+})
+export type MyRequestDetail = z.infer<typeof MyRequestDetail>
+export const REQUEST_TIMELINE_LIMIT = 50

@@ -26,9 +26,9 @@ describe('StatusChip', () => {
     expect(await render(StatusChip, { kind: 'request', value: 'waiting_for_you' })).toContain('mdi-hand-wave-outline')
     expect(await render(StatusChip, { kind: 'run', value: 'running' })).toContain('v-progress-circular')
   })
-  it('renders the older requester label in requester views', async () => {
+  it('renders the plain requester label in requester views', async () => {
     const html = await render(StatusChip, { kind: 'task', value: 'open', audience: 'requester' })
-    expect(html).toContain('task.state.open')
+    expect(html).toContain('chip.requesterTask.open')
     expect(html).not.toContain('chip.task.open')
   })
   it('takes a label override and keeps the full text as a title for ellipsis', async () => {
@@ -74,9 +74,13 @@ describe('StepTrack', () => {
     const html = await render(StepTrack, { steps: steps(['current', 'pending', 'pending']) })
     expect(count(html, 'step-track__seg ')).toBe(3)
   })
-  it('uses the plain-language label when asked', async () => {
+  it('uses the plain-language label when asked, with the requester glossary for known steps', async () => {
     const html = await render(StepTrack, { steps: steps(['done', 'current', 'pending']), plain: true })
-    expect(html).toContain('stepTrack.long(n=2,total=3,name=ขั้น 2)')
+    expect(html).toMatch(/<b[^>]*>ขั้น 2<\/b>\s*stepTrack\.plain\(n=2,total=3\)/)
+    const known = steps(['done', 'done', 'done', 'current', 'pending', 'pending']).map((s, i) => ({ ...s, key: ['intake', 'ba', 'sa', 'dev', 'qc', 'close'][i]! }))
+    const plain = await render(StepTrack, { steps: known, plain: true })
+    expect(plain).toMatch(/<b[^>]*>requests\.step\.dev<\/b>\s*stepTrack\.plain\(n=4,total=6\)/)
+    expect(plain).toContain('aria-label="requests.step.dev stepTrack.plain(n=4,total=6)"')
   })
 })
 

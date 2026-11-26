@@ -75,9 +75,14 @@ describe('statusStyle mapping', () => {
     expect(statusStyle('aiStatus', 'drafting')).toMatchObject({ tone: 'ai', spinner: true })
   })
 
-  it('keeps the older task and request wording for requesters', () => {
-    for (const v of TaskState.options) expect(statusStyle('task', v, 'requester').labelKey).toBe(`task.state.${v}`)
-    for (const v of RequestStatus.options) expect(statusStyle('request', v, 'requester').labelKey).toBe(`requests.status.${v}`)
+  it('uses the plain-language glossary for requester task states, and the request labels as they are', () => {
+    for (const v of TaskState.options) {
+      const key = statusStyle('task', v, 'requester').labelKey
+      expect(key).toBe(`chip.requesterTask.${v}`)
+      expect(typeof lookup(th, key), `th ${key}`).toBe('string')
+      expect(typeof lookup(en, key), `en ${key}`).toBe('string')
+    }
+    for (const v of RequestStatus.options) expect(statusStyle('request', v, 'requester').labelKey).toBe(`chip.request.${v}`)
     expect(statusStyle('task', 'open', 'requester').tone).toBe(statusStyle('task', 'open').tone)
     expect(statusStyle('health', 'blocked', 'requester').labelKey).toBe('chip.health.blocked')
   })

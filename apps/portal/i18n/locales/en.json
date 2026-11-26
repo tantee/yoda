@@ -235,14 +235,6 @@
     "showLess": "Show less"
   },
   "task": {
-    "state": {
-      "proposed": "Proposed",
-      "open": "Open",
-      "in_progress": "In progress",
-      "submitted": "Submitted",
-      "accepted": "Accepted",
-      "rejected": "Rejected"
-    },
     "type": {
       "ai": "AI",
       "human": "Human",
@@ -290,6 +282,21 @@
       "dates": "Dates",
       "created": "Created",
       "updated": "Last updated"
+    },
+    "requester": {
+      "answerLabel": "Your answer",
+      "question": "The team's question",
+      "delivered": "What the team delivered",
+      "deliveryAsk": "Does it work the way you asked?",
+      "notYet": "Not yet — tell us what to fix",
+      "accept": "Accept delivery",
+      "send": "Send answer",
+      "noDelivery": "The team has not attached delivery notes. Try it out, then answer.",
+      "done": "All set. Thank you for answering.",
+      "changesTitle": "What needs fixing in {title}",
+      "changesHint": "Tell the team what still does not match your request. They fix it and send it back to you.",
+      "changesReason": "What needs fixing",
+      "sendChanges": "Send to the team"
     }
   },
   "priority": {
@@ -686,30 +693,84 @@
     }
   },
   "answers": {
-    "empty": "Nothing needs your answer right now",
-    "back": "Back to questions"
+    "empty": "No open questions",
+    "back": "Back to questions",
+    "emptyText": "When the team needs something from you, it shows up here.",
+    "subtitle": "What the IT team is waiting for you to answer or accept",
+    "askedBy": "IT team",
+    "sentAt": "Sent to you {date}",
+    "open": "View request"
   },
   "requests": {
-    "empty": "You have no requests yet. Tell the assistant what you need.",
+    "empty": "No requests yet",
     "startChat": "Talk to the assistant",
     "back": "Back to my requests",
     "updated": "Last updated",
     "yourAnswers": "Questions for you",
     "openChat": "Open chat",
-    "status": {
-      "submitted": "Received",
-      "in_progress": "In progress",
-      "waiting_for_you": "Waiting for you",
-      "done": "Done",
-      "cancelled": "Cancelled"
-    },
     "hint": {
       "submitted": "We received your request.",
       "in_progress": "The team is working on it.",
       "waiting_for_you": "We need an answer from you to continue.",
       "done": "This request is complete.",
       "cancelled": "This request was cancelled."
-    }
+    },
+    "emptyText": "Tell the assistant what you need; it passes the request to the IT team.",
+    "subtitle": "Follow everything you asked the IT team for, in one place",
+    "new": "New request",
+    "waitingTitle": "Waiting for you: {n}",
+    "waitingHint": "The team can continue once you reply",
+    "sentToYou": "Sent to you {date}",
+    "updatedAt": "Updated {date}",
+    "expected": "Expected {date}",
+    "inProgress": "In progress",
+    "finished": "Finished",
+    "details": "View details",
+    "answer": "Answer",
+    "accept": "Accept delivery",
+    "deliveryAsk": "The work is done. Please check it solves what you asked for.",
+    "howTitle": "Need something new?",
+    "howText": "Tell the assistant in the chat what you need. It asks for the details the team needs and passes the request on.",
+    "todo": "Things to do",
+    "nothingToDo": "Nothing needs you right now",
+    "delivered": "What the team delivered",
+    "timeline": "Progress",
+    "timelineEmpty": "No progress yet",
+    "about": "About this request",
+    "project": "System",
+    "expectedDate": "Expected",
+    "noExpected": "Not set yet",
+    "notFound": "Request not found",
+    "notFoundText": "It may have been removed, or it is not one of your requests.",
+    "step": {
+      "intake": "Received",
+      "ba": "The team is gathering requirements",
+      "sa": "The team is designing",
+      "dev": "The team is building it",
+      "qc": "Testing",
+      "close": "Waiting for you to accept"
+    },
+    "kind": {
+      "question": "Question for you",
+      "delivery": "Accept delivery"
+    },
+    "event": {
+      "received": "The IT team received your request",
+      "step": "Progress: {step}",
+      "reopened": "The team went back to {step}",
+      "question": "The team sent you a question",
+      "delivery": "The work is done and sent to you to accept",
+      "answered": "You answered",
+      "accepted": "You accepted the delivery",
+      "changes": "You asked for changes",
+      "expected_date": "Expected to finish {date}",
+      "expected_date_cleared": "Expected date removed",
+      "done": "Request completed",
+      "cancelled": "Request cancelled"
+    },
+    "contact": "Contact {name}",
+    "contactLabel": "Contact",
+    "lastUpdate": "Last update"
   },
   "guards": {
     "rework": "Changes were requested in this step",
@@ -1250,6 +1311,14 @@
     "yesNo": {
       "yes": "Yes",
       "no": "No"
+    },
+    "requesterTask": {
+      "proposed": "Waiting for you",
+      "open": "Waiting for you",
+      "in_progress": "Answering",
+      "submitted": "Sent",
+      "accepted": "Done",
+      "rejected": "Sent back for changes"
     }
   },
   "stateView": {
@@ -1268,8 +1337,8 @@
   },
   "stepTrack": {
     "short": "{n}/{total} {name}",
-    "long": "Step {n} of {total}: {name}",
-    "allDone": "All {total} steps done"
+    "allDone": "All {total} steps done",
+    "plain": "step {n} of {total}"
   },
   "shell": {
     "role": {
