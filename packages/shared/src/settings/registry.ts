@@ -115,7 +115,7 @@ const DEFS = [
 
   // 9.1 Core: sign-in
   def('oidc.issuer', url, { category: 'signin', envName: 'OIDC_ISSUER', test: 'oidc' }, { apply: 'reconnect' }),
-  def('oidc.clientId', text, { category: 'signin', envName: 'OIDC_CLIENT_ID', test: 'oidc' }, { apply: 'reconnect' }),
+  def('oidc.clientId', text, { category: 'signin', envName: 'OIDC_CLIENT_ID', test: 'oidc' }, { apply: 'reconnect', default: 'yoda-portal' }),
   def('oidc.jwksUrl', url, { category: 'signin', envName: 'OIDC_JWKS_URL', test: 'oidc' }, { apply: 'reconnect' }),
   def('oidc.staffGroup', text, { category: 'signin', envName: 'STAFF_GROUP' }, { default: '/it-dev' }),
   // Deprecated; still honoured from env (§6.6), never set in the UI.
