@@ -103,8 +103,9 @@ Then, in the admin console for the realm Yoda uses:
       The portal sends its language as `ui_locales`, so the page follows the language chosen in the portal.
 
 Fun touches on the sign-in page (docs/design/jedi-touch.md): the theme shows a faint starfield, the fun mark and
-one playful line by default. The portal's admin switch (Admin → AI → Fun touches) cannot reach Keycloak at
-runtime, so the sign-in page has its own switch. Pick one:
+one playful line by default. The portal's admin switch (side menu ระบบ → งบประมาณ AI / System → AI budget, card
+"Fun touches", switch "Playful touches in the portal") cannot reach Keycloak at runtime, so the sign-in page has
+its own switch. Pick one:
 
 - [ ] **Environment variable:** set `YODA_LOGIN_FUN_MODE=false` on the Keycloak server (read through the theme
       property `funMode=${env.YODA_LOGIN_FUN_MODE:true}`), then restart Keycloak.

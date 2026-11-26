@@ -31,8 +31,10 @@ tabs and agenda items all keep their empty states plain. Tests (`apps/portal/tes
 
 ## How to switch it off
 
-- **Portal:** go to Admin → AI → "ลูกเล่นธีม / Fun touches". This stores `department_settings.fun_mode`, which
-  defaults to on (migration `0021_fun_mode`). Only admins can change it (`PATCH /admin/ai-settings { funMode }`).
+- **Portal:** in the side menu, open ระบบ → งบประมาณ AI (System → AI budget, `/admin/ai`). On the card
+  "ลูกเล่นธีม / Fun touches", turn off the switch "ลูกเล่นเล็ก ๆ ในพอร์ทัล / Playful touches in the portal". This
+  stores `department_settings.fun_mode`, which defaults to on (migration `0021_fun_mode`). Only admins can change it
+  (`PATCH /admin/ai-settings { funMode }`).
   Every signed-in user, requesters included, can read it at `GET /ui-config`. The setting is cosmetic. Until it
   loads, or if loading fails, the portal treats it as off.
 - **Sign-in page:** the portal setting cannot reach Keycloak, so the page has its own switch. Either set
