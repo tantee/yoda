@@ -1139,7 +1139,8 @@
     "showAll": "ดูทั้งหมด",
     "showLess": "แสดงน้อยลง",
     "openedOn": "เปิดเมื่อ {date}",
-    "inactiveGroup": "ไม่มีงานที่ดำเนินอยู่ ({n})"
+    "inactiveGroup": "ไม่มีงานที่ดำเนินอยู่ ({n})",
+    "showMoreEvents": "แสดงเพิ่ม"
   },
   "chip": {
     "workItem": {

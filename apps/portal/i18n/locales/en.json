@@ -1139,7 +1139,8 @@
     "showAll": "View all",
     "showLess": "Show less",
     "openedOn": "Opened {date}",
-    "inactiveGroup": "No active work ({n})"
+    "inactiveGroup": "No active work ({n})",
+    "showMoreEvents": "Show more"
   },
   "chip": {
     "workItem": {

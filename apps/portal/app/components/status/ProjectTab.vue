@@ -76,7 +76,7 @@ defineExpose({ onLive })
                 size="small"
                 data-testid="events-show-all"
                 @click="allEvents = !allEvents"
-              >{{ allEvents ? t('status.showLess') : t('status.showAll') }}</v-btn>
+              >{{ allEvents ? t('status.showLess') : t('status.showMoreEvents') }}</v-btn>
             </div>
             <div class="card-body pt-2">
               <p v-if="!status.recentEvents.length" class="text-medium-emphasis mb-0">{{ t('status.eventsEmpty') }}</p>

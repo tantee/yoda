@@ -307,7 +307,7 @@ describe('knowledge API', () => {
     expect(deptEvents.filter((e) => e.type.startsWith('knowledge.')).map((e) => e.projectId)).toEqual([p])
   })
 
-  it('pages the list with limit and offset and reports the total in x-total-count', async () => {
+  it('pages the list with limit and offset and reports the total of a page in x-total-count', async () => {
     await setup()
     const p = await newProject()
     const ids: string[] = []
@@ -326,10 +326,11 @@ describe('knowledge API', () => {
     expect(past.json()).toEqual([])
     expect(past.headers['x-total-count']).toBe('5')
 
-    // Without paging: everything (up to the default cap), total over all types.
+    // Without paging: everything (up to the default cap) and no count.
     const all = await call(dev, 'GET', `/knowledge?projectId=${p}`)
     expect((all.json() as KnowledgeEntry[]).length).toBe(6)
-    expect(all.headers['x-total-count']).toBe('6')
+    expect(all.headers['x-total-count']).toBeUndefined()
+    expect((await call(dev, 'GET', `/knowledge?projectId=${p}&offset=0`)).headers['x-total-count']).toBe('6')
 
     // Bounds.
     for (const q of ['limit=0', 'limit=201', 'offset=-1', 'limit=x']) {

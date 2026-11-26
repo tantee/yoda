@@ -48,11 +48,15 @@ export function knowledgeRoutes(app: FastifyInstance): void {
     return e
   }
 
-  /** Newest first; `limit` (1-200, default 200) / `offset` page it, `x-total-count` gives the matching total. */
+  /**
+   * Newest first. With `limit` (1-200, default 200) or `offset` the list is a page and `x-total-count` gives the
+   * matching total; without them there is no count query.
+   */
   app.get('/knowledge', async (request, reply) => {
     requireStaff(request)
     const q = ListQuery.parse(request.query)
     await checkScope(request, q)
+    if (q.limit === undefined && q.offset === undefined) return listEntries(db(), request.me, q)
     const [entries, total] = await Promise.all([listEntries(db(), request.me, q), countEntries(db(), request.me, q)])
     reply.header('x-total-count', String(total))
     return entries
