@@ -385,7 +385,7 @@ describe.skipIf(!posix || (!ci && !has('shellcheck')))('shellcheck', () => {
     const r = spawnSync('shellcheck', ['-x', file], { cwd: root, encoding: 'utf8' })
     expect(r.stdout + r.stderr).toBe('')
     expect(r.status).toBe(0)
-  })
+  }, 30_000) // shellcheck -x on install.sh can take >5 s on a busy CI runner
 })
 
 describe('ops/install/install.sh text', () => {
