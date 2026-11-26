@@ -64,6 +64,12 @@ export function recoveryError(e: unknown): { key: string; named?: Record<string,
   return { key: 'recovery.error.generic' }
 }
 
+/** Revoking the last portal admin was refused until confirmed. */
+export function isLastAdmin(e: unknown): boolean {
+  const data = (e as { data?: { error?: string; reason?: string } })?.data
+  return data?.error === 'invalid_state' && data.reason === 'last_admin'
+}
+
 /** The session is gone (expired, signed out elsewhere, or a reset ended it): back to the sign-in form. */
 export function sessionLost(e: unknown): boolean {
   const err = e as { statusCode?: number; status?: number; data?: { error?: string } }

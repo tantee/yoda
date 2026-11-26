@@ -727,7 +727,10 @@ The master key wraps the data key of every secret in System settings and the bre
    audit log (key ids and counts only). The new key goes to `core/master-key.next` before the transaction and
    becomes `core/master-key` after it; the old key is kept as `core/master-key.prev`. Anything the current key
    cannot open stops the rotation and nothing changes; the command names the settings (clear or re-enter them in
-   System settings first).
+   System settings first). An existing `core/master-key.next` (an earlier rotation that did not finish) is never
+   overwritten: the command refuses and says how to finish the move. When `YODA_MASTER_KEY` comes from this
+   process's environment (not the key file), the command refuses unless `--allow-env-key` is given, because core
+   cannot use the new key until the environment changes and core restarts.
 3. **Store the new kit.** Standard output carries only the new recovery kit (the new key and the new recovery
    codes); messages go to standard error. The old kit and its codes no longer work. Move the file off the host
    as in section 4 step 5, then delete it there.
@@ -737,12 +740,19 @@ The master key wraps the data key of every secret in System settings and the bre
    `.prev` opens the canary, uses it and logs a warning until `.env` is fixed.)
 5. **Finish:** once every core runs with the new key, `dc exec core yoda-admin rotate-master-key --finish`
    re-wraps anything still under the old key (a value saved by a core in the seconds before it switched) and
-   deletes `core/master-key.prev`. `yoda-admin status` shows a previous key until then.
+   deletes `core/master-key.prev`. `yoda-admin status` shows a previous key until then. **Never delete
+   `master-key.prev` by hand while core logs "the previous key does":** then `.prev` holds the only working key
+   (the key file was overwritten from a stale `.env`). `--finish` and a new rotation both refuse in that state;
+   fix `.env` first.
 
 Audit fingerprints of secrets are keyed by the master key too: changes recorded before and after a rotation
-cannot be compared by fingerprint (the log still shows who changed what, and when). If the command stops between
-the commit and moving the files (it says so), the new key is in the kit and in `core/master-key.next`; finish
-by hand with `mv master-key master-key.prev && mv master-key.next master-key` inside `/var/lib/yoda/core`.
+cannot be compared by fingerprint (the log still shows who changed what, and when).
+
+**The commit-to-move window.** Between the database commit and renaming the files (milliseconds), the database
+names the new key while `core/master-key` still holds the old one. If the command dies there (it says so when the
+rename fails), the new key is in the kit on stdout and in `core/master-key.next`: finish by hand with
+`mv master-key master-key.prev && mv master-key.next master-key` inside `/var/lib/yoda/core`, then
+`dc restart core`. A core that restarts inside the window starts in recovery (mismatch) until the move is done.
 
 **Save first, revoke after (LINE and Telegram).** While core still holds a revoked token, deliveries fail with
 401, which counts as a **permanent** failure: those messages are not retried for that channel, although the
@@ -787,9 +797,11 @@ after it). For a value still in `.env`, the same holds with `dc up -d --no-build
   the next sign-in must set a new password and authenticator first. `dc exec core yoda-admin status` shows the
   setup, master key and break-glass state without secrets. Every portal admin page shows a banner while a
   break-glass session is open. If nobody can be admin under the sign-in in effect (another identity provider
-  with other usernames, or no admin left), grant admin at `/recovery` → **Portal admins**: a username that has
-  not signed in yet becomes admin at its first sign-in, and counts as admin for the test sign-in of a pending
-  change.
+  with other usernames, or no admin left), grant admin at `/recovery` → **Portal admins**. A grant also
+  pre-grants the username: the next new person with it (for example the same username under a new identity
+  provider) is admin at their first sign-in, which uses the pre-grant up; it counts as admin for the test
+  sign-in of a pending change. Pending pre-grants are listed there. Revoking the last admin asks for
+  confirmation.
 - **Maintenance lock-down.** `dc exec core yoda-admin recovery on` forces recovery mode: the portal shows only
   `/recovery` and the portal API answers 503 (`recovery_mode`); webhooks keep working. `... recovery off` ends it.
   Both are audited and the admins are told.
@@ -797,12 +809,14 @@ after it). For a value still in `.env`, the same holds with `dc up -d --no-build
   be read; System settings → Security and `/health` say so, and those settings show **unavailable**. The
   break-glass account can still sign in at `/recovery` with its password alone, to a **status-only** session
   (the authenticator cannot be checked without the key, so nothing can be changed there; the admins are told).
+  Such a session stays status-only for its whole life and ends as soon as the key works again.
   Put the right key back (from the recovery kit: `YODA_MASTER_KEY=<key>` in `.env`, then `dc up -d --no-build`;
   section 4a). If the key is lost for good, `dc exec core yoda-admin reset-master-key --yes` makes the key core
   has now the master key: it lists and drops the secrets the old key encrypted, removes the break-glass
-  authenticator and recovery codes, and core leaves recovery mode without a restart. Then enter the secrets
-  again, sign in at `/recovery` (password, then a new authenticator), run `yoda-admin recovery-kit` and store the
-  kit. Never delete the bootstrap volume to "fix" it.
+  authenticator and recovery codes, ends every recovery session (including status-only ones) and core leaves
+  recovery mode without a restart. Then enter the secrets again, sign in at `/recovery` (the password, which must
+  be changed first, then a new authenticator; forgotten password: `yoda-admin reset-break-glass`), run
+  `yoda-admin recovery-kit` and store the kit. Never delete the bootstrap volume to "fix" it.
 - **A setting shows "Set by environment" and cannot be edited.** Its variable is in `.env` (the lock names it),
   or the prod compose passes it with a default. Remove the line from `.env` and `dc up -d --no-build`; the value
   imported from env stays in effect, now editable (section 3).

@@ -7,7 +7,7 @@ import type { FastifyInstance, InjectOptions, LightMyRequestResponse } from 'fas
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildApp } from '../src/app.js'
 import type { Config } from '../src/config.js'
-import { notifications, people, settings, settingsAudit, setupState } from '../src/db/schema.js'
+import { localSessions, notifications, people, settings, settingsAudit, setupState } from '../src/db/schema.js'
 import { totpCodeAt } from '../src/local/totp.js'
 import { encodeMasterKey, loadMasterKey, masterKey, type MasterKey, type MasterKeyLoad } from '../src/settings/crypto.js'
 import { LiveSettings } from '../src/settings/live.js'
@@ -286,6 +286,19 @@ describe('e2e: wrong master key', () => {
     // Fix: the right key back (the recovery kit), restart.
     await start(ok(KEY))
     expect(store.keyStatus).toBe('ok')
+    // The password-only session never becomes a full one: with the key back it is over (no stage, apply, fun mode
+    // or admin grant through it), and it is gone from the database.
+    for (const [method, url, payload] of [
+      ['PUT', '/recovery/oidc/pending', { issuer: idp.issuer, clientId: 'yoda-portal', jwksUrl: null }],
+      ['POST', '/recovery/oidc/apply', {}],
+      ['POST', '/recovery/fun-mode/off', {}],
+      ['POST', '/recovery/admins', { username: 'mallory' }],
+      ['GET', '/recovery/status', undefined],
+    ] as const) {
+      const r = await inject({ method, url, headers: h, ...(payload ? { payload } : {}) })
+      expect(r.statusCode, url).toBe(401)
+    }
+    expect(await (await testDb()).select().from(localSessions)).toHaveLength(0)
     expect(store.get('smtp.password')).toBe('placeholder-smtp-pass-1234')
     const full = await recovery()
     expect(full.res.json()).toMatchObject({ restricted: false, statusOnly: false })
@@ -304,7 +317,10 @@ describe('e2e: wrong master key', () => {
     expect((await inject({ url: '/health' })).json().settings).toEqual({ secrets: 'ok', recovery: false })
     // The break-glass account lost its TOTP: password, then enrol (now possible), then new codes.
     const { res, h } = await recovery({ totpCode: undefined })
-    expect(res.json()).toMatchObject({ restricted: true, statusOnly: false, admin: { mustEnrolTotp: true } })
+    expect(res.json()).toMatchObject({ restricted: true, statusOnly: false, admin: { mustEnrolTotp: true, mustChangePassword: true } })
+    // A new password first (the reset came from the host), then the authenticator.
+    const pw = await inject({ method: 'POST', url: '/recovery/password', headers: h, payload: { newPassword: 'quartz-meadow-falcon-88' } })
+    expect(pw.json()).toMatchObject({ admin: { mustChangePassword: false } })
     const enrol = (await inject({ method: 'POST', url: '/recovery/totp/start', headers: h })).json()
     const done = await inject({ method: 'POST', url: '/recovery/totp/confirm', headers: h, payload: { code: totpCodeAt(enrol.secret, clock.getTime()) } })
     expect(done.json()).toMatchObject({ restricted: false })
@@ -325,7 +341,7 @@ describe('e2e: wrong master key', () => {
     expect(store.keyId).toBe(ROTATED.id)
     await start(ok(ROTATED), { previousKey: WRONG })
     expect(store.get('smtp.password')).toBe('placeholder-smtp-pass-again')
-    expect((await recovery()).res.json()).toMatchObject({ restricted: false })
+    expect((await recovery({ password: 'quartz-meadow-falcon-88' })).res.json()).toMatchObject({ restricted: false })
     const fin = await cli(['rotate-master-key', '--finish'])
     expect(fin.code, fin.err).toBe(0)
   })
@@ -363,5 +379,28 @@ describe('e2e: moving to another identity provider with other usernames', () => 
     } finally {
       await other.stop()
     }
+  })
+})
+
+describe('e2e: another identity provider with the same usernames', () => {
+  it('a grant at /recovery pre-grants the username: the new subject is admin at its first sign-in, once', async () => {
+    await wizard()
+    const token = async (sub: string) => ({
+      authorization: `Bearer ${await signToken({ iss: idp.issuer, azp: 'yoda-portal', sub, typ: 'Bearer', preferred_username: 'somchai', groups: ['/it-dev'] })}`,
+    })
+    // Without a grant, somchai under a new subject is a new, ordinary person.
+    expect((await inject({ url: '/me', headers: await token('other-idp-1') })).json().isAdmin).toBe(false)
+    const { h } = await recovery()
+    clock = new Date(clock.getTime() + 30_000)
+    const g = (await inject({ method: 'POST', url: '/recovery/admins', headers: h, payload: { username: 'somchai', totpCode: totpCodeAt(totpSeed, clock.getTime()) } })).json()
+    expect(g.preGranted).toEqual(['somchai'])
+    // The next new subject with that username is admin, and the pre-grant is used up (audited as system).
+    expect((await inject({ url: '/me', headers: await token('other-idp-2') })).json()).toMatchObject({ isAdmin: true })
+    expect(store.get('oidc.bootstrapAdmins')).toEqual([])
+    const [used] = await (await testDb()).select().from(settingsAudit).where(eq(settingsAudit.action, 'recovery.pregrant_used'))
+    expect(used).toMatchObject({ actorLabel: 'system', newValue: { username: 'somchai' } })
+    expect((await inject({ url: '/recovery/admins', headers: h })).json().preGranted).toEqual([])
+    // Once only: a third subject with the same username is not.
+    expect((await inject({ url: '/me', headers: await token('other-idp-3') })).json().isAdmin).toBe(false)
   })
 })

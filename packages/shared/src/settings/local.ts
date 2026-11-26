@@ -195,7 +195,10 @@ export const TotpConfirmBody = z.object({
 /** Portal admins as /recovery sees them (§7.4, T4): grant and revoke need the current second factor. */
 export const RecoveryAdmins = z.object({
   admins: z.array(z.object({ username: z.string(), displayName: z.string(), lastSeenAt: z.string() })),
-  /** Usernames that become admin at their first sign-in (`oidc.bootstrapAdmins`): another identity provider. */
+  /**
+   * Usernames that become admin when a person with that username is first created (`oidc.bootstrapAdmins`): a
+   * grant covers the same username under another identity provider. Used up at that first sign-in.
+   */
   preGranted: z.array(z.string()),
   /** BOOTSTRAP_ADMINS is set in env: pre-grants are managed there. */
   preGrantLocked: z.boolean(),
@@ -204,6 +207,8 @@ export type RecoveryAdmins = z.infer<typeof RecoveryAdmins>
 
 export const RecoveryAdminBody = z.object({
   username: z.string().trim().min(1).max(200),
+  /** Revoke: taking admin from the last portal admin needs this (409 `last_admin` otherwise). */
+  confirmLastAdmin: z.boolean().optional(),
   totpCode: TotpCode.optional(),
   recoveryCode: RecoveryCodeInput.optional(),
 })

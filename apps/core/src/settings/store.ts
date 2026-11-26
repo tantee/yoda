@@ -195,6 +195,8 @@ export class SettingsStore {
   private prev: MasterKey | null = null
   /** Re-reads the master key (its file) when the canary names another key: a rotation by `yoda-admin`. */
   private keyLoader: (() => MasterKeyLoad) | null = null
+  /** Boot found the key file stale and runs on the previous key (`.prev`), which opens the canary. */
+  private onPreviousKey = false
 
   private constructor(
     private readonly db: Db,
@@ -281,6 +283,14 @@ export class SettingsStore {
   }
 
   /** `yoda-admin recovery on` (7.4): the portal shows only /recovery and the portal API answers 503. */
+  /**
+   * The key that was loaded as current failed the canary and core runs on the previous key instead (`.prev`; an
+   * env install whose `.env` still has the old key). `rotate-master-key --finish` must not delete `.prev` then.
+   */
+  get runsOnPreviousKey(): boolean {
+    return this.onPreviousKey
+  }
+
   get recoveryForced(): boolean {
     return this.recoveryMode
   }
@@ -399,6 +409,30 @@ export class SettingsStore {
     if (!RECOVERY_KEYS.has(key)) throw new SettingLockedError(key, this.lockOf(settingDef(key)) ?? 'readonly')
     await this.apply([{ key, value }], actor, { recovery: true })
     return this.info(key)
+  }
+
+  /**
+   * A pre-grant was used (§7.4, T4): the person it named was just created as an admin, so the username leaves
+   * `oidc.bootstrapAdmins` in the caller's transaction (the one that inserted the person), audited as `system`.
+   * Reads the locked row, so two first sign-ins cannot both consume it. False when there was nothing to remove.
+   * Call `reloadSetting` after the commit.
+   */
+  async consumePreGrant(tx: Tx, username: string): Promise<boolean> {
+    const key: SettingKey = 'oidc.bootstrapAdmins'
+    const d = settingDef(key)
+    if (this.lockOf(d) !== 'readonly') return false
+    const cur = await this.lockRow(tx, key, undefined)
+    const list = this.rowValue(d, cur) as string[]
+    if (!list.includes(username)) return false
+    await this.write(tx, d, list.filter((u) => u !== username), { ...SYSTEM, source: 'recovery' }, 'set', cur, null)
+    await tx.insert(settingsAudit).values({ ...this.auditActor({ ...SYSTEM, source: 'recovery' }), action: 'recovery.pregrant_used', key, newValue: { username } })
+    await this.notify(tx, [key])
+    return true
+  }
+
+  /** Reads one setting again (after a write in a caller's transaction). */
+  async reloadSetting(key: SettingKey): Promise<void> {
+    await this.reload(key)
   }
 
   /**
@@ -758,6 +792,7 @@ export class SettingsStore {
           )
           this.mk = this.prev
           this.prev = mk
+          this.onPreviousKey = true
           return
         }
         this.status = 'mismatch'

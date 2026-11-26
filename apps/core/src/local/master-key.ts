@@ -27,7 +27,7 @@ export type ActorLike = { personId?: string | null; label: string; source: strin
 
 export class RotationRefused extends Error {
   constructor(
-    readonly code: 'key_unavailable' | 'setup_required' | 'key_changed' | 'unreadable' | 'no_previous' | 'not_mismatch',
+    readonly code: 'key_unavailable' | 'setup_required' | 'key_changed' | 'unreadable' | 'no_previous' | 'not_mismatch' | 'stale_key_file' | 'next_exists',
     /** Setting keys or `local_admin:<username>` that could not be opened (never a value). */
     readonly items: string[] = [],
   ) {
@@ -61,16 +61,21 @@ async function newCodes(tx: Tx, mk: MasterKey, adminId: string): Promise<string[
   return codes
 }
 
+/** What must hold before a rotation touches any file: a usable key, setup done, the key file current. */
+export function rotationPreflight(store: SettingsStore): void {
+  if (!store.withKeyring(() => true)) throw new RotationRefused('key_unavailable')
+  if (!store.setupDone) throw new RotationRefused('setup_required')
+  if (store.runsOnPreviousKey) throw new RotationRefused('stale_key_file')
+}
+
 /** Re-wraps everything under `to` (see the module comment). `dryRun` does every step, then rolls back. */
 export async function rotateMasterKey(
   deps: { db: Db; settings: SettingsStore },
   opts: { to: MasterKey; dryRun?: boolean; actor: ActorLike },
 ): Promise<RotationResult> {
   const store = deps.settings
-  const keys = store.withKeyring((current, all) => ({ current, all }))
-  if (!keys) throw new RotationRefused('key_unavailable')
-  if (!store.setupDone) throw new RotationRefused('setup_required')
-  const { current, all } = keys
+  rotationPreflight(store)
+  const { current, all } = store.withKeyring((current, all) => ({ current, all }))!
   const to = opts.to
   try {
     return await deps.db.transaction(async (tx) => {
@@ -153,6 +158,8 @@ export async function finishRotation(deps: { db: Db; settings: SettingsStore }, 
   if (!keys) throw new RotationRefused('key_unavailable')
   const prev = keys.all.find((k) => k.id !== keys.current.id)
   if (!prev) throw new RotationRefused('no_previous')
+  // The key file is stale and core runs on `.prev`: deleting `.prev` would delete the only copy of the key.
+  if (deps.settings.runsOnPreviousKey) throw new RotationRefused('stale_key_file')
   return deps.db.transaction(async (tx) => {
     let moved = 0
     const unreadable: string[] = []
@@ -207,6 +214,9 @@ export async function resetLostMasterKey(
       .set({ totpSecret: null, totpKeyId: null, totpEnabled: false, totpLastStep: null })
       .where(and(isNotNull(localAdmins.totpSecret), ne(localAdmins.totpKeyId, mk.id)))
       .returning({ id: localAdmins.id })
+    // Whoever reset the key had host access only: the next /recovery sign-in sets a new password and a new TOTP
+    // (the status-only session before the reset may have been opened with the password alone).
+    await tx.update(localAdmins).set({ mustChangePassword: true, failedAttempts: 0, lockedUntil: null })
     await tx.delete(localRecoveryCodes)
     await tx.delete(localSessions)
     const canary = makeCanary(mk)
@@ -222,11 +232,18 @@ export async function resetLostMasterKey(
  */
 export async function issueRecoveryKit(
   deps: { db: Db; settings: SettingsStore },
-  opts: { admin: AdminRow; publicUrl: string; at: Date; codes?: string[]; key?: MasterKey },
+  opts: { admin: AdminRow; publicUrl: string; at: Date; codes?: string[]; key?: MasterKey; audit?: (tx: Tx, keyId: string) => Promise<void> },
 ): Promise<{ text: string; keyId: string; codes: string[] }> {
   const mk = opts.key ?? deps.settings.withKey((k) => k)
   if (!mk) throw new MasterKeyUnavailable()
-  const codes = opts.codes ?? (await deps.db.transaction((tx) => newCodes(tx, mk, opts.admin.id)))
+  // The new codes and their audit row commit together.
+  const codes =
+    opts.codes ??
+    (await deps.db.transaction(async (tx) => {
+      const c = await newCodes(tx, mk, opts.admin.id)
+      await opts.audit?.(tx, mk.id)
+      return c
+    }))
   const text = recoveryKitText({
     installId: deps.settings.installId,
     publicUrl: opts.publicUrl,
@@ -241,16 +258,6 @@ export async function issueRecoveryKit(
 
 // ── Key files (the bootstrap volume, init's layout: core/master-key 0600 and core/master-key.prev) ─────────────
 
-function writeFile0600(path: string, value: string): void {
-  const fd = openSync(path, 'w', 0o600)
-  try {
-    writeSync(fd, `${value}\n`)
-    fsyncSync(fd)
-  } finally {
-    closeSync(fd)
-  }
-}
-
 function fsyncDir(dir: string): void {
   try {
     const fd = openSync(dir, 'r')
@@ -264,9 +271,25 @@ function fsyncDir(dir: string): void {
   }
 }
 
-/** Step 1: the new key goes to `<file>.next` first, so it is on disk before the database names it. */
+/**
+ * Step 1: the new key goes to `<file>.next` first, so it is on disk before the database names it. Created
+ * exclusively: an existing `.next` is a rotation whose file move did not finish, and holds the only copy of the
+ * key the database may already use, so it is never overwritten (`RotationRefused('next_exists')`).
+ */
 export function writeNextKey(file: string, mk: MasterKey): void {
-  writeFile0600(`${file}.next`, encodeMasterKey(mk))
+  let fd: number
+  try {
+    fd = openSync(`${file}.next`, 'wx', 0o600)
+  } catch (err) {
+    if ((err as { code?: string }).code === 'EEXIST') throw new RotationRefused('next_exists')
+    throw err
+  }
+  try {
+    writeSync(fd, `${encodeMasterKey(mk)}\n`)
+    fsyncSync(fd)
+  } finally {
+    closeSync(fd)
+  }
   fsyncDir(dirname(file))
 }
 

@@ -69,7 +69,11 @@ Evidence is given as `file:line` at the time of the review (Task 10). Paths are 
   - factor `password_keyless` (`break-glass.ts:274`);
   - restricted (`recovery.ts:103`);
   - only `GET /recovery/status`, the session calls and a temporary-password change answer; everything else is 403
-    `secrets_unavailable`.
+    `secrets_unavailable`;
+  - the session row carries `statusOnly` from its creation, so it stays status-only for its whole life: it never
+    widens when the key starts working (restored key, restart, or a live `reset-master-key`); instead it is
+    ended on its next use (401), and a full sign-in with the second factor is needed (`recovery.ts`, `signed`;
+    tests: `e2e-install.test.ts` "wrong master key", `recovery-hardening.test.ts`).
 
   This is a deliberate weakening: without it, a wrong key locked the break-glass account out completely. It
   exposes no secret and no change, and the admins are told, with a distinct Thai notification text.
@@ -84,9 +88,13 @@ Evidence is given as `file:line` at the time of the review (Task 10). Paths are 
   - each one needs the current second factor;
   - each is audited (`recovery.admin_grant`, `recovery.admin_revoke`);
   - every admin is told, including the new one, and a revoke is announced before it takes effect.
-- **Pre-grants.** A username that has not signed in yet is pre-granted through `oidc.bootstrapAdmins`, written
-  with source `recovery` (`apps/core/src/settings/store.ts`, `setFromRecovery`). It counts for the test sign-in
-  of a pending change (`apps/core/src/local/oidc-change.ts:266`).
+- **Pre-grants.** Every grant also pre-grants the username through `oidc.bootstrapAdmins`, written with source
+  `recovery` (`apps/core/src/settings/store.ts`, `setFromRecovery`), so the same username under a new identity
+  provider (a new subject) becomes admin. A pre-grant is used up in the transaction that creates the admin
+  person, audited as `system` (`recovery.pregrant_used`; `store.ts`, `consumePreGrant`;
+  `apps/core/src/auth/plugin.ts`, `personOf`). It counts for the test sign-in of a pending change
+  (`apps/core/src/local/oidc-change.ts:266`). Pending pre-grants are listed at `/recovery`; revoking the last
+  admin needs a confirmation.
 - **Banner.** Admin pages show a banner while a break-glass session is open:
   - `GET /admin/recovery-activity` (`recovery.ts:438`);
   - `apps/portal/app/components/settings/RecoveryBanner.vue`.
@@ -226,7 +234,8 @@ stays a later option. Rotation re-wraps the data keys only (`crypto.ts:216`), so
 | F3 | A wrong master key left a break-glass admin with TOTP unable to sign in at all (`unavailable`). | Fixed: status-only session (T3). |
 | F4 | The recovery-kit re-issue in the wizard was not rate limited. | Fixed: the test limit (`setup-wizard.ts`). |
 | F5 | §7.4 says recovery mode shows only `/recovery`. For a key mismatch the portal keeps working (non-secret features, unavailable secrets shown as such); only *forced* recovery redirects. | Decision recorded: hiding the whole portal on a key problem would stop the department's work for a settings issue. The owner may revisit it. |
-| F6 | Pre-grants stay in `oidc.bootstrapAdmins` after the person signed in (they apply only when the person row is first created). | Accepted; revoke removes them; listed at `/recovery`. |
+| F6 | Pre-grants stayed in `oidc.bootstrapAdmins` after use. | Fixed in the review round: used up at the first sign-in, audited as `system`. |
+| F8 | `rotate-master-key --finish` (or a new rotation) on a core running on `.prev` would delete the only working key. | Fixed: both refuse (`stale_key_file`); `.next` is created exclusively and never overwritten. |
 | F7 | A rotation ends every setup and recovery session (their pending TOTP seeds are sealed with the old key). | By design, documented. |
 
 ## Follow-ups (open)

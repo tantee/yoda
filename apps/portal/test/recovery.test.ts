@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
 import CodesOnce from '../app/components/recovery/CodesOnce.vue'
 import TotpEnrol from '../app/components/recovery/TotpEnrol.vue'
-import { formatCode, oidcCallback, oidcCallbackError, recoveryClient, recoveryError, sessionLost } from '../app/utils/recovery'
+import { formatCode, oidcCallback, oidcCallbackError, recoveryClient, recoveryError, sessionLost, isLastAdmin } from '../app/utils/recovery'
 import { isLocalAuthPath } from '../app/utils/publicConfig'
 import { render } from './support/render'
 
@@ -37,6 +37,8 @@ describe('recovery client', () => {
     expect(recoveryError({ data: { error: 'invalid_credentials' } })).toEqual({ key: 'recovery.error.invalidCredentials' })
     expect(recoveryError({ data: { error: 'rate_limited', reason: 'locked', retryAfter: 125 } })).toEqual({ key: 'recovery.error.locked', named: { minutes: 3 } })
     expect(recoveryError({ data: { error: 'rate_limited', retryAfter: 10 } })).toEqual({ key: 'recovery.error.rateLimited', named: { minutes: 1 } })
+    expect(isLastAdmin({ data: { error: 'invalid_state', reason: 'last_admin' } })).toBe(true)
+    expect(isLastAdmin({ data: { error: 'invalid_state', reason: 'no_pending' } })).toBe(false)
     expect(recoveryError({ data: { error: 'forbidden', reason: 'secrets_unavailable' } })).toEqual({ key: 'recovery.error.secretsUnavailable' })
     expect(recoveryError({ data: { error: 'forbidden', reason: 'enrolment_required' } })).toEqual({ key: 'recovery.error.generic' })
     expect(recoveryError({ data: { error: 'nope' } })).toEqual({ key: 'recovery.error.generic' })

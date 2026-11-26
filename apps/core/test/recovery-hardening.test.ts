@@ -96,6 +96,25 @@ describe('wrong master key: status-only recovery sessions (7.4)', () => {
     expect((await app.inject({ method: 'POST', url: '/recovery/totp/start', headers: h })).json()).toEqual({ error: 'secrets_unavailable' })
   })
 
+  it('a password-only session stays status-only when the key starts working in the running core, then ends', async () => {
+    await boot()
+    await withAdmin()
+    await boot({ key: ok(WRONG) })
+    const { res, h } = await bg({ totpCode: undefined })
+    expect(res.json()).toMatchObject({ restricted: true, statusOnly: true })
+    const [row] = await (await testDb()).select().from(localSessions)
+    expect(row!.data).toMatchObject({ statusOnly: true })
+    // The lost-key reset makes this process's key the master key (live, no restart).
+    const r = await runAdmin(['reset-master-key', '--yes'], { db: await testDb(), settings: store, config: app.deps.config, tokenFile: null, jobs: { send: async () => {} }, masterKey: ok(WRONG), now: () => clock, out: () => {}, err: () => {} })
+    expect(r).toBe(0)
+    await store.load()
+    expect(store.keyStatus).toBe('ok')
+    // reset-master-key ends every session; an old cookie re-planted in the table would still not be trusted.
+    await (await testDb()).insert(localSessions).values(row!)
+    expect((await app.inject({ method: 'POST', url: '/recovery/fun-mode/off', headers: h })).statusCode).toBe(401)
+    expect(await (await testDb()).select().from(localSessions)).toHaveLength(0)
+  })
+
   it('with the right key, an enrolment-restricted session still gets no status (unchanged)', async () => {
     await boot()
     seed = newTotpSecret()
@@ -117,10 +136,12 @@ describe('portal admins from /recovery (T4)', () => {
     expect((await app.inject({ method: 'POST', url: '/recovery/admins', headers: h, payload: { username: 'nurse1', totpCode: '000000' } })).json()).toEqual({ error: 'invalid_code' })
     const granted = (await app.inject({ method: 'POST', url: '/recovery/admins', headers: h, payload: { username: 'nurse1', totpCode: code() } })).json()
     expect(granted.admins.map((a: { username: string }) => a.username)).toEqual(['boss', 'nurse1'])
-    expect(granted.preGranted).toEqual([])
+    // Also pre-granted: the same username under another identity provider (a new subject) is admin too.
+    expect(granted.preGranted).toEqual(['nurse1'])
     expect((await app.inject({ url: '/me', headers: await bearer('nurse1') })).json().isAdmin).toBe(true)
     const revoked = (await app.inject({ method: 'POST', url: '/recovery/admins/revoke', headers: h, payload: { username: 'nurse1', totpCode: code() } })).json()
     expect(revoked.admins.map((a: { username: string }) => a.username)).toEqual(['boss'])
+    expect(revoked.preGranted).toEqual([])
     expect((await app.inject({ url: '/me', headers: await bearer('nurse1') })).json().isAdmin).toBe(false)
     const db = await testDb()
     const actions = (await db.select().from(settingsAudit)).map((a) => a.action)
@@ -143,10 +164,25 @@ describe('portal admins from /recovery (T4)', () => {
     await expect(store.set('oidc.bootstrapAdmins', ['x'], { label: 'สมชาย', source: 'ui' })).rejects.toThrow(/locked/)
   })
 
-  it('a pre-grant is refused while BOOTSTRAP_ADMINS is set in env', async () => {
-    await boot({ env: { BOOTSTRAP_ADMINS: 'boss' } })
+  it('revoking the last portal admin needs an explicit confirmation', async () => {
+    await boot()
+    await person('boss', true)
     await withAdmin()
     const { h } = await bg()
+    expect((await app.inject({ method: 'POST', url: '/recovery/admins/revoke', headers: h, payload: { username: 'boss', totpCode: code() } })).json()).toEqual({ error: 'invalid_state', reason: 'last_admin' })
+    expect((await app.inject({ url: '/me', headers: await bearer('boss') })).json().isAdmin).toBe(true)
+    const ok = await app.inject({ method: 'POST', url: '/recovery/admins/revoke', headers: h, payload: { username: 'boss', totpCode: code(), confirmLastAdmin: true } })
+    expect(ok.json().admins).toEqual([])
+  })
+
+  it('a pre-grant is refused while BOOTSTRAP_ADMINS is set in env (existing people are still granted)', async () => {
+    await boot({ env: { BOOTSTRAP_ADMINS: 'boss' } })
+    await person('nurse1')
+    await withAdmin()
+    const { h } = await bg()
+    const known = (await app.inject({ method: 'POST', url: '/recovery/admins', headers: h, payload: { username: 'nurse1', totpCode: code() } })).json()
+    expect(known).toMatchObject({ preGranted: ['boss'], preGrantLocked: true })
+    expect(known.admins.map((a: { username: string }) => a.username)).toContain('nurse1')
     expect((await app.inject({ url: '/recovery/admins', headers: h })).json().preGrantLocked).toBe(true)
     const res = await app.inject({ method: 'POST', url: '/recovery/admins', headers: h, payload: { username: 'new.admin', totpCode: code() } })
     expect(res.statusCode).toBe(409)

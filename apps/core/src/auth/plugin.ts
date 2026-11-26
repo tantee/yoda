@@ -1,8 +1,10 @@
 import type { Me } from '@yoda/shared'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
+import { eq } from 'drizzle-orm'
 import { jwtVerify } from 'jose'
 import type { AppDeps } from '../app.js'
 import type { Config } from '../config.js'
+import { people } from '../db/schema.js'
 import { setupState } from '../setup-state.js'
 import { isStaff, TokenClaims, upsertPersonFromClaims } from './people.js'
 
@@ -154,7 +156,7 @@ export function registerAuth(app: FastifyInstance): void {
     if (!config.oidcIssuer) throw notConfigured()
     const claims = await verifyRequest(request, { jwks: deps.jwks }, config)
     if (!claims) throw unauthorized()
-    const person = await upsertPersonFromClaims(deps.db, claims, config)
+    const person = await personOf(deps, claims, config)
     request.tokenExp = claims.exp * 1000
     request.authTime = claims.auth_time ?? null
     request.me = {
@@ -167,6 +169,27 @@ export function registerAuth(app: FastifyInstance): void {
       isStaff: person.isAdmin || isStaff(person, claims, config.staffGroup),
     }
   })
+}
+
+/**
+ * The person for the token. A username pre-granted at /recovery (`oidc.bootstrapAdmins` in the database) becomes
+ * admin when its person row is created, and the pre-grant is used up in that same transaction (T4): it never
+ * makes a later, different person with the same username an admin.
+ */
+async function personOf(deps: FastifyInstance['deps'], claims: TokenClaims, config: Config) {
+  const store = deps.settings
+  if (!store || !config.bootstrapAdmins.includes(claims.preferred_username) || !store.recoveryWritable('oidc.bootstrapAdmins')) {
+    return upsertPersonFromClaims(deps.db, claims, config)
+  }
+  let used = false
+  const person = await deps.db.transaction(async (tx) => {
+    const [known] = await tx.select({ id: people.id }).from(people).where(eq(people.keycloakSub, claims.sub))
+    const p = await upsertPersonFromClaims(tx, claims, config)
+    if (!known && p.isAdmin) used = await store.consumePreGrant(tx, p.username)
+    return p
+  })
+  if (used) await store.reloadSetting('oidc.bootstrapAdmins')
+  return person
 }
 
 /** Any signed-in person, staff or requester; the route itself must then authorize per resource. */

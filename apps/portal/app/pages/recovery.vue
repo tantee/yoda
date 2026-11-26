@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { OidcCheckResult, OidcPending, OidcSignInStart, RecoveryAdmins, RecoveryCodesResult, RecoverySession, RecoveryStatus, TotpEnrolment } from '@yoda/shared'
 import TestResult from '~/components/settings/TestResult.vue'
-import { formatCode, oidcCallback, oidcCallbackError, recoveryClient, recoveryError, sessionLost } from '~/utils/recovery'
+import { formatCode, isLastAdmin, oidcCallback, oidcCallbackError, recoveryClient, recoveryError, sessionLost } from '~/utils/recovery'
 
 /**
  * /recovery (installer proposal §7.4, §8.6): the break-glass sign-in and what it may do. Outside the default
@@ -67,9 +67,24 @@ async function grantAdmin() {
   })
 }
 
-async function revokeAdmin(username: string) {
+/** The last portal admin: asked again before revoking (core refuses with `last_admin` without the flag). */
+const confirmLast = ref<string | null>(null)
+
+async function revokeAdmin(username: string, confirmLastAdmin = false) {
   await run(`revoke:${username}`, async () => {
-    admins.value = await api<RecoveryAdmins>('/admins/revoke', { method: 'POST', body: { username, ...(adminForm.totpCode ? { totpCode: adminForm.totpCode } : {}) } })
+    try {
+      admins.value = await api<RecoveryAdmins>('/admins/revoke', {
+        method: 'POST',
+        body: { username, ...(adminForm.totpCode ? { totpCode: adminForm.totpCode } : {}), ...(confirmLastAdmin ? { confirmLastAdmin } : {}) },
+      })
+    } catch (e) {
+      if (isLastAdmin(e)) {
+        confirmLast.value = username
+        return
+      }
+      throw e
+    }
+    confirmLast.value = null
     adminForm.totpCode = ''
     notice.value = t('recovery.admins.revoked', { username })
   })
@@ -458,6 +473,11 @@ function switchLocale() {
                 <v-btn variant="text" size="small" color="error" :loading="busy === `revoke:${u}`" :disabled="admins.preGrantLocked" :data-testid="`recovery-admin-revoke-${u}`" @click="revokeAdmin(u)">{{ t('recovery.admins.revoke') }}</v-btn>
               </li>
             </ul>
+            <v-alert v-if="confirmLast" type="warning" variant="tonal" density="compact" class="mb-3" data-testid="recovery-admin-last">
+              <div class="mb-2">{{ t('recovery.admins.lastAdmin', { username: confirmLast }) }}</div>
+              <v-btn size="small" color="error" variant="flat" :loading="busy === `revoke:${confirmLast}`" data-testid="recovery-admin-last-confirm" @click="revokeAdmin(confirmLast, true)">{{ t('recovery.admins.revokeAnyway') }}</v-btn>
+              <v-btn size="small" variant="text" class="ml-2" data-testid="recovery-admin-last-cancel" @click="confirmLast = null">{{ t('recovery.admins.cancel') }}</v-btn>
+            </v-alert>
             <v-alert v-if="admins.preGrantLocked" type="info" variant="tonal" density="compact" class="mb-3" data-testid="recovery-admins-locked">{{ t('recovery.admins.locked') }}</v-alert>
             <v-form class="recovery__grid" @submit.prevent="grantAdmin">
               <v-text-field v-model="adminForm.username" :label="t('recovery.admins.username')" autocapitalize="none" spellcheck="false" data-testid="recovery-admin-username" />

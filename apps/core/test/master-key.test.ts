@@ -189,19 +189,37 @@ describe('yoda-admin rotate-master-key', () => {
     expect(row!.keyId).toBe(OLD.id)
   })
 
-  it('refuses before setup is done and with a wrong key', async () => {
+  it('refuses before setup is done and with a wrong key, before writing any key file', async () => {
     const store = await open(OLD)
     expect((await cli(store, ['rotate-master-key'])).err).toContain('Setup is not finished')
+    expect(existsSync(`${keyFile}.next`)).toBe(false)
     await install()
     const wrong = await open(STRANGER)
     const r = await cli(wrong, ['rotate-master-key'])
     expect(r.code).toBe(1)
     expect(r.err).toContain('not usable')
+    expect(existsSync(`${keyFile}.next`)).toBe(false)
   })
 
-  it('with YODA_MASTER_KEY from env: rotates the database, prints the kit and says to update .env', async () => {
+  it('never overwrites a master-key.next left by an unfinished rotation', async () => {
     const store = await install()
-    const r = await cli(store, ['rotate-master-key'], { keySource: 'env' })
+    writeFileSync(`${keyFile}.next`, `${encodeMasterKey(STRANGER)}\n`, { mode: 0o600 })
+    const r = await cli(store, ['rotate-master-key'])
+    expect(r.code).toBe(1)
+    expect(r.err).toContain('master-key.next already exists')
+    expect(readFileSync(`${keyFile}.next`, 'utf8').trim()).toBe(encodeMasterKey(STRANGER))
+    expect(readFileSync(keyFile, 'utf8').trim()).toBe(encodeMasterKey(OLD))
+    const [st] = await (await testDb()).select().from(setupState)
+    expect(st!.keyCanaryKeyId).toBe(OLD.id)
+  })
+
+  it('with YODA_MASTER_KEY from env: refuses without --allow-env-key; with it, rotates, prints the kit, says to update .env', async () => {
+    const store = await install()
+    const no = await cli(store, ['rotate-master-key'], { keySource: 'env' })
+    expect(no.code).toBe(1)
+    expect(no.err).toContain('--allow-env-key')
+    expect(no.out).toBe('')
+    const r = await cli(store, ['rotate-master-key', '--allow-env-key'], { keySource: 'env' })
     expect(r.code, r.err).toBe(0)
     expect(r.out).toContain(encodeMasterKey(NEW))
     expect(r.err).toContain('put the new key in .env')
@@ -217,6 +235,15 @@ describe('yoda-admin rotate-master-key', () => {
     expect(stale.keyId).toBe(NEW.id)
     expect(stale.get('smtp.password')).toBe('placeholder-smtp-password')
     expect(log.warn.mock.calls.map((c) => c[1]).join('\n')).toContain('the previous key does')
+    expect(stale.runsOnPreviousKey).toBe(true)
+    // .prev holds the only working key: neither --finish nor another rotation may touch it.
+    writeFileSync(`${keyFile}.prev`, `${encodeMasterKey(NEW)}\n`, { mode: 0o600 })
+    const fin = await cli(stale, ['rotate-master-key', '--finish'])
+    expect(fin.code).toBe(1)
+    expect(fin.err).toContain('Core runs on the previous key')
+    expect(existsSync(`${keyFile}.prev`)).toBe(true)
+    expect((await cli(stale, ['rotate-master-key'])).err).toContain('Core runs on the previous key')
+    expect(existsSync(`${keyFile}.next`)).toBe(false)
   })
 
   it('--finish moves what a core wrote with the old key meanwhile, then deletes master-key.prev', async () => {
@@ -251,6 +278,13 @@ describe('yoda-admin recovery-kit', () => {
     expect((await signInWith(store, { recoveryCode: kitCodes[0] })).ok).toBe(true)
     const [audit] = await (await testDb()).select().from(settingsAudit).where(eq(settingsAudit.action, 'break_glass.recovery_kit'))
     expect(audit).toMatchObject({ source: 'cli', newValue: { keyId: OLD.id, username: 'admin' } })
+    // The codes and the audit row commit together: a failing audit leaves the old codes.
+    const fresh = await cli(store, ['recovery-kit'])
+    const before = await (await testDb()).select().from(localRecoveryCodes)
+    vi.spyOn(store, 'audit').mockRejectedValueOnce(new Error('audit down'))
+    await expect(cli(store, ['recovery-kit'])).rejects.toThrow('audit down')
+    expect((await (await testDb()).select().from(localRecoveryCodes)).map((c) => c.id).sort()).toEqual(before.map((c) => c.id).sort())
+    expect(fresh.code).toBe(0)
     expect(JSON.stringify(audit)).not.toContain(encodeMasterKey(OLD))
   })
 })
@@ -274,7 +308,7 @@ describe('yoda-admin reset-master-key (the key is lost)', () => {
     expect(r.out).toContain('smtp.password')
     expect(await db.select().from(settings).where(eq(settings.key, 'smtp.password'))).toHaveLength(0)
     const admin = (await findAdmin(db, 'admin'))!
-    expect(admin).toMatchObject({ totpEnabled: false, totpSecret: null })
+    expect(admin).toMatchObject({ totpEnabled: false, totpSecret: null, mustChangePassword: true })
     expect(await db.select().from(localRecoveryCodes)).toHaveLength(0)
     const [audit] = await db.select().from(settingsAudit).where(eq(settingsAudit.action, 'master_key.reset'))
     expect(audit).toMatchObject({ source: 'cli', newValue: { keyId: STRANGER.id, dropped: ['ai.anthropicApiKey', 'smtp.password'], totpRemoved: 1 } })

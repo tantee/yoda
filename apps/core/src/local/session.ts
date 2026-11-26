@@ -21,6 +21,11 @@ export type SessionRow = typeof localSessions.$inferSelect
 
 /** Session state kept server-side: a TOTP seed being enrolled (sealed), an OIDC test sign-in in flight. */
 export type SessionData = {
+  /**
+   * Opened with the password alone because the master key could not check the second factor (7.4): the session
+   * stays status-only for its whole life, and ends as soon as the key works again.
+   */
+  statusOnly?: boolean
   totpSeed?: { blob: string; keyId: string }
   /** Wrong step-up codes in this session (the fifth ends it). */
   stepUpFailures?: number
@@ -95,7 +100,7 @@ export async function createSession(
   db: Db,
   kind: SessionKind,
   request: FastifyRequest,
-  opts: { adminId?: string | null; now: Date },
+  opts: { adminId?: string | null; now: Date; data?: SessionData },
 ): Promise<{ value: string; row: SessionRow }> {
   await db.delete(localSessions).where(lt(localSessions.expiresAt, opts.now))
   const value = randomToken(32)
@@ -105,6 +110,7 @@ export async function createSession(
       idHash: sha256(value),
       kind,
       adminId: opts.adminId ?? null,
+      ...(opts.data ? { data: opts.data } : {}),
       uaHash: uaHash(request),
       ip: request.ip,
       createdAt: opts.now,

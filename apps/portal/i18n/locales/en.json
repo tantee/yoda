@@ -2269,7 +2269,10 @@
       "locked": "BOOTSTRAP_ADMINS is set on the install host: first-sign-in grants are managed there.",
       "granted": "Admin granted to {username}.",
       "revoked": "Admin revoked from {username}.",
-      "lastSeen": "last seen {at}"
+      "lastSeen": "last seen {at}",
+      "lastAdmin": "{username} is the last portal admin. Without an admin nobody can manage the portal until admin is granted again here.",
+      "revokeAnyway": "Revoke anyway",
+      "cancel": "Cancel"
     }
   },
   "recoveryBanner": {

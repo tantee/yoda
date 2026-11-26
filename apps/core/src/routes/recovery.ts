@@ -90,7 +90,7 @@ const PUBLIC = { config: { public: true } } as const
 /** Wrong step-up codes one session may send before it is ended. */
 export const STEP_UP_FAILURES_PER_SESSION = 5
 
-type Signed = { session: ActiveSession; admin: AdminRow; store: SettingsStore; restricted: boolean; host: string }
+type Signed = { session: ActiveSession; admin: AdminRow; store: SettingsStore; restricted: boolean; host: string; statusOnly: boolean }
 
 const actorOf = (request: FastifyRequest, admin: AdminRow): SettingActor => ({
   personId: null,
@@ -127,11 +127,19 @@ export function recoveryRoutes(app: FastifyInstance): void {
     const session = await requireSession(app.deps.db, request, 'recovery', { now: nowOf(app), publicUrl: publicUrl(store) })
     const admin = session.row.adminId ? await adminById(app.deps.db, session.row.adminId) : undefined
     if (!admin) throw new HttpError(401, { error: 'unauthorized', reason: 'session' })
-    const restricted = restrictedOf(store, admin, request.hostname)
-    if (restricted && !opts.allowRestricted && !(opts.statusOnly && store.secretsUnavailable)) {
-      throw new HttpError(403, { error: 'forbidden', reason: store.secretsUnavailable ? 'secrets_unavailable' : 'enrolment_required' })
+    // A session opened with the password alone (no key to check the second factor) is status-only for life; once
+    // the key works again it ends, and a full sign-in (with the second factor) is needed.
+    const keyless = (session.row.data as SessionData).statusOnly === true
+    if (keyless && !store.secretsUnavailable) {
+      await deleteSession(app.deps.db, session.row.idHash)
+      throw new HttpError(401, { error: 'unauthorized', reason: 'session' })
     }
-    return { session, admin, store, restricted, host: request.hostname }
+    const statusOnly = keyless || store.secretsUnavailable
+    const restricted = statusOnly || restrictedOf(store, admin, request.hostname)
+    if (restricted && !opts.allowRestricted && !(opts.statusOnly && statusOnly)) {
+      throw new HttpError(403, { error: 'forbidden', reason: statusOnly ? 'secrets_unavailable' : 'enrolment_required' })
+    }
+    return { session, admin, store, restricted, host: request.hostname, statusOnly }
   }
 
   async function sessionBody(request: FastifyRequest, s: Signed, recoveryCodes?: string[]): Promise<RecoverySession> {
@@ -139,7 +147,7 @@ export function recoveryRoutes(app: FastifyInstance): void {
       ...sessionView(s.session.row, s.session.value, 'recovery', !isHttps(request)),
       admin: await adminView(app.deps.db, s.store, s.admin, request.hostname),
       restricted: s.restricted,
-      statusOnly: s.store.secretsUnavailable,
+      statusOnly: s.statusOnly,
       ...(recoveryCodes ? { recoveryCodes } : {}),
     }
   }
@@ -195,7 +203,8 @@ export function recoveryRoutes(app: FastifyInstance): void {
       if (r.code === 'unavailable') throw secretsUnavailable()
       throw invalidCredentials()
     }
-    const { value, row } = await createSession(app.deps.db, 'recovery', request, { adminId: r.admin.id, now })
+    const keyless = r.factor === 'password_keyless'
+    const { value, row } = await createSession(app.deps.db, 'recovery', request, { adminId: r.admin.id, now, ...(keyless ? { data: { statusOnly: true } } : {}) })
     const secure = isHttps(request)
     if (!secure) request.log.warn('recovery: session over plain HTTP; the cookie is not Secure (D8)')
     setSessionCookie(reply, 'recovery', value, secure)
@@ -207,7 +216,14 @@ export function recoveryRoutes(app: FastifyInstance): void {
       r.factor === 'password_keyless' ? 'เข้าสู่ระบบหน้ากู้คืนด้วยรหัสผ่านอย่างเดียว (กุญแจหลักใช้ไม่ได้ ดูสถานะได้อย่างเดียว)' : 'เข้าสู่ระบบหน้ากู้คืน (/recovery)',
       { factor: r.factor },
     )
-    return sessionBody(request, { session: { row, value }, admin: r.admin, store, restricted: restrictedOf(store, r.admin, request.hostname), host: request.hostname })
+    return sessionBody(request, {
+      session: { row, value },
+      admin: r.admin,
+      store,
+      restricted: keyless || store.secretsUnavailable || restrictedOf(store, r.admin, request.hostname),
+      host: request.hostname,
+      statusOnly: keyless || store.secretsUnavailable,
+    })
   })
 
   app.get('/recovery/session', PUBLIC, async (request, reply): Promise<RecoverySession> => {
@@ -395,25 +411,29 @@ export function recoveryRoutes(app: FastifyInstance): void {
   })
 
   /**
-   * Makes a person a portal admin (step-up). Someone who has signed in already is granted at once; a username not
-   * seen yet (another identity provider, other usernames) is pre-granted: admin at the first sign-in, and the
-   * test sign-in of a pending sign-in change counts them as admin. Audited; every portal admin, the new one too,
-   * is told.
+   * Makes a username a portal admin (step-up). People who have signed in with it are granted at once, and the
+   * username is also pre-granted: the next new person with it (another identity provider, where the subject
+   * differs even if the username is the same) is admin at their first sign-in, which uses the pre-grant up, and
+   * the test sign-in of a pending change counts them as admin. With BOOTSTRAP_ADMINS in env there is no pre-grant
+   * (only existing people are granted). Audited; every portal admin, the new one too, is told.
    */
   app.post('/recovery/admins', PUBLIC, async (request, reply): Promise<RecoveryAdmins> => {
     const s = await signed(request)
     const body = RecoveryAdminBody.parse(request.body)
     await secondFactor(request, reply, s, body)
     const username = body.username
+    const preGrant = s.store.recoveryWritable('oidc.bootstrapAdmins')
+    const [known] = await app.deps.db.select({ id: people.id }).from(people).where(eq(people.username, username)).limit(1)
+    if (!known && !preGrant) throw new HttpError(409, { error: 'setting_locked', key: 'oidc.bootstrapAdmins', reason: 'env', envName: 'BOOTSTRAP_ADMINS' })
     const granted = await app.deps.db.update(people).set({ isAdmin: true }).where(eq(people.username, username)).returning({ id: people.id })
-    if (!granted.length) {
-      if (!s.store.recoveryWritable('oidc.bootstrapAdmins')) throw new HttpError(409, { error: 'setting_locked', key: 'oidc.bootstrapAdmins', reason: 'env', envName: 'BOOTSTRAP_ADMINS' })
+    if (preGrant) {
       const list = s.store.get('oidc.bootstrapAdmins') ?? []
       if (!list.includes(username)) await s.store.setFromRecovery('oidc.bootstrapAdmins', [...list, username], actorOf(request, s.admin))
     }
     await used(request, s.admin, s.store, 'recovery.admin_grant', `ให้สิทธิ์ผู้ดูแลพอร์ทัลแก่ ${username}${granted.length ? '' : ' (เมื่อเข้าสู่ระบบครั้งแรก)'}`, {
       username,
-      preGranted: !granted.length,
+      existing: granted.length,
+      preGranted: preGrant,
     })
     return adminsView(s.store)
   })
@@ -424,6 +444,12 @@ export function recoveryRoutes(app: FastifyInstance): void {
     const body = RecoveryAdminBody.parse(request.body)
     await secondFactor(request, reply, s, body)
     const username = body.username
+    const [r] = await app.deps.db.execute<{ others: number; mine: number }>(
+      sql`select count(*) filter (where ${people.username} <> ${username})::int as others, count(*) filter (where ${people.username} = ${username})::int as mine
+        from ${people} where ${people.isAdmin}`,
+    )
+    // Nobody left to administer the portal: only on purpose (the break-glass account can grant again).
+    if ((r?.mine ?? 0) > 0 && (r?.others ?? 0) === 0 && !body.confirmLastAdmin) throw invalidState('last_admin')
     // Told before the change, so the person losing admin hears of it too.
     await used(request, s.admin, s.store, 'recovery.admin_revoke', `ถอนสิทธิ์ผู้ดูแลพอร์ทัลของ ${username}`, { username })
     await app.deps.db.update(people).set({ isAdmin: false }).where(eq(people.username, username))
@@ -576,7 +602,7 @@ export function recoveryRoutes(app: FastifyInstance): void {
     setSessionCookie(reply, 'recovery', value, isHttps(request))
     await used(request, s.admin, s.store, 'break_glass.totp', 'ตั้งค่า TOTP ของบัญชีฉุกเฉินใหม่')
     const admin = (await adminById(app.deps.db, s.admin.id))!
-    const after: Signed = { session: { row, value }, admin, store: s.store, restricted: restrictedOf(s.store, admin, request.hostname), host: request.hostname }
+    const after: Signed = { session: { row, value }, admin, store: s.store, restricted: restrictedOf(s.store, admin, request.hostname), host: request.hostname, statusOnly: false }
     return sessionBody(request, after, await codesIfResetFinished(s, after))
   })
 }

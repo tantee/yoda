@@ -13,6 +13,7 @@ import {
   promoteNextKey,
   resetLostMasterKey,
   rotateMasterKey,
+  rotationPreflight,
   RotationRefused,
   writeNextKey,
 } from './local/master-key.js'
@@ -68,6 +69,7 @@ const USAGE = `usage: yoda-admin <command>
   reset-break-glass [--username <u>]  new temporary break-glass password; TOTP is enrolled again after sign-in
   status                              setup, master key, break-glass account and sign-in state
   rotate-master-key [--dry-run]       new master key; the new recovery kit goes to stdout (redirect it to a file)
+                    [--allow-env-key] (needed when YODA_MASTER_KEY comes from the environment; restart after)
   rotate-master-key --finish          re-wrap what is left under the previous key, then delete master-key.prev
   recovery-kit                        a new recovery kit on stdout (new recovery codes; the old ones stop working)
   reset-master-key --yes              the master key is lost: keep the loaded key, drop the secrets it cannot open
@@ -149,7 +151,9 @@ export async function runAdmin(argv: string[], deps: AdminCliDeps): Promise<numb
       return 0
     }
     case 'rotate-master-key':
-      return args.includes('--finish') ? finishCommand(deps) : rotateCommand(deps, { dryRun: args.includes('--dry-run'), now })
+      return args.includes('--finish')
+      ? finishCommand(deps)
+      : rotateCommand(deps, { dryRun: args.includes('--dry-run'), allowEnvKey: args.includes('--allow-env-key'), now })
     case 'recovery-kit':
       return kitCommand(deps, now)
     case 'reset-master-key':
@@ -229,6 +233,10 @@ const refusal: Record<RotationRefused['code'], string> = {
   key_unavailable: 'The current master key is not usable (missing or wrong; see yoda-admin status). Put the right key back first, or, if it is lost, run yoda-admin reset-master-key --yes.',
   setup_required: 'Setup is not finished; the wizard\'s recovery kit carries the key. Finish setup first.',
   key_changed: 'The database names another master key than this process loaded (a rotation meanwhile?). Restart core and try again.',
+  stale_key_file:
+    'Core runs on the previous key (master-key.prev): the key file holds an older key, usually because .env still sets the old YODA_MASTER_KEY. Put the current key in .env (or remove the line), run dc up -d --no-build, then try again.',
+  next_exists:
+    'master-key.next already exists: an earlier rotation did not finish moving the key files. Check yoda-admin status; if the database names the key in master-key.next, finish by hand: mv master-key master-key.prev && mv master-key.next master-key (in /var/lib/yoda/core). If it does not, remove master-key.next. Then try again.',
   unreadable: 'Some stored values cannot be opened with the current or previous key; clear or re-enter them in System settings first:',
   no_previous: 'There is no previous master key to finish (no rotation in progress).',
   not_mismatch: 'The loaded master key is not the wrong key (it opens the key canary, or there is none): nothing to reset.',
@@ -258,19 +266,37 @@ async function notifyCli(deps: AdminCliDeps, what: string, key: string, now: Dat
   }
 }
 
-async function rotateCommand(deps: AdminCliDeps, opts: { dryRun: boolean; now: Date }): Promise<number> {
+async function rotateCommand(deps: AdminCliDeps, opts: { dryRun: boolean; allowEnvKey: boolean; now: Date }): Promise<number> {
   const to = (deps.generateKey ?? generateMasterKey)()
   const file = deps.keySource === 'file' ? (deps.keyFile ?? null) : null
+  // Nothing touches a file before these hold.
+  try {
+    rotationPreflight(deps.settings)
+  } catch (err) {
+    return refused(deps, err)
+  }
+  if (!opts.dryRun && deps.keySource === 'env' && !opts.allowEnvKey) {
+    deps.err('The master key comes from YODA_MASTER_KEY in this process\'s environment, which rotation cannot change: core keeps')
+    deps.err('using the old key, and every secret is unreadable to it, until YODA_MASTER_KEY holds the new key and core restarts.')
+    deps.err('Run again with --allow-env-key when you can update the environment and restart core right after.')
+    return 1
+  }
   if (!opts.dryRun && deps.keySource !== 'env' && !file) {
     deps.err('No key file (YODA_MASTER_KEY_FILE) to write the new key to; refusing to rotate.')
     return 1
   }
-  if (file && !opts.dryRun) writeNextKey(file, to)
+  if (file && !opts.dryRun) {
+    try {
+      writeNextKey(file, to)
+    } catch (err) {
+      return refused(deps, err)
+    }
+  }
   let r
   try {
     r = await rotateMasterKey(deps, { to, dryRun: opts.dryRun, actor: CLI })
   } catch (err) {
-    if (file) dropNextKey(file)
+    if (file && !opts.dryRun) dropNextKey(file)
     return refused(deps, err)
   }
   if (r.dryRun) {
@@ -333,13 +359,17 @@ async function kitCommand(deps: AdminCliDeps, now: Date): Promise<number> {
   }
   let kit
   try {
-    kit = await issueRecoveryKit(deps, { admin, publicUrl: publicUrlOf(deps.settings), at: now })
+    kit = await issueRecoveryKit(deps, {
+      admin,
+      publicUrl: publicUrlOf(deps.settings),
+      at: now,
+      audit: (tx, keyId) => deps.settings.audit({ action: 'break_glass.recovery_kit', actor: CLI, newValue: { keyId, username: admin.username }, result: 'ok' }, tx),
+    })
   } catch (err) {
     if (!(err instanceof MasterKeyUnavailable)) throw err
     deps.err(refusal.key_unavailable)
     return 1
   }
-  await deps.settings.audit({ action: 'break_glass.recovery_kit', actor: CLI, newValue: { keyId: kit.keyId, username: admin.username }, result: 'ok' })
   deps.out(kit.text.trimEnd())
   deps.err('New recovery kit above (stdout): the old recovery codes no longer work. Store it offline now.')
   await notifyCli(deps, 'สร้างชุดกู้คืน (recovery kit) ใหม่จากเครื่องที่ติดตั้ง', 'break_glass.recovery_kit', now, admin.username)
@@ -367,7 +397,7 @@ async function resetKeyCommand(deps: AdminCliDeps, yes: boolean): Promise<number
   await deps.settings.broadcast().catch(() => {})
   deps.out(`Master key reset: key ${r.keyId} is now the master key. Dropped ${r.dropped.length} secret(s); enter them again in System settings:`)
   for (const k of r.dropped) deps.out(`  ${k}`)
-  deps.out(`Break-glass TOTP removed (${r.totpRemoved}); recovery codes removed. Sign in at /recovery and enrol TOTP again (new codes are shown then),`)
+  deps.out(`Break-glass TOTP removed (${r.totpRemoved}); recovery codes removed. Sign in at /recovery: a new password and TOTP are required first (new codes are shown then),`)
   deps.out('then run yoda-admin recovery-kit and store the new kit. Running core instances leave recovery on their own.')
   await notifyCli(deps, 'รีเซ็ตกุญแจหลัก (master key) หลังกุญแจเดิมสูญหาย ต้องใส่ความลับใหม่', 'master_key.reset', deps.now?.() ?? new Date())
   return 0
