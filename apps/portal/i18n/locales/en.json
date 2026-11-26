@@ -1720,7 +1720,12 @@
         "model_not_found": "The provider does not have this model",
         "provider_unavailable": "This model's provider is not configured",
         "no_embeddings": "This provider has no embedding models",
-        "http": "The server answered HTTP {status}"
+        "http": "The server answered HTTP {status}",
+        "smtp_error": "The SMTP server returned an error",
+        "invalid_config": "The settings are not valid",
+        "rejected": "The server refused the request",
+        "unreachable": "The storage cannot be reached",
+        "smtp": "The SMTP server answered {status}"
       },
       "check": {
         "discovery": "Issuer discovery",
@@ -1748,7 +1753,9 @@
       "confirm": "Sign in again",
       "retype": "Secrets you typed are not kept meanwhile; type them again when you are back.",
       "retypeNow": "Signed in. Type {secrets} again, then save.",
-      "again": "Signed in. Press the button again to continue."
+      "again": "Signed in. Press the button again to continue.",
+      "againGenerate": "Signed in. Press “Generate” again to create the secret.",
+      "againWebhook": "Signed in. Press “Register webhook” again."
     },
     "audit": {
       "recent": "Recent changes",

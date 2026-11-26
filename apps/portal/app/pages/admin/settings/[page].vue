@@ -14,6 +14,7 @@ import {
   SETTINGS_HOME,
   SETTINGS_PAGES,
   lockedCount,
+  parseReauthStash,
   settingsPage,
   settingsPath,
   visibleSettings,
@@ -29,9 +30,23 @@ const { t } = useI18n()
 const api = useApi()
 const route = useRoute()
 const router = useRouter()
+// One instance for every category: switching category is a route update, handled below (fresh data, the
+// unsaved-changes guard, the crumbs), not a remount.
+definePageMeta({ key: () => 'admin-settings' })
 const page = computed(() => settingsPage(String(route.params.page ?? '')))
 if (!page.value) await navigateTo(SETTINGS_HOME, { replace: true })
-useBreadcrumb(() => (page.value ? [{ label: t(`settings.page.${page.value.id}`) }] : []))
+
+// The category crumb follows the path (useBreadcrumb keys crumbs by the path at setup, which changes here).
+const pageCrumbs = usePageCrumbs()
+let crumbPath = ''
+watchEffect(() => {
+  if (!page.value || !route.path.startsWith('/admin/settings/')) return
+  crumbPath = route.path
+  pageCrumbs.value = { path: crumbPath, crumbs: [{ label: t(`settings.page.${page.value.id}`) }] }
+})
+onBeforeUnmount(() => {
+  if (pageCrumbs.value?.path === crumbPath) pageCrumbs.value = null
+})
 
 // Kept between categories so the list's lock counts show at once; the forms wait for a fresh load.
 const data = useState<AdminSettingsResponse | null>('adminSettings', () => null)
@@ -52,6 +67,18 @@ async function load() {
 const catView = (c: SettingCategory): SettingsCategoryView | null => data.value?.categories.find(x => x.category === c) ?? null
 const navCount = (categories: SettingCategory[]) =>
   categories.reduce((n, c) => n + lockedCount(visibleSettings(c, catView(c)?.settings ?? [])), 0)
+
+/** After a generated secret: only that category is fetched again; the other forms keep their drafts. */
+async function reloadCategory(c: SettingCategory) {
+  try {
+    const r = await api<AdminSettingsResponse>('/admin/settings', { query: { category: c } })
+    const fresh = r.categories.find(x => x.category === c)
+    if (data.value && fresh) data.value = { ...data.value, restartRequired: r.restartRequired, categories: data.value.categories.map(x => (x.category === c ? fresh : x)) }
+  } catch {
+    // the panel shows the old state until the next load
+  }
+  auditRefresh.value++
+}
 
 function onSaved(res: SettingsPutResponse | null) {
   if (res && data.value) {
@@ -104,32 +131,50 @@ const setDirty = (c: string, d: boolean) => (d ? dirty.add(c) : dirty.delete(c))
 const leaveOpen = ref(false)
 let pendingLeave: string | null = null
 let leaving = false
-onBeforeRouteLeave((to) => {
-  if (!dirty.size || leaving) return true
+function guard(to: { fullPath: string }, from: { fullPath: string }) {
+  if (!dirty.size || leaving || to.fullPath === from.fullPath) return true
   pendingLeave = to.fullPath
   leaveOpen.value = true
   return false
-})
-function leave() {
+}
+onBeforeRouteLeave(guard)
+// Another category (or the change log) is the same page instance: the same question.
+onBeforeRouteUpdate((to, from) => (to.path === from.path ? true : guard(to, from)))
+async function leave() {
   leaving = true
   leaveOpen.value = false
-  if (pendingLeave) void router.push(pendingLeave)
+  dirty.clear()
+  try {
+    if (pendingLeave) await router.push(pendingLeave)
+  } finally {
+    leaving = false
+  }
 }
 function beforeUnload(e: BeforeUnloadEvent) {
   if (!dirty.size) return
   // Going to Keycloak to sign in again keeps the form in sessionStorage: no prompt for that.
   try {
-    if (sessionStorage.getItem(REAUTH_STASH_KEY)) return
+    if (parseReauthStash(sessionStorage.getItem(REAUTH_STASH_KEY), route.path)) return
   } catch {
     // ask as usual
   }
   e.preventDefault()
   e.returnValue = ''
 }
-onMounted(() => {
-  window.addEventListener('beforeunload', beforeUnload)
+/** Each category starts from fresh data: the forms wait for it, and no dirty flag outlives its form. */
+function enter() {
+  fresh.value = false
+  failure.value = null
+  dirty.clear()
   void load()
   if (page.value?.id === 'channels') void loadChannels()
+}
+watch(() => page.value?.id, (id, old) => {
+  if (id && old && id !== old) enter()
+})
+onMounted(() => {
+  window.addEventListener('beforeunload', beforeUnload)
+  enter()
 })
 onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload))
 </script>
@@ -189,6 +234,7 @@ onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload))
               class="mb-4"
               @saved="page.id === 'channels' ? onChannelSaved($event) : onSaved($event)"
               @tested="auditRefresh++"
+              @generated="reloadCategory(c)"
               @reload="load"
               @dirty="setDirty(c, $event)"
             >

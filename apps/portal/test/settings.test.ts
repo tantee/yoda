@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs'
-import { SETTING_KEYS, SettingCategory, type SettingView, type SettingsAuditEntry } from '@yoda/shared'
+import { SETTINGS_TEST_CODES, SETTING_KEYS, SettingCategory, type SettingView, type SettingsAuditEntry } from '@yoda/shared'
 import { describe, expect, it } from 'vitest'
 import EnvLockChip from '../app/components/settings/EnvLockChip.vue'
 import SecretField from '../app/components/settings/SecretField.vue'
@@ -13,7 +13,11 @@ import {
   applyModes,
   applyReauthStash,
   auditLine,
+  DETAIL_MAX,
+  REAUTH_STASH_MAX_MS,
   boundSecretNotes,
+  changedFieldErrors,
+  checkDetails,
   checkLabelKey,
   draftChanges,
   enumOptions,
@@ -26,6 +30,7 @@ import {
   pageForCategory,
   parseReauthStash,
   reauthStash,
+  rebaseDraft,
   saveError,
   settingsPage,
   testCodeMessage,
@@ -179,6 +184,23 @@ describe('form diff', () => {
     d.secrets['smtp.password'] = { mode: 'replace', value: 'pw' }
     expect(testValues(EMAIL, d)).toEqual({ 'smtp.host': 'mail.example.org', 'smtp.password': 'pw' })
   })
+  it('client errors only for edited keys', () => {
+    const views = [view('smtp.port', { value: 'not-a-port' }), view('smtp.user')]
+    const d = initialDraft(views)
+    expect(changedFieldErrors(views, d)).toEqual({})
+    d.values['smtp.port'] = '99999'
+    expect(Object.keys(changedFieldErrors(views, d))).toEqual(['smtp.port'])
+  })
+  it('a partial reload keeps unsaved edits, typed secrets included, of keys still editable', () => {
+    const d = initialDraft(EMAIL)
+    d.values['smtp.user'] = 'other@example.org'
+    d.secrets['smtp.password'] = { mode: 'replace', value: 'pw' }
+    const reloaded = EMAIL.map(v => (v.key === 'smtp.user' ? { ...v, version: 2 } : v))
+    const next = rebaseDraft(EMAIL, d, reloaded)
+    expect(draftChanges(reloaded, next)).toEqual({ changes: { 'smtp.user': 'other@example.org', 'smtp.password': 'pw' }, versions: { 'smtp.user': 2, 'smtp.password': 3 } })
+    const locked = EMAIL.map(v => (v.key === 'smtp.user' ? envLocked('smtp.user', 'SMTP_USER', 'yoda@example.org') : v))
+    expect(draftChanges(locked, rebaseDraft(EMAIL, d, locked)).changes).toEqual({ 'smtp.password': 'pw' })
+  })
   it('warns when moving an endpoint clears its stored secret', () => {
     const d = initialDraft(EMAIL)
     d.values['smtp.host'] = 'mail.example.org'
@@ -202,16 +224,18 @@ describe('save errors', () => {
   })
 })
 
+const NOW = Date.parse('2026-11-26T10:00:00Z')
+
 describe('re-authentication stash', () => {
   it('keeps plain values and clears, never a secret value', () => {
     const d = initialDraft(EMAIL)
     d.values['smtp.host'] = 'mail.example.org'
     d.secrets['smtp.password'] = { mode: 'replace', value: 'super-secret-password' }
-    const s = reauthStash('email', '/admin/settings/channels', EMAIL, d)
+    const s = reauthStash('email', '/admin/settings/channels', EMAIL, d, 'save', NOW)
     const raw = JSON.stringify(s)
     expect(raw).not.toContain('super-secret-password')
-    expect(s).toEqual({ category: 'email', path: '/admin/settings/channels', values: { 'smtp.host': 'mail.example.org' }, clears: [], secretsToRetype: ['smtp.password'], action: 'save' })
-    const back = applyReauthStash(EMAIL, parseReauthStash(raw)!)
+    expect(s).toEqual({ category: 'email', path: '/admin/settings/channels', values: { 'smtp.host': 'mail.example.org' }, clears: [], secretsToRetype: ['smtp.password'], action: 'save', at: NOW })
+    const back = applyReauthStash(EMAIL, parseReauthStash(raw, '/admin/settings/channels', NOW + 60_000)!)
     expect(back.values['smtp.host']).toBe('mail.example.org')
     expect(back.secrets['smtp.password']).toEqual({ mode: 'replace', value: '' })
   })
@@ -219,7 +243,7 @@ describe('re-authentication stash', () => {
     const d = initialDraft(EMAIL)
     d.secrets['smtp.password'] = { mode: 'clear', value: '' }
     d.values['smtp.user'] = 'other@example.org'
-    const s = reauthStash('email', '/x', EMAIL, d)
+    const s = reauthStash('email', '/x', EMAIL, d, 'save', NOW)
     expect(s.clears).toEqual(['smtp.password'])
     const nowLocked = EMAIL.map(v => (v.key === 'smtp.user' ? envLocked('smtp.user', 'SMTP_USER', 'yoda@example.org') : v))
     const back = applyReauthStash(nowLocked, s)
@@ -227,9 +251,18 @@ describe('re-authentication stash', () => {
     expect(back.secrets['smtp.password']!.mode).toBe('clear')
   })
   it('rejects junk', () => {
-    expect(parseReauthStash(null)).toBeNull()
-    expect(parseReauthStash('{')).toBeNull()
-    expect(parseReauthStash('{"category":"email"}')).toBeNull()
+    expect(parseReauthStash(null, '/x')).toBeNull()
+    expect(parseReauthStash('{', '/x')).toBeNull()
+    expect(parseReauthStash('{"category":"email"}', '/x')).toBeNull()
+  })
+  it('is replayed only within 10 minutes and only on the page it came from', () => {
+    const raw = JSON.stringify(reauthStash('email', '/admin/settings/channels', EMAIL, initialDraft(EMAIL), 'save', NOW))
+    expect(parseReauthStash(raw, '/admin/settings/channels', NOW + REAUTH_STASH_MAX_MS)).not.toBeNull()
+    expect(parseReauthStash(raw, '/admin/settings/channels', NOW + REAUTH_STASH_MAX_MS + 1)).toBeNull()
+    expect(parseReauthStash(raw, '/admin/settings/channels', NOW - 120_000)).toBeNull()
+    expect(parseReauthStash(raw, '/admin/settings/general', NOW)).toBeNull()
+    const { at: _at, ...noTime } = JSON.parse(raw) as Record<string, unknown>
+    expect(parseReauthStash(JSON.stringify(noTime), '/admin/settings/channels', NOW)).toBeNull()
   })
 })
 
@@ -243,9 +276,35 @@ describe('test result codes', () => {
     expect(checkLabelKey('model.draft')).toBe('settings.test.check.model_draft')
     expect(checkLabelKey('mystery')).toBe('settings.test.check.other')
   })
-  it('every code and check has th and en text', () => {
-    const codes = ['not_configured', 'secret_required', 'auth_rejected', 'invalid_response', 'failed', 'timeout', 'connect_failed', 'tls_failed', 'dns_failed', 'blocked_host', 'blocked_address', 'blocked_port', 'https_required', 'scheme_not_allowed', 'invalid_url', 'too_large', 'issuer_mismatch', 'no_keys', 'client_rejected', 'no_address', 'no_sender', 'webhook_not_registered', 'missing_scope', 'model_not_found', 'provider_unavailable', 'no_embeddings', 'http_500']
-    for (const c of codes) expect(hasText(testCodeMessage(c).key), c).toBe(true)
+  it('maps SMTP reply codes like HTTP ones and cuts third-party details short', () => {
+    expect(testCodeMessage('smtp_550')).toEqual({ key: 'settings.test.code.smtp', named: { status: '550' } })
+    expect(testCodeMessage('smtp_error')).toEqual({ key: 'settings.test.code.smtp_error' })
+    const long = 'x'.repeat(500)
+    const [d] = checkDetails({ id: 'webhook', ok: false, ms: 1, detail: { lastError: long } })
+    expect(d!.length).toBe(DETAIL_MAX)
+    expect(d!.endsWith('…')).toBe(true)
+    expect(checkDetails({ id: 'bot', ok: true, ms: 1, detail: { username: 'yoda_bot', scopes: ['api', 'read_user'] } })).toEqual(['username: yoda_bot', 'scopes: api, read_user'])
+  })
+  it('every code core can return is known and has th and en text', () => {
+    const core = ['tests.ts', 'outbound.ts'].map(f => readFileSync(new URL(`../../core/src/settings/${f}`, import.meta.url), 'utf8')).join('\n')
+    const found = new Set<string>()
+    const patterns = [/fail\('([a-z_]+)'/g, /code: '([a-z_]+)'/g, /OutboundError\('([a-z_]+)'\)/g]
+    for (const re of patterns) for (const m of core.matchAll(re)) found.add(m[1]!)
+    // The SMTP error mapping returns codes; the OutboundCode union lists safeOutbound's.
+    const smtp = /function smtpCode[\s\S]*?\n}\n/.exec(core)![0]
+    for (const m of smtp.matchAll(/return '([a-z_]+)'/g)) found.add(m[1]!)
+    const union = /export type OutboundCode =([\s\S]*?)\n\n/.exec(core)![1]!
+    for (const m of union.matchAll(/'([a-z_]+)'/g)) found.add(m[1]!)
+    // The numbered families are built with a template literal.
+    expect(core).toContain('`http_${')
+    expect(core).toContain('`smtp_${')
+    expect(found.size).toBeGreaterThan(25)
+    for (const c of found) expect(SETTINGS_TEST_CODES as readonly string[], `core code ${c}`).toContain(c)
+    for (const c of [...SETTINGS_TEST_CODES, 'http_500', 'smtp_421']) {
+      const key = testCodeMessage(c).key
+      expect(key, c).not.toBe(c === 'failed' ? '' : 'settings.test.code.failed')
+      expect(hasText(key), c).toBe(true)
+    }
     for (const id of ['discovery', 'jwks', 'client', 'connect', 'send', 'bot', 'webhook', 'user', 'scopes', 'anthropic', 'openai', 'model.draft', 'model.fast', 'model.embed', 'config', 'bucket', 'x']) {
       expect(hasText(checkLabelKey(id)), id).toBe(true)
     }

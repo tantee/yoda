@@ -5,14 +5,15 @@ import {
   applyModes,
   applyReauthStash,
   boundSecretNotes,
+  changedFieldErrors,
   draftChanges,
   fieldLabelKey,
   initialDraft,
   parseReauthStash,
+  rebaseDraft,
   reauthStash,
   saveError,
   testValues,
-  validateField,
   visibleSettings,
   type ReauthStash,
   type SectionDraft,
@@ -40,7 +41,7 @@ const props = defineProps<{
   /** Email: also send a test message to the admin's own address. */
   sendTest?: boolean
 }>()
-const emit = defineEmits<{ saved: [res: SettingsPutResponse | null]; dirty: [dirty: boolean]; reload: []; tested: [] }>()
+const emit = defineEmits<{ saved: [res: SettingsPutResponse | null]; generated: []; dirty: [dirty: boolean]; reload: []; tested: [] }>()
 const { t } = useI18n()
 const api = useApi()
 const route = useRoute()
@@ -48,10 +49,17 @@ const route = useRoute()
 const views = computed(() => visibleSettings(props.category, props.view.settings))
 const draft = ref<SectionDraft>(initialDraft(views.value))
 const serverErrors = ref<Record<string, string>>({})
-watch(() => props.view, () => {
-  draft.value = initialDraft(views.value)
+// After a save or a reload the form starts again from the server; after a partial reload (a generated secret)
+// the admin's other unsaved edits are kept.
+let resetOnNextView = false
+watch(() => props.view, (next, prev) => {
+  const nextViews = visibleSettings(props.category, next.settings)
+  if (resetOnNextView || !prev) draft.value = initialDraft(nextViews)
+  else draft.value = rebaseDraft(visibleSettings(props.category, prev.settings), draft.value, nextViews)
+  resetOnNextView = false
   serverErrors.value = {}
 })
+onBeforeUnmount(() => emit('dirty', false))
 
 const changes = computed(() => draftChanges(views.value, draft.value))
 const dirty = computed(() => Object.keys(changes.value.changes).length)
@@ -64,15 +72,9 @@ const notes = computed(() => {
   for (const [k, secrets] of Object.entries(boundSecretNotes(views.value, draft.value))) out[k] = t('settings.boundNote', { secrets: secrets.map(label).join(', ') })
   return out
 })
-const clientErrors = computed(() => {
-  const out: Record<string, string> = {}
-  for (const v of views.value) {
-    if (v.secret || v.locked) continue
-    const msg = validateField(v.key, draft.value.values[v.key] ?? '')
-    if (msg) out[v.key] = t('settings.save.invalidField', { message: msg })
-  }
-  return out
-})
+const clientErrors = computed(() =>
+  Object.fromEntries(Object.entries(changedFieldErrors(views.value, draft.value)).map(([k, m]) => [k, t('settings.save.invalidField', { message: m })])),
+)
 const hasClientErrors = computed(() => Object.keys(clientErrors.value).length > 0)
 const errorOf = (key: string) => serverErrors.value[key] ?? clientErrors.value[key] ?? null
 
@@ -93,7 +95,7 @@ function handleError(e: unknown, action: ReauthStash['action']) {
   const err = saveError(e)
   switch (err.kind) {
     case 'reauth':
-      stash.value = reauthStash(props.category, route.fullPath, views.value, draft.value, action)
+      stash.value = reauthStash(props.category, route.path, views.value, draft.value, action)
       reauthOpen.value = true
       return
     case 'conflict':
@@ -126,6 +128,7 @@ async function save() {
   try {
     const res = await api<SettingsPutResponse>(`/admin/settings/${props.category}`, { method: 'PUT', body: changes.value })
     notice.value = { type: 'success', text: t('settings.save.saved') }
+    resetOnNextView = true
     warnings.value = [
       ...(res.cleared.length ? [t('settings.save.cleared', { secrets: res.cleared.map(label).join(', ') })] : []),
       ...res.warnings.map(warningText),
@@ -184,7 +187,7 @@ async function generateSecret(key: string) {
     const r = await api<GeneratedSecret & { webhook?: SettingsTestResult }>(`/admin/settings/${props.category}/generate/${key}`, { method: 'POST', body: { version: v.version } })
     generated.value = { key: r.key, value: r.value, version: r.version }
     if (r.webhook) result.value = r.webhook
-    emit('saved', null)
+    emit('generated')
   } catch (e) {
     handleError(e, 'generate')
   } finally {
@@ -194,6 +197,8 @@ async function generateSecret(key: string) {
 const generatedOpen = computed({ get: () => !!generated.value, set: (v) => { if (!v) generated.value = null } })
 
 // Back from the re-authentication redirect: restore the form, then save again when no secret needs retyping.
+// A stash that is too old, from another page or unreadable is dropped without saving.
+const AGAIN: Record<ReauthStash['action'], string> = { save: 'settings.reauth.again', generate: 'settings.reauth.againGenerate', webhook: 'settings.reauth.againWebhook' }
 onMounted(async () => {
   let raw: string | null = null
   try {
@@ -201,19 +206,25 @@ onMounted(async () => {
   } catch {
     return
   }
-  const s = parseReauthStash(raw)
-  if (!s || s.category !== props.category) return
+  if (!raw) return
+  const s = parseReauthStash(raw, route.path)
+  // A valid stash for another card on this page is left to that card; an invalid one is dropped by any card.
+  if (s && s.category !== props.category) return
   try {
     sessionStorage.removeItem(REAUTH_STASH_KEY)
   } catch {
     // nothing kept
   }
+  if (!s) return
   draft.value = applyReauthStash(views.value, s)
   if (s.action === 'save' && !s.secretsToRetype.length && dirty.value > 0) {
     await save()
     return
   }
-  notice.value = { type: 'info', text: t(s.secretsToRetype.length ? 'settings.reauth.retypeNow' : 'settings.reauth.again', { secrets: s.secretsToRetype.map(label).join(', ') }) }
+  notice.value = {
+    type: 'info',
+    text: s.secretsToRetype.length ? t('settings.reauth.retypeNow', { secrets: s.secretsToRetype.map(label).join(', ') }) : t(AGAIN[s.action] ?? AGAIN.save),
+  }
 })
 </script>
 
@@ -257,7 +268,7 @@ onMounted(async () => {
       <v-alert v-if="notice" :type="notice.type" variant="tonal" density="compact" class="mt-4" :role="notice.type === 'error' ? 'alert' : 'status'" data-testid="settings-notice">
         {{ notice.text }}
         <template v-if="notice.conflict" #append>
-          <v-btn size="small" variant="outlined" data-testid="settings-reload" @click="emit('reload')">{{ t('settings.save.reload') }}</v-btn>
+          <v-btn size="small" variant="outlined" data-testid="settings-reload" @click="resetOnNextView = true; emit('reload')">{{ t('settings.save.reload') }}</v-btn>
         </template>
       </v-alert>
       <v-alert v-for="w in warnings" :key="w" type="warning" variant="tonal" density="compact" class="mt-2" data-testid="settings-warning">{{ w }}</v-alert>

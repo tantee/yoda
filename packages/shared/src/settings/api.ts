@@ -161,3 +161,20 @@ export type TelegramWebhookBody = z.infer<typeof TelegramWebhookBody>
 /** `POST /admin/settings/:category/generate/:key`: the generated secret, shown this once. */
 export const GeneratedSecret = z.object({ key: z.string(), value: z.string(), version: z.number() })
 export type GeneratedSecret = z.infer<typeof GeneratedSecret>
+
+/**
+ * Every fixed result code a settings test can return (core `settings/tests.ts` and `settings/outbound.ts`), so the
+ * portal can word each one. `http_<status>` and `smtp_<reply code>` carry a number and are matched by pattern.
+ * A portal test reads core's sources and fails when a new code is missing here.
+ */
+export const SETTINGS_TEST_CODES = [
+  // outcomes
+  'not_configured', 'secret_required', 'auth_rejected', 'invalid_response', 'failed', 'rejected', 'unreachable', 'invalid_config',
+  // safeOutbound refusals and failures
+  'invalid_url', 'scheme_not_allowed', 'https_required', 'blocked_host', 'blocked_address', 'blocked_port', 'dns_failed',
+  'connect_failed', 'timeout', 'tls_failed', 'too_large',
+  // per action
+  'issuer_mismatch', 'no_keys', 'client_rejected', 'smtp_error', 'no_address', 'no_sender', 'webhook_not_registered',
+  'missing_scope', 'model_not_found', 'provider_unavailable', 'no_embeddings',
+] as const
+export type SettingsTestCode = (typeof SETTINGS_TEST_CODES)[number]

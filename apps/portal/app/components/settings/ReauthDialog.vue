@@ -17,7 +17,7 @@ const busy = ref(false)
 async function go() {
   busy.value = true
   try {
-    if (props.stash) sessionStorage.setItem(REAUTH_STASH_KEY, JSON.stringify(props.stash))
+    if (props.stash) sessionStorage.setItem(REAUTH_STASH_KEY, JSON.stringify({ ...props.stash, at: Date.now() }))
   } catch {
     // private mode: the admin types the change again after signing in
   }

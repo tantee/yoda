@@ -1,4 +1,4 @@
-import { SETTINGS, isSettingKey, type SettingCategory, type SettingView, type SettingsAuditEntry, type SettingsTestCheck } from '@yoda/shared'
+import { SETTINGS, SETTINGS_TEST_CODES, isSettingKey, type SettingCategory, type SettingView, type SettingsAuditEntry, type SettingsTestCheck } from '@yoda/shared'
 import type { ZodTypeAny } from 'zod'
 
 /**
@@ -194,6 +194,36 @@ export function draftChanges(views: SettingView[], draft: SectionDraft): DraftCh
   return out
 }
 
+/**
+ * Client-side schema errors of the edited keys only: a stored value the form did not touch (say, from an older
+ * release) never blocks saving the rest.
+ */
+export function changedFieldErrors(views: SettingView[], draft: SectionDraft): Record<string, string> {
+  const { changes } = draftChanges(views, draft)
+  const out: Record<string, string> = {}
+  for (const v of views) {
+    if (v.secret || !(v.key in changes)) continue
+    const msg = validateField(v.key, draft.values[v.key] ?? '')
+    if (msg) out[v.key] = msg
+  }
+  return out
+}
+
+/**
+ * A fresh form for reloaded settings that keeps the admin's unsaved edits (typed secrets included) of keys that
+ * are still editable. Used when only part of the page reloads (a generated secret), never after a save.
+ */
+export function rebaseDraft(oldViews: SettingView[], oldDraft: SectionDraft, newViews: SettingView[]): SectionDraft {
+  const next = initialDraft(newViews)
+  const { changes } = draftChanges(oldViews, oldDraft)
+  for (const v of newViews) {
+    if (v.locked || !(v.key in changes)) continue
+    if (v.secret && oldDraft.secrets[v.key]) next.secrets[v.key] = { ...oldDraft.secrets[v.key]! }
+    else if (!v.secret && v.key in oldDraft.values) next.values[v.key] = oldDraft.values[v.key]!
+  }
+  return next
+}
+
 export const dirtyCount = (views: SettingView[], draft: SectionDraft) => Object.keys(draftChanges(views, draft).changes).length
 
 /**
@@ -264,11 +294,22 @@ export type ReauthStash = {
   secretsToRetype: string[]
   /** Saved automatically on return when nothing needs retyping. */
   action: 'save' | 'generate' | 'webhook'
+  /** When it was kept (ms); a stash older than REAUTH_STASH_MAX_MS is dropped. */
+  at: number
 }
 
 export const REAUTH_STASH_KEY = 'yoda.settings.reauth'
+/** Re-authentication is good for 10 minutes (core's `auth_time` window): an older stash is never replayed. */
+export const REAUTH_STASH_MAX_MS = 10 * 60 * 1000
 
-export function reauthStash(category: SettingCategory, path: string, views: SettingView[], draft: SectionDraft, action: ReauthStash['action'] = 'save'): ReauthStash {
+export function reauthStash(
+  category: SettingCategory,
+  path: string,
+  views: SettingView[],
+  draft: SectionDraft,
+  action: ReauthStash['action'] = 'save',
+  now = Date.now(),
+): ReauthStash {
   const { changes } = draftChanges(views, draft)
   const values: Record<string, FormValue> = {}
   const clears: string[] = []
@@ -282,14 +323,20 @@ export function reauthStash(category: SettingCategory, path: string, views: Sett
       values[v.key] = draft.values[v.key] ?? null
     }
   }
-  return { category, path, values, clears, secretsToRetype, action }
+  return { category, path, values, clears, secretsToRetype, action, at: now }
 }
 
-export function parseReauthStash(raw: string | null): ReauthStash | null {
+/**
+ * The stash to replay on this page, or null: it must parse, be no older than 10 minutes (nor from the future),
+ * and belong to the path the admin is on. Anything else is discarded without saving.
+ */
+export function parseReauthStash(raw: string | null, path: string, now = Date.now()): ReauthStash | null {
   if (!raw) return null
   try {
     const s = JSON.parse(raw) as ReauthStash
-    if (!s || typeof s.category !== 'string' || typeof s.values !== 'object' || !Array.isArray(s.clears) || !Array.isArray(s.secretsToRetype)) return null
+    if (!s || typeof s.category !== 'string' || !s.values || typeof s.values !== 'object' || !Array.isArray(s.clears) || !Array.isArray(s.secretsToRetype)) return null
+    if (typeof s.at !== 'number' || now - s.at > REAUTH_STASH_MAX_MS || s.at - now > 60_000) return null
+    if (s.path !== path) return null
     return s
   } catch {
     return null
@@ -308,12 +355,7 @@ export function applyReauthStash(views: SettingView[], stash: ReauthStash): Sect
 
 // --- Tests ------------------------------------------------------------------------------------------------------
 
-const KNOWN_CODES = new Set([
-  'not_configured', 'secret_required', 'auth_rejected', 'invalid_response', 'failed', 'timeout', 'connect_failed', 'tls_failed',
-  'dns_failed', 'blocked_host', 'blocked_address', 'blocked_port', 'https_required', 'scheme_not_allowed', 'invalid_url', 'too_large',
-  'issuer_mismatch', 'no_keys', 'client_rejected', 'no_address', 'no_sender', 'webhook_not_registered', 'missing_scope',
-  'model_not_found', 'provider_unavailable', 'no_embeddings',
-])
+const KNOWN_CODES = new Set<string>(SETTINGS_TEST_CODES)
 
 /** A test result code as an i18n key and its named values (`http_404` → the HTTP line with status 404). */
 export function testCodeMessage(code: string | undefined): { key: string; named?: Record<string, string> } {
@@ -321,6 +363,8 @@ export function testCodeMessage(code: string | undefined): { key: string; named?
   const http = /^http_(\d{3})$/.exec(code)
   if (http) return { key: 'settings.test.code.http', named: { status: http[1]! } }
   if (code === 'http_3xx') return { key: 'settings.test.code.http', named: { status: '3xx' } }
+  const smtp = /^smtp_(\d{3})$/.exec(code)
+  if (smtp) return { key: 'settings.test.code.smtp', named: { status: smtp[1]! } }
   return { key: KNOWN_CODES.has(code) ? `settings.test.code.${code}` : 'settings.test.code.failed' }
 }
 
@@ -332,12 +376,18 @@ export function checkLabelKey(id: string): string {
   return KNOWN_CHECKS.has(k) ? `settings.test.check.${k}` : 'settings.test.check.other'
 }
 
+/** Longest detail shown: some facts come from a third party (a bot's last error), so they are cut short. */
+export const DETAIL_MAX = 200
+
 /** Safe detail facts of a check as short "name: value" strings (bot username, scopes, model count). */
 export function checkDetails(c: SettingsTestCheck): string[] {
   if (!c.detail) return []
   return Object.entries(c.detail)
     .filter(([, v]) => v !== null && v !== '')
-    .map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : String(v)}`)
+    .map(([k, v]) => {
+      const text = `${k}: ${Array.isArray(v) ? v.join(', ') : String(v)}`
+      return text.length > DETAIL_MAX ? `${text.slice(0, DETAIL_MAX - 1)}…` : text
+    })
 }
 
 // --- Audit ------------------------------------------------------------------------------------------------------
