@@ -133,6 +133,9 @@ services:
       NUXT_PUBLIC_KEYCLOAK_URL: ${NUXT_PUBLIC_KEYCLOAK_URL:-}
       NUXT_PUBLIC_KEYCLOAK_REALM: ${NUXT_PUBLIC_KEYCLOAK_REALM:-}
       NUXT_PUBLIC_KEYCLOAK_CLIENT_ID: ${NUXT_PUBLIC_KEYCLOAK_CLIENT_ID:-}
+      # The backup container's settings, so a value set in .env shows locked in System settings → Backups.
+      BACKUP_AT: ${BACKUP_AT:-}
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-}
     # Ready = database, storage and job queue all answer (GET /ready).
     healthcheck:
       test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:4000/ready').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
@@ -219,9 +222,10 @@ services:
       start_period: 20s
     restart: unless-stopped
 
-  # Daily backups (ops/backup): at BACKUP_AT in TZ a pg_dump -Fc of the database and a mirror of the bucket go
-  # into the `backups` volume, kept BACKUP_KEEP_DAYS days. One-shot: `run --rm backup --now`. Restore (core
-  # and portal stopped): `run --rm -e RESTORE_CONFIRM=yes --entrypoint restore.sh backup <stamp|latest>`.
+  # Daily backups (ops/backup): at the backup time in TZ a pg_dump -Fc of the database and a mirror of the bucket
+  # go into the `backups` volume, kept for the days set (System settings → Backups, or BACKUP_AT and
+  # BACKUP_KEEP_DAYS). One-shot: `run --rm backup --now`. Restore (core and portal stopped):
+  # `run --rm -e RESTORE_CONFIRM=yes --entrypoint restore.sh backup <stamp|latest>`.
   backup:
     build:
       context: ops/backup
@@ -243,8 +247,10 @@ services:
       S3_BUCKET: ${S3_BUCKET:-yoda}
       S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
       S3_SECRET_KEY: ${S3_SECRET_KEY:-}
-      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
-      BACKUP_AT: ${BACKUP_AT:-02:00}
+      # Empty: System settings → Backups (read from the database every minute), else 02:00 and 14 days. Set,
+      # they win and show locked there.
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-}
+      BACKUP_AT: ${BACKUP_AT:-}
       TZ: Asia/Bangkok
     volumes:
       - backups:/backups

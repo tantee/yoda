@@ -3,6 +3,20 @@
 Releases follow [semantic versioning](https://semver.org); each is a git tag of the same name (`1.0.0`) and the
 image tag the deploy job runs. Upgrade steps: [docs/operations.md](docs/operations.md#5-upgrade-and-rollback).
 
+## Unreleased
+
+### Installer and release bundle
+
+- `install.sh` installs a pinned release on a fresh host from the internal file server: it checks the
+  prerequisites, verifies the bundle's minisign signature and SHA-256, unpacks it with an empty `.env` and
+  deploys. A `release-bundle` CI job builds and signs the bundle on tags.
+- `deploy.sh` creates an empty `.env` when there is none, runs `init` before the migrations and prints the setup
+  wizard's address and the setup-token command while setup is not finished.
+- Backups read the backup time and days kept from System settings → Backups (a change applies within a minute);
+  `BACKUP_AT` / `BACKUP_KEEP_DAYS` in `.env` still win. **Upgrade note:** the prod compose no longer sets them by
+  default.
+- The runbook and `.env.example` now start from "nothing is required"; env values are advanced overrides.
+
 ## 1.0.0 — 2026-11-25
 
 The first release: an AI work portal for the IT department, in Thai (default) and English.

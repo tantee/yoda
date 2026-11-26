@@ -126,10 +126,10 @@ describe('GET /admin/settings', () => {
     expect(find(body, 'telegram.botUsername')).toMatchObject({ locked: { reason: 'readonly' } })
     expect(find(body, 'oidc.issuer')).toMatchObject({ locked: { reason: 'recovery_only' } })
     expect(find(body, 'oidc.jwksUrl')).toMatchObject({ locked: { reason: 'recovery_only' } })
-    // The portal reads its settings from /public-config; the backup container still reads its own env (Task 9).
+    // The portal reads its settings from /public-config and the backup container from the settings table.
     expect(find(body, 'org.name')).toMatchObject({ locked: null })
     expect(find(body, 'org.line')).toMatchObject({ locked: null, envName: 'NUXT_PUBLIC_ORG_LINE' })
-    expect(find(body, 'backup.keepDays')).toMatchObject({ locked: { reason: 'managed_on_host', container: 'backup', envName: 'BACKUP_KEEP_DAYS' } })
+    expect(find(body, 'backup.keepDays')).toMatchObject({ locked: null, envName: 'BACKUP_KEEP_DAYS' })
     expect(find(body, 'smtp.from')).toMatchObject({ importable: true, composeDefault: false })
     expect(find(body, 'smtp.host').importable).toBeUndefined()
     expect(find(body, 'ai.workers')).toMatchObject({ apply: 'restart', restartRequired: false })
@@ -207,7 +207,7 @@ describe('PUT /admin/settings/:category', () => {
   })
 
   it('refuses env-locked, bootstrap-only, read-only and recovery-only settings with 409 and the reason', async () => {
-    await boot({ SMTP_HOST: 'mail.example.org', NUXT_PUBLIC_RUNNER_DOCS_URL: 'https://runners.example.org' })
+    await boot({ SMTP_HOST: 'mail.example.org', NUXT_PUBLIC_RUNNER_DOCS_URL: 'https://runners.example.org', BACKUP_AT: '04:00' })
     const cases: [string, object, object][] = [
       ['email', { 'smtp.host': 'other.example.org' }, { key: 'smtp.host', reason: 'env', envName: 'SMTP_HOST' }],
       ['storage', { 'storage.s3Bucket': 'other' }, { key: 'storage.s3Bucket', reason: 'bootstrap' }],
@@ -216,7 +216,7 @@ describe('PUT /admin/settings/:category', () => {
       ['signin', { 'oidc.issuer': 'https://sso.example.org/realms/x' }, { key: 'oidc.issuer', reason: 'recovery_only' }],
       ['signin', { 'oidc.jwksUrl': 'https://sso.example.org/certs' }, { key: 'oidc.jwksUrl', reason: 'recovery_only' }],
       ['general', { 'org.runnerDocsUrl': 'https://docs.example.org' }, { key: 'org.runnerDocsUrl', reason: 'env', envName: 'NUXT_PUBLIC_RUNNER_DOCS_URL' }],
-      ['backups', { 'backup.at': '03:00' }, { key: 'backup.at', reason: 'managed_on_host', envName: 'BACKUP_AT' }],
+      ['backups', { 'backup.at': '03:00' }, { key: 'backup.at', reason: 'env', envName: 'BACKUP_AT' }],
     ]
     for (const [category, changes, expected] of cases) {
       const res = await put(boss, category, { changes })
@@ -233,6 +233,14 @@ describe('PUT /admin/settings/:category', () => {
     expect(store.get('org.name')).toBe('Example hospital')
     expect((await put(boss, 'line', { changes: { 'line.addFriendUrl': 'https://line.example.org/add' } })).statusCode).toBe(200)
     expect(store.get('line.addFriendUrl')).toBe('https://line.example.org/add')
+  })
+
+  it('saves the backup settings the backup container reads from the database', async () => {
+    await boot()
+    const res = await put(boss, 'backups', { changes: { 'backup.at': '03:30', 'backup.keepDays': 30 } })
+    expect(res.statusCode).toBe(200)
+    expect(store.get('backup.at')).toBe('03:30')
+    expect(store.get('backup.keepDays')).toBe(30)
   })
 
   it('validates per key: unknown keys, other categories and bad values are 422 with every issue, nothing saved', async () => {

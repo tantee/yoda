@@ -178,6 +178,39 @@ setup_store() {
   export RCLONE_CONFIG=/dev/null
 }
 
+# The backup settings saved in System settings → Backups: prints `<key><TAB><value>` lines for backup.at and
+# backup.keepDays from the settings table (non-secret rows hold JSON; `#>> '{}'` gives the bare scalar). Needs the
+# PG* variables (setup_pg). Fails, printing nothing, when the database or the table is not there yet; psql's own
+# messages are dropped (they can name the host, never the password, which stays in PGPASSWORD).
+db_backup_settings() {
+  psql -X -q -A -t -F $'\t' -v ON_ERROR_STOP=1 --no-password \
+    -c "select key, value #>> '{}' from settings where key in ('backup.at', 'backup.keepDays') and value is not null" \
+    2>/dev/null
+}
+
+# Resolves the backup time and days kept: env wins (<env_at>, <env_keep>, '' when unset), then the database rows on
+# stdin (`<key><TAB><value>`, as db_backup_settings prints them), then <current_at>/<current_keep>. An invalid
+# database value is skipped with a warning on stderr. Prints `<at> <keep>`.
+pick_backup_settings() {
+  local env_at=${1:-} env_keep=${2:-} at=${3:-02:00} keep=${4:-14} key value
+  local db_at='' db_keep=''
+  while IFS=$'\t' read -r key value || [[ -n $key ]]; do
+    case $key in
+      backup.at) db_at=$value ;;
+      backup.keepDays) db_keep=$value ;;
+    esac
+  done
+  if [[ -n $db_at ]]; then
+    if [[ $db_at =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]]; then at=$db_at; else echo 'ignoring an invalid backup.at in the database' >&2; fi
+  fi
+  if [[ -n $db_keep ]]; then
+    if [[ $db_keep =~ ^[1-9][0-9]{0,3}$ ]] && ((db_keep <= 3650)); then keep=$db_keep; else echo 'ignoring an invalid backup.keepDays in the database' >&2; fi
+  fi
+  [[ -z $env_at ]] || at=$env_at
+  [[ -z $env_keep ]] || keep=$env_keep
+  printf '%s %s\n' "$at" "$keep"
+}
+
 # rclone with quiet output (errors only) and no progress stats.
 rc() {
   rclone --log-level ERROR --stats 0 "$@"

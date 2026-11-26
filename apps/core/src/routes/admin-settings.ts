@@ -122,8 +122,8 @@ export type ViewOpts = { setup?: boolean }
 export function lockOf(store: SettingsStore, info: SettingInfo, opts: ViewOpts = {}): Lock | null {
   const d = settingDef(info.key)
   if (info.lock === 'bootstrap') return { reason: 'bootstrap' }
-  // TODO(Task 9): backup.at / backup.keepDays are read from the backup container's env only; they unlock once it
-  // reads the database. The portal settings are served by /public-config, so they follow the usual env lock.
+  // A scope read only from another container's env (none today: the portal and backup settings both read the
+  // database, so they follow the usual env lock).
   const container = SCOPE_CONTAINER[d.scope]
   if (container) return { reason: 'managed_on_host', container, ...(d.envName ? { envName: d.envName } : {}) }
   if (info.lock === 'env') return { reason: 'env', ...(info.envName ? { envName: info.envName } : {}) }

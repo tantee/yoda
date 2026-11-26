@@ -1,5 +1,5 @@
 # No secrets here: deploy/registry credentials come from CI/CD variables (docs/operations.md, "Upgrade").
-stages: [secrets, test, build, deploy]
+stages: [secrets, test, build, release, deploy]
 
 default:
   interruptible: true
@@ -28,8 +28,9 @@ test:
     TEST_STORAGE: memory
     LEFTHOOK: '0'
   before_script:
-    # bash runs the ops/backup script tests; util-linux brings flock for their lock test.
-    - apk add --no-cache bash util-linux
+    # bash runs the ops/backup script tests; util-linux brings flock for their lock test; curl, minisign and
+    # shellcheck run the installer tests (ops-install.test.ts).
+    - apk add --no-cache bash util-linux curl minisign shellcheck
     - corepack enable
     - pnpm install --frozen-lockfile --ignore-scripts
   script:
@@ -83,6 +84,45 @@ build-backup:
     DOCKERFILE: ops/backup/Dockerfile
     CONTEXT: ops/backup
 
+# Tags only: the release bundle install.sh downloads (docs/operations.md, "Release bundle"). Builds
+# releases/<tag>/ with ops/install/bundle.sh (the compose files, deploy.sh, install.sh, SHA256SUMS), signs
+# SHA256SUMS with minisign, keeps it as a job artifact and uploads it to the internal file server (D1).
+# CI/CD variables (protected, for protected tags), none in this file:
+# - YODA_RELEASE_SIGNING_KEY (type File): the minisign secret key, made without a password (minisign -G -W);
+#   its public half is embedded in ops/install/install.sh;
+# - YODA_RELEASE_UPLOAD_URL: the file server's base for releases (empty: the upload is skipped, the artifact stays);
+# - YODA_RELEASE_UPLOAD_TOKEN (masked): sent as a bearer token on stdin, never on the command line.
+# The upload is a template: one HTTP PUT per file to $YODA_RELEASE_UPLOAD_URL/releases/<tag>/<file>; change it to
+# what the file server takes (WebDAV, the GitLab generic package registry, rsync over SSH, ...).
+release-bundle:
+  stage: release
+  image: alpine:3.20
+  rules:
+    - if: $CI_COMMIT_TAG
+  interruptible: false
+  before_script:
+    - case "$CI_COMMIT_TAG" in '' | -* | *[!A-Za-z0-9._-]*) echo "invalid release tag" >&2; exit 1 ;; esac
+    - apk add --no-cache curl minisign tar
+    - test -s "$YODA_RELEASE_SIGNING_KEY" || { echo "YODA_RELEASE_SIGNING_KEY (a File variable) is not set" >&2; exit 1; }
+  script:
+    - sh ops/install/bundle.sh "$CI_COMMIT_TAG" "$CI_REGISTRY_IMAGE" dist
+    - minisign -S -s "$YODA_RELEASE_SIGNING_KEY" -m "dist/releases/$CI_COMMIT_TAG/SHA256SUMS" -t "yoda release $CI_COMMIT_TAG"
+    # Self-check against the public key install.sh embeds: a placeholder or a mismatched key fails the release.
+    - pub=$(sed -n "s/^RELEASE_PUBKEY_EMBEDDED='\\(.*\\)'$/\\1/p" ops/install/install.sh)
+    - minisign -V -P "$pub" -m "dist/releases/$CI_COMMIT_TAG/SHA256SUMS"
+    - |
+      if [ -z "${YODA_RELEASE_UPLOAD_URL:-}" ]; then
+        echo "YODA_RELEASE_UPLOAD_URL is not set: the bundle stays a job artifact only"
+        exit 0
+      fi
+      for f in "dist/releases/$CI_COMMIT_TAG"/*; do
+        printf 'header = "Authorization: Bearer %s"\n' "$YODA_RELEASE_UPLOAD_TOKEN" |
+          curl -fsS --retry 3 -K - --upload-file "$f" "${YODA_RELEASE_UPLOAD_URL%/}/releases/$CI_COMMIT_TAG/$(basename "$f")"
+      done
+  artifacts:
+    paths: [dist/releases/]
+    expire_in: 90 days
+
 # Manual, tags only. CI/CD variables (protected, for protected tags): DEPLOY_HOST, DEPLOY_USER, DEPLOY_PATH,
 # DEPLOY_SSH_KEY (type File) and DEPLOY_KNOWN_HOSTS (the host's `ssh-keyscan` lines, checked by hand once).
 # Copies the tag's compose files and deploy script to $DEPLOY_PATH, then runs ops/deploy/deploy.sh there:
@@ -90,6 +130,8 @@ build-backup:
 deploy:
   stage: deploy
   image: alpine:3.20
+  # The images, not the release bundle: a bundle that failed to sign or upload never blocks a deploy.
+  needs: [build-core, build-portal, build-runner, build-backup]
   rules:
     - if: $CI_COMMIT_TAG
       when: manual

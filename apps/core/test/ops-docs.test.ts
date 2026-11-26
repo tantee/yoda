@@ -143,6 +143,30 @@ describe('docs/operations.md commands', () => {
   })
 })
 
+describe('docs/operations.md installer (installer proposal §3.4, §13.2)', () => {
+  it('downloads install.sh pinned, checks it, then runs it (never curl | sh)', () => {
+    expect(runbook).toContain('curl -fsSLO https://files.example.org/yoda/releases/1.2.0/install.sh')
+    expect(runbook).toContain('sh install.sh --version 1.2.0 --dir /srv/yoda')
+    expect(runbook).toMatch(/minisign -Vm SHA256SUMS/)
+    expect(runbook).not.toMatch(/curl[^\n`]*\|\s*(ba)?sh\b/)
+  })
+
+  it('covers the setup token, the recovery kit, the master key and the troubleshooting entries', () => {
+    for (const s of [
+      'dc exec core yoda-admin setup-token',
+      'Store the recovery kit',
+      '## 4a. Bootstrap volume and master key',
+      '**Setup token lost or expired.**',
+      '**Locked out of Keycloak**',
+      '**Wrong or missing master key**',
+      '"Set by environment" and cannot be edited',
+      'YODA_TRUSTED_PROXY_HOPS=2',
+      'YODA_RELEASE_SIGNING_KEY',
+      'YODA_RELEASE_UPLOAD_URL',
+    ]) expect(runbook, s).toContain(s)
+  })
+})
+
 describe('core image', () => {
   it('leaves the dev-only scripts (demo seed) out of the build context, while typecheck covers them', () => {
     expect(read('.dockerignore').split('\n')).toContain('apps/core/scripts')

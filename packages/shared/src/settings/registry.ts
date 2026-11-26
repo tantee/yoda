@@ -264,11 +264,11 @@ export const PROD_COMPOSE_CORE_ENV: readonly string[] = [
 ]
 
 /**
- * The container that reads a setting of a scope other than core from its own env (shown in the "managed on the
- * host" lock). The portal reads its settings from core's `/public-config` (§5.6), so they are editable; the backup
- * container does not read the database yet.
+ * The container that reads a setting of a scope other than core from its own env only (shown in the "managed on the
+ * host" lock). None today: the portal reads its settings from core's `/public-config` (§5.6), and the backup
+ * container reads `backup.at` / `backup.keepDays` from the settings table (env still wins), so both are editable.
  */
-export const SCOPE_CONTAINER: Partial<Record<SettingScope, string>> = { backup: 'backup' }
+export const SCOPE_CONTAINER: Partial<Record<SettingScope, string>> = {}
 
 /** Secrets of 20+ characters show their last 4 after saving; shorter ones show nothing (5.2). */
 export function secretHint(value: string): string | null {

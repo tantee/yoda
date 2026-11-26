@@ -29,15 +29,15 @@ const images = ['core', 'portal', 'runner', 'backup']
 describe('.gitlab-ci.yml', () => {
   it('has the expected jobs and stages', () => {
     const jobs = Object.keys(ci).filter((k) => !k.startsWith('.') && !['stages', 'default', 'variables'].includes(k))
-    expect(jobs.sort()).toEqual(['build-backup', 'build-core', 'build-portal', 'build-runner', 'deploy', 'secrets', 'test'])
-    expect(ci.stages).toEqual(['secrets', 'test', 'build', 'deploy'])
+    expect(jobs.sort()).toEqual(['build-backup', 'build-core', 'build-portal', 'build-runner', 'deploy', 'release-bundle', 'secrets', 'test'])
+    expect(ci.stages).toEqual(['secrets', 'test', 'build', 'release', 'deploy'])
   })
 
-  it('installs bash and flock for the ops script tests', () => {
+  it('installs bash, flock, curl, minisign and shellcheck for the ops script tests', () => {
     const test = ci.test!
     expect(String(test.image)).toMatch(/alpine/)
     expect(test.before_script?.[0]).toMatch(/^apk add --no-cache (.* )?bash( |$)/)
-    expect(test.before_script?.[0]).toMatch(/ util-linux( |$)/)
+    for (const pkg of ['util-linux', 'curl', 'minisign', 'shellcheck']) expect(test.before_script?.[0]).toMatch(new RegExp(` ${pkg}( |$)`))
   })
 
   it('builds and pushes every image to $CI_REGISTRY_IMAGE/<name>', () => {
@@ -65,12 +65,41 @@ describe('.gitlab-ci.yml', () => {
     expect(ci['build-backup']!.variables).toMatchObject({ DOCKERFILE: 'ops/backup/Dockerfile', CONTEXT: 'ops/backup' })
   })
 
-  it('deploys only by hand, only on tags, one deploy at a time', () => {
+  it('deploys only by hand, only on tags, one deploy at a time, after the images (not the bundle)', () => {
     const deploy = ci.deploy!
     expect(deploy.stage).toBe('deploy')
     expect(deploy.rules).toEqual([{ if: '$CI_COMMIT_TAG', when: 'manual' }])
     expect(deploy.resource_group).toBe('production')
     expect(deploy.interruptible).toBe(false)
+    expect((deploy as Job & { needs?: string[] }).needs?.sort()).toEqual(images.map((n) => `build-${n}`).sort())
+  })
+
+  describe('release-bundle (installer proposal §3.4, D1)', () => {
+    const job = ci['release-bundle'] as Job & { artifacts?: { paths?: string[] } }
+    const script = lines(job)
+
+    it('runs on tags only, building the bundle with ops/install/bundle.sh for the tag and the registry path', () => {
+      expect(job.stage).toBe('release')
+      expect(job.rules).toEqual([{ if: '$CI_COMMIT_TAG' }])
+      expect(script).toMatch(/case "\$CI_COMMIT_TAG" in/)
+      expect(script).toContain('sh ops/install/bundle.sh "$CI_COMMIT_TAG" "$CI_REGISTRY_IMAGE" dist')
+      expect(job.artifacts?.paths).toEqual(['dist/releases/'])
+    })
+
+    it('signs SHA256SUMS with the protected file key, naming the release, and checks it against install.sh\'s key', () => {
+      expect(script).toContain('test -s "$YODA_RELEASE_SIGNING_KEY"')
+      expect(script).toContain('minisign -S -s "$YODA_RELEASE_SIGNING_KEY" -m "dist/releases/$CI_COMMIT_TAG/SHA256SUMS" -t "yoda release $CI_COMMIT_TAG"')
+      expect(script).toContain('RELEASE_PUBKEY_EMBEDDED')
+      expect(script).toMatch(/minisign -V -P "\$pub"/)
+      // The trusted comment install.sh expects.
+      expect(read('ops/install/install.sh')).toContain('Trusted comment: yoda release $version')
+    })
+
+    it('uploads with the token on stdin only, and skips the upload while no URL is set', () => {
+      expect(script).toContain('if [ -z "${YODA_RELEASE_UPLOAD_URL:-}" ]')
+      expect(script).toMatch(/printf 'header = "Authorization: Bearer %s"\\n' "\$YODA_RELEASE_UPLOAD_TOKEN" \|\s*curl [^\n]*-K -/)
+      expect(script).not.toMatch(/curl [^\n|]*\$YODA_RELEASE_UPLOAD_TOKEN/)
+    })
   })
 
   it('checks the host key and keeps the SSH key private', () => {
@@ -162,6 +191,23 @@ describe('ops/deploy/deploy.sh', () => {
   it('refuses an unsafe version string', () => {
     expect(sh).toContain('YODA_VERSION')
     expect(sh).toMatch(/case "\$YODA_VERSION" in/)
+  })
+
+  it('creates an empty .env (0600) when there is none instead of failing (§13.3)', () => {
+    expect(code).toContain('(umask 077 && : > .env)')
+    expect(code).not.toMatch(/no \.env in/)
+    expect(order('(umask 077')).toBeLessThan(order(' pull'))
+  })
+
+  it('prints the setup hint after ready, when /public-config says setup is required', () => {
+    const ready = order('/api/ready')
+    const pc = order('/public-config')
+    expect(ready).toBeLessThan(pc)
+    expect(code).toContain('yoda-admin setup-token')
+  })
+
+  it('never touches a volume (the bootstrap volume holds the master key)', () => {
+    expect(code).not.toMatch(/\bvolume\b|\bdown\b|\s-v\b|--volumes/)
   })
 })
 
