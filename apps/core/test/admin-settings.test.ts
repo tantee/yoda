@@ -108,8 +108,8 @@ describe('admin settings API: access', () => {
 describe('GET /admin/settings', () => {
   it('lists every category with sources, locks, apply modes and masked secrets', async () => {
     await boot({ MAIL_FROM: 'yoda@example.org' })
-    await store.set('smtp.password', SMTP_PASSWORD, system)
     await store.set('smtp.host', 'mail.example.org', system)
+    await store.set('smtp.password', SMTP_PASSWORD, system)
     const res = await app.inject({ url: '/admin/settings', headers: h(boss) })
     expect(res.statusCode).toBe(200)
     const body = res.json()
@@ -164,10 +164,10 @@ describe('GET /admin/settings', () => {
 describe('PUT /admin/settings/:category', () => {
   it('saves a partial change, bumps the version and audits the actor', async () => {
     await boot()
-    const res = await put(boss, 'email', { changes: { 'smtp.port': '2525', 'smtp.host': 'mail.example.org' }, versions: { 'smtp.port': 0 } })
+    const res = await put(boss, 'email', { changes: { 'smtp.port': '2525', 'smtp.host': 'mail.example.org' }, versions: { 'smtp.port': 0, 'smtp.host': 0 } })
     expect(res.statusCode).toBe(200)
     const body = res.json()
-    expect(body).toMatchObject({ applied: ['smtp.port', 'smtp.host'], cleared: [], warnings: [] })
+    expect(body).toMatchObject({ applied: ['smtp.host', 'smtp.port'], cleared: [], warnings: [] })
     expect(body.category.settings.find((s: { key: string }) => s.key === 'smtp.port')).toMatchObject({ value: 2525, version: 1, source: 'db', updatedBy: { personId: boss.id, label: 'boss' } })
     expect(store.get('smtp.port')).toBe(2525)
     const rows = await (await testDb()).select().from(settingsAudit).where(eq(settingsAudit.key, 'smtp.port'))
@@ -258,7 +258,7 @@ describe('PUT /admin/settings/:category', () => {
       await store.set('gitlab.url', 'https://git.example.org', system)
       await store.set('gitlab.token', GITLAB_TOKEN, system)
 
-      const res = await put(boss, 'gitlab', { changes: { 'gitlab.url': 'https://other.example.org' } })
+      const res = await put(boss, 'gitlab', { changes: { 'gitlab.url': 'https://other.example.org' }, versions: { 'gitlab.url': 1 } })
       expect(res.statusCode).toBe(200)
       expect(res.json()).toMatchObject({ applied: ['gitlab.url'], cleared: ['gitlab.token'] })
       expect(store.info('gitlab.token').isSet).toBe(false)
@@ -266,30 +266,64 @@ describe('PUT /admin/settings/:category', () => {
       expect(audit.map((a) => a.action)).toEqual(['set', 'clear'])
 
       // Endpoint and a new secret together: kept.
-      const both = await put(boss, 'gitlab', { changes: { 'gitlab.url': 'https://git.example.org', 'gitlab.token': GITLAB_TOKEN } })
+      const both = await put(boss, 'gitlab', { changes: { 'gitlab.url': 'https://git.example.org', 'gitlab.token': GITLAB_TOKEN }, versions: { 'gitlab.url': 2 } })
       expect(both.json()).toMatchObject({ cleared: [] })
       expect(store.get('gitlab.token')).toBe(GITLAB_TOKEN)
-      // Saving the same endpoint again changes nothing.
-      expect((await put(boss, 'gitlab', { changes: { 'gitlab.url': 'https://git.example.org/' } })).json()).toMatchObject({ cleared: [] })
+      // Saving the same endpoint again changes nothing: no write, no audit row.
+      const auditCount = (await (await testDb()).select().from(settingsAudit)).length
+      const again = await put(boss, 'gitlab', { changes: { 'gitlab.url': 'https://git.example.org/', 'gitlab.token': GITLAB_TOKEN }, versions: { 'gitlab.url': 3 } })
+      expect(again.json()).toMatchObject({ applied: [], cleared: [] })
       expect(store.get('gitlab.token')).toBe(GITLAB_TOKEN)
+      expect(store.info('gitlab.url').version).toBe(3)
+      expect((await (await testDb()).select().from(settingsAudit)).length).toBe(auditCount)
     })
 
-    it('clearing a bound secret is a secret change: it needs a recent sign-in', async () => {
+    it('an endpoint is saved only with the version the form loaded', async () => {
+      await boot()
+      const res = await put(boss, 'gitlab', { changes: { 'gitlab.url': 'https://git.example.org' } })
+      expect(res.statusCode).toBe(422)
+      expect(res.json()).toEqual({ error: 'invalid_settings', issues: [{ key: 'gitlab.url', message: 'version_required' }] })
+    })
+
+    it('decides the clear on the locked row, not on a stale snapshot (another instance moved the endpoint)', async () => {
+      await boot()
+      await store.set('gitlab.url', 'https://git.example.org', system)
+      await store.set('gitlab.token', GITLAB_TOKEN, system)
+      // Another instance moved the endpoint and set its token there; this instance has not reloaded yet.
+      const db = await testDb()
+      await db.update(settings).set({ value: 'https://other.example.org', version: 2 }).where(eq(settings.key, 'gitlab.url'))
+      expect(store.get('gitlab.url')).toBe('https://git.example.org')
+      // Saving the value the stale snapshot holds would look like no change, but it moves the token back.
+      const res = await put(boss, 'gitlab', { changes: { 'gitlab.url': 'https://git.example.org' }, versions: { 'gitlab.url': 2 } })
+      expect(res.statusCode).toBe(200)
+      expect(res.json()).toMatchObject({ applied: ['gitlab.url'], cleared: ['gitlab.token'] })
+      expect(store.info('gitlab.token').isSet).toBe(false)
+    })
+
+    it('moving an endpoint needs a recent sign-in (it can clear a secret)', async () => {
       await boot()
       await store.set('smtp.host', 'mail.example.org', system)
       await store.set('smtp.password', SMTP_PASSWORD, system)
       const old = await signIn(app, 'boss', { authAgoS: 3600 })
-      expect((await put(old, 'email', { changes: { 'smtp.host': 'evil.example.org' } })).statusCode).toBe(401)
+      expect((await put(old, 'email', { changes: { 'smtp.host': 'evil.example.org' }, versions: { 'smtp.host': 1 } })).statusCode).toBe(401)
       expect(store.get('smtp.host')).toBe('mail.example.org')
       expect(store.get('smtp.password')).toBe(SMTP_PASSWORD)
     })
 
     it('refuses to move an endpoint whose secret is set in env', async () => {
       await boot({ OPENAI_API_KEY: 'sk-placeholder-openai-0000' })
-      const res = await put(boss, 'ai', { changes: { 'ai.openaiBaseUrl': 'https://llm.example.org/v1' } })
+      const res = await put(boss, 'ai', { changes: { 'ai.openaiBaseUrl': 'https://llm.example.org/v1' }, versions: { 'ai.openaiBaseUrl': 0 } })
       expect(res.statusCode).toBe(409)
       expect(res.json()).toEqual({ error: 'setting_locked', key: 'ai.openaiBaseUrl', reason: 'bound_secret_in_env', envName: 'OPENAI_API_KEY' })
     })
+  })
+
+  it('the public URL needs a recent sign-in (webhooks and links point at it)', async () => {
+    await boot()
+    const old = await signIn(app, 'boss', { authAgoS: 3600 })
+    expect((await put(old, 'general', { changes: { 'org.publicUrl': 'https://evil.example.org' } })).statusCode).toBe(401)
+    expect((await put(old, 'general', { changes: { 'work.dailyTaskCap': 5 } })).statusCode).toBe(200)
+    expect((await put(boss, 'general', { changes: { 'org.publicUrl': 'https://portal.example.org' } })).statusCode).toBe(200)
   })
 
   it('warns about unpriced models and an embedding model change with embeddings stored', async () => {
@@ -409,6 +443,10 @@ describe('POST /admin/settings/:category/test', () => {
     expect(await codeFor('http://metadata.google.internal')).toBe('blocked_host')
     expect(await codeFor('http://postgres:5432')).toBe('blocked_host')
     expect(await codeFor('http://rustfs:9000')).toBe('blocked_host')
+    // Decimal, octal and hex spellings of the metadata address.
+    for (const url of ['http://2852039166/', 'http://0251.0376.0251.0376/', 'http://0xa9fea9fe/', 'http://0xa9.0xfe.0xa9.0xfe/', 'http://169.254.43518/']) {
+      expect(await codeFor(url), url).toBe('blocked_address')
+    }
     await app.close()
     await boot({}, { outbound: {} })
     await store.set('gitlab.token', GITLAB_TOKEN, system)
@@ -440,6 +478,10 @@ describe('POST /admin/settings/:category/test', () => {
       const moved = await test(boss, 'gitlab', { values: { 'gitlab.url': other.url } })
       expect(moved.json()).toMatchObject({ ok: false, checks: [{ id: 'user', code: 'secret_required' }] })
       expect(other.requests).toEqual([])
+      // A draft server answers with booleans only: nothing it sends is reflected back.
+      const draft = (await test(boss, 'gitlab', { values: { 'gitlab.url': other.url, 'gitlab.token': 'draft-placeholder' } })).json()
+      expect(draft.ok).toBe(true)
+      expect(draft.checks.map((c: { detail?: unknown }) => c.detail)).toEqual([undefined, undefined])
       // A draft token is used as given.
       const wrong = await test(boss, 'gitlab', { values: { 'gitlab.token': 'wrong-placeholder' } })
       expect(wrong.json().checks[0]).toMatchObject({ ok: false, code: 'auth_rejected' })
@@ -473,10 +515,24 @@ describe('POST /admin/settings/:category/test', () => {
     const [derived] = await (await testDb()).select().from(settingsAudit).where(eq(settingsAudit.key, 'telegram.botUsername'))
     expect(derived).toMatchObject({ action: 'derived', actorLabel: 'system', newValue: 'yoda_test_bot' })
 
+    // It sends the webhook secret: a recent sign-in is needed.
+    const old = await signIn(app, 'boss', { authAgoS: 3600 })
+    expect((await app.inject({ method: 'POST', url: '/admin/settings/telegram/webhook', headers: h(old) })).statusCode).toBe(401)
+    expect(tg.webhook).toBeNull()
     const reg = await app.inject({ method: 'POST', url: '/admin/settings/telegram/webhook', headers: h(boss) })
     expect(reg.json()).toMatchObject({ ok: true, checks: [{ id: 'webhook', ok: true }] })
-    expect(tg.webhook).toMatchObject({ url: 'https://portal.example.org/api/webhooks/telegram', secret_token: 'webhook_secret_placeholder_01' })
+    // Pending updates are kept unless the admin confirmed dropping them.
+    expect(tg.webhook).toMatchObject({ url: 'https://portal.example.org/api/webhooks/telegram', secret_token: 'webhook_secret_placeholder_01', drop_pending_updates: false })
+    await app.inject({ method: 'POST', url: '/admin/settings/telegram/webhook', headers: h(boss), payload: { dropPending: true } })
+    expect(tg.webhook).toMatchObject({ drop_pending_updates: true })
     expect((await test(boss, 'telegram')).json()).toMatchObject({ ok: true })
+
+    // A failed save of the username does not fail the bot check.
+    tg.username = 'renamed_test_bot'
+    const spy = vi.spyOn(store, 'setDerived').mockRejectedValueOnce(new Error('db down'))
+    expect((await test(boss, 'telegram')).json().checks[0]).toMatchObject({ id: 'bot', ok: true })
+    spy.mockRestore()
+    tg.username = 'yoda_test_bot'
 
     // A draft token does not write the username.
     tg.username = 'other_test_bot'
@@ -544,7 +600,9 @@ describe('POST /admin/settings/:category/test', () => {
     const bad = await fakeOidc('yoda-portal', { issuerSuffix: '-other' })
     try {
       const res = await test(boss, 'signin', { values: { 'oidc.issuer': idp.issuer, 'oidc.clientId': 'yoda-portal' } })
-      expect(res.json()).toMatchObject({ ok: true, checks: [{ id: 'discovery', ok: true }, { id: 'jwks', ok: true, detail: { keys: 1 } }, { id: 'client', ok: true }] })
+      // A draft issuer: booleans only, so the key count is not reflected.
+      expect(res.json()).toMatchObject({ ok: true, checks: [{ id: 'discovery', ok: true }, { id: 'jwks', ok: true }, { id: 'client', ok: true }] })
+      expect(res.json().checks[1].detail).toBeUndefined()
       const wrongClient = await test(boss, 'signin', { values: { 'oidc.issuer': idp.issuer, 'oidc.clientId': 'nope' } })
       expect(wrongClient.json().checks[2]).toMatchObject({ ok: false, code: 'client_rejected' })
       const mismatch = await test(boss, 'signin', { values: { 'oidc.issuer': bad.issuer, 'oidc.clientId': 'yoda-portal' } })
@@ -594,6 +652,9 @@ describe('POST /admin/settings/:category/test', () => {
     const res = await test(boss, 'backups')
     expect(res.statusCode).toBe(429)
     expect(res.json().error).toBe('rate_limited')
+    expect(Number(res.headers['retry-after'])).toBeGreaterThanOrEqual(1)
+    expect(Number(res.headers['retry-after'])).toBeLessThanOrEqual(60)
+    expect(res.json().retryAfter).toBe(Number(res.headers['retry-after']))
   })
 })
 

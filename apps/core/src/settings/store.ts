@@ -103,6 +103,17 @@ export class SecretsUnavailableError extends Error {
   }
 }
 
+/** Moving an endpoint whose bound secret is set in env (it would follow the endpoint and cannot be cleared). */
+export class BoundSecretInEnvError extends Error {
+  constructor(
+    readonly key: SettingKey,
+    readonly secret: SettingKey,
+  ) {
+    super(`setting ${key} is bound to ${secret}, which is set in env`)
+    this.name = 'BoundSecretInEnvError'
+  }
+}
+
 export class SettingConflictError extends Error {
   constructor(
     readonly key: SettingKey,
@@ -118,6 +129,10 @@ export type AuditRow = typeof settingsAudit.$inferSelect
 
 /** One write in `apply`: a new value, or null to clear the stored one; `expectedVersion` 0 = nothing stored. */
 export type SettingChange = { key: SettingKey; value: unknown; expectedVersion?: number }
+
+/** Endpoint key → the secrets bound to it (registry `boundTo`, 8.6). */
+const BOUND_SECRETS = new Map<SettingKey, SettingKey[]>()
+for (const k of SETTING_KEYS) for (const b of settingDef(k).boundTo ?? []) BOUND_SECRETS.set(b as SettingKey, [...(BOUND_SECRETS.get(b as SettingKey) ?? []), k])
 
 /** Read-only settings the system fills itself (`setDerived`). */
 const DERIVED_KEYS = new Set<SettingKey>(['telegram.botUsername'])
@@ -341,10 +356,15 @@ export class SettingsStore {
 
   /**
    * Validates every change, then writes them all in one transaction (rows locked in key order, so two saves
-   * cannot deadlock), each with its audit row, and one NOTIFY. `value: null` clears the stored value (a clear of
-   * nothing stored writes nothing). Any refusal (lock, stale version, validation) writes nothing.
+   * cannot deadlock), each with its audit row, and one NOTIFY. `value: null` clears the stored value. A change
+   * that leaves the stored row as it is (same value, or a clear of nothing) writes nothing and is not audited.
+   * Any refusal (lock, stale version, validation) writes nothing.
+   *
+   * Credential-bound endpoints (8.6): when a change moves an endpoint away from its value in the locked row, the
+   * secrets bound to it are cleared in the same transaction, unless the same call sets them. A bound secret set
+   * in env cannot be cleared, so moving its endpoint is refused (`BoundSecretInEnvError`).
    */
-  async apply(changes: SettingChange[], actor: SettingActor, opts: { derived?: boolean } = {}): Promise<SettingKey[]> {
+  async apply(changes: SettingChange[], actor: SettingActor, opts: { derived?: boolean } = {}): Promise<{ changed: SettingKey[]; cleared: SettingKey[] }> {
     const plan = changes.map((c) => {
       const d = this.writable(c.key, opts.derived === true)
       if (c.value === null) return { d, c, value: null }
@@ -356,26 +376,57 @@ export class SettingsStore {
       return { d, c, value }
     })
     if (new Set(plan.map((p) => p.c.key)).size !== plan.length) throw new Error('duplicate setting in one change')
-    const mk = plan.some((p) => p.d.secret && p.value !== null) ? this.requireKey(plan.find((p) => p.d.secret && p.value !== null)!.c.key) : null
-    plan.sort((a, b) => (a.c.key < b.c.key ? -1 : a.c.key > b.c.key ? 1 : 0))
-    const keys = plan.map((p) => p.c.key)
+    const inPlan = new Set(plan.map((p) => p.c.key))
+    const bound = new Map<SettingKey, SettingKey[]>()
+    for (const p of plan) {
+      const secrets = (BOUND_SECRETS.get(p.c.key) ?? []).filter((k) => !inPlan.has(k))
+      for (const k of secrets) if (this.envSet.has(k)) throw new BoundSecretInEnvError(p.c.key, k)
+      if (secrets.length) bound.set(p.c.key, secrets)
+    }
+    const setsSecret = plan.find((p) => p.d.secret && p.value !== null)
+    const mk = setsSecret ? this.requireKey(setsSecret.c.key) : null
+    const lockKeys = [...new Set([...inPlan, ...[...bound.values()].flat()])].sort()
+    const changed: SettingKey[] = []
+    const cleared: SettingKey[] = []
     await this.db.transaction(async (tx) => {
-      let wrote = false
-      for (const { d, c, value } of plan) {
-        const cur = await this.lockRow(tx, c.key, c.expectedVersion)
+      const rows = new Map<SettingKey, Row | undefined>()
+      for (const key of lockKeys) {
+        const p = plan.find((x) => x.c.key === key)
+        rows.set(key, await this.lockRow(tx, key, p?.c.expectedVersion))
+      }
+      for (const { d, c, value } of plan.sort((a, b) => (a.c.key < b.c.key ? -1 : 1))) {
+        const cur = rows.get(c.key)
+        // The endpoint's value in the locked row (not the snapshot, which another instance may have outrun).
+        if (bound.has(c.key) && !same(this.rowValue(d, cur), value ?? d.default)) {
+          for (const secret of bound.get(c.key)!) {
+            const row = rows.get(secret)
+            if (!row || cleared.includes(secret)) continue
+            await tx.delete(settings).where(eq(settings.key, secret))
+            await tx.insert(settingsAudit).values({ ...this.auditActor(actor), action: 'clear', key: secret, ...this.oldOf(settingDef(secret), row), newValue: null, newFp: null })
+            cleared.push(secret)
+          }
+        }
         if (value === null) {
           if (!cur) continue
           await tx.delete(settings).where(eq(settings.key, c.key))
           await tx.insert(settingsAudit).values({ ...this.auditActor(actor), action: 'clear', key: c.key, ...this.oldOf(d, cur), newValue: null, newFp: null })
         } else {
+          if (cur && (d.secret ? this.decryptRow(cur) === value : !cur.ciphertext && same(cur.value, value))) continue
           await this.write(tx, d, value, actor, opts.derived ? 'derived' : 'set', cur, d.secret ? mk : null)
         }
-        wrote = true
+        changed.push(c.key)
       }
-      if (wrote) await this.notify(tx, keys)
+      if (changed.length || cleared.length) await this.notify(tx, [...changed, ...cleared])
     })
-    for (const key of keys) await this.reload(key)
-    return keys
+    for (const key of [...changed, ...cleared]) await this.reload(key)
+    return { changed, cleared }
+  }
+
+  /** A row's non-secret value as stored (validated), else the default. */
+  private rowValue(d: SettingDef, row: Row | undefined): unknown {
+    if (!row || row.ciphertext) return d.default
+    const parsed = d.schema.safeParse(row.value)
+    return parsed.success ? parsed.data : d.default
   }
 
   /** A test run (§5.4): who, which action, the result code; never a value. */

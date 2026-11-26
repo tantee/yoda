@@ -209,7 +209,11 @@ async function telegram(ctx: TestContext): Promise<SettingsTestCheck[]> {
       expectOk(res)
       const username = (json(res) as { result?: { username?: unknown } } | null)?.result?.username
       if (typeof username !== 'string' || !BOT_USERNAME.test(username)) fail('invalid_response')
-      await ctx.onTelegramUsername?.(username as string)
+      try {
+        await ctx.onTelegramUsername?.(username as string)
+      } catch {
+        // Saving the username is a side effect: the bot answered, so the check passed.
+      }
       return { ok: true, detail: { username: username as string } }
     }),
   ]
@@ -237,7 +241,7 @@ async function telegram(ctx: TestContext): Promise<SettingsTestCheck[]> {
 export const telegramWebhookUrl = (publicUrl: string) => `${publicUrl}/api/webhooks/telegram`
 
 /** Registers the Telegram webhook with the saved token and secret (`setWebhook`). */
-export async function registerTelegramWebhook(ctx: TestContext): Promise<SettingsTestCheck> {
+export async function registerTelegramWebhook(ctx: TestContext, opts: { dropPending: boolean }): Promise<SettingsTestCheck> {
   const token = ctx.get('telegram.botToken')
   const secret = ctx.get('telegram.webhookSecret')
   if (!token || !secret) return notConfigured('webhook')
@@ -249,7 +253,7 @@ export async function registerTelegramWebhook(ctx: TestContext): Promise<Setting
         url: telegramWebhookUrl(ctx.get('org.publicUrl') ?? ''),
         secret_token: secret,
         allowed_updates: ['message', 'my_chat_member'],
-        drop_pending_updates: true,
+        drop_pending_updates: opts.dropPending,
       }),
       policy: ctx.policy,
     })

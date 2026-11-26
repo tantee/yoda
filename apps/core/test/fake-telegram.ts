@@ -13,7 +13,7 @@ export class FakeTelegram {
   /** What `getMe` answers. */
   username = 'yoda_test_bot'
   /** The last `setWebhook` body. */
-  webhook: { url: string; secret_token?: string } | null = null
+  webhook: { url: string; secret_token?: string; drop_pending_updates?: boolean } | null = null
 
   /** Messages sent through `sendMessage`: `{ chatId, text }`. */
   get messages(): { chatId: string; text: string; parseMode?: string }[] {
@@ -53,7 +53,7 @@ export class FakeTelegram {
         if (m[2] === 'getMe') return send(200, { ok: true, result: { id: 1001, is_bot: true, first_name: 'Yoda', username: this.username } })
         if (m[2] === 'getWebhookInfo') return send(200, { ok: true, result: { url: this.webhook?.url ?? '', pending_update_count: 0 } })
         if (m[2] === 'setWebhook' && req.method === 'POST') {
-          this.webhook = body as { url: string; secret_token?: string }
+          this.webhook = body as NonNullable<FakeTelegram['webhook']>
           return send(200, { ok: true, result: true, description: 'Webhook was set' })
         }
         if (req.method !== 'POST' || m[2] !== 'sendMessage') return send(404, { ok: false, error_code: 404, description: 'Not Found' })

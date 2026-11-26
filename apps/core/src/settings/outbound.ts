@@ -2,6 +2,7 @@ import { lookup as dnsLookup } from 'node:dns/promises'
 import http from 'node:http'
 import https from 'node:https'
 import { isIP, isIPv4 } from 'node:net'
+import { networkInterfaces } from 'node:os'
 
 /**
  * `safeOutbound` (installer proposal §8.5): every settings test connects through here, because the address is
@@ -43,8 +44,13 @@ export class OutboundError extends Error {
 export type BlockReason = 'metadata' | 'link-local' | 'loopback' | 'unspecified' | 'multicast' | 'reserved'
 
 export type OutboundPolicy = {
-  /** Loopback targets (the dev fakes on 127.0.0.1). Never in production. */
+  /** Loopback targets (the dev fakes on 127.0.0.1): only with YODA_OUTBOUND_ALLOW_LOOPBACK=true (dev, tests). */
   allowLoopback?: boolean
+  /**
+   * Further addresses never connected to: core's own interfaces and what the compose service names resolved to
+   * at boot (`internalAddresses`). Best effort: a container that restarts later may get another address.
+   */
+  blockedAddresses?: ReadonlySet<string>
   /** Replaces the DNS lookup (tests). */
   lookup?: (host: string) => Promise<{ address: string; family: number }[]>
 }
@@ -116,6 +122,12 @@ function v6Blocked(ip: string, policy: OutboundPolicy): BlockReason | null {
   const zeroTo = (n: number) => g.slice(0, n).every((x) => x === 0)
   if (zeroTo(8)) return 'unspecified'
   if (zeroTo(7) && g[7] === 1) return policy.allowLoopback ? null : 'loopback'
+  // IPv4-translated (::ffff:0:a.b.c.d, SIIT), Teredo (2001::/32), site-local (fec0::/10) and the local-use NAT64
+  // prefix (64:ff9b:1::/48) can all reach addresses the rules above would refuse: blocked outright.
+  if (zeroTo(4) && g[4] === 0xffff && g[5] === 0) return 'reserved'
+  if (g[0] === 0x2001 && g[1] === 0) return 'reserved'
+  if ((g[0]! & 0xffc0) === 0xfec0) return 'reserved'
+  if (g[0] === 0x64 && g[1] === 0xff9b && g[2] === 1) return 'reserved'
   // IPv4 inside IPv6 (mapped, compatible, NAT64, 6to4) is judged as that IPv4.
   if (zeroTo(5) && g[5] === 0xffff) return v4Blocked(v4Of(g[6]!, g[7]!), policy)
   if (zeroTo(6)) return v4Blocked(v4Of(g[6]!, g[7]!), policy)
@@ -129,7 +141,8 @@ function v6Blocked(ip: string, policy: OutboundPolicy): BlockReason | null {
 }
 
 /** Why core must not connect to this IP address, or null when it may. */
-export function addressBlocked(ip: string, policy: OutboundPolicy): BlockReason | null {
+export function addressBlocked(ip: string, policy: OutboundPolicy): BlockReason | 'internal' | null {
+  if (policy.blockedAddresses?.has(ip.toLowerCase())) return 'internal'
   const kind = isIP(ip)
   if (kind === 4) return v4Blocked(ip, policy)
   if (kind === 6) return v6Blocked(ip, policy)
@@ -153,13 +166,32 @@ function isInternal(ip: string): boolean {
   return (g[0]! & 0xfe00) === 0xfc00
 }
 
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  let timer: NodeJS.Timeout
+  return Promise.race([
+    p,
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new OutboundError('timeout')), Math.max(ms, 1))
+    }),
+  ]).finally(() => clearTimeout(timer))
+}
+
 export type ResolvedTarget = { address: string; family: number; private: boolean }
 
 /** Resolves a host once and checks every address; the caller connects to `address`. */
-export async function resolveOutbound(rawHost: string, policy: OutboundPolicy = {}): Promise<ResolvedTarget> {
+export async function resolveOutbound(rawHost: string, policy: OutboundPolicy = {}, timeoutMs = 5_000): Promise<ResolvedTarget> {
   let host = rawHost.trim().toLowerCase().replace(/\.$/, '')
   if (host.startsWith('[') && host.endsWith(']')) host = host.slice(1, -1)
   if (!host) throw new OutboundError('invalid_url')
+  // Decimal, octal and hex IPv4 forms (2852039166, 0251.0376.0251.0376, 0xa9fea9fe) as the URL parser reads them,
+  // so they are checked as the address the resolver would turn them into.
+  if (!isIP(host)) {
+    try {
+      host = new URL(`http://${host}`).hostname
+    } catch {
+      throw new OutboundError('invalid_url')
+    }
+  }
   const literal = isIP(host)
   if (!literal) {
     if (BLOCKED_HOSTS.has(host)) throw new OutboundError('blocked_host')
@@ -169,9 +201,9 @@ export async function resolveOutbound(rawHost: string, policy: OutboundPolicy = 
   if (literal) addrs = [{ address: host, family: literal }]
   else {
     try {
-      addrs = policy.lookup ? await policy.lookup(host) : await dnsLookup(host, { all: true, verbatim: true })
-    } catch {
-      throw new OutboundError('dns_failed')
+      addrs = await withTimeout(policy.lookup ? policy.lookup(host) : dnsLookup(host, { all: true, verbatim: true }), timeoutMs)
+    } catch (err) {
+      throw err instanceof OutboundError ? err : new OutboundError('dns_failed')
     }
     if (!addrs.length) throw new OutboundError('dns_failed')
   }
@@ -216,7 +248,9 @@ export async function safeFetch(rawUrl: string | URL, opts: SafeFetchOptions = {
   if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new OutboundError('scheme_not_allowed')
   if (url.username || url.password) throw new OutboundError('invalid_url')
   const policy = opts.policy ?? {}
-  const target = await resolveOutbound(url.hostname, policy)
+  // The DNS lookup counts against the whole request's time.
+  const deadline = Date.now() + (opts.timeoutMs ?? 10_000)
+  const target = await resolveOutbound(url.hostname, policy, Math.min(opts.connectTimeoutMs ?? 5_000, deadline - Date.now()))
   if (url.protocol === 'http:' && !target.private) throw new OutboundError('https_required')
   const secure = url.protocol === 'https:'
   const hostName = url.hostname.replace(/^\[|\]$/g, '')
@@ -257,7 +291,7 @@ export async function safeFetch(rawUrl: string | URL, opts: SafeFetchOptions = {
       })
       res.on('error', fail)
     })
-    const total = setTimeout(() => fail(new OutboundError('timeout')), opts.timeoutMs ?? 10_000)
+    const total = setTimeout(() => fail(new OutboundError('timeout')), Math.max(deadline - Date.now(), 1))
     req.on('socket', (socket) => {
       const connect = setTimeout(() => fail(new OutboundError('timeout')), opts.connectTimeoutMs ?? 5_000)
       socket.once(secure ? 'secureConnect' : 'connect', () => clearTimeout(connect))
@@ -267,4 +301,30 @@ export async function safeFetch(rawUrl: string | URL, opts: SafeFetchOptions = {
     if (opts.body !== undefined) req.write(opts.body)
     req.end()
   })
+}
+
+/** The compose services core sits next to (§8.5); their addresses are blocked as well as their names. */
+export const COMPOSE_SERVICES = ['postgres', 'rustfs', 'core', 'portal', 'backup', 'migrate', 'runner'] as const
+
+/**
+ * Core's own interface addresses and what the compose service names resolve to now, for
+ * `OutboundPolicy.blockedAddresses` (boot, best effort: a name that does not resolve is skipped, and a container
+ * that restarts later may get an address not in the list).
+ */
+export async function internalAddresses(
+  lookup: (host: string) => Promise<{ address: string }[]> = (h) => dnsLookup(h, { all: true, verbatim: true }),
+  interfaces: () => NodeJS.Dict<{ address: string; internal: boolean }[]> = networkInterfaces,
+): Promise<Set<string>> {
+  const out = new Set<string>()
+  for (const list of Object.values(interfaces())) for (const i of list ?? []) if (!i.internal) out.add(i.address.toLowerCase())
+  await Promise.all(
+    COMPOSE_SERVICES.map(async (name) => {
+      try {
+        for (const a of await withTimeout(lookup(name), 2_000)) out.add(a.address.toLowerCase())
+      } catch {
+        // Not running in compose (dev), or the service is not up.
+      }
+    }),
+  )
+  return out
 }

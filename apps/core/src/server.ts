@@ -11,6 +11,7 @@ import { seedTemplates } from './workflow/seed.js'
 import { takeMasterKey } from './settings/crypto.js'
 import { LiveSettings } from './settings/live.js'
 import { SettingsStore } from './settings/store.js'
+import { internalAddresses } from './settings/outbound.js'
 
 // Read the master key first and drop YODA_MASTER_KEY from process.env, so it does not linger there.
 const masterKey = takeMasterKey(process.env)
@@ -46,9 +47,9 @@ const ai = new AiGateway({
     return live.config
   },
 })
-// Settings tests may reach loopback only outside production (the dev fakes on 127.0.0.1); the image sets
-// NODE_ENV=production.
-const outbound = { allowLoopback: process.env.NODE_ENV !== 'production' }
+// Settings tests reach loopback only with YODA_OUTBOUND_ALLOW_LOOPBACK=true (dev: the fakes on 127.0.0.1), and
+// never core's own addresses or the compose services' (looked up once, best effort).
+const outbound = { allowLoopback: settings.get('security.outboundAllowLoopback') === true, blockedAddresses: await internalAddresses() }
 const deps = live.attach({ db, bus, storage, ai, jobs, settings, outbound })
 const app = await buildApp(deps)
 await registerJobHandlers(app.deps)

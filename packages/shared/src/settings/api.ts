@@ -154,6 +154,10 @@ export type SettingsAuditEntry = z.infer<typeof SettingsAuditEntry>
 export const SettingsAuditPage = z.object({ entries: z.array(SettingsAuditEntry), nextCursor: z.number().nullable() })
 export type SettingsAuditPage = z.infer<typeof SettingsAuditPage>
 
+/** `POST /admin/settings/telegram/webhook`: `dropPending` discards the updates Telegram holds (confirm first). */
+export const TelegramWebhookBody = z.object({ dropPending: z.boolean().default(false) })
+export type TelegramWebhookBody = z.infer<typeof TelegramWebhookBody>
+
 /** `POST /admin/settings/:category/generate/:key`: the generated secret, shown this once. */
 export const GeneratedSecret = z.object({ key: z.string(), value: z.string(), version: z.number() })
 export type GeneratedSecret = z.infer<typeof GeneratedSecret>

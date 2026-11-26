@@ -111,6 +111,8 @@ export const envSchema = z.object({
   YODA_MASTER_KEY: optional(z.string()),
   YODA_MASTER_KEY_FILE: optional(z.string()),
   YODA_SETTINGS_IMPORT: z.preprocess((v) => (v === '' ? undefined : v), z.enum(['true', 'false']).default('true')),
+  // Dev and tests only: the settings tests may reach loopback (the fakes). Read by server.ts, not mapped into Config.
+  YODA_OUTBOUND_ALLOW_LOOPBACK: z.preprocess((v) => (v === '' ? undefined : v), z.enum(['true', 'false']).default('false')),
 })
 
 /** URLs lose trailing slashes here as in the settings registry, so the shown value is the one in effect. */

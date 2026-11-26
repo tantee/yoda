@@ -1,7 +1,7 @@
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { addressBlocked, OutboundError, resolveOutbound, safeFetch, type OutboundPolicy } from '../src/settings/outbound.js'
+import { addressBlocked, internalAddresses, OutboundError, resolveOutbound, safeFetch, type OutboundPolicy } from '../src/settings/outbound.js'
 
 /** A resolver that answers from a table (no real DNS); counts lookups to show DNS is resolved once. */
 function table(entries: Record<string, string[]>) {
@@ -49,6 +49,12 @@ describe('addressBlocked', () => {
     ['::ffff:127.0.0.1', 'loopback'],
     ['64:ff9b::a9fe:a9fe', 'metadata'],
     ['2002:a9fe:a9fe::1', 'metadata'],
+    // IPv4-translated, Teredo, site-local and local-use NAT64: blocked outright.
+    ['::ffff:0:10.0.0.5', 'reserved'],
+    ['::ffff:0:a9fe:a9fe', 'reserved'],
+    ['2001:0:4136:e378:8000:63bf:3fff:fdd2', 'reserved'],
+    ['fec0::1', 'reserved'],
+    ['64:ff9b:1::a00:5', 'reserved'],
   ])('%s is blocked (%s)', (ip, why) => {
     expect(addressBlocked(ip, {})).toBe(why)
   })
@@ -82,6 +88,31 @@ describe('resolveOutbound', () => {
     expect(await resolveOutbound('ok.example.org', { lookup: t.lookup })).toEqual({ address: '10.0.0.8', family: 4, private: true })
   })
 
+  it('reads decimal, octal and hex IPv4 spellings as the address they stand for, without a lookup', async () => {
+    const t = table({})
+    for (const host of ['2852039166', '0251.0376.0251.0376', '0xa9fea9fe', '0xA9.0xFE.0xA9.0xFE', '169.254.43518', '017700000001']) {
+      expect(await code(resolveOutbound(host, t)), host).toBe('blocked_address')
+    }
+    expect(await resolveOutbound('0x0a000001', t)).toMatchObject({ address: '10.0.0.1' })
+    expect(t.calls).toEqual([])
+  })
+
+  it('blocks the addresses in blockedAddresses (core itself, the compose services)', async () => {
+    const t = table({ 'db.example.org': ['10.0.0.8'] })
+    const blockedAddresses = new Set(['10.0.0.8'])
+    expect(await code(resolveOutbound('db.example.org', { lookup: t.lookup, blockedAddresses }))).toBe('blocked_address')
+    expect(await code(resolveOutbound('10.0.0.8', { blockedAddresses }))).toBe('blocked_address')
+    expect(addressBlocked('10.0.0.8', { blockedAddresses })).toBe('internal')
+  })
+
+  it('counts a slow lookup against the timeout', async () => {
+    const lookup = () => new Promise<{ address: string; family: number }[]>(() => {})
+    expect(await code(resolveOutbound('slow.example.org', { lookup }, 50))).toBe('timeout')
+    const started = Date.now()
+    expect(await code(safeFetch('https://slow.example.org/', { policy: { lookup }, timeoutMs: 100 }))).toBe('timeout')
+    expect(Date.now() - started).toBeLessThan(1000)
+  })
+
   it('maps a failed lookup to dns_failed', async () => {
     expect(await code(resolveOutbound('nowhere.example.org', table({})))).toBe('dns_failed')
   })
@@ -92,6 +123,18 @@ describe('resolveOutbound', () => {
     expect(await code(resolveOutbound('[::1]', t))).toBe('blocked_address')
     expect(await resolveOutbound('10.1.2.3', t)).toMatchObject({ address: '10.1.2.3' })
     expect(t.calls).toEqual([])
+  })
+})
+
+describe('internalAddresses', () => {
+  it('collects core\'s own non-internal interface addresses and what the service names resolve to, skipping failures', async () => {
+    const lookup = async (h: string) => {
+      if (h === 'postgres') return [{ address: '172.18.0.2' }]
+      if (h === 'rustfs') return [{ address: 'FD00::3' }]
+      throw new Error('ENOTFOUND')
+    }
+    const interfaces = () => ({ lo0: [{ address: '127.0.0.1', internal: true }], eth0: [{ address: '172.18.0.5', internal: false }] })
+    expect([...(await internalAddresses(lookup, interfaces))].sort()).toEqual(['172.18.0.2', '172.18.0.5', 'fd00::3'])
   })
 })
 

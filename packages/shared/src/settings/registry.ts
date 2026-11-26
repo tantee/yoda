@@ -106,6 +106,8 @@ const DEFS = [
   def('security.masterKey', text, { category: 'security', envName: 'YODA_MASTER_KEY' }, { ...boot, secret: true }),
   def('security.masterKeyFile', text, { category: 'security', envName: 'YODA_MASTER_KEY_FILE' }, boot),
   def('security.settingsImport', bool, { category: 'security', envName: 'YODA_SETTINGS_IMPORT' }, { ...boot, default: true }),
+  // Dev only: the settings tests may connect to loopback (the fakes on 127.0.0.1).
+  def('security.outboundAllowLoopback', bool, { category: 'security', envName: 'YODA_OUTBOUND_ALLOW_LOOPBACK' }, { ...boot, default: false }),
 
   // 9.1 Core: sign-in
   def('oidc.issuer', url, { category: 'signin', envName: 'OIDC_ISSUER', test: 'oidc' }, { apply: 'reconnect' }),

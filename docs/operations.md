@@ -161,6 +161,7 @@ Settings and secrets (installer proposal §3.5, §6):
 | `YODA_MASTER_KEY` | Master key for secrets saved in the admin settings, base64 of 32 bytes; never stored in the database. Empty: no secrets stored there (env secrets still work); a wrong key starts core in recovery | optional | `<openssl rand -base64 32>` |
 | `YODA_MASTER_KEY_FILE` | File holding the master key instead (the bootstrap volume); `YODA_MASTER_KEY` wins when both are set | optional | `/run/yoda/core/master-key` |
 | `YODA_SETTINGS_IMPORT` | `false` = env secrets are not copied into the database on start (other values still are) | optional (`true`) | `true` |
+| `YODA_OUTBOUND_ALLOW_LOOPBACK` | Dev only: the admin settings tests may connect to loopback (the dev fakes). Never set in production | optional (`false`) | `false` |
 
 A setting saved in the database applies without a restart, on every core instance: each one listens for
 `NOTIFY settings_changed` (key names only, never values) and reloads its settings, and reloads them again after
@@ -172,7 +173,10 @@ reads the access token's `auth_time` claim, and the portal signs in again when i
 `auth_time` in access tokens through the realm's default **basic** client scope (Keycloak 25 and later); keep that
 scope on the `yoda-portal` client, or every secret save is refused with `reauth_required`. The settings **Test**
 buttons connect only through core's outbound guard: private addresses are allowed, cloud metadata, link-local and
-loopback addresses and the compose service names are not, and redirects are not followed.
+loopback addresses and the compose service names are not, and redirects are not followed. The service names'
+addresses and core's own are looked up once at start and blocked too; that is best effort, since a container
+restarted later may get an address not on the list, and other containers on the compose network (private
+addresses, like the hospital's own hosts) stay reachable by design.
 
 Sign-in (section 2):
 

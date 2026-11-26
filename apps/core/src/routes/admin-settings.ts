@@ -5,6 +5,7 @@ import {
   SettingsAuditQuery,
   SettingsPutBody,
   SettingsTestBody,
+  TelegramWebhookBody,
   isSettingKey,
   settingDef,
   type AdminSettingsResponse,
@@ -29,6 +30,7 @@ import { HttpError, notFound, requireAdmin } from '../auth/plugin.js'
 import { knowledgeChunks } from '../db/schema.js'
 import { RateLimiter } from '../settings/rate-limit.js'
 import {
+  BoundSecretInEnvError,
   SecretsUnavailableError,
   SettingConflictError,
   SettingLockedError,
@@ -57,6 +59,19 @@ export const REAUTH_WINDOW_S = 600
 const RECOVERY_ONLY = new Set<SettingKey>(['oidc.issuer', 'oidc.clientId'])
 /** Secrets an admin may have generated (shown once). */
 const GENERATED = new Set<SettingKey>(['gitlab.webhookSecret', 'telegram.webhookSecret'])
+/** Keys that choose which server a test talks to. */
+const DRAFT_ENDPOINTS = new Set<SettingKey>(['oidc.issuer', 'oidc.jwksUrl', 'gitlab.url', 'smtp.host', 'ai.openaiBaseUrl'])
+
+function booleansOnly(r: SettingsTestResult): SettingsTestResult {
+  return {
+    ...r,
+    checks: r.checks.map(({ detail, ...c }) => {
+      const kept = Object.entries(detail ?? {}).filter(([, v]) => typeof v === 'boolean')
+      return kept.length ? { ...c, detail: Object.fromEntries(kept) } : c
+    }),
+  }
+}
+
 const MODEL_KEYS = ['ai.modelDraft', 'ai.modelFast', 'ai.embeddingModel'] as const
 
 const CATEGORY_TEST: Partial<Record<SettingCategory, SettingsTestAction>> = {
@@ -263,29 +278,25 @@ export function adminSettingsRoutes(app: FastifyInstance): void {
       const l = lockOf(s, s.info(key))
       if (l) throw locked(key, l.reason, l.envName)
     }
-    // Credential-bound endpoints (8.6): a changed endpoint clears its secret unless a new one is given.
-    const cleared: SettingKey[] = []
-    for (const [key, value] of values) {
-      if (same(value, safeGet(s, key))) continue
-      for (const secret of BOUND_SECRETS.get(key) ?? []) {
-        if (values.has(secret)) continue
-        const info = s.info(secret)
-        // A secret set in env would follow the endpoint and could not be cleared here: refuse the change.
-        if (info.source === 'env') throw locked(key, 'bound_secret_in_env', info.envName)
-        if (info.source === 'db' && !cleared.includes(secret)) cleared.push(secret)
-      }
-    }
-    const touchesSecret = cleared.length > 0 || [...values.keys()].some((k) => settingDef(k).secret)
-    if ((touchesSecret || category === 'signin') && !recentlyAuthenticated(request)) throw reauthRequired()
+    // An endpoint a secret is bound to is saved only against the version the form loaded: the store clears the
+    // bound secret when the locked row's endpoint differs (8.6), and the version makes that a decision on what
+    // the admin saw.
+    const unversioned = [...values.keys()].filter((k) => BOUND_SECRETS.has(k) && body.versions?.[k] === undefined)
+    if (unversioned.length) throw invalidSettings(unversioned.map((key) => ({ key, message: 'version_required' })))
+    // Recent sign-in: any secret (set, cleared, or cleared with its endpoint), any sign-in setting, and the public
+    // URL (where webhooks and links point).
+    const sensitive = [...values.keys()].some((k) => settingDef(k).secret || BOUND_SECRETS.has(k) || k === 'org.publicUrl')
+    if ((sensitive || category === 'signin') && !recentlyAuthenticated(request)) throw reauthRequired()
 
     const oldEmbedding = safeGet(s, 'ai.embeddingModel')
     const changes: SettingChange[] = [
       ...[...values].map(([key, value]) => ({ key, value, ...(body.versions?.[key] !== undefined ? { expectedVersion: body.versions[key] } : {}) })),
-      ...cleared.map((key) => ({ key, value: null })),
     ]
+    let result: { changed: SettingKey[]; cleared: SettingKey[] }
     try {
-      await s.apply(changes, actorOf(request))
+      result = await s.apply(changes, actorOf(request))
     } catch (err) {
+      if (err instanceof BoundSecretInEnvError) throw locked(err.key, 'bound_secret_in_env', settingDef(err.secret).envName)
       if (err instanceof SettingConflictError) throw new HttpError(409, { error: 'version_conflict', key: err.key, version: err.version })
       if (err instanceof SettingLockedError) throw locked(err.key, err.reason)
       if (err instanceof SecretsUnavailableError) throw new HttpError(409, { error: 'secrets_unavailable', key: err.key })
@@ -301,8 +312,8 @@ export function adminSettingsRoutes(app: FastifyInstance): void {
       if (r && r.n > 0) warnings.push({ key: 'ai.embeddingModel', code: 'embedding_model_changed', count: r.n })
     }
     return {
-      applied: [...values.keys()],
-      cleared,
+      applied: result.changed,
+      cleared: result.cleared,
       restartRequired: s.restartRequiredKeys,
       warnings,
       category: categoryView(s, category),
@@ -321,16 +332,24 @@ export function adminSettingsRoutes(app: FastifyInstance): void {
     const draft = action === 'storage' ? new Map<SettingKey, unknown>() : parseValues(category, body.values)
     const ctx = testContext(s, draft, request)
     if (body.sendTo === 'self' && action === 'smtp') ctx.sendTo = request.me.email ?? null
-    const result = await runSettingsTest(action, ctx)
+    const raw = await runSettingsTest(action, ctx)
+    // A draft endpoint is a server the admin chose: only booleans come back from it, never its own fields.
+    const result = [...draft.keys()].some((k) => DRAFT_ENDPOINTS.has(k)) ? booleansOnly(raw) : raw
     await s.recordTest(category, action, result.ok ? 'ok' : (result.checks.find((c) => !c.ok)?.code ?? 'failed'), actorOf(request))
     return result
   })
 
+  /**
+   * Registers the Telegram webhook with the saved token and secret. It sends the webhook secret, so it needs a
+   * recent sign-in. `dropPending: true` (the portal confirms it first) discards updates Telegram still holds.
+   */
   app.post('/admin/settings/telegram/webhook', async (request, reply): Promise<SettingsTestResult> => {
     requireAdmin(request)
     const s = store()
+    const body = TelegramWebhookBody.parse(request.body ?? {})
     limit(testLimit, request, reply)
-    const c = await registerTelegramWebhook(testContext(s, new Map(), request))
+    if (!recentlyAuthenticated(request)) throw reauthRequired()
+    const c = await registerTelegramWebhook(testContext(s, new Map(), request), { dropPending: body.dropPending })
     await s.recordTest('telegram', 'telegram.webhook', c.ok ? 'ok' : (c.code ?? 'failed'), actorOf(request))
     return { action: 'telegram', ok: c.ok, checks: [c] }
   })
@@ -360,7 +379,7 @@ export function adminSettingsRoutes(app: FastifyInstance): void {
     const out: GeneratedSecret & { webhook?: SettingsTestResult } = { key, value, version: s.info(key).version ?? 0 }
     // Rotating the Telegram secret re-registers the webhook with it (§9.1), when the bot token is set.
     if (key === 'telegram.webhookSecret' && safeGet(s, 'telegram.botToken')) {
-      const c = await registerTelegramWebhook(testContext(s, new Map(), request))
+      const c = await registerTelegramWebhook(testContext(s, new Map(), request), { dropPending: false })
       await s.recordTest('telegram', 'telegram.webhook', c.ok ? 'ok' : (c.code ?? 'failed'), actorOf(request))
       out.webhook = { action: 'telegram', ok: c.ok, checks: [c] }
     }
