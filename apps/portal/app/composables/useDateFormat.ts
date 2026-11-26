@@ -1,4 +1,4 @@
-import { formatDate, formatDateShort, formatDateTime, formatDateTimeLong, formatRelative, formatTime } from '~/utils/dates'
+import { formatDate, formatDateShort, formatDateTime, formatDateTimeLong, formatMonth, formatRelative, formatTime } from '~/utils/dates'
 
 type Input = string | Date | null | undefined
 
@@ -11,6 +11,7 @@ export function useDateFormat() {
     date: (v: Input) => formatDate(v, locale.value),
     dateShort: (v: Input) => formatDateShort(v, locale.value),
     time: (v: Input) => formatTime(v, locale.value),
+    month: (m: string) => formatMonth(m, locale.value),
     relative: (v: Input, now?: Date) => formatRelative(v, locale.value, now),
   }
 }

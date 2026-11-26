@@ -50,6 +50,11 @@ export function formatDateShort(v: Input, locale: string, now = new Date()): str
   return year(d) === year(now) ? fmt(locale, 'dm', { day: 'numeric', month: 'short' }).format(d) : formatDate(d, locale)
 }
 
+/** A calendar month (`YYYY-MM`) → `พฤศจิกายน 2569` / `November 2026`; anything else is returned as is. */
+export function formatMonth(m: string, locale: string): string {
+  return /^\d{4}-\d{2}$/.test(m) ? fmt(locale, 'my', { month: 'long', year: 'numeric' }).format(new Date(`${m}-15T12:00:00+07:00`)) : m
+}
+
 export function formatTime(v: Input, locale: string): string {
   const d = toDate(v)
   return d ? fmt(locale, 't', { hour: '2-digit', minute: '2-digit', hour12: false }).format(d) : ''

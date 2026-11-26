@@ -17,15 +17,6 @@ export function sortDiscussions(list: Discussion[], by: 'priority' | 'created' |
   return copy.sort((a, b) => RANK[a.priority] - RANK[b.priority] || oldestFirst(a, b))
 }
 
-export function voteSummary(d: Discussion): { key: string; title: string; votes: number; recommended: boolean }[] {
-  return (d.brief?.options ?? []).map(o => ({
-    key: o.key,
-    title: o.title,
-    votes: d.voteCounts[o.key] ?? 0,
-    recommended: d.brief?.recommendedKey === o.key,
-  }))
-}
-
 export interface OptionShare {
   key: string
   title: string

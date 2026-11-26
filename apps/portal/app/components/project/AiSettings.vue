@@ -4,7 +4,8 @@ import type { AiUsage, ProjectDetail } from '@yoda/shared'
 const props = defineProps<{ project: ProjectDetail; canManage: boolean }>()
 const emit = defineEmits<{ changed: [] }>()
 
-const { t, locale } = useI18n()
+const { t } = useI18n()
+const { month } = useDateFormat()
 const api = useApi()
 const usage = ref<AiUsage | null>(null)
 const budget = ref('')
@@ -48,11 +49,6 @@ function saveBudget() {
   return patch({ aiBudgetUsd: n })
 }
 
-/** `YYYY-MM` → "พฤศจิกายน 2569" / "November 2026". */
-const monthLabel = (m: string) =>
-  /^\d{4}-\d{2}$/.test(m)
-    ? new Intl.DateTimeFormat(locale.value === 'en' ? 'en-GB' : 'th-TH', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${m}-15T00:00:00Z`))
-    : m
 const money = (n: number) => `$${n.toFixed(2)}`
 
 onMounted(loadUsage)
@@ -109,7 +105,7 @@ onMounted(loadUsage)
     <v-card>
       <div class="card-head">
         <h2>{{ t('ai.usage') }}</h2>
-        <span v-if="usage" class="text-body-2 text-medium-emphasis">{{ monthLabel(usage.month) }}</span>
+        <span v-if="usage" class="text-body-2 text-medium-emphasis">{{ month(usage.month) }}</span>
       </div>
       <div class="card-body">
         <SkeletonList v-if="!usage && !error" :rows="1" :two-line="false" quiet />

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Discussion, DiscussionResponse } from '@yoda/shared'
-import { briefFailKey, sortDiscussions, voteShares, voteSummary, votersByOption } from '../app/utils/discussions'
+import { briefFailKey, sortDiscussions, voteShares, votersByOption } from '../app/utils/discussions'
 
 let n = 0
 function d(over: Partial<Discussion>): Discussion {
@@ -39,25 +39,6 @@ describe('sortDiscussions', () => {
     const z = d({ projectName: 'Zeta' })
     const a = d({ projectName: 'Alpha' })
     expect(sortDiscussions([none, z, a], 'project')).toEqual([a, z, none])
-  })
-})
-
-describe('voteSummary', () => {
-  const brief = {
-    context: '', recommendation: '', recommendedKey: 'b', source: 'ai' as const, status: 'ready' as const, failReason: null,
-    options: [
-      { key: 'a', title: 'ตัวเลือก ก', pros: '', cons: '' },
-      { key: 'b', title: 'Option B', pros: '', cons: '' },
-    ],
-  }
-  it('counts votes per option and flags the recommendation', () => {
-    expect(voteSummary(d({ brief, voteCounts: { a: 2 } }))).toEqual([
-      { key: 'a', title: 'ตัวเลือก ก', votes: 2, recommended: false },
-      { key: 'b', title: 'Option B', votes: 0, recommended: true },
-    ])
-  })
-  it('is empty without a brief', () => {
-    expect(voteSummary(d({}))).toEqual([])
   })
 })
 

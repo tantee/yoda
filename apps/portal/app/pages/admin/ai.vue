@@ -2,7 +2,8 @@
 import type { DepartmentAiSettings, DepartmentAiSettingsPatch, DepartmentStatus } from '@yoda/shared'
 import { usd } from '~/utils/status'
 
-const { t, locale } = useI18n()
+const { t } = useI18n()
+const { month } = useDateFormat()
 const api = useApi()
 const settings = ref<DepartmentAiSettings | null>(null)
 const status = ref<DepartmentStatus | null>(null)
@@ -29,11 +30,6 @@ const projectSpend = computed(() => {
 })
 const dirty = computed(() => budget.value !== (settings.value?.aiBudgetUsd == null ? '' : String(settings.value.aiBudgetUsd)))
 
-/** `YYYY-MM` → "พฤศจิกายน 2569" / "November 2026". */
-const monthLabel = (m: string) =>
-  /^\d{4}-\d{2}$/.test(m)
-    ? new Intl.DateTimeFormat(locale.value === 'en' ? 'en-GB' : 'th-TH', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${m}-15T00:00:00Z`))
-    : m
 
 async function load() {
   try {
@@ -153,7 +149,7 @@ onMounted(load)
       <v-card v-if="usage">
         <div class="card-head">
           <h2>{{ t('ai.usage') }}</h2>
-          <span class="text-body-2 text-medium-emphasis">{{ monthLabel(usage.month) }}</span>
+          <span class="text-body-2 text-medium-emphasis">{{ month(usage.month) }}</span>
         </div>
         <div class="card-body" data-testid="ai-usage">
           <div class="d-flex flex-wrap align-baseline ga-2">

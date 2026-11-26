@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatDate, formatDateShort, formatDateTime, formatDateTimeLong, formatRelative, formatTime } from '../app/utils/dates'
+import { formatDate, formatDateShort, formatDateTime, formatDateTimeLong, formatMonth, formatRelative, formatTime } from '../app/utils/dates'
 
 // 14:05 on 25 Nov 2026 in Asia/Bangkok (UTC+7).
 const iso = '2026-11-25T07:05:30Z'
@@ -74,5 +74,17 @@ describe('formatDateTimeLong', () => {
   })
   it('is empty for no date', () => {
     expect(formatDateTimeLong(null, 'th')).toBe('')
+  })
+})
+
+describe('formatMonth', () => {
+  it('spells out a calendar month, Buddhist era in Thai', () => {
+    expect(formatMonth('2026-11', 'th')).toBe('พฤศจิกายน 2569')
+    expect(formatMonth('2026-11', 'en')).toBe('November 2026')
+    expect(formatMonth('2027-01', 'th')).toBe('มกราคม 2570')
+  })
+  it('returns anything that is not YYYY-MM as is', () => {
+    expect(formatMonth('', 'th')).toBe('')
+    expect(formatMonth('soon', 'en')).toBe('soon')
   })
 })

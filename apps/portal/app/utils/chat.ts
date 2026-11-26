@@ -32,7 +32,7 @@ export function mergeMessages(existing: Message[], incoming: Message[]): Message
   return [...byId.values()].sort((a, b) => a.seq - b.seq)
 }
 
-export const TYPING_TIMEOUT_MS = 60_000
+const TYPING_TIMEOUT_MS = 60_000
 
 /**
  * The secretary answers every person message in personal/intake threads, and in project/work_item threads
