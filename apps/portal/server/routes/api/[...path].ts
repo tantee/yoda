@@ -8,6 +8,11 @@ export default defineEventHandler((event) => {
   return proxyRequest(event, `${String(coreUrl).replace(/\/+$/, '')}${path}`, { headers: forwardedHeaders(event) })
 })
 
+// X-Forwarded-Proto and -Host are passed on as they arrive when an outer reverse proxy set them, else derived here.
+// With no outer proxy a browser could send its own; that only changes its own request: a claimed https makes its
+// cookies Secure (stricter), and a claimed host only matters to the Origin check and the localhost rule for TOTP,
+// which also needs the saved public URL to be localhost. The client address is different: the portal always
+// appends the peer it saw, and core believes only YODA_TRUSTED_PROXY_HOPS entries from the right.
 function forwardedHeaders(event: Parameters<typeof getRequestHeader>[0]): Record<string, string> {
   const peer = event.node.req.socket.remoteAddress ?? ''
   const prior = getRequestHeader(event, 'x-forwarded-for')

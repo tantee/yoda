@@ -4,9 +4,9 @@ import { join } from 'node:path'
 import { CODE_ALPHABET, normaliseCode, passwordIssue } from '@yoda/shared'
 import type { FastifyRequest } from 'fastify'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { TRUST_PROXY, buildApp, type AppDeps } from '../src/app.js'
+import { buildApp, trustProxy, type AppDeps } from '../src/app.js'
 import type { Db } from '../src/db/client.js'
-import { isLocalhostUrl, lockoutMs, UnknownUserGuard } from '../src/local/break-glass.js'
+import { isLocalhostHost, isLocalhostUrl, lockoutMs, totpRequired, UnknownUserGuard } from '../src/local/break-glass.js'
 import { newRecoveryCode, newSetupToken, recoveryCodeHash, sameBytes, setupTokenHash } from '../src/local/codes.js'
 import { finishTestSignIn, recoveryRedirectUri, startTestSignIn } from '../src/local/oidc-change.js'
 import { ARGON2_PARAMS, hashPassword, verifyPassword } from '../src/local/password.js'
@@ -14,6 +14,7 @@ import { COOKIE_NAME, COOKIE_PATH, csrfFor, parseCookies, setSessionCookie, clea
 import { readTokenFile, setupTokenBanner, setupTokenFile, writeTokenFile } from '../src/local/setup-token.js'
 import { newTotpSecret, totpCodeAt, totpUri, verifyTotp } from '../src/local/totp.js'
 import { masterKey } from '../src/settings/crypto.js'
+import type { SettingsStore } from '../src/settings/store.js'
 import { startFakeOidc, type FakeOidc } from './fake-oidc.js'
 import { testConfig } from './helpers.js'
 import { localJwks } from './jwt.js'
@@ -139,9 +140,26 @@ describe('lockout and localhost', () => {
     expect(g.lockedFor('other', 1000)).toBe(0)
   })
 
-  it('treats only localhost, 127/8 and ::1 as localhost (D3)', () => {
+  it('treats only localhost, 127/8 and ::1 as localhost (D3); a missing URL is not', () => {
     for (const u of ['http://localhost:3000', 'http://127.0.0.1:3000', 'http://[::1]:3000', 'http://portal.localhost']) expect(isLocalhostUrl(u), u).toBe(true)
-    for (const u of ['https://portal.example.org', 'http://192.168.1.10:3000', 'http://localhost.example.org', 'nonsense']) expect(isLocalhostUrl(u), u).toBe(false)
+    for (const u of ['https://portal.example.org', 'http://192.168.1.10:3000', 'http://localhost.example.org', 'nonsense', '', undefined, null]) expect(isLocalhostUrl(u), String(u)).toBe(false)
+    expect(isLocalhostHost('localhost')).toBe(true)
+    expect(isLocalhostHost('[::1]')).toBe(true)
+    expect(isLocalhostHost(null)).toBe(false)
+    expect(isLocalhostHost('portal.example.org')).toBe(false)
+  })
+
+  it('TOTP is optional only when the saved public URL AND the request host are both localhost (fail closed)', () => {
+    const store = (source: 'env' | 'db' | 'default' | 'unset', value?: string) => ({ info: () => ({ source, value }) }) as unknown as SettingsStore
+    expect(totpRequired(store('env', 'http://localhost:3000'), 'localhost')).toBe(false)
+    expect(totpRequired(store('db', 'http://127.0.0.1:3000'), '127.0.0.1')).toBe(false)
+    // A localhost URL reached at another host name, a remote URL reached at localhost (tunnel), no request host.
+    expect(totpRequired(store('env', 'http://localhost:3000'), 'portal.example.org')).toBe(true)
+    expect(totpRequired(store('env', 'https://portal.example.org'), 'localhost')).toBe(true)
+    expect(totpRequired(store('env', 'http://localhost:3000'), null)).toBe(true)
+    // The registry default (http://localhost:3000) is not a choice: unset counts as not localhost.
+    expect(totpRequired(store('default', 'http://localhost:3000'), 'localhost')).toBe(true)
+    expect(totpRequired(store('unset'), 'localhost')).toBe(true)
   })
 })
 
@@ -177,24 +195,45 @@ describe('session cookies and CSRF', () => {
     expect(csrfFor('cookie-a')).not.toContain('cookie-a')
   })
 
-  it('trusts X-Forwarded-* from one internal hop only (the portal proxy)', () => {
-    expect(TRUST_PROXY('172.18.0.5', 0)).toBe(true)
-    expect(TRUST_PROXY('127.0.0.1', 0)).toBe(true)
-    expect(TRUST_PROXY('203.0.113.9', 0)).toBe(false)
-    expect(TRUST_PROXY('10.0.0.2', 1)).toBe(false)
+  it('trusts X-Forwarded-* from an internal first hop, and only as many hops as configured', () => {
+    const one = trustProxy(1)
+    expect(one('172.18.0.5', 0)).toBe(true)
+    expect(one('127.0.0.1', 0)).toBe(true)
+    expect(one('203.0.113.9', 0)).toBe(false)
+    expect(one('10.0.0.2', 1)).toBe(false)
+    const two = trustProxy(2)
+    expect(two('172.18.0.5', 0)).toBe(true)
+    expect(two('203.0.113.9', 0)).toBe(false)
+    expect(two('10.0.0.2', 1)).toBe(true)
+    expect(two('10.0.0.3', 2)).toBe(false)
   })
 
-  it('takes the address the portal appended, not one the client wrote', async () => {
-    const app = await buildApp({ config: testConfig(), db: {} as Db, jwks: localJwks, bus: {}, storage: {}, ai: {}, jobs: {}, gitlab: null } as unknown as AppDeps)
-    let seen: Pick<FastifyRequest, 'ip' | 'protocol'> | null = null
-    app.get('/__ip', { config: { public: true, setupMode: true } }, async (request) => {
-      seen = { ip: request.ip, protocol: request.protocol }
+  async function ipApp(hops?: number) {
+    const app = await buildApp({ config: { ...testConfig(), ...(hops ? { trustedProxyHops: hops } : {}) }, db: {} as Db, jwks: localJwks, bus: {}, storage: {}, ai: {}, jobs: {}, gitlab: null } as unknown as AppDeps)
+    const seen: { ip: string; protocol: string }[] = []
+    app.get('/__ip', { config: { public: true, setupMode: true } }, async (request: FastifyRequest) => {
+      seen.push({ ip: request.ip, protocol: request.protocol })
       return {}
     })
+    return { app, seen }
+  }
+
+  it('one hop (default): takes the address the portal appended, not one the client wrote', async () => {
+    const { app, seen } = await ipApp()
     await app.inject({ url: '/__ip', headers: { 'x-forwarded-for': '6.6.6.6, 192.168.10.20', 'x-forwarded-proto': 'https' } })
-    expect(seen).toEqual({ ip: '192.168.10.20', protocol: 'https' })
     await app.inject({ url: '/__ip', remoteAddress: '203.0.113.9', headers: { 'x-forwarded-for': '6.6.6.6' } })
-    expect(seen).toEqual({ ip: '203.0.113.9', protocol: 'http' })
+    expect(seen).toEqual([{ ip: '192.168.10.20', protocol: 'https' }, { ip: '203.0.113.9', protocol: 'http' }])
+    await app.close()
+  })
+
+  it('two hops (reverse proxy in front of the portal): the address the reverse proxy saw; anything further left is ignored', async () => {
+    const { app, seen } = await ipApp(2)
+    // client wrote 6.6.6.6 and 7.7.7.7; the reverse proxy appended the client 198.51.100.7; the portal appended the proxy 10.0.0.2.
+    await app.inject({ url: '/__ip', headers: { 'x-forwarded-for': '6.6.6.6, 7.7.7.7, 198.51.100.7, 10.0.0.2' } })
+    // Without the reverse proxy entry (a direct hit on the portal), the client's own entry is still not enough to spoof.
+    await app.inject({ url: '/__ip', headers: { 'x-forwarded-for': '10.0.0.2' } })
+    await app.inject({ url: '/__ip', remoteAddress: '203.0.113.9', headers: { 'x-forwarded-for': '6.6.6.6, 10.0.0.2' } })
+    expect(seen.map((s) => s.ip)).toEqual(['198.51.100.7', '10.0.0.2', '203.0.113.9'])
     await app.close()
   })
 

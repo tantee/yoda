@@ -220,6 +220,11 @@ describe('setup: the break-glass admin', () => {
     const dump = JSON.stringify(codes.map((c) => c.codeHash.toString('hex'))) + JSON.stringify(admin)
     for (const c of body.recoveryCodes as string[]) expect(dump).not.toContain(c)
     expect((await app.inject({ url: '/setup/status', headers: { ...UA, cookie } })).json().steps.admin).toBe('done')
+    // The setup session is rotated after the TOTP step: the old cookie is over, the new one carries on.
+    expect((await app.inject({ url: '/setup/session', headers: { ...UA, cookie } })).statusCode).toBe(401)
+    const next = cookieOf(ok, 'yoda_setup')!
+    expect(next).not.toBe(cookie)
+    expect((await app.inject({ url: '/setup/session', headers: { ...UA, cookie: next } })).json().csrf).toBe(body.session.csrf)
   })
 
   it('TOTP is optional on a localhost install', async () => {
@@ -420,8 +425,68 @@ describe('recovery actions', () => {
     const ok = await app.inject({ method: 'POST', url: '/recovery/totp/confirm', headers: h, payload: { code: totpCodeAt(enrol.secret, clock.getTime()), currentTotpCode: totpCodeAt(seed, clock.getTime()) } })
     expect(ok.statusCode).toBe(200)
     clock = new Date(clock.getTime() + 30_000)
+    // Every session of the account ended (this one rotated): the old cookie is over, the returned one works.
+    expect((await app.inject({ url: '/recovery/status', headers: h })).statusCode).toBe(401)
+    expect((await app.inject({ url: '/recovery/status', headers: { ...UA, cookie: cookieOf(ok, 'yoda_bg')! } })).statusCode).toBe(200)
+    expect(ok.json().recoveryCodes).toBeUndefined()
     expect((await signInBg({}, { 'x-forwarded-for': '10.4.4.4' })).json()).toEqual({ error: 'invalid_code' })
     expect((await signInBg({ totpCode: totpCodeAt(enrol.secret, clock.getTime()) }, { 'x-forwarded-for': '10.4.4.5' })).statusCode).toBe(200)
+  })
+
+  it('wrong step-up codes count as failures: the fifth ends the session and locks the account; admins are told', async () => {
+    await boot({ done: true })
+    const bossId = await boss()
+    await withAdmin()
+    const h = await bg()
+    const wrong = () => app.inject({ method: 'POST', url: '/recovery/recovery-codes', headers: h, payload: { totpCode: '000001' } })
+    for (let i = 0; i < 4; i++) expect((await wrong()).json()).toEqual({ error: 'invalid_code' })
+    const fifth = await wrong()
+    expect(fifth.json()).toEqual({ error: 'unauthorized', reason: 'session' })
+    expect(String(fifth.headers['set-cookie'])).toContain('Max-Age=0')
+    expect((await app.inject({ url: '/recovery/status', headers: h })).statusCode).toBe(401)
+    const [row] = await (await db()).select().from(localAdmins)
+    expect(row!.failedAttempts).toBe(5)
+    expect(row!.lockedUntil!.getTime()).toBe(clock.getTime() + 60_000)
+    clock = new Date(clock.getTime() + 30_000)
+    expect((await signInBg({}, { 'x-forwarded-for': '10.6.6.6' })).json()).toMatchObject({ error: 'rate_limited', reason: 'locked' })
+    const titles = (await (await db()).select().from(notifications).where(eq(notifications.personId, bossId))).map((n) => n.title)
+    expect(titles.some((t) => t.includes('ล็อก'))).toBe(true)
+    expect((await (await db()).select().from(settingsAudit).where(eq(settingsAudit.action, 'recovery.step_up'))).length).toBe(5)
+  })
+
+  it('step-up checks are rate limited per account (10 per 15 minutes)', async () => {
+    await boot({ done: true })
+    await withAdmin()
+    const results: number[] = []
+    for (let round = 0; round < 3; round++) {
+      clock = new Date(clock.getTime() + 30_000)
+      const h = await bg()
+      // A sign-in resets the account's failure count; the per-account limiter does not reset.
+      for (let i = 0; i < 4; i++) {
+        results.push((await app.inject({ method: 'POST', url: '/recovery/recovery-codes', headers: h, payload: { totpCode: '000001' } })).statusCode)
+      }
+    }
+    expect(results).toEqual([401, 401, 401, 401, 401, 401, 401, 401, 401, 401, 429, 429])
+  })
+})
+
+describe('D3: TOTP fails closed', () => {
+  it('a localhost public URL reached at another host name still needs TOTP', async () => {
+    await boot({ env: { PORTAL_URL: 'http://localhost:3000' } })
+    const { cookie, csrf } = await setupSession()
+    const far = { ...UA, cookie, 'x-yoda-csrf': csrf, 'x-forwarded-host': 'portal.example.org' }
+    expect((await app.inject({ url: '/setup/status', headers: { 'x-forwarded-host': 'portal.example.org' } })).json().totpRequired).toBe(true)
+    expect((await app.inject({ url: '/setup/status' })).json().totpRequired).toBe(false)
+    const res = await app.inject({ method: 'POST', url: '/setup/admin', headers: far, payload: { username: 'admin', password: BG_LOGIN } })
+    expect(res.json()).toEqual({ error: 'second_factor_required' })
+  })
+
+  it('an unset public URL (the registry default) counts as not localhost', async () => {
+    const d = await db()
+    store = await SettingsStore.open({ db: d, env: {}, masterKey: KEY, log: quiet(), channel: `settings_test_${randomUUID().slice(0, 8)}` })
+    const deps = await testDeps()
+    app = await buildApp({ ...deps, config: { ...deps.config, devSkipSetup: false }, settings: store, now: () => clock, setupTokenFile: tokenFile })
+    expect((await app.inject({ url: '/setup/status' })).json().totpRequired).toBe(true)
   })
 })
 
@@ -477,6 +542,22 @@ describe('recovery: changing the OIDC settings (8.6)', () => {
     expect(rolled.oidc.rollback).toBeNull()
     expect(store.info('oidc.issuer').source).not.toBe('db')
     expect((await (await db()).select().from(settingsAudit).where(eq(settingsAudit.action, 'oidc.rollback'))).length).toBe(1)
+  })
+
+  it('a test sign-in does not mark values restaged meanwhile as tested', async () => {
+    await boot({ done: true })
+    await boss()
+    await withAdmin()
+    const h = await bg()
+    const values = { issuer: idp.issuer, clientId: 'yoda-portal', jwksUrl: null }
+    await app.inject({ method: 'PUT', url: '/recovery/oidc/pending', headers: h, payload: values })
+    const start = await app.inject({ method: 'POST', url: '/recovery/oidc/signin', headers: h })
+    const back = idp.authorize(start.json().authorizeUrl, { username: 'boss' })
+    clock = new Date(clock.getTime() + 1000)
+    await app.inject({ method: 'PUT', url: '/recovery/oidc/pending', headers: h, payload: values })
+    const res = await app.inject({ method: 'POST', url: '/recovery/oidc/callback', headers: h, payload: back })
+    expect(res.json()).toEqual({ error: 'invalid_state', reason: 'pending_changed' })
+    expect((await app.inject({ url: '/recovery/status', headers: h })).json().oidc.pending.testedAt).toBeNull()
   })
 
   it('the rollback closes after 7 days', async () => {
@@ -574,7 +655,15 @@ describe('yoda-admin', () => {
     const enrol = (await app.inject({ method: 'POST', url: '/recovery/totp/start', headers: rh })).json()
     const done = await app.inject({ method: 'POST', url: '/recovery/totp/confirm', headers: rh, payload: { code: totpCodeAt(enrol.secret, clock.getTime()) } })
     expect(done.json()).toMatchObject({ restricted: false, admin: { totpEnabled: true } })
-    expect((await app.inject({ url: '/recovery/status', headers: rh })).statusCode).toBe(200)
+    // Finishing the reset hands out new recovery codes (the old ones were dropped by the reset).
+    expect(done.json().recoveryCodes).toHaveLength(10)
+    // The session was rotated: the old cookie is over, the new one works.
+    expect((await app.inject({ url: '/recovery/status', headers: rh })).statusCode).toBe(401)
+    const nh = { ...UA, cookie: cookieOf(done, 'yoda_bg')!, 'x-yoda-csrf': done.json().csrf }
+    expect((await app.inject({ url: '/recovery/status', headers: nh })).json().breakGlass.recoveryCodesLeft).toBe(10)
+    clock = new Date(clock.getTime() + 30_000)
+    seed = enrol.secret
+    expect((await signInBg({ password: 'quartz-meadow-falcon-88', totpCode: undefined, recoveryCode: codes[0] }, { 'x-forwarded-for': '10.5.5.6' })).json()).toEqual({ error: 'invalid_code' })
     expect((await cli(['status'])).out).toMatch(/break-glass: admin, TOTP on/)
   })
 

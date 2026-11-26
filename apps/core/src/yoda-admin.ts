@@ -102,7 +102,7 @@ export async function runAdmin(argv: string[], deps: AdminCliDeps): Promise<numb
         deps.out(`setup token: ${live ? `valid until ${st!.setupTokenExpires!.toISOString()}` : 'none (run: yoda-admin setup-token)'}`)
       }
       if (admin) {
-        const v = await adminView(deps.db, s, admin)
+        const v = await adminView(deps.db, s, admin, null)
         const locked = admin.lockedUntil && admin.lockedUntil > now ? `, locked until ${admin.lockedUntil.toISOString()}` : ''
         deps.out(`break-glass: ${v.username}, TOTP ${v.totpEnabled ? 'on' : 'off'}, ${v.recoveryCodesLeft} recovery codes left${v.mustChangePassword ? ', temporary password' : ''}${locked}`)
       } else {

@@ -1908,6 +1908,9 @@
         },
         "outboundAllowLoopback": {
           "label": "ให้ทดสอบไปยัง loopback ได้ (สำหรับนักพัฒนา)"
+        },
+        "trustedProxyHops": {
+          "label": "จำนวนพร็อกซีที่เชื่อถือหน้า core (X-Forwarded-For)"
         }
       },
       "oidc": {

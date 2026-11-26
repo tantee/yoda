@@ -17,7 +17,7 @@ import {
   type TotpEnrolment,
 } from '@yoda/shared'
 import { and, eq, ne, sql } from 'drizzle-orm'
-import type { FastifyInstance, FastifyRequest } from 'fastify'
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { HttpError, invalidState } from '../auth/plugin.js'
 import { departmentSettings, localSessions } from '../db/schema.js'
 import {
@@ -25,7 +25,10 @@ import {
   adminView,
   changePassword,
   checkSecondFactor,
+  clearFailures,
+  lockedForMs,
   MasterKeyUnavailable,
+  recordFailure,
   notifyAdmins,
   PENDING_TOTP_AAD,
   replaceRecoveryCodes,
@@ -44,6 +47,7 @@ import {
   finishTestSignIn,
   markTested,
   OidcChangeFailed,
+  PendingChangedError,
   readOidcState,
   rollbackOidc,
   stagePending,
@@ -55,6 +59,7 @@ import {
   deleteSession,
   isHttps,
   requireSession,
+  revokeSessions,
   sessionView,
   setSessionCookie,
   updateSessionData,
@@ -78,8 +83,10 @@ import { setupState } from './public-config.js'
  */
 
 const PUBLIC = { config: { public: true } } as const
+/** Wrong step-up codes one session may send before it is ended. */
+export const STEP_UP_FAILURES_PER_SESSION = 5
 
-type Signed = { session: ActiveSession; admin: AdminRow; store: SettingsStore; restricted: boolean }
+type Signed = { session: ActiveSession; admin: AdminRow; store: SettingsStore; restricted: boolean; host: string }
 
 const actorOf = (request: FastifyRequest, admin: AdminRow): SettingActor => ({
   personId: null,
@@ -88,11 +95,13 @@ const actorOf = (request: FastifyRequest, admin: AdminRow): SettingActor => ({
   ...whereFrom(request),
 })
 
-const restrictedOf = (s: SettingsStore, admin: AdminRow) => admin.mustChangePassword || (!admin.totpEnabled && totpRequired(s))
+const restrictedOf = (s: SettingsStore, admin: AdminRow, host: string) => admin.mustChangePassword || (!admin.totpEnabled && totpRequired(s, host))
 
 export function recoveryRoutes(app: FastifyInstance): void {
   // §8.4: 5 sign-ins per IP per 15 min (the per-account backoff is in break-glass.ts); tests 10 / min, 60 / hour.
   const signInLimit = new RateLimiter([{ max: 5, windowMs: 15 * 60_000 }])
+  // Step-up checks (the current TOTP or a recovery code inside a session): 10 per account per 15 min.
+  const stepUpLimit = new RateLimiter([{ max: 10, windowMs: 15 * 60_000 }])
   const testLimit = new RateLimiter([
     { max: 10, windowMs: 60_000 },
     { max: 60, windowMs: 3_600_000 },
@@ -109,17 +118,24 @@ export function recoveryRoutes(app: FastifyInstance): void {
     const session = await requireSession(app.deps.db, request, 'recovery', { now: nowOf(app), publicUrl: publicUrl(store) })
     const admin = session.row.adminId ? await adminById(app.deps.db, session.row.adminId) : undefined
     if (!admin) throw new HttpError(401, { error: 'unauthorized', reason: 'session' })
-    const restricted = restrictedOf(store, admin)
+    const restricted = restrictedOf(store, admin, request.hostname)
     if (restricted && !opts.allowRestricted) throw new HttpError(403, { error: 'forbidden', reason: 'enrolment_required' })
-    return { session, admin, store, restricted }
+    return { session, admin, store, restricted, host: request.hostname }
   }
 
-  async function sessionBody(request: FastifyRequest, s: Signed): Promise<RecoverySession> {
+  async function sessionBody(request: FastifyRequest, s: Signed, recoveryCodes?: string[]): Promise<RecoverySession> {
     return {
       ...sessionView(s.session.row, s.session.value, 'recovery', !isHttps(request)),
-      admin: await adminView(app.deps.db, s.store, s.admin),
+      admin: await adminView(app.deps.db, s.store, s.admin, request.hostname),
       restricted: s.restricted,
+      ...(recoveryCodes ? { recoveryCodes } : {}),
     }
+  }
+
+  /** The account just locked after repeated failures: every portal admin is told. */
+  async function notifyLocked(request: FastifyRequest, admin: AdminRow) {
+    const at = nowOf(app)
+    await notifyAdmins(app.deps, { what: 'ถูกล็อกชั่วคราวหลังใส่รหัสผิดหลายครั้ง', username: admin.username, ip: request.ip, at, key: `break_glass.locked:${request.id}:${at.getTime()}` })
   }
 
   /** Audited, and every portal admin is told (feed, and email when they have it). */
@@ -142,7 +158,7 @@ export function recoveryRoutes(app: FastifyInstance): void {
         rollback: rollback && new Date(rollback.until) > now ? rollback : null,
       },
       funMode: await funMode(app.deps.db),
-      breakGlass: await adminView(app.deps.db, s.store, s.admin),
+      breakGlass: await adminView(app.deps.db, s.store, s.admin, s.host),
     }
   }
 
@@ -156,6 +172,7 @@ export function recoveryRoutes(app: FastifyInstance): void {
     const now = nowOf(app)
     const r = await signIn({ db: app.deps.db, settings: store }, unknownUsers, { ...body, now })
     if (!r.ok) {
+      if (r.lockedNow) await notifyLocked(request, r.lockedNow)
       await store.audit({ action: 'recovery.signin', actor: { label: `break-glass:${body.username.trim().toLowerCase().slice(0, 64)}`, source: 'recovery', ...whereFrom(request) }, result: r.code })
       if (r.code === 'locked') {
         reply.header('retry-after', String(r.retryAfter ?? 60))
@@ -171,7 +188,7 @@ export function recoveryRoutes(app: FastifyInstance): void {
     if (!secure) request.log.warn('recovery: session over plain HTTP; the cookie is not Secure (D8)')
     setSessionCookie(reply, 'recovery', value, secure)
     await used(request, r.admin, store, 'recovery.signin', 'เข้าสู่ระบบหน้ากู้คืน (/recovery)', { factor: r.factor })
-    return sessionBody(request, { session: { row, value }, admin: r.admin, store, restricted: restrictedOf(store, r.admin) })
+    return sessionBody(request, { session: { row, value }, admin: r.admin, store, restricted: restrictedOf(store, r.admin, request.hostname), host: request.hostname })
   })
 
   app.get('/recovery/session', PUBLIC, async (request, reply): Promise<RecoverySession> => {
@@ -285,7 +302,15 @@ export function recoveryRoutes(app: FastifyInstance): void {
     const r = await finishTestSignIn({ db: app.deps.db, policy: policy() }, pending, flow, { ...body, now })
     const result = r.ok ? 'ok' : (r.checks.find((c) => !c.ok)?.code ?? 'failed')
     await s.store.recordTest('signin', 'oidc.signin', result, actorOf(request, s.admin))
-    const next = r.ok && r.username ? await markTested(app.deps.db, pending, r.username, now) : pending
+    let next: OidcPending | null = pending
+    if (r.ok && r.username) {
+      try {
+        next = await markTested(app.deps.db, pending, r.username, now)
+      } catch (err) {
+        if (err instanceof PendingChangedError) throw invalidState('pending_changed')
+        throw err
+      }
+    }
     return { ok: r.ok, checks: r.checks, pending: next }
   })
 
@@ -294,7 +319,12 @@ export function recoveryRoutes(app: FastifyInstance): void {
     const pending = await pendingOrFail()
     if (!pending.testedAt) throw invalidState('not_tested')
     if (envLockedOidc(s.store).length) throw new HttpError(409, { error: 'setting_locked', reason: 'env' })
-    await applyPending({ db: app.deps.db, settings: s.store, config: app.deps.config }, pending, actorOf(request, s.admin), nowOf(app))
+    try {
+      await applyPending({ db: app.deps.db, settings: s.store, config: app.deps.config }, pending, actorOf(request, s.admin), nowOf(app))
+    } catch (err) {
+      if (err instanceof PendingChangedError) throw invalidState('pending_changed')
+      throw err
+    }
     await notifyAdmins(app.deps, {
       what: `เปลี่ยนการตั้งค่าเข้าสู่ระบบ (OIDC) เป็น ${pending.values.issuer}`,
       username: s.admin.username,
@@ -323,18 +353,57 @@ export function recoveryRoutes(app: FastifyInstance): void {
 
   // ── The break-glass account itself ───────────────────────────────────────────────────────────────────────────
 
-  /** The current second factor, when TOTP is enrolled; otherwise nothing to check. */
-  async function secondFactor(s: Signed, input: { totpCode?: string; recoveryCode?: string }): Promise<void> {
-    const r = await checkSecondFactor(app.deps.db, s.store, s.admin, input, nowOf(app))
+  /**
+   * Step-up: the current second factor, when TOTP is enrolled (otherwise nothing to check). A wrong code counts as
+   * a failed sign-in of the account (failures, lockout with backoff, admins told when it locks) and against the
+   * session: the fifth wrong code ends it. Rate limited per account; refused while the account is locked.
+   */
+  async function secondFactor(request: FastifyRequest, reply: FastifyReply, s: Signed, input: { totpCode?: string; recoveryCode?: string }): Promise<void> {
+    if (!s.admin.totpEnabled) return
+    takeLimit(stepUpLimit, s.admin.id, reply)
+    const now = nowOf(app)
+    const lockedMs = lockedForMs(s.admin, now)
+    if (lockedMs > 0) {
+      const retryAfter = Math.ceil(lockedMs / 1000)
+      reply.header('retry-after', String(retryAfter))
+      throw new HttpError(429, { error: 'rate_limited', reason: 'locked', retryAfter })
+    }
+    const r = await checkSecondFactor(app.deps.db, s.store, s.admin, input, now)
+    if (r === 'ok') {
+      if (s.admin.failedAttempts > 0) await clearFailures(app.deps.db, s.admin.id)
+      return
+    }
     if (r === 'missing') throw secondFactorRequired()
-    if (r === 'invalid') throw invalidCode()
     if (r === 'unavailable') throw secretsUnavailable()
+    const lockedNow = await recordFailure(app.deps.db, s.admin, now)
+    await s.store.audit({ action: 'recovery.step_up', actor: actorOf(request, s.admin), result: 'invalid_code' })
+    if (lockedNow) await notifyLocked(request, s.admin)
+    const data = s.session.row.data as SessionData
+    const failures = (data.stepUpFailures ?? 0) + 1
+    if (failures >= STEP_UP_FAILURES_PER_SESSION) {
+      await deleteSession(app.deps.db, s.session.row.idHash)
+      clearSessionCookie(reply, 'recovery', isHttps(request))
+      throw new HttpError(401, { error: 'unauthorized', reason: 'session' })
+    }
+    await updateSessionData(app.deps.db, s.session.row.idHash, { ...data, stepUpFailures: failures })
+    throw invalidCode()
+  }
+
+  /** A reset from the host just finished (restricted → full): the old codes were dropped, so new ones come now. */
+  async function codesIfResetFinished(before: Signed, after: Signed): Promise<string[] | undefined> {
+    if (!before.restricted || after.restricted) return undefined
+    try {
+      return await replaceRecoveryCodes(app.deps.db, after.store, after.admin.id)
+    } catch (err) {
+      if (err instanceof MasterKeyUnavailable) return undefined
+      throw err
+    }
   }
 
   app.post('/recovery/recovery-codes', PUBLIC, async (request, reply): Promise<RecoveryCodesResult> => {
     const s = await signed(request)
     const body = RecoveryCodesBody.parse(request.body ?? {})
-    await secondFactor(s, body)
+    await secondFactor(request, reply, s, body)
     let codes: string[]
     try {
       codes = await replaceRecoveryCodes(app.deps.db, s.store, s.admin.id)
@@ -348,18 +417,21 @@ export function recoveryRoutes(app: FastifyInstance): void {
   })
 
   /** A new password; needs the current second factor when TOTP is enrolled. Other sessions of the account end. */
-  app.post('/recovery/password', PUBLIC, async (request): Promise<RecoverySession> => {
+  app.post('/recovery/password', PUBLIC, async (request, reply): Promise<RecoverySession> => {
     const s = await signed(request, { allowRestricted: true })
     const body = PasswordChangeBody.parse(request.body)
     const issue = passwordIssue(s.admin.username, body.newPassword)
     if (issue) throw weakPassword(issue)
-    await secondFactor(s, body)
+    await secondFactor(request, reply, s, body)
     await changePassword(app.deps.db, s.admin.id, body.newPassword, nowOf(app))
     await app.deps.db
       .delete(localSessions)
       .where(and(eq(localSessions.adminId, s.admin.id), ne(localSessions.idHash, s.session.row.idHash)))
     await used(request, s.admin, s.store, 'break_glass.password', 'เปลี่ยนรหัสผ่านบัญชีฉุกเฉิน')
-    return sessionBody(request, await signed(request, { allowRestricted: true }))
+    const after = await signed(request, { allowRestricted: true })
+    const codes = await codesIfResetFinished(s, after)
+    if (codes) reply.header('cache-control', 'no-store')
+    return sessionBody(request, after, codes)
   })
 
   const sealAad = (sess: ActiveSession) => `${PENDING_TOTP_AAD}:${sess.row.idHash.toString('hex')}`
@@ -377,25 +449,32 @@ export function recoveryRoutes(app: FastifyInstance): void {
     return { uri: totpUri(secret, s.admin.username), secret }
   })
 
-  /** Switches to the new seed once a code of it verifies; replacing an enrolled seed needs the current factor. */
-  app.post('/recovery/totp/confirm', PUBLIC, async (request): Promise<RecoverySession> => {
+  /**
+   * Switches to the new seed once a code of it verifies; replacing an enrolled seed needs the current factor. Every
+   * session of the account ends and this browser gets a new one (rotation after the TOTP step, 8.3).
+   */
+  app.post('/recovery/totp/confirm', PUBLIC, async (request, reply): Promise<RecoverySession> => {
     const s = await signed(request, { allowRestricted: true })
+    takeLimit(stepUpLimit, s.admin.id, reply)
     const body = TotpConfirmBody.parse(request.body)
     const data = s.session.row.data as SessionData
     const seed = data.totpSeed ? s.store.open(sealAad(s.session), Buffer.from(data.totpSeed.blob, 'base64'), data.totpSeed.keyId) : null
     if (!seed) throw invalidState('no_enrolment')
     const step = verifyTotp(seed, body.code, { now: nowOf(app).getTime() })
     if (step === null) throw invalidCode()
-    await secondFactor(s, { totpCode: body.currentTotpCode, recoveryCode: body.recoveryCode })
+    await secondFactor(request, reply, s, { totpCode: body.currentTotpCode, recoveryCode: body.recoveryCode })
     try {
       await setTotp(app.deps.db, s.store, s.admin.id, seed, step)
     } catch (err) {
       if (err instanceof MasterKeyUnavailable) throw secretsUnavailable()
       throw err
     }
-    const { totpSeed: _used, ...rest } = data
-    await updateSessionData(app.deps.db, s.session.row.idHash, rest)
+    await revokeSessions(app.deps.db, { adminId: s.admin.id })
+    const { value, row } = await createSession(app.deps.db, 'recovery', request, { adminId: s.admin.id, now: nowOf(app) })
+    setSessionCookie(reply, 'recovery', value, isHttps(request))
     await used(request, s.admin, s.store, 'break_glass.totp', 'ตั้งค่า TOTP ของบัญชีฉุกเฉินใหม่')
-    return sessionBody(request, await signed(request, { allowRestricted: true }))
+    const admin = (await adminById(app.deps.db, s.admin.id))!
+    const after: Signed = { session: { row, value }, admin, store: s.store, restricted: restrictedOf(s.store, admin, request.hostname), host: request.hostname }
+    return sessionBody(request, after, await codesIfResetFinished(s, after))
   })
 }

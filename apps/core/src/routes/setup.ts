@@ -76,7 +76,7 @@ export function setupRoutes(app: FastifyInstance): void {
       detectedUrl: `${request.protocol}://${request.host}`,
       https: isHttps(request),
       session: !!mine,
-      totpRequired: totpRequired(s),
+      totpRequired: totpRequired(s, request.hostname),
       steps: { admin: (await firstAdmin(app.deps.db)) ? 'done' : 'todo' },
     }
   })
@@ -148,7 +148,7 @@ export function setupRoutes(app: FastifyInstance): void {
       const step = verifyTotp(seed, body.totpCode, { now: now.getTime() })
       if (step === null) throw invalidCode()
       totp = { seed, step }
-    } else if (totpRequired(s)) {
+    } else if (totpRequired(s, request.hostname)) {
       throw secondFactorRequired()
     }
     let created
@@ -158,14 +158,21 @@ export function setupRoutes(app: FastifyInstance): void {
       if (err instanceof MasterKeyUnavailable) throw secretsUnavailable()
       throw err
     }
-    const { totpSeed: _used, ...rest } = data
-    await updateSessionData(app.deps.db, sess.row.idHash, rest)
+    // Rotated after the TOTP step (8.3): the old cookie ends, this browser gets a new one (and a new CSRF token).
+    await deleteSession(app.deps.db, sess.row.idHash)
+    const next = await createSession(app.deps.db, 'setup', request, { now })
+    setSessionCookie(reply, 'setup', next.value, isHttps(request))
     await s.audit({
       action: 'break_glass.created',
       actor: { label: 'setup', source: 'setup', ...whereFrom(request) },
       newValue: { username: created.admin.username, totp: created.admin.totpEnabled },
     })
     reply.header('cache-control', 'no-store')
-    return { username: created.admin.username, totpEnabled: created.admin.totpEnabled, recoveryCodes: created.codes }
+    return {
+      username: created.admin.username,
+      totpEnabled: created.admin.totpEnabled,
+      recoveryCodes: created.codes,
+      session: sessionView(next.row, next.value, 'setup', !isHttps(request)),
+    }
   })
 }

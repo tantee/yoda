@@ -82,6 +82,7 @@ services:
       YODA_BOOTSTRAP_FILE: /var/lib/yoda/bootstrap.env
       YODA_MASTER_KEY_FILE: /var/lib/yoda/core/master-key
       YODA_SETTINGS_IMPORT: ${YODA_SETTINGS_IMPORT:-}
+      YODA_TRUSTED_PROXY_HOPS: ${YODA_TRUSTED_PROXY_HOPS:-}
       # Optional: unset until sign-in is set up (setup mode refuses every token with `not_configured`).
       OIDC_ISSUER: ${OIDC_ISSUER:-}
       OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-yoda-portal}

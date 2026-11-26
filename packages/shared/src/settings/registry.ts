@@ -109,6 +109,8 @@ const DEFS = [
   def('security.bootstrapFile', text, { category: 'security', envName: 'YODA_BOOTSTRAP_FILE' }, boot),
   // Dev only: setup counts as done without the wizard (§13.3).
   def('security.devSkipSetup', bool, { category: 'security', envName: 'YODA_DEV_SKIP_SETUP' }, { ...boot, default: false }),
+  // How many proxies in front of core are believed for the client address (1: the portal; 2: behind a reverse proxy).
+  def('security.trustedProxyHops', int(1, 5), { category: 'security', envName: 'YODA_TRUSTED_PROXY_HOPS' }, { ...boot, default: 1 }),
   def('security.settingsImport', bool, { category: 'security', envName: 'YODA_SETTINGS_IMPORT' }, { ...boot, default: true }),
   // Dev only: the settings tests may connect to loopback (the fakes on 127.0.0.1).
   def('security.outboundAllowLoopback', bool, { category: 'security', envName: 'YODA_OUTBOUND_ALLOW_LOOPBACK' }, { ...boot, default: false }),

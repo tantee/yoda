@@ -29,20 +29,32 @@ export function lockoutMs(failures: number): number {
   return Math.min(MAX_LOCK_MS, 60_000 * 2 ** (failures - FAILURES_BEFORE_LOCK))
 }
 
-/** localhost, 127.0.0.0/8 or ::1 (D3: TOTP is optional only there). */
-export function isLocalhostUrl(url: string | undefined): boolean {
-  if (!url) return true
+/** A host name (no port) that is localhost, in 127.0.0.0/8 or ::1. */
+export function isLocalhostHost(host: string | null | undefined): boolean {
+  if (!host) return false
+  const h = host.replace(/^\[|\]$/g, '').toLowerCase()
+  return h === 'localhost' || h.endsWith('.localhost') || /^127\.\d+\.\d+\.\d+$/.test(h) || h === '::1'
+}
+
+/** The URL's host is localhost (D3); a missing or unparseable URL is not. */
+export function isLocalhostUrl(url: string | undefined | null): boolean {
+  if (!url) return false
   try {
-    const h = new URL(url).hostname.replace(/^\[|\]$/g, '').toLowerCase()
-    return h === 'localhost' || h.endsWith('.localhost') || /^127\.\d+\.\d+\.\d+$/.test(h) || h === '::1'
+    return isLocalhostHost(new URL(url).hostname)
   } catch {
     return false
   }
 }
 
-/** D3: TOTP is required unless the public URL is localhost. */
-export function totpRequired(settings: SettingsStore): boolean {
-  return !isLocalhostUrl(settings.get('org.publicUrl'))
+/**
+ * D3, failing closed: TOTP is optional only when the public URL is set (not the registry default) to localhost AND
+ * the request itself came to a localhost host name (`request.hostname`, from X-Forwarded-Host through the portal).
+ * Without a request (the CLI), it is required.
+ */
+export function totpRequired(settings: SettingsStore, requestHost: string | null): boolean {
+  const info = settings.info('org.publicUrl')
+  const url = info.source === 'env' || info.source === 'db' ? (info.value as string | undefined) : undefined
+  return !(isLocalhostUrl(url) && isLocalhostHost(requestHost))
 }
 
 export const totpAad = (adminId: string) => `local_admin.totp:${adminId}`
@@ -77,12 +89,12 @@ export async function codesLeft(db: Db, adminId: string): Promise<number> {
   return r?.n ?? 0
 }
 
-export async function adminView(db: Db, settings: SettingsStore, admin: AdminRow): Promise<BreakGlassView> {
+export async function adminView(db: Db, settings: SettingsStore, admin: AdminRow, requestHost: string | null): Promise<BreakGlassView> {
   return {
     username: admin.username,
     totpEnabled: admin.totpEnabled,
     mustChangePassword: admin.mustChangePassword,
-    mustEnrolTotp: !admin.totpEnabled && totpRequired(settings),
+    mustEnrolTotp: !admin.totpEnabled && totpRequired(settings, requestHost),
     recoveryCodesLeft: await codesLeft(db, admin.id),
   }
 }
@@ -165,6 +177,11 @@ export async function useRecoveryCode(db: Db, settings: SettingsStore, adminId: 
   return rows.length ? 'ok' : 'invalid'
 }
 
+/** Resets the failure count after a successful second-factor check. */
+export async function clearFailures(db: Db, adminId: string): Promise<void> {
+  await db.update(localAdmins).set({ failedAttempts: 0, lockedUntil: null }).where(eq(localAdmins.id, adminId))
+}
+
 /** Checks the current second factor (TOTP code or recovery code) of an admin with TOTP enrolled. */
 export async function checkSecondFactor(
   db: Db,
@@ -181,7 +198,13 @@ export async function checkSecondFactor(
 
 export type SignInResult =
   | { ok: true; admin: AdminRow; factor: 'totp' | 'recovery_code' | 'password' }
-  | { ok: false; code: 'invalid_credentials' | 'locked' | 'second_factor_required' | 'invalid_code' | 'unavailable'; retryAfter?: number }
+  | {
+      ok: false
+      code: 'invalid_credentials' | 'locked' | 'second_factor_required' | 'invalid_code' | 'unavailable'
+      retryAfter?: number
+      /** This failure locked the (existing) account: the admins are told. */
+      lockedNow?: AdminRow
+    }
 
 /**
  * Failed attempts of usernames that do not exist, in memory (one core process), so an unknown name locks out
@@ -202,9 +225,10 @@ export class UnknownUserGuard {
   }
 }
 
-async function recordFailure(db: Db, admin: AdminRow, now: Date): Promise<void> {
+/** Counts a failed password or second-factor check; true when it (re)locks the account (five or more). */
+export async function recordFailure(db: Db, admin: Pick<AdminRow, 'id'>, now: Date): Promise<boolean> {
   // One statement, so concurrent failures all count.
-  await db
+  const [row] = await db
     .update(localAdmins)
     .set({
       failedAttempts: sql`${localAdmins.failedAttempts} + 1`,
@@ -213,6 +237,13 @@ async function recordFailure(db: Db, admin: AdminRow, now: Date): Promise<void> 
         else ${localAdmins.lockedUntil} end`,
     })
     .where(eq(localAdmins.id, admin.id))
+    .returning({ failedAttempts: localAdmins.failedAttempts })
+  return (row?.failedAttempts ?? 0) >= FAILURES_BEFORE_LOCK
+}
+
+/** Milliseconds the account stays locked, 0 when it is not. */
+export function lockedForMs(admin: Pick<AdminRow, 'lockedUntil'>, now: Date): number {
+  return admin.lockedUntil ? Math.max(0, admin.lockedUntil.getTime() - now.getTime()) : 0
 }
 
 /** Password, then the second factor when TOTP is enrolled. A locked account is refused before any check. */
@@ -225,12 +256,12 @@ export async function signIn(
   const username = input.username.trim().toLowerCase()
   const now = input.now
   const admin = await findAdmin(db, username)
-  const lockedMs = admin ? (admin.lockedUntil ? admin.lockedUntil.getTime() - now.getTime() : 0) : guard.lockedFor(username, now.getTime())
+  const lockedMs = admin ? lockedForMs(admin, now) : guard.lockedFor(username, now.getTime())
   if (lockedMs > 0) return { ok: false, code: 'locked', retryAfter: Math.ceil(lockedMs / 1000) }
   const passwordOk = await verifyPassword(admin?.passwordHash ?? null, input.password)
   if (!admin || !passwordOk) {
-    if (admin) await recordFailure(db, admin, now)
-    else guard.fail(username, now.getTime())
+    if (admin && (await recordFailure(db, admin, now))) return { ok: false, code: 'invalid_credentials', lockedNow: admin }
+    if (!admin) guard.fail(username, now.getTime())
     return { ok: false, code: 'invalid_credentials' }
   }
   let factor: 'totp' | 'recovery_code' | 'password' = 'password'
@@ -239,8 +270,8 @@ export async function signIn(
     if (r === 'missing') return { ok: false, code: 'second_factor_required' }
     if (r === 'unavailable') return { ok: false, code: 'unavailable' }
     if (r === 'invalid') {
-      await recordFailure(db, admin, now)
-      return { ok: false, code: 'invalid_code' }
+      const lockedNow = await recordFailure(db, admin, now)
+      return { ok: false, code: 'invalid_code', ...(lockedNow ? { lockedNow: admin } : {}) }
     }
     factor = input.totpCode ? 'totp' : 'recovery_code'
   }
@@ -289,6 +320,8 @@ export async function resetAdmin(db: Db, admin: AdminRow, now: Date): Promise<st
       passwordChangedAt: now,
     })
     .where(eq(localAdmins.id, admin.id))
+  // The old codes may be what was lost or leaked; new ones come when the reset is finished at /recovery.
+  await db.delete(localRecoveryCodes).where(eq(localRecoveryCodes.adminId, admin.id))
   return password
 }
 

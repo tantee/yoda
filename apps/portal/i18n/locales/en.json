@@ -1908,6 +1908,9 @@
         },
         "outboundAllowLoopback": {
           "label": "Allow tests to loopback (development only)"
+        },
+        "trustedProxyHops": {
+          "label": "Trusted proxies in front of core (X-Forwarded-For hops)"
         }
       },
       "oidc": {

@@ -108,14 +108,18 @@ export const LOGGER_OPTIONS = {
 
 /**
  * The client address and scheme come from X-Forwarded-For / -Proto only when the direct peer is internal (the
- * portal's /api proxy on the compose network, or loopback) and only one hop deep: the portal appends the address
- * it saw, so a client cannot choose its own address for the rate limits and the audit log. Behind a further
- * reverse proxy, that proxy's address is what counts.
+ * portal's /api proxy on the compose network, or loopback), and only `hops` entries deep
+ * (YODA_TRUSTED_PROXY_HOPS): each trusted proxy appends the address it saw, so with 1 (the portal alone) the
+ * address the portal saw counts, with 2 (a reverse proxy in front of the portal) the one the reverse proxy saw.
+ * Entries further left are the client's own and never believed, so it cannot choose its address for the rate
+ * limits, the audit log and the alerts.
  */
-export const TRUST_PROXY = (address: string, hop: number): boolean => hop === 0 && isInternalAddress(address)
+export function trustProxy(hops = 1): (address: string, hop: number) => boolean {
+  return (address, hop) => (hop === 0 ? isInternalAddress(address) : hop < hops)
+}
 
 export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
-  const app = Fastify({ logger: process.env.VITEST ? false : LOGGER_OPTIONS, trustProxy: TRUST_PROXY })
+  const app = Fastify({ logger: process.env.VITEST ? false : LOGGER_OPTIONS, trustProxy: trustProxy(deps.config.trustedProxyHops ?? 1) })
   app.decorate('deps', deps)
 
   app.setErrorHandler((err, _req, reply) => {

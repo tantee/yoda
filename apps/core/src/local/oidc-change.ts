@@ -1,6 +1,6 @@
 import { createHash, timingSafeEqual } from 'node:crypto'
 import { OidcPending, OidcRollback, type OidcCurrent, type OidcValues, type SettingKey, type SettingsTestCheck } from '@yoda/shared'
-import { eq, sql } from 'drizzle-orm'
+import { and, eq, sql } from 'drizzle-orm'
 import { createLocalJWKSet, jwtVerify, type JSONWebKeySet } from 'jose'
 import type { AppDeps } from '../app.js'
 import { TokenClaims } from '../auth/people.js'
@@ -255,9 +255,29 @@ export async function finishTestSignIn(
   return { ok, checks, username }
 }
 
+/**
+ * The stored pending change is still the one `pending` describes (same staging time and values), so a test or an
+ * apply never lands on values staged meanwhile by another session.
+ */
+const samePending = (pending: OidcPending) =>
+  and(
+    eq(setupState.id, 1),
+    sql`${setupState.oidcPending}->>'stagedAt' = ${pending.stagedAt}`,
+    sql`${setupState.oidcPending}->'values' = ${JSON.stringify(pending.values)}::jsonb`,
+  )
+
+/** Pending changed between reading it and writing (restaged or discarded by another session). */
+export class PendingChangedError extends Error {
+  constructor() {
+    super('the pending sign-in change changed meanwhile')
+    this.name = 'PendingChangedError'
+  }
+}
+
 export async function markTested(db: Db, pending: OidcPending, username: string, now: Date): Promise<OidcPending> {
   const next: OidcPending = { ...pending, testedAt: now.toISOString(), testedUsername: username }
-  await db.update(setupState).set({ oidcPending: next }).where(eq(setupState.id, 1))
+  const rows = await db.update(setupState).set({ oidcPending: next }).where(samePending(pending)).returning({ id: setupState.id })
+  if (!rows.length) throw new PendingChangedError()
   return next
 }
 
@@ -281,9 +301,21 @@ export async function applyPending(
   now: Date,
 ): Promise<OidcRollback> {
   const previous = currentOidc(deps.config, deps.settings)
-  await writeOidc(deps.settings, pending.values, actor)
   const rollback: OidcRollback = { values: previous, appliedAt: now.toISOString(), until: new Date(now.getTime() + ROLLBACK_MS).toISOString() }
-  await deps.db.update(setupState).set({ oidcPending: null, oidcRollback: rollback }).where(eq(setupState.id, 1))
+  // Claim the tested pending change first (one conditional update): a change restaged since the test is refused,
+  // and two applies cannot both win. Put back if writing the settings fails.
+  const [claimed] = await deps.db
+    .update(setupState)
+    .set({ oidcPending: null, oidcRollback: rollback })
+    .where(and(samePending(pending), sql`${setupState.oidcPending}->>'testedAt' = ${pending.testedAt ?? ''}`))
+    .returning({ id: setupState.id })
+  if (!claimed) throw new PendingChangedError()
+  try {
+    await writeOidc(deps.settings, pending.values, actor)
+  } catch (err) {
+    await deps.db.update(setupState).set({ oidcPending: pending }).where(eq(setupState.id, 1))
+    throw err
+  }
   await deps.settings.audit({ action: 'oidc.apply_pending', actor, newValue: { issuer: pending.values.issuer, clientId: pending.values.clientId, jwksUrl: pending.values.jwksUrl, testedUsername: pending.testedUsername } })
   return rollback
 }

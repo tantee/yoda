@@ -62,6 +62,11 @@ export type Config = {
   telegramApiUrl: string
   /** Dev only: report setup as done without the wizard (YODA_DEV_SKIP_SETUP). */
   devSkipSetup?: boolean
+  /**
+   * Proxies in front of core whose X-Forwarded-For entry is believed (YODA_TRUSTED_PROXY_HOPS, default 1: the
+   * portal's /api proxy). Decides the client address for rate limits, the audit log and alerts.
+   */
+  trustedProxyHops?: number
 }
 
 const modelId = z.string().regex(/^(anthropic|openai):.+$/, 'must be provider:model with provider anthropic or openai')
@@ -120,6 +125,8 @@ export const envSchema = z.object({
   YODA_BOOTSTRAP_FILE: optional(z.string()),
   // Dev only: setup counts as done without the wizard, so the env-only dev flow stays the default.
   YODA_DEV_SKIP_SETUP: z.preprocess((v) => (v === '' ? undefined : v), z.enum(['true', 'false']).default('false')),
+  // Proxies in front of core whose X-Forwarded-For entry counts: 1 = the portal only, 2 = portal behind a reverse proxy.
+  YODA_TRUSTED_PROXY_HOPS: z.preprocess((v) => (v === '' ? undefined : v), z.coerce.number().int().min(1).max(5).default(1)),
   YODA_SETTINGS_IMPORT: z.preprocess((v) => (v === '' ? undefined : v), z.enum(['true', 'false']).default('true')),
   // Dev and tests only: the settings tests may reach loopback (the fakes). Read by server.ts, not mapped into Config.
   YODA_OUTBOUND_ALLOW_LOOPBACK: z.preprocess((v) => (v === '' ? undefined : v), z.enum(['true', 'false']).default('false')),
@@ -179,6 +186,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     telegramWebhookSecret: e.TELEGRAM_WEBHOOK_SECRET,
     telegramApiUrl: e.TELEGRAM_API_URL.replace(/\/+$/, ''),
     devSkipSetup: e.YODA_DEV_SKIP_SETUP === 'true',
+    trustedProxyHops: e.YODA_TRUSTED_PROXY_HOPS,
   }
 }
 

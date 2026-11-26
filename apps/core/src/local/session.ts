@@ -22,6 +22,8 @@ export type SessionRow = typeof localSessions.$inferSelect
 /** Session state kept server-side: a TOTP seed being enrolled (sealed), an OIDC test sign-in in flight. */
 export type SessionData = {
   totpSeed?: { blob: string; keyId: string }
+  /** Wrong step-up codes in this session (the fifth ends it). */
+  stepUpFailures?: number
   oidc?: { state: string; nonce: string; verifier: string; redirectUri: string; startedAt: string; valuesHash: string }
 }
 

@@ -84,6 +84,8 @@ export const SetupAdminResult = z.object({
   totpEnabled: z.boolean(),
   /** 10 single-use codes, shown this once. */
   recoveryCodes: z.array(z.string()),
+  /** The setup session is rotated here: the new cookie is set, and this is its CSRF token. */
+  session: LocalSession,
 })
 export type SetupAdminResult = z.infer<typeof SetupAdminResult>
 
@@ -111,6 +113,8 @@ export const RecoverySession = LocalSession.extend({
   admin: BreakGlassView,
   /** Only the password and TOTP calls are open until the reset is finished. */
   restricted: z.boolean(),
+  /** New recovery codes, shown once, when this call finished a reset from the install host. */
+  recoveryCodes: z.array(z.string()).optional(),
 })
 export type RecoverySession = z.infer<typeof RecoverySession>
 

@@ -163,6 +163,7 @@ Settings and secrets (installer proposal §3.5, §6):
 | `YODA_BOOTSTRAP_FILE` | The bootstrap volume's `bootstrap.env`: fills `DATABASE_URL` and the S3 keys when env leaves them empty (core, `migrate`, `backup`) | fixed (`/var/lib/yoda/bootstrap.env`) | `/var/lib/yoda/bootstrap.env` |
 | `YODA_DEV_SKIP_SETUP` | Dev only: setup counts as done without the setup wizard. Never set in production | optional (`false`) | `true` |
 | `YODA_SETTINGS_IMPORT` | `false` = env secrets are not copied into the database on start (other values still are) | optional (`true`) | `true` |
+| `YODA_TRUSTED_PROXY_HOPS` | How many proxies in front of core add a believed `X-Forwarded-For` entry; decides the client address in rate limits, the audit log and break-glass alerts. `1` = the portal only (the portal published directly, or reached through an SSH tunnel). Set `2` when a reverse proxy (nginx, Caddy, a load balancer) sits in front of the portal and adds `X-Forwarded-For`; otherwise every browser shows as the reverse proxy's address. Never higher than the proxies really there: a client could then choose its own address | optional (`1`) | `2` |
 | `YODA_OUTBOUND_ALLOW_LOOPBACK` | Dev only: the admin settings tests may connect to loopback (the dev fakes). Never set in production | optional (`false`) | `false` |
 
 In production core reads the master key from the bootstrap volume (section 4a): the `init` service generates it,

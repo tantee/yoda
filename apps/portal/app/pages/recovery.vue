@@ -89,6 +89,7 @@ async function changePassword() {
       method: 'POST',
       body: { newPassword: pw.newPassword, ...(pw.totpCode ? { totpCode: pw.totpCode } : {}) },
     })
+    if (session.value?.recoveryCodes) newCodes.value = session.value.recoveryCodes
     pw.newPassword = ''
     pw.confirm = ''
     pw.totpCode = ''
@@ -112,6 +113,7 @@ async function confirmTotp() {
       method: 'POST',
       body: { code: totp.code, ...(totp.currentTotpCode ? { currentTotpCode: totp.currentTotpCode } : {}) },
     })
+    if (session.value?.recoveryCodes) newCodes.value = session.value.recoveryCodes
     enrolment.value = null
     totp.code = ''
     totp.currentTotpCode = ''
