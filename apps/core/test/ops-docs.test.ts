@@ -50,6 +50,14 @@ describe('docs/operations.md environment table', () => {
     expect(composeKeys().filter((k) => !tableNames.has(k))).toEqual([])
   })
 
+  it('passes every portal runtime key to the prod portal service', () => {
+    const src = read('docker-compose.prod.yml')
+    const service = /^  portal:\n([\s\S]*?)(?=^  \S|(?![\s\S]))/m.exec(src)?.[1] ?? ''
+    const env = new Set([...service.matchAll(/^\s+([A-Z][A-Z0-9_]*):/gm)].map((m) => m[1]!))
+    expect(env).toContain('NUXT_CORE_URL')
+    expect(portalKeys().filter((k) => !env.has(k))).toEqual([])
+  })
+
   it('lists nothing the code or compose does not read', () => {
     const known = new Set([...coreKeys, ...portalKeys(), ...composeKeys()])
     expect([...tableNames].filter((k) => !known.has(k))).toEqual([])
