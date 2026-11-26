@@ -5,6 +5,12 @@ export default defineNuxtConfig({
   compatibilityDate: '2025-07-15',
   ssr: false,
   devtools: { enabled: false },
+  app: {
+    head: {
+      // The Thai 400 face is on every page (proposal §3.2: preload that one file only).
+      link: [{ rel: 'preload', href: '/fonts/ibm-plex-sans-thai-thai-400-normal.woff2', as: 'font', type: 'font/woff2', crossorigin: '' }],
+    },
+  },
   modules: [
     '@nuxtjs/i18n',
     // Tree-shaken Vuetify: only the components and directives the templates use are bundled.

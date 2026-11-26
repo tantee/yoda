@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" width="40" height="40">
+  <!-- Placeholder mark (a plain Y tile, like the portal's AppMark). Task 9 replaces this file with the original mark. -->
+  <rect width="40" height="40" rx="9" fill="#FFFFFF"/>
+  <path d="M12 11 L20 21 L28 11 M20 21 V30" fill="none" stroke="#0B2545" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

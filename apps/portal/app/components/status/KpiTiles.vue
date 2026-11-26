@@ -43,7 +43,7 @@ const percent = computed(() => (props.budget === undefined ? null : spendPercent
         <span class="text-h5 tabular-nums">{{ usd(spend) }}</span>
         <span v-if="budget != null" class="text-body-2 text-medium-emphasis ml-1">{{ t('status.kpi.ofBudget', { budget: usd(budget) }) }}</span>
       </div>
-      <v-progress-linear v-if="percent !== null && budget != null" :model-value="percent" :color="usageColor(percent)" height="6" rounded class="mt-2" data-testid="ai-budget-bar" />
+      <v-progress-linear v-if="percent !== null && budget != null" :model-value="percent" :color="usageColor(percent)" height="6" rounded class="mt-2" :aria-label="t('status.totals.aiSpend')" data-testid="ai-budget-bar" />
       <div v-else-if="budget === null" class="kpi__sub text-medium-emphasis">{{ t('status.kpi.noBudget') }}</div>
     </v-card>
   </div>

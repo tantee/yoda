@@ -89,6 +89,7 @@ async function submit() {
     </fieldset>
     <v-textarea
       v-model="decision"
+      autofocus
       :label="t('discussions.decide.textRequired')"
       :hint="t('discussions.decide.textHint')"
       persistent-hint

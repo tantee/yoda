@@ -78,6 +78,7 @@ async function assign() {
     <template #title>{{ t('task.assignTitle', { title: localized(task.title, locale) }) }}</template>
     <v-autocomplete
       v-model="chosen"
+      autofocus
       :items="items"
       :label="t('task.assignee')"
       prepend-inner-icon="mdi-account-search-outline"

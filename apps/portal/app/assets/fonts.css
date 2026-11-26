@@ -1,9 +1,16 @@
-/* Self-hosted IBM Plex (proposal §3.2): Thai glyphs from Plex Sans Thai, Latin from Plex Sans. */
-@import '@fontsource/ibm-plex-sans-thai/thai-400.css';
+/* Self-hosted IBM Plex (proposal §3.2): Thai glyphs from Plex Sans Thai, Latin from Plex Sans. Weights 400/500/600
+   (bold text renders at 600). The Thai 400 file is served from public/fonts (a copy of the @fontsource file, checked
+   by test/fonts.test.ts) so nuxt.config.ts can preload it at a fixed URL. */
 @import '@fontsource/ibm-plex-sans-thai/thai-500.css';
 @import '@fontsource/ibm-plex-sans-thai/thai-600.css';
-@import '@fontsource/ibm-plex-sans-thai/thai-700.css';
 @import '@fontsource/ibm-plex-sans/latin-400.css';
 @import '@fontsource/ibm-plex-sans/latin-500.css';
 @import '@fontsource/ibm-plex-sans/latin-600.css';
-@import '@fontsource/ibm-plex-sans/latin-700.css';
+
+@font-face {
+  font-family: 'IBM Plex Sans Thai';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url(/fonts/ibm-plex-sans-thai-thai-400-normal.woff2) format('woff2');
+}

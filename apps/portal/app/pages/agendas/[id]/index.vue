@@ -81,10 +81,15 @@ function move(i: number, to: number) {
   if (to < 0 || to >= ids.value.length || to === i) return
   return putItems(moveItem(ids.value, i, to))
 }
+// Drag starts only from the handle (text and links in the row stay selectable); the whole row is the drag image.
 function onDragStart(i: number, e: DragEvent) {
   dragFrom.value = i
   e.dataTransfer?.setData('text/plain', String(i))
-  if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move'
+  if (e.dataTransfer) {
+    e.dataTransfer.effectAllowed = 'move'
+    const row = (e.currentTarget as HTMLElement | null)?.closest('li')
+    if (row) e.dataTransfer.setDragImage(row, 16, 16)
+  }
 }
 function onDrop(i: number) {
   const from = dragFrom.value
@@ -167,15 +172,20 @@ async function deleteAgenda() {
               :key="it.discussionId"
               class="agenda-item"
               :class="{ 'agenda-item--over': dragOver === i && dragFrom !== i, 'agenda-item--dragging': dragFrom === i }"
-              :draggable="canEdit && !busy"
               data-testid="agenda-item"
-              @dragstart="onDragStart(i, $event)"
               @dragover.prevent="dragOver = i"
               @dragleave="dragOver = dragOver === i ? null : dragOver"
               @drop.prevent="onDrop(i)"
-              @dragend="onDragEnd"
             >
-              <v-icon v-if="canEdit" icon="mdi-drag-vertical" class="agenda-item__handle" aria-hidden="true" />
+              <span
+                v-if="canEdit"
+                class="agenda-item__handle"
+                :draggable="!busy"
+                aria-hidden="true"
+                data-testid="agenda-drag-handle"
+                @dragstart="onDragStart(i, $event)"
+                @dragend="onDragEnd"
+              ><v-icon icon="mdi-drag-vertical" /></span>
               <span class="agenda-item__n tabular-nums">{{ i + 1 }}</span>
               <div class="agenda-item__main">
                 <NuxtLink :to="`/discussions/${it.discussionId}`" class="row-link">{{ it.question }}</NuxtLink>
@@ -263,10 +273,10 @@ async function deleteAgenda() {
 .agenda-items { list-style: none; margin: 0; padding: 0; }
 .agenda-item { display: flex; align-items: center; gap: 8px; padding: 10px 8px 10px 12px; border-top: 1px solid rgba(var(--v-border-color), var(--v-border-opacity)); background: rgb(var(--v-theme-surface)); }
 .agenda-item:first-child { border-top: 0; }
-.agenda-item[draggable='true'] { cursor: grab; }
+.agenda-item__handle[draggable='true'] { cursor: grab; }
 .agenda-item--dragging { opacity: .5; }
 .agenda-item--over { box-shadow: inset 0 2px 0 rgb(var(--v-theme-primary)); }
-.agenda-item__handle { flex: none; color: rgb(var(--v-theme-neutral-dot)); }
+.agenda-item__handle { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 36px; color: rgb(var(--v-theme-neutral-dot)); }
 .agenda-item__n { flex: none; width: 28px; height: 28px; display: grid; place-items: center; border-radius: 50%; background: rgb(var(--v-theme-primary-soft)); color: rgb(var(--v-theme-on-primary-soft)); font-weight: 600; font-size: .875rem; }
 .agenda-item__main { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
 .agenda-item__meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin-top: 2px; }

@@ -69,7 +69,7 @@ const { date, dateShort } = useDateFormat()
 .status-board__col { background: rgb(var(--v-theme-surface-light)); border-radius: 8px; padding: 8px; min-width: 0; display: flex; flex-direction: column; gap: 8px; min-height: 120px; }
 .status-board__head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 4px 0; }
 .status-board__head h3 { margin: 0; min-width: 0; }
-.status-board__empty { color: #6B7789; text-align: center; margin: 12px 0 0; }
+.status-board__empty { color: #556275; text-align: center; margin: 12px 0 0; }
 .board-card {
   display: block; background: rgb(var(--v-theme-surface)); border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity));
   border-radius: 8px; padding: 10px 12px; color: inherit; text-decoration: none; min-width: 0;

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { ChannelName, NotificationKind, type MyNotificationPrefs } from '@yoda/shared'
-import { channelColumns, channelKey, codeLeftPercent, columnNoteKey, countdown, isChecked, kindKey, msLeft, toggleChannel } from '../app/utils/notificationSettings'
+import { cellKey, channelColumns, channelKey, codeLeftPercent, columnNoteKey, countdown, isChecked, kindKey, msLeft, serialQueue, toggleChannel } from '../app/utils/notificationSettings'
 import { errorKey } from '../app/utils/errors'
 import { navItemsFor } from '../app/utils/nav'
 
@@ -98,5 +98,36 @@ describe('codeLeftPercent', () => {
     expect(codeLeftPercent('2026-11-26T00:07:30Z', now)).toBe(50)
     expect(codeLeftPercent('2026-11-25T23:59:00Z', now)).toBe(0)
     expect(codeLeftPercent('2026-11-26T01:00:00Z', now)).toBe(100)
+  })
+})
+
+describe('grid saves', () => {
+  it('names one cell per kind and channel', () => {
+    expect(cellKey('request_update', 'email')).toBe('request_update:email')
+    expect(cellKey('request_update', 'line')).not.toBe(cellKey('secretary_message', 'line'))
+  })
+  it('runs saves in click order, one at a time, and counts the unfinished ones', async () => {
+    const q = serialQueue()
+    const log: string[] = []
+    let release!: () => void
+    const first = q.run(() => new Promise<string>((r) => { release = () => { log.push('first'); r('a') } }))
+    const second = q.run(async () => { log.push('second'); return 'b' })
+    expect(q.pending).toBe(2)
+    await Promise.resolve()
+    expect(log).toEqual([])
+    release()
+    expect(await first).toBe('a')
+    expect(q.pending).toBe(1)
+    expect(await second).toBe('b')
+    expect(log).toEqual(['first', 'second'])
+    expect(q.pending).toBe(0)
+  })
+  it('keeps going after a failed save', async () => {
+    const q = serialQueue()
+    const failed = q.run(async () => { throw new Error('500') })
+    const next = q.run(async () => 'ok')
+    await expect(failed).rejects.toThrow('500')
+    expect(await next).toBe('ok')
+    expect(q.pending).toBe(0)
   })
 })

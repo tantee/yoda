@@ -56,7 +56,7 @@ const more = computed(() => props.project.reasons.length - 1)
         <div class="text-caption text-medium-emphasis">{{ t('status.card.aiSpend') }}</div>
         <template v-if="percent !== null">
           <div class="text-body-2 tabular-nums">{{ t('status.card.ofBudget', { spend: usd(project.aiSpendUsd), budget: usd(project.aiBudgetUsd ?? 0) }) }}</div>
-          <v-progress-linear :model-value="percent" :color="usageColor(percent)" bg-color="neutral-soft" bg-opacity="1" height="6" rounded class="mt-1" data-testid="ai-budget-bar" />
+          <v-progress-linear :model-value="percent" :color="usageColor(percent)" bg-color="neutral-soft" bg-opacity="1" height="6" rounded class="mt-1" :aria-label="t('status.card.aiSpend')" data-testid="ai-budget-bar" />
         </template>
         <div v-else class="text-body-2 text-medium-emphasis tabular-nums">{{ t('status.card.noBudgetShort', { amount: usd(project.aiSpendUsd) }) }}</div>
       </div>

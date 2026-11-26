@@ -137,7 +137,7 @@ async function confirmEntry() {
     </div>
     <div class="entry-form">
       <v-select v-if="isNew" v-model="type" :label="t('knowledge.type')" :items="TYPES.map(x => ({ title: t(`knowledge.types.${x}`), value: x }))" data-testid="entry-type" />
-      <v-text-field v-model="title" :readonly="!canEdit" :label="t('knowledge.entryTitle')" maxlength="300" data-testid="entry-title" />
+      <v-text-field v-model="title" :autofocus="canEdit" :readonly="!canEdit" :label="t('knowledge.entryTitle')" maxlength="300" data-testid="entry-title" />
       <div>
         <v-tabs v-model="bodyTab" density="compact" color="primary" class="mb-2">
           <v-tab value="edit">{{ t('knowledge.bodyEdit') }}</v-tab>

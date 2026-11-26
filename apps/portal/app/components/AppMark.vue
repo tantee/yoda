@@ -10,6 +10,6 @@ withDefaults(defineProps<{ size?: number }>(), { size: 30 })
 <style scoped>
 .app-mark {
   display: inline-grid; place-items: center; flex: none; border-radius: 7px;
-  background: #fff; color: rgb(var(--v-theme-nav)); font-family: 'IBM Plex Sans', sans-serif; font-weight: 700; line-height: 1;
+  background: #fff; color: rgb(var(--v-theme-nav)); font-family: 'IBM Plex Sans', sans-serif; font-weight: 600; line-height: 1;
 }
 </style>

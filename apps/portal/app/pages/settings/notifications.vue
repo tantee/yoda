@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { ChannelLinkCode, ChannelName, LinkableChannel, MyNotificationPrefs, NotificationKind, NotificationPrefs } from '@yoda/shared'
-import { channelColumns, channelKey, codeLeftPercent, columnNoteKey, countdown, isChecked, kindKey, msLeft, toggleChannel } from '~/utils/notificationSettings'
+import { cellKey, channelColumns, channelKey, codeLeftPercent, columnNoteKey, countdown, isChecked, kindKey, msLeft, serialQueue, toggleChannel } from '~/utils/notificationSettings'
 
 const POLL_MS = 3000
 
@@ -12,7 +12,10 @@ const lineAddFriendUrl = useRuntimeConfig().public.lineAddFriendUrl as string
 const my = ref<MyNotificationPrefs | null>(null)
 const error = ref('')
 const saved = ref(false)
-const saving = ref(false)
+/** Cells being saved: only these are disabled; other cells stay clickable and queue behind them. */
+const savingCells = ref<string[]>([])
+const saving = computed(() => savingCells.value.length > 0)
+const saves = serialQueue()
 /** A success message after linking or unlinking. */
 const notice = ref('')
 
@@ -38,17 +41,26 @@ async function load() {
 
 async function toggle(kind: NotificationKind, channel: ChannelName, on: boolean | null) {
   if (!my.value) return
+  const key = cellKey(kind, channel)
   const body: NotificationPrefs = toggleChannel(my.value.prefs, kind, channel, on === true)
+  // Shown at once, so a second click builds on this one; the saves then run in click order.
+  my.value = { ...my.value, prefs: body }
   error.value = ''
   saved.value = false
-  saving.value = true
+  savingCells.value = [...savingCells.value, key]
   try {
-    my.value = await api<MyNotificationPrefs>('/me/notification-prefs', { method: 'PUT', body })
-    saved.value = true
+    const fresh = await saves.run(() => api<MyNotificationPrefs>('/me/notification-prefs', { method: 'PUT', body }))
+    if (saves.pending === 0) {
+      my.value = fresh
+      saved.value = true
+    }
   } catch (e) {
-    error.value = t(errorKey(e))
+    const message = t(errorKey(e))
+    // Back to what the server has once nothing else is on its way.
+    if (saves.pending === 0) await load()
+    error.value = message
   } finally {
-    saving.value = false
+    savingCells.value = savingCells.value.filter(k => k !== key)
   }
 }
 
@@ -228,7 +240,7 @@ onBeforeUnmount(stopTimer)
                     class="d-inline-flex"
                     color="primary"
                     :model-value="c.usable && isChecked(my.prefs, kind, c.name)"
-                    :disabled="!c.usable || saving"
+                    :disabled="!c.usable || savingCells.includes(cellKey(kind, c.name))"
                     :aria-label="`${t(kindKey(kind))} – ${t(channelKey(c.name))}`"
                     :data-testid="`prefs-${kind}-${c.name}`"
                     @update:model-value="(v: boolean | null) => toggle(kind, c.name, v)"
@@ -244,7 +256,6 @@ onBeforeUnmount(stopTimer)
     <AppDialog
       :model-value="!!linking"
       :title="linking ? t('notifications.settings.linking.linkTitle', { channel: t(channelKey(linking.channel)) }) : ''"
-      persistent
       data-testid="link-dialog"
       @update:model-value="v => { if (!v) closeLinking() }"
     >

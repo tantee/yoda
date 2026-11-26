@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import DialogCard from '../app/components/DialogCard.vue'
-import { DIALOG_WIDTHS, dialogPersistent, dialogWidth } from '../app/utils/dialogs'
+import { DIALOG_WIDTHS, dialogLayout, dialogPersistent, dialogWidth } from '../app/utils/dialogs'
 import { render } from './support/render'
 
 describe('dialogWidth', () => {
@@ -20,6 +20,20 @@ describe('dialogPersistent', () => {
     expect(dialogPersistent({ busy: true })).toBe(true)
     expect(dialogPersistent({ dirty: true })).toBe(true)
     expect(dialogPersistent({ persistent: true })).toBe(true)
+  })
+})
+
+describe('dialogLayout', () => {
+  it('centres every dialog from 600 px up', () => {
+    expect(dialogLayout('confirm', false)).toBe('centered')
+    expect(dialogLayout('form', false)).toBe('centered')
+    expect(dialogLayout('editor', false)).toBe('centered')
+  })
+  it('on phones, confirms sit at the bottom and forms and editors take the screen', () => {
+    expect(dialogLayout('confirm', true)).toBe('sheet')
+    expect(dialogLayout('form', true)).toBe('fullscreen')
+    expect(dialogLayout('editor', true)).toBe('fullscreen')
+    expect(dialogLayout(undefined, true)).toBe('fullscreen')
   })
 })
 

@@ -57,3 +57,24 @@ export const LINK_CODE_MS = 15 * 60 * 1000
 export function codeLeftPercent(expiresAt: string, now: number): number {
   return Math.min(100, Math.round((msLeft(expiresAt, now) / LINK_CODE_MS) * 100))
 }
+
+/** One grid cell (a kind × channel checkbox); only the cell being saved is disabled. */
+export const cellKey = (kind: NotificationKind, channel: ChannelName) => `${kind}:${channel}`
+
+/**
+ * Runs saves one after another, in click order, so a later save (built on the earlier click) always lands last.
+ * `pending` counts the saves not finished yet; the grid takes the server's answer only from the last one.
+ */
+export function serialQueue() {
+  let tail: Promise<unknown> = Promise.resolve()
+  let pending = 0
+  return {
+    run<T>(job: () => Promise<T>): Promise<T> {
+      pending++
+      const p = tail.then(job).finally(() => { pending-- })
+      tail = p.catch(() => undefined)
+      return p
+    },
+    get pending() { return pending },
+  }
+}

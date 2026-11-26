@@ -492,6 +492,7 @@ useLiveEvents((e) => {
         <p class="text-body-2 mb-4">{{ t('workItems.reopenConfirm') }}</p>
         <v-select
           v-model="reopenStep"
+          autofocus
           :items="reopenItems"
           :label="t('workItems.reopenStep')"
           hide-details

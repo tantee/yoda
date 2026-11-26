@@ -189,6 +189,7 @@ onMounted(load)
       <p class="text-body-2 text-medium-emphasis mb-4">{{ editing?.username }}<template v-if="editing?.email"> · {{ editing.email }}</template></p>
       <v-combobox
         v-model="draft.skills"
+        autofocus
         :label="t('people.skills')"
         :hint="t('people.skillsHint')"
         persistent-hint

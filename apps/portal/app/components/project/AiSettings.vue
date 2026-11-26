@@ -131,6 +131,7 @@ onMounted(loadUsage)
             height="10"
             rounded
             class="mt-3"
+            :aria-label="t('ai.usage')"
             data-testid="ai-bar"
             :data-color="barColor"
           />

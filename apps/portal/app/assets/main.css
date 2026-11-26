@@ -1,6 +1,8 @@
 /* Global design rules (proposal §3.3, §7.2). Component looks live in the Vuetify theme/defaults. */
 html { font-size: 16px; }
 body { font-family: 'IBM Plex Sans Thai', 'IBM Plex Sans', 'Leelawadee UI', 'Thonburi', system-ui, sans-serif; }
+/* Only 400/500/600 are loaded (fonts.css): bold text uses 600 instead of a synthesised 700. */
+b, strong, .font-weight-bold { font-weight: 600 !important; }
 
 /* Thai has no case and needs no tracking: never uppercase, zero letter-spacing everywhere. */
 .v-application, .v-btn, .v-tab, .v-chip, .v-overlay-container, .v-picker-title { letter-spacing: 0 !important; }
@@ -10,8 +12,13 @@ body { font-family: 'IBM Plex Sans Thai', 'IBM Plex Sans', 'Leelawadee UI', 'Tho
 .tabular-nums, .v-table td, .v-badge__badge { font-variant-numeric: tabular-nums; }
 
 /* Visible focus ring on every interactive element (Vuetify's overlay alone is not enough). */
-:focus-visible { outline: 2px solid rgb(var(--v-theme-primary)); outline-offset: 2px; }
-.v-navigation-drawer :focus-visible { outline-color: rgb(var(--v-theme-nav-accent)); }
+/* Vuetify sets `outline: none` on buttons, chips, list items and link cards, so those are named here too. */
+:focus-visible, .v-btn:focus-visible, .v-chip:focus-visible, .v-card--link:focus-visible, .v-list-item:focus-visible {
+  outline: 2px solid rgb(var(--v-theme-primary)); outline-offset: 2px;
+}
+/* List items sit inside scrolling menus and the rail: the ring goes inside so it is never clipped. */
+.v-list-item:focus-visible { outline-offset: -2px; }
+.v-navigation-drawer :focus-visible, .v-navigation-drawer .v-btn:focus-visible, .v-navigation-drawer .v-list-item:focus-visible { outline-color: rgb(var(--v-theme-nav-accent)); }
 
 /* Chips: room for stacked Thai vowels and tone marks; 12 px minimum. */
 .v-chip { line-height: 1.5; }

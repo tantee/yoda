@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" width="40" height="40">
+  <!-- Placeholder favicon; Task 9 replaces it with the original mark. -->
+  <rect width="40" height="40" rx="9" fill="#0B2545"/>
+  <path d="M12 11 L20 21 L28 11 M20 21 V30" fill="none" stroke="#FFFFFF" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

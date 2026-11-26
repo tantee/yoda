@@ -213,6 +213,7 @@ async function remove() {
       <v-autocomplete
         v-if="!editing"
         v-model="personId"
+        autofocus
         :items="candidates"
         item-title="displayName"
         item-value="id"
