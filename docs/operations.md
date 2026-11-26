@@ -163,6 +163,24 @@ Settings and secrets (installer proposal §3.5, §6):
 | `YODA_SETTINGS_IMPORT` | `false` = env secrets are not copied into the database on start (other values still are) | optional (`true`) | `true` |
 | `YODA_OUTBOUND_ALLOW_LOOPBACK` | Dev only: the admin settings tests may connect to loopback (the dev fakes). Never set in production | optional (`false`) | `false` |
 
+`YODA_MASTER_KEY`, `YODA_MASTER_KEY_FILE` and `YODA_SETTINGS_IMPORT` take effect once they reach core's
+environment. The prod compose file does not pass them to the `core` service yet: that wiring (with the bootstrap
+volume for the key file) arrives with the installer update. Until then a production core runs without a master
+key: secrets set in env work, System settings shows an information note, and secrets cannot be saved there. In
+development core reads the repository's `.env` (`pnpm dev` or `pnpm --filter @yoda/core dev`), so set them there.
+
+On start core copies every env value it reads into the database (D4; secrets too, with a usable master key and
+`YODA_SETTINGS_IMPORT` not `false`). In System settings such a value shows **Imported from environment**. So
+**removing a variable from `.env` does not turn the feature off**: after the restart the imported value stays in
+effect, now editable. To really disable something (email, LINE, Telegram, GitLab, an AI provider), remove the
+variable and restart, then clear the value in System settings (for a secret, **Remove**), or switch the channel
+off there. With `YODA_SETTINGS_IMPORT=false` (or no usable master key) env secrets are not copied, so removing one
+disconnects that service until it is entered in System settings. Variables the prod compose file passes with a
+default (such as `SMTP_PORT`, `AI_WORKERS`) stay set in env, and so locked in the UI, until the install uses the
+generated settings of the installer update. The settings read by the portal and the backup container (the
+`NUXT_PUBLIC_*` values, `BACKUP_AT`, `BACKUP_KEEP_DAYS`, the organisation name) are shown read-only for now:
+they are set on those containers' environment on the install host.
+
 A setting saved in the database applies without a restart, on every core instance: each one listens for
 `NOTIFY settings_changed` (key names only, never values) and reloads its settings, and reloads them again after
 any reconnect. That needs a session-pinned database connection, so a `DATABASE_URL` through PgBouncer in
