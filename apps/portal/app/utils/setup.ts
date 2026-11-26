@@ -101,6 +101,17 @@ export function tokenGroups(input: string): string[] {
   return Array.from({ length: TOKEN_GROUPS }, (_, i) => clean.slice(i * TOKEN_GROUP_LENGTH, (i + 1) * TOKEN_GROUP_LENGTH))
 }
 
+/** Typing into box `i`: only that box changes (the others keep what they have). */
+export function typedInto(groups: string[], i: number, typed: string): string[] {
+  const own = tokenGroups(typed)[0]!
+  return groups.map((g, j) => (j === i ? own : g))
+}
+
+/** A paste into box `i`: the boxes before it stay, the pasted token fills from `i` on and replaces the rest. */
+export function pastedInto(groups: string[], i: number, text: string): string[] {
+  return tokenGroups(groups.slice(0, i).join('') + text)
+}
+
 export const tokenComplete = (groups: string[]) => groups.length === TOKEN_GROUPS && groups.every((g) => g.length === TOKEN_GROUP_LENGTH)
 export const tokenValue = (groups: string[]) => groups.join('-')
 
@@ -237,9 +248,12 @@ export function passwordStrength(password: string, username = ''): Strength {
   return { score, bits: Math.round(bits * 10) / 10, warnings: [...warnings] }
 }
 
-/** The wizard's rule: core's minimum (14+, not too simple, no username) and a strength score of 3 or more. */
-export function passwordAcceptable(username: string, password: string): boolean {
-  return passwordIssue(username, password) === null && passwordStrength(password, username).score >= 3
+/**
+ * The wizard's rule: core's minimum (14+, not too simple, no username) and a strength score of 3 or more: zxcvbn's
+ * when it is loaded (`score`), else the estimator's.
+ */
+export function passwordAcceptable(username: string, password: string, score?: number): boolean {
+  return passwordIssue(username, password) === null && (score ?? passwordStrength(password, username).score) >= 3
 }
 
 // ── Errors ──────────────────────────────────────────────────────────────────────────────────────────────────────

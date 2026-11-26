@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { AdminSettingsResponse, LocalSession, SettingCategory, SettingsCategoryView, SetupClaimResult, SetupProgress, SetupStatus, SetupStepId } from '@yoda/shared'
+import type { AdminSettingsResponse, LocalSession, RecoveryKit, SettingCategory, SettingsCategoryView, SetupClaimResult, SetupProgress, SetupStatus, SetupStepId } from '@yoda/shared'
 import StepAdmin from '~/components/setup/StepAdmin.vue'
 import StepCheck from '~/components/setup/StepCheck.vue'
 import StepClaim from '~/components/setup/StepClaim.vue'
@@ -44,6 +44,8 @@ const error = ref('')
 const welcome = ref(false)
 const claimResult = ref<SetupClaimResult | null>(null)
 const callbackBusy = ref(false)
+/** The recovery kit, once downloaded: kept in memory only (never browser storage), so Back and Next keep it. */
+const kit = ref<RecoveryKit | null>(null)
 const api = setupClient((url, opts) => $fetch(url, opts), () => session.value?.csrf ?? null)
 
 const origin = typeof window === 'undefined' ? '' : window.location.origin
@@ -286,7 +288,7 @@ function switchLocale(l: 'th' | 'en') {
             @skip="mark(step, 'skipped')"
             @next="mark(step, 'done')"
           />
-          <StepKit v-else-if="step === 'kit'" :api="api" :progress="progress" @downloaded="loadProgress" @back="go(prevStep(step))" @next="go(nextStep(step))" />
+          <StepKit v-else-if="step === 'kit'" :api="api" :progress="progress" :kit="kit" @kit="(k) => (kit = k)" @downloaded="loadProgress" @back="go(prevStep(step))" @next="go(nextStep(step))" />
           <StepClaim v-else-if="step === 'claim'" :api="api" :progress="progress" :result="claimResult" :callback-busy="callbackBusy" @back="go(prevStep(step))" @finished="finished" />
         </template>
       </div>

@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { nextTick, ref, useI18n } from '#imports'
-import { TOKEN_GROUP_LENGTH, tokenGroups } from '~/utils/setup'
+import { TOKEN_GROUP_LENGTH, pastedInto, tokenGroups, typedInto } from '~/utils/setup'
 
 /**
- * The setup token as 5 boxes of 4 (proposal §8.2, mockup `installer-token.html`). The whole token can be pasted
- * into any box; case, dashes and spaces do not matter, and letters that are not in the token alphabet are dropped.
+ * The setup token as 5 boxes of 4 (proposal §8.2, mockup `installer-token.html`). Typing fills one box (4 at most)
+ * and moves on when it is full; a paste fills from that box onward and replaces the later boxes. Case, dashes and
+ * spaces do not matter, and letters that are not in the token alphabet are dropped.
  */
 const model = defineModel<string[]>({ required: true })
 const emit = defineEmits<{ submit: [] }>()
@@ -16,14 +17,20 @@ function focus(i: number) {
 }
 
 function onInput(i: number, e: Event) {
-  const raw = (e.target as HTMLInputElement).value
-  // Typing past a box, or a paste, flows on into the next boxes.
-  const before = model.value.slice(0, i).join('')
-  const after = model.value.slice(i + 1).join('')
-  const next = tokenGroups(before + raw + (raw.length > TOKEN_GROUP_LENGTH ? '' : after))
-  model.value = next
-  const filled = next.findIndex((g) => g.length < TOKEN_GROUP_LENGTH)
-  if (raw.length >= TOKEN_GROUP_LENGTH) focus(filled === -1 ? next.length - 1 : filled)
+  const el = e.target as HTMLInputElement
+  const own = tokenGroups(el.value)[0]!
+  el.value = own
+  model.value = typedInto(model.value, i, own)
+  if (own.length === TOKEN_GROUP_LENGTH) focus(i + 1)
+}
+
+function onPaste(i: number, e: ClipboardEvent) {
+  const text = e.clipboardData?.getData('text') ?? ''
+  if (!text) return
+  e.preventDefault()
+  model.value = pastedInto(model.value, i, text)
+  const open = model.value.findIndex((g) => g.length < TOKEN_GROUP_LENGTH)
+  focus(open === -1 ? model.value.length - 1 : open)
 }
 
 function onKey(i: number, e: KeyboardEvent) {
@@ -40,11 +47,14 @@ function onKey(i: number, e: KeyboardEvent) {
         :value="g"
         class="token-box__seg"
         :aria-label="t('setup.token.segmentLabel', { n: i + 1 })"
+        :maxlength="TOKEN_GROUP_LENGTH"
+        inputmode="text"
         autocomplete="off"
         autocapitalize="characters"
         spellcheck="false"
         :data-testid="`setup-token-${i}`"
         @input="onInput(i, $event)"
+        @paste="onPaste(i, $event)"
         @keydown="onKey(i, $event)"
       >
       <span v-if="i < model.length - 1" class="token-box__dash" aria-hidden="true">–</span>

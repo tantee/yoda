@@ -2282,7 +2282,8 @@
     "insecure": {
       "title": "This connection is not encrypted (http)",
       "token": "The setup token travels over the network unencrypted. Open this page through an https reverse proxy or an SSH tunnel:",
-      "session": "This setup session uses plain http, so its cookie is not protected by HTTPS. It is fine on an internal network; an SSH tunnel or https is better."
+      "session": "This setup session uses plain http, so its cookie is not protected by HTTPS. It is fine on an internal network; an SSH tunnel or https is better.",
+      "proxy": "With an https reverse proxy in front of the portal, set this in .env on the install host:"
     },
     "nav": {
       "back": "Back",
@@ -2323,7 +2324,8 @@
       "httpWarning": "Allowed on an internal network, but passwords and cookies travel unencrypted. Set up an https reverse proxy and use the https address.",
       "defaultLocale": "Default language",
       "defaultLocaleHelp": "Each person can change their own language.",
-      "lockedEnv": "Set by environment on the install host ({name})"
+      "lockedEnv": "Set by environment on the install host ({name})",
+      "proxyHint": "Reaching Yoda through a reverse proxy (such as nginx doing https)? Set this in .env and restart, so Yoda sees the proxy's address and https:"
     },
     "admin": {
       "kicker": "Step 2 · Break-glass admin",
@@ -2430,7 +2432,10 @@
       "saveAgain": "Save the file again",
       "codesTitle": "Recovery codes (also in the file)",
       "lost": "If the file is lost: copy the master key from the install host (/var/lib/yoda/core/master-key), and make new recovery codes at /recovery after setup.",
-      "stored": "I have stored the recovery kit somewhere safe"
+      "stored": "I have stored the recovery kit somewhere safe",
+      "reissued": "A new recovery kit was issued. The recovery codes in the earlier file no longer work: use this one.",
+      "reissueHelp": "This browser already downloaded the recovery kit. If the file is lost, ask for it again until {at} (the earlier codes then stop working).",
+      "reissue": "Issue the recovery kit again"
     },
     "claim": {
       "kicker": "Step 10 · Claim admin",
@@ -2444,7 +2449,8 @@
       "claimed": "{username} is now an administrator",
       "finish": "Finish setup",
       "missing": "Still to do: {steps}",
-      "providerError": "Keycloak did not sign you in (cancelled or refused). Check the client's Valid redirect URIs and try again."
+      "providerError": "Keycloak did not sign you in (cancelled or refused). Check the client's Valid redirect URIs and try again.",
+      "adminNeedsTotp": "The break-glass admin has no authenticator app, but the web address now needs one. It will be asked to set up TOTP at its first /recovery sign-in; or go back to step 2 and create the account again (possible before the kit is downloaded)."
     },
     "error": {
       "invalidToken": "The setup token is wrong, expired or already used. Get a new one with yoda-admin setup-token --new.",
@@ -2457,7 +2463,7 @@
       "settingLocked": "This value is set on the install host. Change it in .env and restart.",
       "invalidSettings": "Some values are not valid. Check the fields marked in red.",
       "done": "Setup is already finished.",
-      "kitDownloaded": "The recovery kit was already downloaded; it is given out once.",
+      "kitDownloaded": "The recovery kit was already downloaded. Only the browser that downloaded it can ask again, within 10 minutes.",
       "incomplete": "Some required steps are not finished.",
       "noIssuer": "Keycloak is not set up yet. Go back to step 4.",
       "noAdmin": "The break-glass admin is not created yet. Go back to step 2.",

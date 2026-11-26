@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import type { LocalSession, SetupAdminResult, SetupProgress, TotpEnrolment } from '@yoda/shared'
-import { computed, reactive, ref, useI18n } from '#imports'
+import { computed, onMounted, reactive, ref, shallowRef, useI18n } from '#imports'
 import TotpEnrol from '~/components/recovery/TotpEnrol.vue'
 import { passwordAcceptable, setupError, type SetupFetcher } from '~/utils/setup'
+import { loadZxcvbn, type Scorer } from '~/utils/zxcvbn'
 import PasswordMeter from './PasswordMeter.vue'
 import StepFrame from './StepFrame.vue'
 
@@ -29,7 +30,14 @@ const locked = computed(() => !!props.progress.kitDownloadedAt)
 const showForm = computed(() => !existing.value || (replacing.value && !locked.value))
 const totpOn = computed(() => props.progress.totpRequired || useTotp.value)
 const mismatch = computed(() => form.confirm !== '' && form.confirm !== form.password)
-const strongEnough = computed(() => passwordAcceptable(form.username.trim().toLowerCase(), form.password))
+// zxcvbn is loaded here only (its own chunks); until then, or if it fails, the estimator scores.
+const scorer = shallowRef<Scorer | null>(null)
+onMounted(() => {
+  loadZxcvbn().then((f) => (scorer.value = f), () => {})
+})
+const user = computed(() => form.username.trim().toLowerCase())
+const score = computed(() => (scorer.value && form.password ? scorer.value(form.password, [user.value, 'yoda', 'admin']) : null))
+const strongEnough = computed(() => passwordAcceptable(user.value, form.password, score.value ?? undefined))
 const ready = computed(() => form.username.trim().length >= 3 && strongEnough.value && form.password === form.confirm && (!totpOn.value || (!!enrolment.value && /^\d{6}$/.test(form.code))))
 
 function fail(e: unknown) {
@@ -109,7 +117,7 @@ function next() {
         <div class="d-none d-sm-block" />
         <div>
           <v-text-field v-model="form.password" :label="t('setup.admin.password')" type="password" autocomplete="new-password" :hint="t('setup.admin.passwordHelp')" persistent-hint data-testid="setup-admin-password" />
-          <PasswordMeter :password="form.password" :username="form.username.trim().toLowerCase()" class="mt-4" />
+          <PasswordMeter :password="form.password" :username="user" :score="score" class="mt-4" />
         </div>
         <v-text-field v-model="form.confirm" :label="t('setup.admin.confirm')" type="password" autocomplete="new-password" :error-messages="mismatch ? t('setup.admin.mismatch') : ''" data-testid="setup-admin-confirm" />
       </div>

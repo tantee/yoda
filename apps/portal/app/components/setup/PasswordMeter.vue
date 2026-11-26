@@ -2,10 +2,16 @@
 import { computed, useI18n } from '#imports'
 import { passwordStrength } from '~/utils/setup'
 
-/** How guessable the break-glass password is (§4.2 step 2: score 3 or more), with what to change. */
-const props = defineProps<{ password: string; username: string }>()
+/**
+ * How guessable the break-glass password is (§4.2 step 2: score 3 or more), with what to change. `score` is
+ * zxcvbn's when the admin step has loaded it; the hints come from the estimator.
+ */
+const props = defineProps<{ password: string; username: string; score?: number | null }>()
 const { t } = useI18n()
-const s = computed(() => passwordStrength(props.password, props.username))
+const s = computed(() => {
+  const est = passwordStrength(props.password, props.username)
+  return typeof props.score === 'number' ? { ...est, score: props.score as typeof est.score } : est
+})
 const color = computed(() => (s.value.score >= 4 ? 'success' : s.value.score === 3 ? 'primary' : s.value.score === 2 ? 'warning' : 'error'))
 </script>
 

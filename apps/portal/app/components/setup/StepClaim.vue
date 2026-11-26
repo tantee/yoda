@@ -70,6 +70,7 @@ async function finish() {
     <TestResult v-if="result" :result="{ action: 'oidc', ok: result.ok, checks: result.checks }" class="mt-4" />
     <v-btn v-if="claimed" variant="text" size="small" class="px-0 mt-2" :loading="busy === 'signin'" data-testid="setup-claim-again" @click="signIn">{{ t('setup.claim.again') }}</v-btn>
 
+    <v-alert v-if="progress.adminNeedsTotp" type="warning" variant="tonal" density="compact" class="mt-4" data-testid="setup-claim-totp">{{ t('setup.claim.adminNeedsTotp') }}</v-alert>
     <v-alert v-if="missing.length" type="info" variant="tonal" density="compact" class="mt-4" data-testid="setup-claim-missing">
       {{ t('setup.claim.missing', { steps: missing.map(s => t(`setup.step.${s}`)).join(', ') }) }}
     </v-alert>

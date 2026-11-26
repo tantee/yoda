@@ -53,6 +53,7 @@ async function start() {
     <v-alert v-if="!https" type="warning" variant="tonal" density="compact" icon="mdi-lock-open-alert-outline" class="mt-4" data-testid="setup-insecure">
       <div class="font-weight-medium">{{ t('setup.insecure.title') }}</div>
       <div>{{ t('setup.insecure.token') }} <code>ssh -L 3000:127.0.0.1:3000 yoda-host</code></div>
+      <div class="mt-1">{{ t('setup.insecure.proxy') }} <code>YODA_TRUSTED_PROXY_HOPS=2</code></div>
     </v-alert>
 
     <div class="setup-token-foot">

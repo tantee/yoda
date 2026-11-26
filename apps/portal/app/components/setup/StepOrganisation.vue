@@ -107,6 +107,7 @@ async function save() {
           <div class="font-weight-medium">{{ t('setup.insecure.title') }}</div>
           <div>{{ t('setup.org.httpWarning') }}</div>
         </v-alert>
+        <p v-if="!url.invalid && (url.mismatch || url.plainHttp)" class="setup-help" data-testid="setup-url-proxy">{{ t('setup.org.proxyHint') }} <code>YODA_TRUSTED_PROXY_HOPS=2</code></p>
       </div>
       <div>
         <div class="setup-label">{{ t('setup.org.defaultLocale') }}</div>

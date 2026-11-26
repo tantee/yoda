@@ -7,18 +7,20 @@ import StepFrame from './StepFrame.vue'
 
 /**
  * Step 9 (proposal §4.2, D7): the recovery kit, one text file with the master key and the break-glass recovery
- * codes. Core hands it out once per install, so the file is saved straight away and the codes are shown here; it
- * is kept only in this component's memory. Next opens once it was downloaded and "I have stored it" is ticked.
+ * codes. Core hands it out once per install (the session that downloaded it may have it issued again for 10
+ * minutes, with new codes), so the file is saved straight away and the codes are shown here. The kit lives only in
+ * the page's memory (passed in as `kit`, so Back and Next keep it); never in browser storage. Next opens once it
+ * was downloaded and "I have stored it" is ticked.
  */
-const props = defineProps<{ api: SetupFetcher; progress: SetupProgress }>()
-const emit = defineEmits<{ back: []; next: []; downloaded: [] }>()
+const props = defineProps<{ api: SetupFetcher; progress: SetupProgress; kit: RecoveryKit | null }>()
+const emit = defineEmits<{ back: []; next: []; downloaded: []; kit: [kit: RecoveryKit] }>()
 const { t } = useI18n()
 const { dateTime } = useDateFormat()
-const kit = ref<RecoveryKit | null>(null)
 const stored = ref(false)
 const busy = ref(false)
 const error = ref('')
-const downloadedAt = computed(() => kit.value?.downloadedAt ?? props.progress.kitDownloadedAt)
+const downloadedAt = computed(() => props.kit?.downloadedAt ?? props.progress.kitDownloadedAt)
+const reissueUntil = computed(() => props.progress.kitReissueUntil)
 
 function save(k: RecoveryKit) {
   const url = URL.createObjectURL(new Blob([k.content], { type: 'text/plain;charset=utf-8' }))
@@ -35,8 +37,9 @@ async function download() {
   busy.value = true
   error.value = ''
   try {
-    kit.value = await props.api<RecoveryKit>('/recovery-kit', { method: 'POST' })
-    save(kit.value)
+    const k = await props.api<RecoveryKit>('/recovery-kit', { method: 'POST' })
+    emit('kit', k)
+    save(k)
     emit('downloaded')
   } catch (e) {
     const m = setupError(e)
@@ -72,10 +75,15 @@ async function download() {
     </template>
     <template v-else>
       <v-alert type="success" variant="tonal" density="compact" class="mb-4" data-testid="setup-kit-downloaded">{{ t('setup.kit.downloaded', { at: dateTime(downloadedAt) }) }}</v-alert>
+      <v-alert v-if="kit?.reissued" type="info" variant="tonal" density="compact" class="mb-4" data-testid="setup-kit-reissued">{{ t('setup.kit.reissued') }}</v-alert>
       <template v-if="kit">
         <v-btn variant="outlined" prepend-icon="mdi-download" class="mb-4" data-testid="setup-kit-save-again" @click="save(kit)">{{ t('setup.kit.saveAgain') }}</v-btn>
         <h2 class="setup-subhead">{{ t('setup.kit.codesTitle') }}</h2>
         <CodesOnce :codes="kit.recoveryCodes" class="mb-4" />
+      </template>
+      <template v-else-if="reissueUntil">
+        <p class="setup-help" data-testid="setup-kit-reissue-help">{{ t('setup.kit.reissueHelp', { at: dateTime(reissueUntil) }) }}</p>
+        <v-btn variant="outlined" prepend-icon="mdi-download" class="mb-4" :loading="busy" data-testid="setup-kit-reissue" @click="download">{{ t('setup.kit.reissue') }}</v-btn>
       </template>
       <p v-else class="setup-help" data-testid="setup-kit-gone">{{ t('setup.kit.lost') }}</p>
       <v-checkbox v-model="stored" :label="t('setup.kit.stored')" density="compact" hide-details data-testid="setup-kit-stored" />

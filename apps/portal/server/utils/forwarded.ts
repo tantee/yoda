@@ -4,9 +4,12 @@
  *
  * - The client address: the peer the portal saw is always appended, so a browser cannot choose its own for core's
  *   rate limits and audit log (core believes only `hops` entries from the right).
- * - Scheme and host: with hops = 1 there is no outer proxy, so whatever a browser sent is its own claim: the portal
- *   sets both from what it sees itself (its socket and its own Host header). With hops > 1 a reverse proxy in front
- *   sets them, and the portal passes them on (falling back to its own view when one is missing).
+ * - Host: with hops = 1 the portal's own Host header, never an X-Forwarded-Host a browser sent. With hops > 1 a
+ *   reverse proxy in front sets it and the portal passes it on (falling back to its own Host).
+ * - Scheme: an incoming `X-Forwarded-Proto: https` is honoured even with hops = 1, as an upgrade only: TLS is often
+ *   terminated by a proxy the admin has not counted yet, and a browser claiming https only makes its own cookies
+ *   `Secure` (stricter). It never downgrades: a TLS socket is https whatever arrives. With hops > 1 the proxy's
+ *   value is passed on.
  *
  * The host decides the setup wizard's detected public URL, the Origin check and the localhost rule for TOTP (D3).
  */
@@ -27,9 +30,11 @@ export function trustedHops(raw: string | undefined): number {
 export function forwardedHeaders(i: ForwardInput): Record<string, string> {
   const own = { proto: i.encrypted ? 'https' : 'http', host: i.headers.host ?? '' }
   const outer = i.hops > 1
+  const claimed = i.headers.forwardedProto?.split(',')[0]?.trim().toLowerCase()
+  const proto = i.encrypted ? 'https' : outer ? (claimed === 'https' || claimed === 'http' ? claimed : own.proto) : claimed === 'https' ? 'https' : own.proto
   return {
     'x-forwarded-for': i.headers.forwardedFor ? `${i.headers.forwardedFor}, ${i.peer}` : i.peer,
-    'x-forwarded-proto': (outer && i.headers.forwardedProto) || own.proto,
+    'x-forwarded-proto': proto,
     'x-forwarded-host': (outer && i.headers.forwardedHost) || own.host,
   }
 }

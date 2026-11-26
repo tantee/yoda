@@ -22,11 +22,13 @@ import {
   tokenComplete,
   tokenGroups,
   tokenValue,
+  pastedInto,
+  typedInto,
 } from '../app/utils/setup'
 
 function progress(done: Partial<Record<SetupStepId, SetupStepState>> = {}): SetupProgress {
   const steps = Object.fromEntries(SETUP_STEPS.map((s) => [s, done[s] ?? 'todo'])) as Record<SetupStepId, SetupStepState>
-  return { installId: 'i-1', steps, totpRequired: true, admin: null, kitDownloadedAt: null, claimed: null, missing: ['organisation', 'admin', 'kit', 'claim'] }
+  return { installId: 'i-1', steps, totpRequired: true, admin: null, kitDownloadedAt: null, kitReissueUntil: null, adminNeedsTotp: false, claimed: null, missing: ['organisation', 'admin', 'kit', 'claim'] }
 }
 const upTo = (last: SetupStepId, extra: Partial<Record<SetupStepId, SetupStepState>> = {}) =>
   progress({ ...Object.fromEntries(SETUP_STEPS.slice(0, SETUP_STEPS.indexOf(last) + 1).map((s) => [s, 'done'])), ...extra })
@@ -106,6 +108,15 @@ describe('setup token boxes', () => {
     expect(tokenComplete(tokenGroups('ABCDEFGH'))).toBe(false)
     expect(tokenValue(tokenGroups('abcdefghjklmnpqrstuv'))).toBe('ABCD-EFGH-JKLM-NPQR-STUV')
   })
+
+  it('typing changes one box only; a paste fills from its box and replaces the later ones', () => {
+    const full = ['ABCD', 'EFGH', 'JKLM', 'NPQR', 'STUV']
+    expect(typedInto(full, 1, 'wxyz9')).toEqual(['ABCD', 'WXYZ', 'JKLM', 'NPQR', 'STUV'])
+    expect(typedInto(full, 2, 'jk')).toEqual(['ABCD', 'EFGH', 'JK', 'NPQR', 'STUV'])
+    expect(pastedInto(['ABCD', '', '', '', ''], 1, 'efgh-jklm')).toEqual(['ABCD', 'EFGH', 'JKLM', '', ''])
+    expect(pastedInto(full, 0, '2345-6789-ABCD-EFGH-JKLM')).toEqual(['2345', '6789', 'ABCD', 'EFGH', 'JKLM'])
+    expect(pastedInto(full, 3, 'zz')).toEqual(['ABCD', 'EFGH', 'JKLM', 'ZZ', ''])
+  })
 })
 
 describe('public URL (D8)', () => {
@@ -147,6 +158,25 @@ describe('password strength (§4.2: score ≥ 3, 14+ characters)', () => {
   })
 })
 
+describe('zxcvbn (lazy, /setup only)', () => {
+  it('loads on demand and scores like zxcvbn; nothing imports it statically', async () => {
+    const { loadZxcvbn } = await import('../app/utils/zxcvbn')
+    const score = await loadZxcvbn()
+    expect(score('password12345678', [])).toBeLessThan(3)
+    expect(score('admin-admin-admin', ['admin'])).toBeLessThan(3)
+    expect(score('river-copper-lantern-71', ['admin'])).toBeGreaterThanOrEqual(3)
+    expect(await loadZxcvbn()).toBe(score)
+    expect(passwordAcceptable('admin', 'river-copper-lantern-71', 2)).toBe(false)
+    expect(passwordAcceptable('admin', 'abcdefghijklmnop', 4)).toBe(true)
+    // Only the loader names the packages, and only through import().
+    const { execSync } = await import('node:child_process')
+    const hits = execSync('grep -rln "@zxcvbn-ts" app', { cwd: new URL('..', import.meta.url).pathname }).toString().trim().split('\n')
+    expect(hits).toEqual(['app/utils/zxcvbn.ts'])
+    const loader = readFileSync(new URL('../app/utils/zxcvbn.ts', import.meta.url), 'utf8')
+    expect(loader).not.toMatch(/^import .*@zxcvbn-ts/m)
+  })
+})
+
 describe('setup errors', () => {
   it('words errors with what to do next', () => {
     expect(setupError({ data: { error: 'invalid_credentials' } })).toEqual({ key: 'setup.error.invalidToken' })
@@ -165,15 +195,21 @@ describe('setup errors', () => {
 describe('portal proxy forwarded headers', () => {
   const base = { peer: '10.0.0.7', encrypted: false, headers: { host: 'portal.example.org', forwardedHost: 'evil.example.org', forwardedProto: 'https', forwardedFor: '1.2.3.4' } }
 
-  it('with no outer proxy (hops = 1) sends its own scheme and Host, never the browser claim; always appends the peer', () => {
-    expect(forwardedHeaders({ ...base, hops: 1 })).toEqual({ 'x-forwarded-for': '1.2.3.4, 10.0.0.7', 'x-forwarded-proto': 'http', 'x-forwarded-host': 'portal.example.org' })
-    expect(forwardedHeaders({ ...base, encrypted: true, hops: 1 })['x-forwarded-proto']).toBe('https')
+  it('with hops = 1 keeps its own Host, honours an incoming https (upgrade only), and always appends the peer', () => {
+    // TLS ended by a proxy not counted yet: https arrives and is kept, so the cookies stay Secure.
+    expect(forwardedHeaders({ ...base, hops: 1 })).toEqual({ 'x-forwarded-for': '1.2.3.4, 10.0.0.7', 'x-forwarded-proto': 'https', 'x-forwarded-host': 'portal.example.org' })
+    expect(forwardedHeaders({ ...base, headers: { ...base.headers, forwardedProto: 'HTTPS, http' }, hops: 1 })['x-forwarded-proto']).toBe('https')
+    // Never a downgrade: a claimed http on a TLS socket is https; on plain http it stays http.
+    expect(forwardedHeaders({ ...base, encrypted: true, headers: { ...base.headers, forwardedProto: 'http' }, hops: 1 })['x-forwarded-proto']).toBe('https')
+    expect(forwardedHeaders({ ...base, headers: { ...base.headers, forwardedProto: 'http' }, hops: 1 })['x-forwarded-proto']).toBe('http')
+    expect(forwardedHeaders({ ...base, headers: { ...base.headers, forwardedProto: 'gopher' }, hops: 1 })['x-forwarded-proto']).toBe('http')
     expect(forwardedHeaders({ peer: '10.0.0.7', encrypted: false, headers: {}, hops: 1 })).toEqual({ 'x-forwarded-for': '10.0.0.7', 'x-forwarded-proto': 'http', 'x-forwarded-host': '' })
   })
 
   it('behind a reverse proxy (hops > 1) passes its scheme and host on', () => {
     expect(forwardedHeaders({ ...base, hops: 2 })).toEqual({ 'x-forwarded-for': '1.2.3.4, 10.0.0.7', 'x-forwarded-proto': 'https', 'x-forwarded-host': 'evil.example.org' })
-    expect(forwardedHeaders({ ...base, headers: { host: 'portal.example.org' }, hops: 2 })['x-forwarded-host']).toBe('portal.example.org')
+    expect(forwardedHeaders({ ...base, headers: { host: 'portal.example.org' }, hops: 2 })).toMatchObject({ 'x-forwarded-host': 'portal.example.org', 'x-forwarded-proto': 'http' })
+    expect(forwardedHeaders({ ...base, headers: { ...base.headers, forwardedProto: 'http' }, hops: 2 })['x-forwarded-proto']).toBe('http')
   })
 
   it('reads YODA_TRUSTED_PROXY_HOPS like core (1–5, else 1)', () => {
