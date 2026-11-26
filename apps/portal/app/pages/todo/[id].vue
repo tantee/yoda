@@ -3,6 +3,7 @@ import type { Attachment, Conversation, ProjectDetail, TaskInput, TaskWithContex
 import { localized } from '~/utils/localized'
 import { requesterTaskKind, taskViewFor } from '~/utils/requests'
 import { waitingFor } from '~/utils/runners'
+import { errorKind } from '~/utils/stateView'
 import { taskCrumbs } from '~/utils/todo'
 
 // The trail comes from the task itself (staff: project › work item; requesters: their request).
@@ -21,6 +22,7 @@ const project = ref<ProjectDetail | null>(null)
 const workItem = ref<WorkItemDetail | null>(null)
 const loadError = ref('')
 const loadFailure = ref<unknown>(null)
+const notFound = ref(false)
 const error = ref('')
 const busy = ref(false)
 const text = ref('')
@@ -66,6 +68,7 @@ async function load() {
     if (mine !== seq) return
     task.value = loaded
     loadError.value = ''
+    notFound.value = false
     if (!staff.value) void loadIntake()
     else {
       // Staff only: the project (members, PM role) and the work item (steps, dates) for the side panel.
@@ -79,6 +82,7 @@ async function load() {
     }
   } catch (e) {
     if (mine === seq) {
+      notFound.value = errorKind(e).status === 404
       loadError.value = t(errorKey(e))
       loadFailure.value = e
     }
@@ -172,7 +176,13 @@ useLiveEvents((e) => {
 
 <template>
   <div>
-    <ErrorState v-if="loadError && !task" :error="loadFailure" class="mb-4" data-testid="load-error" @retry="load" />
+    <template v-if="loadError && !task">
+      <EmptyState v-if="notFound" wisdom="notFound" :title="t('todo.notFound')" :text="t('todo.notFoundText')" icon="mdi-clipboard-remove-outline" data-testid="load-error">
+        <v-btn v-if="me?.isStaff" color="primary" variant="flat" to="/todo">{{ t('todo.back') }}</v-btn>
+        <v-btn v-else color="primary" variant="flat" to="/requests">{{ t('requests.back') }}</v-btn>
+      </EmptyState>
+      <ErrorState v-else :error="loadFailure" class="mb-4" data-testid="load-error" @retry="load" />
+    </template>
     <v-alert v-else-if="loadError" type="error" class="mb-4" data-testid="load-error">{{ loadError }}</v-alert>
     <SkeletonDetail v-else-if="!task" />
 

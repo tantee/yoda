@@ -19,7 +19,8 @@ interface GroupState {
   total: number
   page: number
   loading: boolean
-  error: string
+  /** The last load failed (cleared by the next success). */
+  failure: unknown
   open: boolean
 }
 
@@ -64,7 +65,7 @@ const state = reactive<Record<string, GroupState>>({})
 const seqs: Record<string, number> = {}
 
 function groupState(g: Group): GroupState {
-  state[g.key] ??= { entries: [], total: 0, page: 1, loading: true, error: '', open: !g.collapsible }
+  state[g.key] ??= { entries: [], total: 0, page: 1, loading: true, failure: null, open: !g.collapsible }
   return state[g.key]!
 }
 
@@ -84,17 +85,21 @@ async function loadGroup(g: Group) {
       s.page = pageCount(s.total, PAGE)
       return loadGroup(g)
     }
-    s.error = ''
+    s.failure = null
   } catch (e) {
-    if (mine === seqs[g.key]) s.error = t(errorKey(e))
+    if (mine === seqs[g.key]) s.failure = e
   } finally {
     if (mine === seqs[g.key]) s.loading = false
   }
 }
 
 const loadingAll = computed(() => groups.value.some(g => state[g.key]?.loading))
-const shownGroups = computed(() => groups.value.filter(g => (state[g.key]?.total ?? 0) > 0 || state[g.key]?.error))
-const groupsEmpty = computed(() => !loadingAll.value && !shownGroups.value.length)
+/** Groups whose last load failed: one error with a retry for the tab, and never a misleading empty group or "0". */
+const failedGroups = computed(() => groups.value.filter(g => state[g.key]?.failure))
+const groupsFailure = computed(() => (failedGroups.value[0] ? state[failedGroups.value[0].key]!.failure : null))
+const shownGroups = computed(() => groups.value.filter(g => (state[g.key]?.total ?? 0) > 0 && !state[g.key]?.failure))
+const groupsEmpty = computed(() => !loadingAll.value && !shownGroups.value.length && !failedGroups.value.length)
+const retryGroups = () => Promise.all(failedGroups.value.map(loadGroup))
 
 let searchSeq = 0
 async function loadSearch(term: string) {
@@ -226,11 +231,12 @@ const source = (e: KnowledgeEntry) => t(`knowledge.sources.${e.sourceKind}`)
 
     <!-- Grouped by type, each group paged. -->
     <template v-else>
-      <v-card v-if="loadingAll && !shownGroups.length" class="mb-6"><SkeletonList :rows="4" quiet /></v-card>
+      <ErrorState v-if="failedGroups.length" :error="groupsFailure" class="mb-4" data-testid="knowledge-load-error" @retry="retryGroups" />
+      <v-card v-if="loadingAll && !shownGroups.length && !failedGroups.length" class="mb-6"><SkeletonList :rows="4" quiet /></v-card>
       <EmptyState v-else-if="groupsEmpty" icon="mdi-book-open-page-variant-outline" :title="t('knowledge.empty')" data-testid="knowledge-empty">
         <v-btn color="primary" prepend-icon="mdi-plus" @click="open(null)">{{ t('knowledge.add') }}</v-btn>
       </EmptyState>
-      <div v-else data-testid="knowledge-list">
+      <div v-else-if="shownGroups.length" data-testid="knowledge-list">
         <v-card v-for="g in shownGroups" :key="g.key" class="mb-4" :data-group="g.key" data-testid="knowledge-group">
           <div class="card-head">
             <h2 class="d-flex align-center ga-2">
@@ -250,7 +256,6 @@ const source = (e: KnowledgeEntry) => t(`knowledge.sources.${e.sourceKind}`)
           </div>
           <p v-if="g.collapsible && !state[g.key]!.open" class="card-body text-caption text-medium-emphasis mb-0">{{ t('knowledge.groupDraftsHint') }}</p>
           <template v-else>
-            <p v-if="state[g.key]!.error" class="card-body text-error mb-0">{{ state[g.key]!.error }}</p>
             <ul class="knowledge-list" :class="{ 'knowledge-list--loading': state[g.key]!.loading }">
               <li v-for="e in state[g.key]!.entries" :key="e.id" data-testid="knowledge-row">
                 <button type="button" class="knowledge-row" @click="open(e.id)">

@@ -211,6 +211,7 @@ describe('the gimmick stays on its own surfaces', () => {
       'app/pages/projects/[id].vue load-error': 'notFound',
       'app/pages/work-items/[id].vue load-error': 'notFound',
       'app/pages/discussions/[id].vue load-error': 'notFound',
+      'app/pages/todo/[id].vue load-error': 'notFound',
       'app/pages/agendas/[id]/index.vue load-error': 'notFound',
       "app/pages/requests/[id].vue t('requests.notFound')": 'notFound',
       // tables, lists, tabs and filtered results: plain

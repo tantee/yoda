@@ -193,6 +193,8 @@
     "project": "Project",
     "workItem": "Work item",
     "back": "Back to to-do",
+    "notFound": "Task not found",
+    "notFoundText": "It may have been finished or cancelled, or you cannot see it.",
     "proposals": "Waiting for your decision",
     "stepAdvance": "The current step is finished. Move this work item to the next step?",
     "awaitingAdvance": "This work item finished its current step and is waiting to move on",
