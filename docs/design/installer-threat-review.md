@@ -115,7 +115,9 @@ Evidence is given as `file:line` at the time of the review (Task 10). Paths are 
   - Recovery codes are HMACs as well (`apps/core/src/local/codes.ts:43`).
   - The setup token is stored as SHA-256 only.
 - **The recovery kit** holds the master key and, since the PR B fix wave, the Postgres password and the storage
-  keys (section 3 of the kit) so a lost bootstrap volume can be rebuilt. Postgres and RustFS publish no ports, so
+  keys (section 3 of the kit) so a lost bootstrap volume can be rebuilt. Only for the bundled `postgres` and
+  `rustfs` services: an external database or bucket is named "external service — credentials managed outside
+  Yoda" and its credentials never go in the kit (`kitBootstrapValues`, `apps/core/src/local/setup-progress.ts`). Postgres and RustFS publish no ports, so
   those add host-side access only; the kit was already "anyone with it and a dump reads every secret", and the
   runbook keeps it off the host and apart from the backups (`(umask 077; …)` when it is written on the host).
 - **Rotation.** A key copied together with a dump can now be retired: `yoda-admin rotate-master-key`

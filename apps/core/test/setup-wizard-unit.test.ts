@@ -102,9 +102,9 @@ describe('recovery kit file (D7)', () => {
     expect(text).not.toContain('3. BOOTSTRAP VALUES')
   })
 
-  it('carries the Postgres password and the storage keys, labelled, for a lost bootstrap volume (I2)', () => {
-    const bootstrap = kitBootstrapValues({ databaseUrl: 'postgres://yoda:pg%2Fplaceholder@postgres:5432/yoda', s3AccessKey: 'access-placeholder', s3SecretKey: 'secret-placeholder' })
-    expect(bootstrap).toEqual({ postgresUser: 'yoda', postgresPassword: 'pg/placeholder', s3AccessKey: 'access-placeholder', s3SecretKey: 'secret-placeholder' })
+  it('carries the Postgres password and the storage keys of the bundled services, labelled (I2)', () => {
+    const bootstrap = kitBootstrapValues({ databaseUrl: 'postgres://yoda:pg%2Fplaceholder@postgres:5432/yoda', s3Endpoint: 'http://rustfs:9000', s3AccessKey: 'access-placeholder', s3SecretKey: 'secret-placeholder' })
+    expect(bootstrap).toEqual({ postgresUser: 'yoda', postgresPassword: 'pg/placeholder', s3AccessKey: 'access-placeholder', s3SecretKey: 'secret-placeholder', postgresExternal: false, s3External: false })
     const text = recoveryKitText({ installId: 'i', publicUrl: '', keyId: 'k', masterKey: 'placeholder-master-key', username: 'admin', codes: [], at: new Date(0), bootstrap })
     const section = text.slice(text.indexOf('3. BOOTSTRAP VALUES'))
     expect(section).toContain('POSTGRES_PASSWORD=pg/placeholder\n')
@@ -112,10 +112,25 @@ describe('recovery kit file (D7)', () => {
     expect(section).toContain('S3_SECRET_KEY=secret-placeholder\n')
     expect(section).toContain('YODA_MASTER_KEY=placeholder-master-key\n')
     expect(section).toContain('section 4a')
+    expect(section).not.toContain('external service')
     // The default user is not repeated; another one is.
     expect(section).not.toContain('POSTGRES_USER=')
-    expect(recoveryKitText({ installId: 'i', publicUrl: '', keyId: 'k', masterKey: 'm', username: 'a', codes: [], at: new Date(0), bootstrap: kitBootstrapValues({ databaseUrl: 'postgres://hosp:x@db.example.org/yoda' }) })).toContain('POSTGRES_USER=hosp\n')
-    expect(kitBootstrapValues({ databaseUrl: 'not a url' })).toEqual({ postgresUser: null, postgresPassword: null, s3AccessKey: null, s3SecretKey: null })
+    expect(recoveryKitText({ installId: 'i', publicUrl: '', keyId: 'k', masterKey: 'm', username: 'a', codes: [], at: new Date(0), bootstrap: kitBootstrapValues({ databaseUrl: 'postgres://hosp:x@postgres/yoda' }) })).toContain('POSTGRES_USER=hosp\n')
+  })
+
+  it('leaves out the credentials of an external Postgres or S3 (managed outside Yoda)', () => {
+    const both = kitBootstrapValues({ databaseUrl: 'postgres://hosp:db-placeholder@db.example.org:5432/yoda', s3Endpoint: 'https://s3.example.org', s3AccessKey: 'ext-access', s3SecretKey: 'ext-secret' })
+    expect(both).toMatchObject({ postgresPassword: null, s3AccessKey: null, s3SecretKey: null, postgresExternal: true, s3External: true })
+    const text = recoveryKitText({ installId: 'i', publicUrl: '', keyId: 'k', masterKey: 'm', username: 'a', codes: [], at: new Date(0), bootstrap: both })
+    expect(text).toContain('Postgres: external service — credentials managed outside Yoda')
+    expect(text).toContain('Storage (S3): external service — credentials managed outside Yoda')
+    for (const v of ['db-placeholder', 'ext-access', 'ext-secret', 'POSTGRES_PASSWORD=', 'S3_ACCESS_KEY=']) expect(text).not.toContain(v)
+    // Mixed: bundled Postgres, external bucket.
+    const mixed = recoveryKitText({ installId: 'i', publicUrl: '', keyId: 'k', masterKey: 'm', username: 'a', codes: [], at: new Date(0), bootstrap: kitBootstrapValues({ databaseUrl: 'postgres://yoda:pg-placeholder@postgres:5432/yoda', s3Endpoint: 'https://s3.example.org', s3AccessKey: 'ext-access', s3SecretKey: 'ext-secret' }) })
+    expect(mixed).toContain('POSTGRES_PASSWORD=pg-placeholder\n')
+    expect(mixed).toContain('Storage (S3): external service')
+    expect(mixed).not.toContain('ext-secret')
+    expect(kitBootstrapValues({ databaseUrl: 'not a url' })).toMatchObject({ postgresPassword: null, postgresExternal: true })
   })
 })
 

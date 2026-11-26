@@ -362,7 +362,8 @@ in your shell overrides `release.env`, so leave it unset.
    settings), and the claim: you sign in through Keycloak and become the first admin.
 5. **Store the recovery kit.** The last step gives one file, `yoda-recovery-kit-<first 8 characters of the
    install id>.txt` (the install id is the one the wizard shows): the master key, the break-glass username and
-   its recovery codes, and the bootstrap values (the Postgres password and the storage keys, section 4a). It is
+   its recovery codes, and the bootstrap values (the Postgres password and the storage keys of the bundled services,
+   section 4a). It is
    shown once. Print it or put it in the organisation's
    password vault, **off this host and apart from the backups**: anyone with it and a database backup can read
    every secret. Setup finishes only once you confirm you stored it; a new kit can be made later on the host
@@ -415,7 +416,9 @@ found but its password is unknown". Never let it generate a new one:
 1. **With the recovery kit:** put the values of its section 3 in `.env` (`POSTGRES_PASSWORD`, `S3_ACCESS_KEY`,
    `S3_SECRET_KEY`, and `YODA_MASTER_KEY` from section 1; `POSTGRES_USER` if the kit lists one), then
    `dc up -d --no-build`. `init` writes them back into the volume; you may delete the lines afterwards. A kit made
-   before the Postgres password or the storage keys were changed holds the old values: use the newest kit.
+   before the Postgres password or the storage keys were changed holds the old values: use the newest kit. The
+   kit carries them only for the bundled `postgres` and `rustfs` services; for an external database or bucket it
+   says "external service — credentials managed outside Yoda" (keep those with the service's owners).
 2. **Without a kit, reset the Postgres password** (host access is the root of trust). The database is
    untouched; only the role's password changes. Postgres must not be running (it is not while `init` fails):
 
@@ -753,8 +756,8 @@ environment changed). Rotate on a schedule, when a person with access leaves, an
 
 | Secret | How |
 | --- | --- |
-| Postgres password | Host side. `dc exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'`, then `\password yoda` (prompts, so the password stays out of history); put the same value in `.env` as `POSTGRES_PASSWORD` (and in `DATABASE_URL` if you set one), then `dc up -d --no-build` (`init` copies it into the bootstrap volume). |
-| Storage keys | Host side. RustFS takes its credentials from the bootstrap volume: set both `S3_ACCESS_KEY` and `S3_SECRET_KEY` in `.env` and `dc up -d --no-build` (restarts `rustfs`, `core`, `backup`). |
+| Postgres password | Host side. `dc exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'`, then `\password yoda` (prompts, so the password stays out of history); put the same value in `.env` as `POSTGRES_PASSWORD` (and in `DATABASE_URL` if you set one), then `dc up -d --no-build` (`init` copies it into the bootstrap volume), then make a new recovery kit (`yoda-admin recovery-kit`; section 4 step 5). |
+| Storage keys | Host side. RustFS takes its credentials from the bootstrap volume: set both `S3_ACCESS_KEY` and `S3_SECRET_KEY` in `.env` and `dc up -d --no-build` (restarts `rustfs`, `core`, `backup`), then make a new recovery kit (`yoda-admin recovery-kit`; section 4 step 5). |
 | AI provider keys | Create the new key in the provider console, enter it in System settings → AI, then delete the old key. |
 | GitLab bot token | Create a new token (`api`), enter it in System settings → GitLab (**Test** shows the bot), revoke the old one. |
 | GitLab webhook secret | Generate a new one in System settings → GitLab, then put it in every webhook right away; deliveries in between are refused (resend them). |

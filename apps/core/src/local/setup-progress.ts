@@ -87,14 +87,35 @@ export function missingSteps(states: Record<SetupStepId, SetupStepState>): Setup
 }
 
 /** The bootstrap values a recovery kit carries besides the master key (from core's resolved env). */
-export type KitBootstrap = { postgresUser: string | null; postgresPassword: string | null; s3AccessKey: string | null; s3SecretKey: string | null }
+export type KitBootstrap = {
+  postgresUser: string | null
+  postgresPassword: string | null
+  s3AccessKey: string | null
+  s3SecretKey: string | null
+  /** The database or the bucket is not the bundled service: its credentials are managed outside Yoda (not in the kit). */
+  postgresExternal?: boolean
+  s3External?: boolean
+}
+
+/** The bundled services' compose names: init derives DATABASE_URL for `postgres`; RustFS is `rustfs`. */
+const hostOf = (url: string | undefined) => {
+  try {
+    return new URL(url ?? '').hostname
+  } catch {
+    return ''
+  }
+}
 
 /**
- * The Postgres user and password (from DATABASE_URL, which init derives from the bootstrap volume or an external
- * database sets) and the storage keys, for the kit: with them a lost bootstrap volume next to a surviving database
- * volume is rebuilt (`.env` → init). A URL that does not parse gives nulls, never an error.
+ * The Postgres user and password (from DATABASE_URL, which init derives from the bootstrap volume) and the storage
+ * keys, for the kit: with them a lost bootstrap volume next to a surviving database volume is rebuilt (`.env` →
+ * init). Only for the bundled services (host `postgres`, endpoint host `rustfs`): an external database or bucket
+ * keeps its credentials outside Yoda, so they are left out. A URL that does not parse gives nulls, never an error.
  */
-export function kitBootstrapValues(c: { databaseUrl?: string; s3AccessKey?: string; s3SecretKey?: string }): KitBootstrap {
+export function kitBootstrapValues(c: { databaseUrl?: string; s3Endpoint?: string; s3AccessKey?: string; s3SecretKey?: string }): KitBootstrap {
+  const postgresExternal = hostOf(c.databaseUrl) !== 'postgres'
+  const s3External = hostOf(c.s3Endpoint) !== 'rustfs'
+  if (postgresExternal && s3External) return { postgresUser: null, postgresPassword: null, s3AccessKey: null, s3SecretKey: null, postgresExternal, s3External }
   let postgresUser: string | null = null
   let postgresPassword: string | null = null
   try {
@@ -104,7 +125,18 @@ export function kitBootstrapValues(c: { databaseUrl?: string; s3AccessKey?: stri
   } catch {
     // Not a URL: leave both out.
   }
-  return { postgresUser, postgresPassword, s3AccessKey: c.s3AccessKey || null, s3SecretKey: c.s3SecretKey || null }
+  if (postgresExternal) {
+    postgresUser = null
+    postgresPassword = null
+  }
+  return {
+    postgresUser,
+    postgresPassword,
+    s3AccessKey: s3External ? null : c.s3AccessKey || null,
+    s3SecretKey: s3External ? null : c.s3SecretKey || null,
+    postgresExternal,
+    s3External,
+  }
 }
 
 /**
@@ -123,7 +155,7 @@ export function recoveryKitText(k: {
   bootstrap?: KitBootstrap
 }): string {
   const b = k.bootstrap
-  const bootstrapLines = !b || (!b.postgresPassword && !b.s3AccessKey && !b.s3SecretKey)
+  const bootstrapLines = !b || (!b.postgresPassword && !b.s3AccessKey && !b.s3SecretKey && !b.postgresExternal && !b.s3External)
     ? []
     : [
       '',
@@ -135,6 +167,8 @@ export function recoveryKitText(k: {
       'run dc up -d: init writes them back (docs/operations.md, section 4a).',
       'หากโวลุ่ม bootstrap หาย แต่ฐานข้อมูลยังอยู่ ให้ใส่ค่าเหล่านี้และกุญแจหลักใน .env แล้ว dc up -d',
       '',
+      ...(b.postgresExternal ? ['Postgres: external service — credentials managed outside Yoda'] : []),
+      ...(b.s3External ? ['Storage (S3): external service — credentials managed outside Yoda'] : []),
       ...(b.postgresPassword ? [`POSTGRES_PASSWORD=${b.postgresPassword}`] : []),
       ...(b.postgresUser && b.postgresUser !== 'yoda' ? [`POSTGRES_USER=${b.postgresUser}`] : []),
       ...(b.s3AccessKey ? [`S3_ACCESS_KEY=${b.s3AccessKey}`] : []),

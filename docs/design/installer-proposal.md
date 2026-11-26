@@ -283,7 +283,8 @@ Without the script, the same is: copy the bundle, `docker compose -f docker-comp
 - **Recovery kit.** The wizard's last step (4.2, step 9) produces `yoda-recovery-kit-<first 8 of the install
   id>.txt` (the install id is `setup_state.install_id` in the database; the bootstrap volume has none): install id,
   public URL, date, the master key, the break-glass username and its recovery codes, the Postgres password and the
-  storage keys (for a lost bootstrap volume next to a surviving database), and short instructions.
+  storage keys of the bundled services (for a lost bootstrap volume next to a surviving database; an external
+  database or bucket is only named), and short instructions.
   Warnings on the page and in the file: *print it or store it in the organisation's password vault; anyone with
   this file and a database backup can read every secret; it is shown once.* Setup cannot finish until the person
   ticks "I have stored the recovery kit". Admin → Security can produce a new kit later (break-glass re-auth;
