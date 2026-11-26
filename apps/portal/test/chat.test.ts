@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Message } from '@yoda/shared'
-import { applySent, groupMessages, isNearBottom, isSecretaryTyping, mergeLatest, mergeMessages, scrollPlan, systemMarkerKey, threadIcon } from '../app/utils/chat'
+import { applySent, groupMessages, isNearBottom, isSecretaryTyping, mergeLatest, mergeMessages, scrollPlan, systemMarkerKey, threadIcon, workItemCardLink } from '../app/utils/chat'
 
 let n = 0
 function msg(over: Partial<Message> & { createdAt: string }): Message {
@@ -153,5 +153,12 @@ describe('threadIcon', () => {
     expect(threadIcon('personal')).toBe('mdi-robot-outline')
     expect(threadIcon('project')).toBe('mdi-folder-outline')
     expect(threadIcon('work_item')).toBe('mdi-clipboard-text-outline')
+  })
+})
+
+describe('workItemCardLink', () => {
+  it('opens the work item for staff and the request page for the requester', () => {
+    expect(workItemCardLink('wi-1', true)).toBe('/work-items/wi-1')
+    expect(workItemCardLink('wi-1', false)).toBe('/requests/wi-1')
   })
 })

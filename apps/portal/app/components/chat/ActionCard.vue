@@ -3,6 +3,7 @@ import type { ActionCard, ConversationKind, Proposal } from '@yoda/shared'
 import { proposalFallbackKey } from '~/utils/requests'
 import { guardOf } from '~/utils/guards'
 import { DECISION_KINDS } from '~/utils/todo'
+import { workItemCardLink } from '~/utils/chat'
 
 /**
  * One action card in a chat message (proposal §8.2 chat): kind icon + kind label, a title naming the object,
@@ -20,7 +21,7 @@ function internal(to: string): string | null {
 const staff = computed(() => !!me.value?.isStaff)
 const workItemLink = computed(() => {
   if (props.card.type !== 'work_item_created') return null
-  return staff.value ? `/work-items/${props.card.workItemId}` : '/requests'
+  return workItemCardLink(props.card.workItemId, staff.value)
 })
 const kind = computed(() => (props.proposal ? DECISION_KINDS[props.proposal.kind] : null))
 const proposalTitle = computed(() => {

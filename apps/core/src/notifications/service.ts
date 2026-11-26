@@ -90,7 +90,7 @@ export async function notifyRequestEnded(
     kind: 'request_update',
     title: event === 'done' ? 'คำขอของคุณเสร็จสมบูรณ์แล้ว' : 'คำขอของคุณถูกยกเลิก',
     body: item.title,
-    link: '/requests',
+    link: `/requests/${item.id}`,
     dedupeKey: `request:${item.id}:${event}`,
   })
 }

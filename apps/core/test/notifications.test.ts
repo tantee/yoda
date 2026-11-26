@@ -269,14 +269,14 @@ describe('notifications', () => {
     expect((await detail(wiId)).state).toBe('done')
     const done = (await inbox(nurse)).filter((n) => n.title.includes('เสร็จ'))
     expect(done).toHaveLength(1)
-    expect(done[0]!.link).toBe('/requests')
+    expect(done[0]!.link).toBe(`/requests/${wiId}`)
 
     const p2 = await project([[pm, ['PM']]])
     const other = await createItem(p2, { requesterId: nurse2.id })
     expect((await call(pm, 'POST', `/work-items/${other.id}/cancel`)).statusCode).toBe(200)
     expect((await inbox(nurse2)).map((n) => n.kind)).toEqual(['request_update'])
     expect((await inbox(nurse2))[0]!.title).toContain('ยกเลิก')
-    expect((await inbox(nurse2))[0]!.link).toBe('/requests')
+    expect((await inbox(nurse2))[0]!.link).toBe(`/requests/${other.id}`)
   })
 
   it('live events address only the notified person and fire only for new notifications', async () => {

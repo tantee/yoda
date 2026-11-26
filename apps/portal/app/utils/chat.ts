@@ -107,6 +107,11 @@ export function scrollPlan(s: {
   return s.appended ? 'pill' : 'none'
 }
 
+/** Where a "work item created" card opens: staff go to the work item, the requester to their own request. */
+export function workItemCardLink(workItemId: string, staff: boolean): string {
+  return staff ? `/work-items/${workItemId}` : `/requests/${workItemId}`
+}
+
 export function threadIcon(kind: ConversationKind): string {
   if (kind === 'personal' || kind === 'intake') return 'mdi-robot-outline'
   return kind === 'project' ? 'mdi-folder-outline' : 'mdi-clipboard-text-outline'
