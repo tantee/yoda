@@ -195,9 +195,9 @@ On start core copies every env value it reads into the database (D4; secrets too
 effect, now editable. To really disable something (email, LINE, Telegram, GitLab, an AI provider), remove the
 variable and restart, then clear the value in System settings (for a secret, **Remove**), or switch the channel
 off there. With `YODA_SETTINGS_IMPORT=false` (or no usable master key) env secrets are not copied, so removing one
-disconnects that service until it is entered in System settings. Variables the prod compose file passes with a
-default (such as `SMTP_PORT`, `AI_WORKERS`) stay set in env, and so locked in the UI, until the install uses the
-generated settings of the installer update. The portal reads the organisation name and line, its links and
+disconnects that service until it is entered in System settings. The prod compose file passes every setting the
+UI can edit with an empty default, and an empty value counts as unset, so a variable that is not in `.env` never
+locks anything (only bootstrap values such as the ports and S3 have compose defaults). The portal reads the organisation name and line, its links and
 where to sign in from core's `GET /api/public-config`, so those are edited in System settings (a
 `NUXT_PUBLIC_*` value in `.env` still wins and locks it). The `backup` container reads the backup time and the
 days kept from the database too (section 6), so they are edited in System settings → Backups.
@@ -818,7 +818,7 @@ after it). For a value still in `.env`, the same holds with `dc up -d --no-build
   be changed first, then a new authenticator; forgotten password: `yoda-admin reset-break-glass`), run
   `yoda-admin recovery-kit` and store the kit. Never delete the bootstrap volume to "fix" it.
 - **A setting shows "Set by environment" and cannot be edited.** Its variable is in `.env` (the lock names it),
-  or the prod compose passes it with a default. Remove the line from `.env` and `dc up -d --no-build`; the value
+  or in the shell that ran compose. Remove the line from `.env` and `dc up -d --no-build`; the value
   imported from env stays in effect, now editable (section 3).
 - **Everyone shows as the proxy's address, or the wizard detects the wrong URL** behind a reverse proxy: set
   `YODA_TRUSTED_PROXY_HOPS=2` and have the proxy send `X-Forwarded-For`, `X-Forwarded-Proto` and

@@ -130,7 +130,7 @@ describe('GET /admin/settings', () => {
     expect(find(body, 'org.name')).toMatchObject({ locked: null })
     expect(find(body, 'org.line')).toMatchObject({ locked: null, envName: 'NUXT_PUBLIC_ORG_LINE' })
     expect(find(body, 'backup.keepDays')).toMatchObject({ locked: null, envName: 'BACKUP_KEEP_DAYS' })
-    expect(find(body, 'smtp.from')).toMatchObject({ importable: true, composeDefault: false })
+    expect(find(body, 'smtp.from')).toMatchObject({ importable: true })
     expect(find(body, 'smtp.host').importable).toBeUndefined()
     expect(find(body, 'ai.workers')).toMatchObject({ apply: 'restart', restartRequired: false })
     expect(body.categories.find((c: { category: string }) => c.category === 'email').test).toBe('smtp')
@@ -140,12 +140,25 @@ describe('GET /admin/settings', () => {
     expect((await app.inject({ url: '/admin/settings?category=nope', headers: h(boss) })).statusCode).toBe(404)
   })
 
-  it('tells per env-locked key what removing the variable would do (kept by the import, prod compose default)', async () => {
+  it('the prod compose env with an empty .env leaves the UI-editable settings unlocked (C1)', async () => {
+    const { prodComposeCoreEnv } = await import('./prod-compose-env.js')
+    await boot(prodComposeCoreEnv())
+    const body = (await app.inject({ url: '/admin/settings', headers: h(boss) })).json()
+    for (const k of ['smtp.port', 'smtp.secure', 'ai.modelDraft', 'ai.modelFast', 'ai.workers', 'work.dailyTaskCap', 'runners.leaseSeconds', 'runners.mcpEnabled', 'oidc.staffGroup']) {
+      expect(find(body, k), k).toMatchObject({ locked: null })
+    }
+    const res = await put(boss, 'email', { changes: { 'smtp.port': 2525 }, versions: { 'smtp.port': 0 } })
+    expect(res.statusCode).toBe(200)
+    expect(store.get('smtp.port')).toBe(2525)
+  })
+
+  it('tells per env-locked key what removing the variable would do (kept by the import)', async () => {
     const env = { SMTP_PORT: '465', SMTP_PASSWORD, GITLAB_TOKEN }
     await boot(env)
     let body = (await app.inject({ url: '/admin/settings?category=email', headers: h(boss) })).json()
-    expect(find(body, 'smtp.port')).toMatchObject({ locked: { reason: 'env', envName: 'SMTP_PORT' }, importable: true, composeDefault: true })
-    expect(find(body, 'smtp.password')).toMatchObject({ locked: { reason: 'env' }, importable: true, composeDefault: false })
+    expect(find(body, 'smtp.port')).toMatchObject({ locked: { reason: 'env', envName: 'SMTP_PORT' }, importable: true })
+    expect(find(body, 'smtp.port').composeDefault).toBeUndefined()
+    expect(find(body, 'smtp.password')).toMatchObject({ locked: { reason: 'env' }, importable: true })
     expect(find(body, 'smtp.password').writeSource).toBe('import')
     await app.close()
     // Import off: env secrets are not copied, so removing one disconnects the service.

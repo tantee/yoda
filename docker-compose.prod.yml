@@ -77,6 +77,9 @@ services:
     volumes:
       - yoda-bootstrap:/var/lib/yoda
     environment:
+      # Every setting the UI can edit is passed with an empty default: empty counts as unset, so it is editable in System
+      # settings (and at /recovery) unless .env sets it. Only bootstrap-only values (§8) have a default or a fixed
+      # value here (a core test checks this).
       PORT: 4000
       # Empty: derived from the bootstrap volume (an external Postgres sets it).
       DATABASE_URL: ${DATABASE_URL:-}
@@ -86,12 +89,12 @@ services:
       YODA_TRUSTED_PROXY_HOPS: ${YODA_TRUSTED_PROXY_HOPS:-}
       # Optional: unset until sign-in is set up (setup mode refuses every token with `not_configured`).
       OIDC_ISSUER: ${OIDC_ISSUER:-}
-      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-yoda-portal}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
       # Optional: fetch signing keys from an internal address; tokens are still checked against OIDC_ISSUER.
       OIDC_JWKS_URL: ${OIDC_JWKS_URL:-}
       # The `migrate` service has already run; core never migrates in production.
       MIGRATE_ON_START: 'false'
-      STAFF_GROUP: ${STAFF_GROUP:-/it-dev}
+      STAFF_GROUP: ${STAFF_GROUP:-}
       BOOTSTRAP_ADMINS: ${BOOTSTRAP_ADMINS:-}
       S3_ENDPOINT: http://rustfs:9000
       S3_REGION: ${S3_REGION:-us-east-1}
@@ -102,20 +105,20 @@ services:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
-      AI_MODEL_DRAFT: ${AI_MODEL_DRAFT:-anthropic:claude-opus-5-5}
-      AI_MODEL_FAST: ${AI_MODEL_FAST:-anthropic:claude-haiku-5-5}
+      AI_MODEL_DRAFT: ${AI_MODEL_DRAFT:-}
+      AI_MODEL_FAST: ${AI_MODEL_FAST:-}
       AI_EMBEDDING_MODEL: ${AI_EMBEDDING_MODEL:-}
-      AI_WORKERS: ${AI_WORKERS:-2}
-      DAILY_TASK_CAP: ${DAILY_TASK_CAP:-8}
+      AI_WORKERS: ${AI_WORKERS:-}
+      DAILY_TASK_CAP: ${DAILY_TASK_CAP:-}
       GITLAB_URL: ${GITLAB_URL:-}
       GITLAB_TOKEN: ${GITLAB_TOKEN:-}
       GITLAB_WEBHOOK_SECRET: ${GITLAB_WEBHOOK_SECRET:-}
       PORTAL_URL: ${PORTAL_URL:-}
-      RUNNER_LEASE_SECONDS: ${RUNNER_LEASE_SECONDS:-600}
-      MCP_ENABLED: ${MCP_ENABLED:-true}
+      RUNNER_LEASE_SECONDS: ${RUNNER_LEASE_SECONDS:-}
+      MCP_ENABLED: ${MCP_ENABLED:-}
       SMTP_HOST: ${SMTP_HOST:-}
-      SMTP_PORT: ${SMTP_PORT:-587}
-      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_PORT: ${SMTP_PORT:-}
+      SMTP_SECURE: ${SMTP_SECURE:-}
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       MAIL_FROM: ${MAIL_FROM:-}

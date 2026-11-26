@@ -1,6 +1,5 @@
 import { randomBytes } from 'node:crypto'
 import {
-  PROD_COMPOSE_CORE_ENV,
   SCOPE_CONTAINER,
   SETTING_KEYS,
   SettingCategory,
@@ -63,7 +62,6 @@ export const REAUTH_WINDOW_S = 600
  * a wrong JWKS URL fails every token check, as a wrong issuer does.
  */
 const RECOVERY_ONLY = new Set<SettingKey>(['oidc.issuer', 'oidc.clientId', 'oidc.jwksUrl'])
-const COMPOSE_ENV = new Set(PROD_COMPOSE_CORE_ENV)
 /** Secrets an admin may have generated (shown once). */
 export const GENERATED = new Set<SettingKey>(['gitlab.webhookSecret', 'telegram.webhookSecret'])
 /** Keys that choose which server a test talks to. */
@@ -158,7 +156,6 @@ function view(store: SettingsStore, info: SettingInfo, restart: Set<SettingKey>,
   if (v.locked?.reason === 'env') {
     // What removing the variable from the host's .env would do (the lock help wording depends on it).
     v.importable = !info.secret || store.importsSecrets
-    v.composeDefault = !!info.envName && COMPOSE_ENV.has(info.envName)
   }
   if (info.secret) {
     // The store never keeps the master key, so its state comes from the key check (keyStatus / keyId).

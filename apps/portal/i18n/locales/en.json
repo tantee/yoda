@@ -1636,7 +1636,6 @@
         "bound_secret_in_env": "Remove {name} from the .env before moving this endpoint",
         "managed_on_host": "Set {name} on the {container} container on the install host, then restart that container. It becomes editable here in a later update.",
         "managed_on_host_unused": "Nothing reads this yet. It becomes editable here with the setup update.",
-        "envCompose": "The prod compose file provides a default for {name}, so it stays set by environment until this install uses generated settings (coming in the setup update). Change it in the .env on the install host.",
         "envNotKept": "This secret is not stored in the database (the master key is not usable, or YODA_SETTINGS_IMPORT=false). Removing {name} from the .env disconnects the service until the secret is entered here."
       },
       "managed_on_host": "Managed on the install host"

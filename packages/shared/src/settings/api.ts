@@ -33,11 +33,9 @@ export const SettingView = z.object({
   /**
    * Env-locked settings only. `importable`: the env value is copied into the database on boot (D4), so removing
    * the variable keeps it; false for a secret when the master key is not usable or YODA_SETTINGS_IMPORT=false
-   * (removing it then disconnects the service). `composeDefault`: the prod compose file passes the variable with
-   * a default (or requires it), so it stays set in env until the install uses generated settings.
+   * (removing it then disconnects the service).
    */
   importable: z.boolean().optional(),
-  composeDefault: z.boolean().optional(),
   /** Non-secrets only (absent when unset). */
   value: z.unknown().optional(),
   /** Secrets only. `unavailable`: stored, but the master key cannot decrypt it (recovery). */

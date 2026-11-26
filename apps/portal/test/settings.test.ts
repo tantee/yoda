@@ -146,11 +146,9 @@ describe('fields by registry type', () => {
     expect(lockHowKey('env', { secret: true, importable: true })).toBe('settings.lock.how.env')
     // A secret the import did not copy (no usable key, or import off) is lost: the service disconnects.
     expect(lockHowKey('env', { secret: true, importable: false })).toBe('settings.lock.how.envNotKept')
-    // The prod compose passes it anyway: removing it from .env does not unlock it.
-    expect(lockHowKey('env', { composeDefault: true, importable: true })).toBe('settings.lock.how.envCompose')
-    const port = view('smtp.port', { source: 'env', envName: 'SMTP_PORT', value: 465, locked: { reason: 'env', envName: 'SMTP_PORT' }, importable: true, composeDefault: true })
-    expect(fieldRules(port).lock!.howKey).toBe('settings.lock.how.envCompose')
-    const pw = secret('smtp.password', true, { source: 'env', locked: { reason: 'env', envName: 'SMTP_PASSWORD' }, importable: false, composeDefault: false })
+    const port = view('smtp.port', { source: 'env', envName: 'SMTP_PORT', value: 465, locked: { reason: 'env', envName: 'SMTP_PORT' }, importable: true })
+    expect(fieldRules(port).lock!.howKey).toBe('settings.lock.how.env')
+    const pw = secret('smtp.password', true, { source: 'env', locked: { reason: 'env', envName: 'SMTP_PASSWORD' }, importable: false })
     expect(fieldRules(pw).lock!.howKey).toBe('settings.lock.how.envNotKept')
     expect(lockHowKey('mystery')).toBe('settings.lock.how.readonly')
   })
@@ -432,7 +430,7 @@ describe('labels', () => {
       expect(hasText(`settings.lock.${r}`), r).toBe(true)
       expect(hasText(`settings.lock.how.${r}`), r).toBe(true)
     }
-    for (const k of ['envCompose', 'envNotKept', 'managed_on_host_unused']) expect(hasText(`settings.lock.how.${k}`), k).toBe(true)
+    for (const k of ['envNotKept', 'managed_on_host_unused']) expect(hasText(`settings.lock.how.${k}`), k).toBe(true)
     for (const k of ['settings.source.imported', 'settings.secret.keyBlocked', 'settings.security.keyAlert.missingEnvOnly']) expect(hasText(k), k).toBe(true)
     expect(hasText('nav.admin.settings')).toBe(true)
   })
@@ -526,10 +524,11 @@ describe('EnvLockChip and SettingField', () => {
     expect(field).toContain('data-testid="setting-lock-how"')
   })
   it('an env-locked field uses the help that fits its state', async () => {
-    const v = view('smtp.port', { source: 'env', envName: 'SMTP_PORT', value: 465, locked: { reason: 'env', envName: 'SMTP_PORT' }, importable: true, composeDefault: true })
-    const html = await render(SettingField, { view: v, modelValue: '465' })
-    expect(html).toContain('settings.lock.how.envCompose(name=SMTP_PORT)')
-    expect(html).not.toContain('settings.lock.how.env(name=SMTP_PORT)')
+    const v = secret('smtp.password', true, { source: 'env', envName: 'SMTP_PASSWORD', locked: { reason: 'env', envName: 'SMTP_PASSWORD' }, importable: false })
+    expect(fieldRules(v).lock!.howKey).toBe('settings.lock.how.envNotKept')
+    const port = view('smtp.port', { source: 'env', envName: 'SMTP_PORT', value: 465, locked: { reason: 'env', envName: 'SMTP_PORT' }, importable: true })
+    const html = await render(SettingField, { view: port, modelValue: '465' })
+    expect(html).toContain('settings.lock.how.env(name=SMTP_PORT)')
   })
   it('a value imported from env is marked', async () => {
     const html = await render(SettingField, { view: view('smtp.user', { source: 'db', value: 'yoda@example.org', updatedAt: '2026-11-24T03:02:00Z', writeSource: 'import' }), modelValue: 'yoda@example.org' })

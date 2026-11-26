@@ -16,6 +16,7 @@ import { runAdmin } from '../src/yoda-admin.js'
 import { startFakeOidc, type FakeOidc } from './fake-oidc.js'
 import { resetDb, testDb, testDeps } from './helpers.js'
 import { signToken } from './jwt.js'
+import { prodComposeCoreEnv } from './prod-compose-env.js'
 
 // Setup mode, the setup token, the break-glass admin and /recovery against the test database (installer proposal
 // §4.1, §7, §8). Placeholder passwords only.
@@ -582,6 +583,19 @@ describe('recovery: changing the OIDC settings (8.6)', () => {
     const res = await app.inject({ method: 'PUT', url: '/recovery/oidc/pending', headers: h, payload: { issuer: idp.issuer, clientId: 'yoda-portal', jwksUrl: null } })
     expect(res.statusCode).toBe(409)
     expect(res.json()).toMatchObject({ error: 'setting_locked', key: 'oidc.issuer', envName: 'OIDC_ISSUER' })
+  })
+
+  it('the prod compose env with an empty .env locks none of the OIDC settings (C1)', async () => {
+    const env = prodComposeCoreEnv({ YODA_IMAGE_PREFIX: 'registry.example.org/yoda', YODA_VERSION: '1.0.0' })
+    expect(env.OIDC_CLIENT_ID).toBe('')
+    await boot({ done: true, env })
+    for (const k of ['oidc.issuer', 'oidc.clientId', 'oidc.jwksUrl', 'oidc.staffGroup'] as const) expect(store.fromEnv(k), k).toBe(false)
+    await boss()
+    await withAdmin()
+    const h = await bg()
+    const staged = await app.inject({ method: 'PUT', url: '/recovery/oidc/pending', headers: h, payload: { issuer: idp.issuer, clientId: 'portal-2', jwksUrl: null } })
+    expect(staged.statusCode).toBe(200)
+    expect(staged.json().oidc.pending).toMatchObject({ values: { issuer: idp.issuer, clientId: 'portal-2' } })
   })
 })
 

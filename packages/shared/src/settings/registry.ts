@@ -253,17 +253,6 @@ export function byEnvName(envName: string): SettingDef | undefined {
 export const SETTING_ENV_NAMES: readonly string[] = [...BY_ENV.keys()]
 
 /**
- * Variables the prod compose file passes to core with a default or as required (`${NAME:-value}`, `${NAME:?...}`,
- * or a fixed value), so they are always set in core's env there. Removing one from the host's `.env` does not
- * unlock it in the UI. A core test keeps this list in sync with `docker-compose.prod.yml`.
- */
-export const PROD_COMPOSE_CORE_ENV: readonly string[] = [
-  'PORT', 'YODA_BOOTSTRAP_FILE', 'YODA_MASTER_KEY_FILE', 'OIDC_CLIENT_ID', 'MIGRATE_ON_START', 'STAFF_GROUP', 'S3_ENDPOINT',
-  'S3_REGION', 'S3_BUCKET', 'AI_MODEL_DRAFT', 'AI_MODEL_FAST', 'AI_WORKERS', 'DAILY_TASK_CAP', 'RUNNER_LEASE_SECONDS',
-  'MCP_ENABLED', 'SMTP_PORT', 'SMTP_SECURE', 'LINE_API_URL', 'TELEGRAM_API_URL',
-]
-
-/**
  * The container that reads a setting of a scope other than core from its own env only (shown in the "managed on the
  * host" lock). None today: the portal reads its settings from core's `/public-config` (§5.6), and the backup
  * container reads `backup.at` / `backup.keepDays` from the settings table (env still wins), so both are editable.

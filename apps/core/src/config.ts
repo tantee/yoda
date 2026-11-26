@@ -72,36 +72,41 @@ export type Config = {
 const modelId = z.string().regex(/^(anthropic|openai):.+$/, 'must be provider:model with provider anthropic or openai')
 const optional = <T extends z.ZodTypeAny>(s: T) =>
   z.preprocess((v) => (v === '' ? undefined : v), s.optional())
+/**
+ * An empty value counts as unset (its default applies), as in the settings store: the prod compose passes
+ * `${NAME:-}`, so a variable missing from .env reaches core as '' and the setting stays editable in the UI.
+ */
+const emptyUnset = <T extends z.ZodTypeAny>(s: T) => z.preprocess((v) => (v === '' ? undefined : v), s)
 
 /** The environment core reads; exported so the runbook's variable table can be checked against it. */
 export const envSchema = z.object({
-  PORT: z.coerce.number().int().min(0).max(65535).default(4000),
+  PORT: emptyUnset(z.coerce.number().int().min(0).max(65535).default(4000)),
   DATABASE_URL: z.string().min(1),
   // Optional (setup mode, R4): without it core starts and refuses every bearer token until sign-in is set up.
   OIDC_ISSUER: optional(z.string().url()),
-  OIDC_CLIENT_ID: z.preprocess((v) => (v === '' ? undefined : v), z.string().min(1).default('yoda-portal')),
+  OIDC_CLIENT_ID: emptyUnset(z.string().min(1).default('yoda-portal')),
   OIDC_JWKS_URL: optional(z.string().url()),
   MIGRATE_ON_START: z.preprocess((v) => (v === '' ? undefined : v), z.enum(['true', 'false']).default('true')),
-  STAFF_GROUP: z.string().min(1).default('/it-dev'),
+  STAFF_GROUP: emptyUnset(z.string().min(1).default('/it-dev')),
   BOOTSTRAP_ADMINS: z.string().default(''),
   ANTHROPIC_API_KEY: optional(z.string()),
   OPENAI_API_KEY: optional(z.string()),
   OPENAI_BASE_URL: optional(z.string().url()),
-  AI_MODEL_DRAFT: modelId.default('anthropic:claude-opus-5-5'),
-  AI_MODEL_FAST: modelId.default('anthropic:claude-haiku-5-5'),
+  AI_MODEL_DRAFT: emptyUnset(modelId.default('anthropic:claude-opus-5-5')),
+  AI_MODEL_FAST: emptyUnset(modelId.default('anthropic:claude-haiku-5-5')),
   AI_EMBEDDING_MODEL: optional(modelId),
-  S3_ENDPOINT: z.string().url().default('http://localhost:9000'),
-  S3_REGION: z.string().min(1).default('us-east-1'),
-  S3_BUCKET: z.string().min(1).default('yoda'),
+  S3_ENDPOINT: emptyUnset(z.string().url().default('http://localhost:9000')),
+  S3_REGION: emptyUnset(z.string().min(1).default('us-east-1')),
+  S3_BUCKET: emptyUnset(z.string().min(1).default('yoda')),
   S3_ACCESS_KEY: z.string().min(1),
   S3_SECRET_KEY: z.string().min(1),
-  AI_WORKERS: z.coerce.number().int().min(1).max(32).default(2),
-  DAILY_TASK_CAP: z.coerce.number().int().min(1).max(1000).default(8),
+  AI_WORKERS: emptyUnset(z.coerce.number().int().min(1).max(32).default(2)),
+  DAILY_TASK_CAP: emptyUnset(z.coerce.number().int().min(1).max(1000).default(8)),
   GITLAB_URL: optional(z.string().url()),
   GITLAB_TOKEN: optional(z.string()),
   GITLAB_WEBHOOK_SECRET: optional(z.string().min(16)),
   PORTAL_URL: z.preprocess((v) => (v === '' ? undefined : v), z.string().url().default('http://localhost:3000')),
-  RUNNER_LEASE_SECONDS: z.coerce.number().int().min(180).max(86400).default(600),
+  RUNNER_LEASE_SECONDS: emptyUnset(z.coerce.number().int().min(180).max(86400).default(600)),
   MCP_ENABLED: z.preprocess((v) => (v === '' ? undefined : v), z.enum(['true', 'false']).default('true')),
   SMTP_HOST: optional(z.string()),
   SMTP_PORT: z.preprocess((v) => (v === '' ? undefined : v), z.coerce.number().int().min(1).max(65535).default(587)),
