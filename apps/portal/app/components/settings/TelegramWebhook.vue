@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { SettingsTestResult, TelegramWebhookBody } from '@yoda/shared'
 import { saveError, type ReauthStash } from '~/utils/settings'
+import type { SetupFetcher } from '~/utils/setup'
 import ConfirmDialog from '../ConfirmDialog.vue'
 import CopyField from './CopyField.vue'
 import ReauthDialog from './ReauthDialog.vue'
@@ -11,10 +12,11 @@ import TestResult from './TestResult.vue'
  * Dropping the updates Telegram still holds is opt-in and confirmed first. It sends the secret, so it needs a
  * recent sign-in like a save.
  */
-const props = defineProps<{ url: string; disabled?: boolean }>()
+const props = defineProps<{ url: string; disabled?: boolean; client?: SetupFetcher; basePath?: string }>()
 const emit = defineEmits<{ done: [] }>()
 const { t } = useI18n()
-const api = useApi()
+// The setup wizard passes its cookie-session client (`/api/setup`); the admin page uses `useApi`.
+const api = (props.client ?? useApi()) as SetupFetcher
 const route = useRoute()
 const dropPending = ref(false)
 const confirmOpen = ref(false)
@@ -35,7 +37,7 @@ async function register() {
   result.value = null
   try {
     const body: TelegramWebhookBody = { dropPending: dropPending.value }
-    result.value = await api<SettingsTestResult>('/admin/settings/telegram/webhook', { method: 'POST', body })
+    result.value = await api<SettingsTestResult>(`${props.basePath ?? '/admin/settings'}/telegram/webhook`, { method: 'POST', body })
     confirmOpen.value = false
     emit('done')
   } catch (e) {

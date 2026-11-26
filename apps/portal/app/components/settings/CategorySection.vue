@@ -21,6 +21,7 @@ import {
   type ReauthStash,
   type SectionDraft,
 } from '~/utils/settings'
+import type { SetupFetcher } from '~/utils/setup'
 import ApplyHint from './ApplyHint.vue'
 import CopyField from './CopyField.vue'
 import ReauthDialog from './ReauthDialog.vue'
@@ -45,10 +46,17 @@ const props = defineProps<{
   sendTest?: boolean
   /** Secrets cannot be saved while the master key is not usable. */
   keyStatus?: MasterKeyView['status'] | null
+  /**
+   * The setup wizard's cookie-session client (`/api/setup`) and its settings path; the admin pages use the
+   * Keycloak-backed `useApi` and `/admin/settings`. The setup session stands in for a recent sign-in.
+   */
+  client?: SetupFetcher
+  basePath?: string
 }>()
-const emit = defineEmits<{ saved: [res: SettingsPutResponse | null]; generated: []; dirty: [dirty: boolean]; reload: []; tested: [] }>()
+const emit = defineEmits<{ saved: [res: SettingsPutResponse | null]; generated: []; dirty: [dirty: boolean]; reload: []; tested: [result: SettingsTestResult] }>()
 const { t } = useI18n()
-const api = useApi()
+const api = (props.client ?? useApi()) as SetupFetcher
+const base = props.basePath ?? '/admin/settings'
 const route = useRoute()
 
 const views = computed(() => visibleSettings(props.category, props.view.settings))
@@ -135,7 +143,7 @@ async function save() {
   warnings.value = []
   serverErrors.value = {}
   try {
-    const res = await api<SettingsPutResponse>(`/admin/settings/${props.category}`, { method: 'PUT', body: replayChanges(changes.value, replay.value) })
+    const res = await api<SettingsPutResponse>(`${base}/${props.category}`, { method: 'PUT', body: replayChanges(changes.value, replay.value) })
     replay.value = null
     notice.value = { type: 'success', text: t('settings.save.saved') }
     resetOnNextView = true
@@ -169,11 +177,11 @@ async function runTest(sendTo?: 'self') {
   testError.value = ''
   testedDraft.value = dirty.value > 0
   try {
-    result.value = await api<SettingsTestResult>(`/admin/settings/${props.category}/test`, {
+    result.value = await api<SettingsTestResult>(`${base}/${props.category}/test`, {
       method: 'POST',
       body: { values: testValues(views.value, draft.value), ...(sendTo ? { sendTo } : {}) },
     })
-    emit('tested')
+    emit('tested', result.value)
   } catch (e) {
     const err = saveError(e)
     if (err.kind === 'invalid') {
@@ -195,7 +203,7 @@ async function generateSecret(key: string) {
   generating.value = key
   notice.value = null
   try {
-    const r = await api<GeneratedSecret & { webhook?: SettingsTestResult }>(`/admin/settings/${props.category}/generate/${key}`, { method: 'POST', body: { version: v.version } })
+    const r = await api<GeneratedSecret & { webhook?: SettingsTestResult }>(`${base}/${props.category}/generate/${key}`, { method: 'POST', body: { version: v.version } })
     generated.value = { key: r.key, value: r.value, version: r.version }
     if (r.webhook) result.value = r.webhook
     emit('generated')

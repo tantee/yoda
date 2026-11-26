@@ -376,7 +376,7 @@ describe('test result codes', () => {
     expect(checkDetails({ id: 'bot', ok: true, ms: 1, detail: { username: 'yoda_bot', scopes: ['api', 'read_user'] } })).toEqual(['username: yoda_bot', 'scopes: api, read_user'])
   })
   it('every code core can return is known and has th and en text', () => {
-    const core = ['settings/tests.ts', 'settings/outbound.ts', 'local/oidc-change.ts'].map(f => readFileSync(new URL(`../../core/src/${f}`, import.meta.url), 'utf8')).join('\n')
+    const core = ['settings/tests.ts', 'settings/outbound.ts', 'local/oidc-change.ts', 'routes/setup-wizard.ts'].map(f => readFileSync(new URL(`../../core/src/${f}`, import.meta.url), 'utf8')).join('\n')
     const found = new Set<string>()
     const patterns = [/fail\('([a-z_]+)'/g, /code: '([a-z_]+)'/g, /OutboundError\('([a-z_]+)'\)/g, /new Failed\('([a-z_]+)'\)/g]
     for (const re of patterns) for (const m of core.matchAll(re)) found.add(m[1]!)
@@ -395,7 +395,7 @@ describe('test result codes', () => {
       expect(key, c).not.toBe(c === 'failed' ? '' : 'settings.test.code.failed')
       expect(hasText(key), c).toBe(true)
     }
-    for (const id of ['discovery', 'jwks', 'client', 'connect', 'send', 'bot', 'webhook', 'user', 'scopes', 'anthropic', 'openai', 'model.draft', 'model.fast', 'model.embed', 'config', 'bucket', 'state', 'token', 'id_token', 'access_token', 'admin', 'x']) {
+    for (const id of ['discovery', 'jwks', 'client', 'connect', 'send', 'bot', 'webhook', 'user', 'scopes', 'anthropic', 'openai', 'model.draft', 'model.fast', 'model.embed', 'config', 'bucket', 'state', 'token', 'id_token', 'access_token', 'admin', 'staff', 'db', 'pgvector', 'queue', 'x']) {
       expect(hasText(checkLabelKey(id)), id).toBe(true)
     }
   })

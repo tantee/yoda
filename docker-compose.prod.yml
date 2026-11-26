@@ -201,6 +201,8 @@ services:
       - '${PORTAL_BIND:-127.0.0.1}:${PORTAL_PORT:-3000}:3000'
     environment:
       NUXT_CORE_URL: http://core:4000
+      # With 1 (no reverse proxy in front) the portal sends core its own scheme and host, never the browser's.
+      YODA_TRUSTED_PROXY_HOPS: ${YODA_TRUSTED_PROXY_HOPS:-}
       # Deprecated overrides: the portal reads sign-in, the org line and its links from core's /public-config
       # (derived from OIDC_ISSUER / OIDC_CLIENT_ID and the settings); a non-empty value here still wins.
       NUXT_PUBLIC_KEYCLOAK_URL: ${NUXT_PUBLIC_KEYCLOAK_URL:-}
