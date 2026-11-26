@@ -272,10 +272,19 @@ describe('LINE webhook', () => {
       deliveryContext: { isRedelivery },
       source: { type: 'user', userId: LINE_USER },
     })
-    await lineWebhook([unfollow(Date.now() - 60_000, true)])
+    // Both timestamps come from the link itself, so the test does not depend on the host and DB clocks agreeing.
+    const linkedAt = (await linkOf(dev.id, 'line'))!.linkedAt.getTime()
+    await lineWebhook([unfollow(linkedAt - 60_000, true)])
     expect(await linkOf(dev.id, 'line')).toBeDefined()
-    await lineWebhook([unfollow(Date.now(), false)])
+    await lineWebhook([unfollow(linkedAt + 1_000, false)])
     expect(await linkOf(dev.id, 'line')).toBeUndefined()
+  })
+
+  it('a new link records linkedAt from the app clock (the clock webhook timestamps are compared with)', async () => {
+    const { code } = await newCode(dev, 'line')
+    const now = new Date(Date.now() - 5 * 60_000)
+    expect(await linkWithCode(deps, 'line', code, LINE_USER, now)).toBe('linked')
+    expect((await linkOf(dev.id, 'line'))!.linkedAt.toISOString()).toBe(now.toISOString())
   })
 
   it('follow replies with instructions; unfollow unlinks; other text is ignored', async () => {
