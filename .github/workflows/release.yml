@@ -95,7 +95,7 @@ jobs:
             # Exercise the notes extraction on the newest released section.
             latest=$(sed -n 's/^## \([0-9][0-9A-Za-z.-]*\).*$/\1/p' CHANGELOG.md | head -n 1)
             sh ops/install/release-notes.sh "$latest" > /dev/null
-            platforms=linux/amd64,linux/arm64 # TEMPORARY: measure the QEMU build time
+            platforms=linux/amd64
           fi
           {
             echo "real=$real"
@@ -218,6 +218,7 @@ jobs:
         with:
           persist-credentials: false
       - name: QEMU (linux/arm64)
+        if: needs.meta.outputs.real == 'true'
         uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
         with:
           platforms: arm64
