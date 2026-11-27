@@ -2251,7 +2251,7 @@
       "invalidState": "ทำแบบนี้ในสถานะปัจจุบันไม่ได้ โหลดหน้าใหม่",
       "validation": "ตรวจค่าที่กรอก",
       "generic": "เกิดข้อผิดพลาด ลองอีกครั้ง",
-      "notKeycloak": "Issuer ต้องเป็น realm ของ Keycloak รูปแบบ https://<host>/realms/<realm> เพราะพอร์ทัลเข้าสู่ระบบผ่าน Keycloak"
+      "notKeycloak": "Issuer ต้องเป็น realm ของ Keycloak เช่น https://keycloak.example.org/realms/yoda เพราะพอร์ทัลเข้าสู่ระบบผ่าน Keycloak"
     },
     "statusOnly": {
       "title": "ดูสถานะได้อย่างเดียว: กุญแจหลักใช้ไม่ได้",

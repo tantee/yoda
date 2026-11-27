@@ -2251,7 +2251,7 @@
       "invalidState": "That cannot be done in the current state. Reload the page.",
       "validation": "Check the values you entered.",
       "generic": "Something went wrong. Try again.",
-      "notKeycloak": "The issuer must be a Keycloak realm, https://<host>/realms/<realm>: the portal signs in with Keycloak."
+      "notKeycloak": "The issuer must be a Keycloak realm (for example https://keycloak.example.org/realms/yoda): the portal signs in with Keycloak."
     },
     "statusOnly": {
       "title": "Status only: the master key is not usable",
