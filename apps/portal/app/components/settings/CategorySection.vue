@@ -5,6 +5,7 @@ import {
   applyModes,
   applyReauthStash,
   boundSecretNotes,
+  boundSecretsInEnv,
   changedFieldErrors,
   draftChanges,
   fieldLabelKey,
@@ -75,6 +76,7 @@ const label = (key: string) => t(fieldLabelKey(key))
 const notes = computed(() => {
   const out: Record<string, string> = {}
   for (const [k, secrets] of Object.entries(boundSecretNotes(views.value, draft.value))) out[k] = t('settings.boundNote', { secrets: secrets.map(label).join(', ') })
+  for (const [k, b] of Object.entries(boundSecretsInEnv(views.value, draft.value))) out[k] = t('settings.save.boundInEnv', { name: label(k), env: b.envName ?? '' })
   return out
 })
 const clientErrors = computed(() =>

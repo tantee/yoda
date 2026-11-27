@@ -16,7 +16,9 @@ const how = computed(() => t(props.howKey ?? lockHowKey(reasonKey.value, { envNa
 </script>
 
 <template>
-  <v-tooltip :text="how" location="bottom" max-width="320">
+  <!-- The tooltip root keeps role="tooltip" while closed (its text is hidden then), so it carries the text as its
+       name too: the chip's aria-describedby never points at a nameless tooltip (axe aria-tooltip-name). -->
+  <v-tooltip :text="how" :aria-label="how" location="bottom" max-width="320">
     <template #activator="{ props: tip }">
       <span v-bind="tip" class="lock-chip" tabindex="0" :title="how" :data-reason="reasonKey" data-testid="env-lock-chip">
         <v-icon icon="mdi-lock-outline" size="14" aria-hidden="true" />

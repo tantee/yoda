@@ -1702,7 +1702,7 @@
       "seconds": "{s} s",
       "code": {
         "not_configured": "Not configured",
-        "secret_required": "The secret is required (the saved one does not go to a new endpoint)",
+        "secret_required": "A secret is needed: none is saved, or the address changed and the saved one does not go to a new address",
         "auth_rejected": "The credentials were rejected",
         "invalid_response": "The server gave an unexpected answer",
         "failed": "Failed",

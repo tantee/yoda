@@ -304,8 +304,24 @@ export function boundSecretNotes(views: SettingView[], draft: SectionDraft): Rec
   const out: Record<string, string[]> = {}
   for (const v of views) {
     if (!v.boundSecrets?.length || !(v.key in changes)) continue
-    const lost = v.boundSecrets.filter(s => byKey.get(s)?.secretState?.set && !(s in changes))
+    const lost = v.boundSecrets.filter(s => byKey.get(s)?.secretState?.set && !byKey.get(s)?.locked && !(s in changes))
     if (lost.length) out[v.key] = lost
+  }
+  return out
+}
+
+/**
+ * Endpoints being moved whose bound secret is set by env: core refuses the save (`bound_secret_in_env`), so the
+ * form says so before saving instead of promising a clear: `{ 'gitlab.url': { secret: 'gitlab.token', envName } }`.
+ */
+export function boundSecretsInEnv(views: SettingView[], draft: SectionDraft): Record<string, { secret: string; envName: string | null }> {
+  const { changes } = draftChanges(views, draft)
+  const byKey = new Map(views.map(v => [v.key, v]))
+  const out: Record<string, { secret: string; envName: string | null }> = {}
+  for (const v of views) {
+    if (!v.boundSecrets?.length || !(v.key in changes)) continue
+    const inEnv = v.boundSecrets.map(s => byKey.get(s)).find(s => s?.source === 'env')
+    if (inEnv) out[v.key] = { secret: inEnv.key, envName: inEnv.envName ?? inEnv.locked?.envName ?? null }
   }
   return out
 }

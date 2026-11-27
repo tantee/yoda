@@ -17,6 +17,7 @@ import {
   DETAIL_MAX,
   REAUTH_STASH_MAX_MS,
   boundSecretNotes,
+  boundSecretsInEnv,
   changedFieldErrors,
   checkDetails,
   checkLabelKey,
@@ -254,6 +255,15 @@ describe('form diff', () => {
     d.secrets['smtp.password'] = { mode: 'replace', value: 'pw' }
     expect(boundSecretNotes(EMAIL, d)).toEqual({})
   })
+  it('an env-set bound secret: no clear promised, the move is flagged as refused before saving', () => {
+    const views = EMAIL.map(v => (v.key === 'smtp.password' ? secret('smtp.password', true, { source: 'env', envName: 'SMTP_PASSWORD', locked: { reason: 'env', envName: 'SMTP_PASSWORD' } }) : v))
+    const d = initialDraft(views)
+    expect(boundSecretsInEnv(views, d)).toEqual({})
+    d.values['smtp.host'] = 'mail.example.org'
+    expect(boundSecretNotes(views, d)).toEqual({})
+    expect(boundSecretsInEnv(views, d)).toEqual({ 'smtp.host': { secret: 'smtp.password', envName: 'SMTP_PASSWORD' } })
+    expect(boundSecretsInEnv(EMAIL, d)).toEqual({})
+  })
   it('the SMTP port and TLS mode are bound to the password like the host', () => {
     const d = initialDraft(EMAIL)
     d.values['smtp.port'] = '465'
@@ -460,6 +470,15 @@ describe('SecretField', () => {
     expect(html).toContain('type="password"')
     expect(html).toContain('settings.secret.writeOnly')
   })
+  it('a generatable secret offers สร้างใหม่ before one is set, beside the open field', async () => {
+    const unset = await render(SecretField, { view: secret('gitlab.webhookSecret', false), modelValue: { mode: 'keep', value: '' }, generatable: true })
+    expect(unset).toContain('type="password"')
+    expect(unset).toContain('data-testid="secret-generate-gitlab.webhookSecret"')
+    const set = await render(SecretField, { view: secret('gitlab.webhookSecret', true), modelValue: { mode: 'keep', value: '' }, generatable: true })
+    expect(set.match(/secret-generate-/g)).toHaveLength(1)
+    const plain = await render(SecretField, { view: secret('line.accessToken', false), modelValue: { mode: 'keep', value: '' } })
+    expect(plain).not.toContain('secret-generate')
+  })
   it('an env-locked secret has no actions and shows the lock chip', async () => {
     const v = secret('smtp.password', true, { source: 'env', locked: { reason: 'env', envName: 'SMTP_PASSWORD' } })
     const html = await render(SecretField, { view: v, modelValue: { mode: 'keep', value: '' } })
@@ -490,6 +509,10 @@ describe('EnvLockChip and SettingField', () => {
     const html = await render(EnvLockChip, { reason: 'env', envName: 'SMTP_HOST' })
     expect(html).toContain('settings.lock.env(name=SMTP_HOST)')
     expect(html).toContain('title="settings.lock.how.env(name=SMTP_HOST)"')
+  })
+  it('the chip tooltip carries its text as its name (never a nameless role=tooltip while closed)', () => {
+    const src = readFileSync(new URL('../app/components/settings/EnvLockChip.vue', import.meta.url), 'utf8')
+    expect(src).toMatch(/<v-tooltip[^>]*:text="how"[^>]*:aria-label="how"/)
   })
   it('a host-managed setting names the variable and its container', async () => {
     const html = await render(EnvLockChip, { reason: 'managed_on_host', envName: 'BACKUP_AT', container: 'backup', howKey: 'settings.lock.how.managed_on_host' })

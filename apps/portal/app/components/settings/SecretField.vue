@@ -55,6 +55,8 @@ const set = (mode: SecretDraft['mode'], value = '') => emit('update:modelValue',
         :data-testid="`secret-input-${view.key}`"
         @update:model-value="(v: string) => set('replace', v ?? '')"
       />
+      <!-- Not set yet: the field is open, so สร้างใหม่ sits beside it (otherwise a first secret could only be typed). -->
+      <v-btn v-if="generatable && !state.set" variant="text" color="primary" class="mt-2" :loading="busy" :data-testid="`secret-generate-${view.key}`" @click="emit('generate')">{{ t('settings.secret.generate') }}</v-btn>
       <v-btn v-if="state.set" variant="text" class="mt-2" :data-testid="`secret-cancel-${view.key}`" @click="set('keep')">{{ t('common.cancel') }}</v-btn>
     </div>
 
