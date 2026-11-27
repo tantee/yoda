@@ -524,13 +524,13 @@ describe('built-in HTTPS proxy card (GET /setup/proxy)', () => {
     const res = await app.inject({ url: '/setup/proxy', headers: h })
     expect(res.statusCode).toBe(200)
     expect(res.headers['cache-control']).toBe('no-store')
-    expect(res.json()).toEqual({ enabled: false, domain: null, certMode: null, publicUrl: null, trustedProxyHops: 1, reachable: null, error: null, certificate: null })
+    expect(res.json()).toEqual({ enabled: false, domain: null, certMode: null, publicUrl: null, trustedProxyHops: 1, reachable: null, error: null, invalid: [], certificate: null })
     expect(probe).not.toHaveBeenCalled()
   })
 
   it('reports the mode, the address and the certificate the proxy presents for its name', async () => {
     const probe = vi.fn(async () => ({ ok: true as const, cert }))
-    await boot({}, { proxyProbe: probe, configPatch: { trustedProxyHops: 2, proxy: { domain: 'portal.example.org', certMode: 'internal', httpsPort: 443 } } })
+    await boot({}, { proxyProbe: probe, configPatch: { trustedProxyHops: 2, proxy: { domain: 'portal.example.org', certMode: 'internal', httpsPort: 443, invalid: [] } } })
     const h = await setupSession()
     const body = (await app.inject({ url: '/setup/proxy', headers: h })).json()
     expect(probe).toHaveBeenCalledWith({ host: 'proxy', port: 443, servername: 'portal.example.org', timeoutMs: 3000 })
@@ -542,6 +542,7 @@ describe('built-in HTTPS proxy card (GET /setup/proxy)', () => {
       trustedProxyHops: 2,
       reachable: true,
       error: null,
+      invalid: [],
       certificate: {
         subject: 'portal.example.org',
         issuer: 'Caddy Local Authority - ECC Intermediate',
@@ -555,9 +556,27 @@ describe('built-in HTTPS proxy card (GET /setup/proxy)', () => {
   })
 
   it('says why when the proxy does not answer', async () => {
-    await boot({}, { proxyProbe: async () => ({ ok: false, error: 'refused' }), configPatch: { proxy: { domain: 'portal.example.org', certMode: 'files', httpsPort: 8443 } } })
+    await boot({}, { proxyProbe: async () => ({ ok: false, error: 'refused' }), configPatch: { proxy: { domain: 'portal.example.org', certMode: 'files', httpsPort: 8443, invalid: [] } } })
     const h = await setupSession()
     const body = (await app.inject({ url: '/setup/proxy', headers: h })).json()
     expect(body).toMatchObject({ enabled: true, publicUrl: 'https://portal.example.org:8443', reachable: false, error: 'refused', certificate: null })
+  })
+
+  it('sends no SNI name for an IP address (RFC 6066 allows host names only)', async () => {
+    const probe = vi.fn(async () => ({ ok: false as const, error: 'tls_failed' }))
+    await boot({}, { proxyProbe: probe, configPatch: { proxy: { domain: '10.0.0.5', certMode: 'internal', httpsPort: 443, invalid: [] } } })
+    const h = await setupSession()
+    const body = (await app.inject({ url: '/setup/proxy', headers: h })).json()
+    expect(probe).toHaveBeenCalledWith({ host: 'proxy', port: 443, timeoutMs: 3000 })
+    expect(body).toMatchObject({ publicUrl: 'https://10.0.0.5' })
+  })
+
+  it('names the values core ignored, and probes nothing without a usable domain', async () => {
+    const probe = vi.fn()
+    await boot({}, { proxyProbe: probe, configPatch: { proxy: { domain: null, certMode: 'internal', httpsPort: 443, invalid: ['YODA_PROXY_DOMAIN'] } } })
+    const h = await setupSession()
+    const body = (await app.inject({ url: '/setup/proxy', headers: h })).json()
+    expect(body).toMatchObject({ enabled: true, domain: null, publicUrl: null, reachable: false, error: 'no_domain', invalid: ['YODA_PROXY_DOMAIN'] })
+    expect(probe).not.toHaveBeenCalled()
   })
 })

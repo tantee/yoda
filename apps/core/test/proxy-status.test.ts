@@ -45,6 +45,14 @@ describe.runIf(openssl)('tlsProbe', () => {
     expect(names).toContain('portal.example.org')
   })
 
+  it('connects without SNI when no name is given (an IP address as the domain)', async () => {
+    const before = names.length
+    const r = await tlsProbe({ host: '127.0.0.1', port, timeoutMs: 3000 })
+    expect(r.ok).toBe(true)
+    // Node's server calls SNICallback only for a client that sent a name.
+    expect(names.length).toBe(before)
+  })
+
   it('names a refused connection and an unknown host', async () => {
     const closed = createServer()
     await new Promise<void>((done) => closed.listen(0, '127.0.0.1', done))

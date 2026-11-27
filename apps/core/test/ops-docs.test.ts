@@ -109,8 +109,27 @@ describe('settings registry (installer proposal §5.1, §9)', () => {
     expect(prodComposeCoreEnv().YODA_TRUSTED_PROXY_HOPS).toBe('')
     expect(prodComposeCoreEnv({ YODA_PROXY_ENABLED: 'true' }).YODA_TRUSTED_PROXY_HOPS).toBe('2')
     expect(prodComposeCoreEnv({ YODA_PROXY_ENABLED: 'true', YODA_TRUSTED_PROXY_HOPS: '3' }).YODA_TRUSTED_PROXY_HOPS).toBe('3')
+    // deploy.sh pins it empty without the proxy (release.env, read after .env): no hops from a stray value.
+    expect(prodComposeCoreEnv({ YODA_PROXY_ENABLED: '' }).YODA_TRUSTED_PROXY_HOPS).toBe('')
     const env = { ...prodComposeCoreEnv({ YODA_PROXY_ENABLED: 'true', YODA_PROXY_DOMAIN: 'portal.example.org', YODA_PROXY_CERT_MODE: 'internal' }), DATABASE_URL: 'postgres://yoda:x@postgres:5432/yoda', S3_ACCESS_KEY: 'a', S3_SECRET_KEY: 'b' }
-    expect(loadConfig(env)).toMatchObject({ trustedProxyHops: 2, proxy: { domain: 'portal.example.org', certMode: 'internal', httpsPort: 443 } })
+    expect(loadConfig(env)).toMatchObject({ trustedProxyHops: 2, proxy: { domain: 'portal.example.org', certMode: 'internal', httpsPort: 443, invalid: [] } })
+  })
+
+  it('never fails to start on odd proxy values: it ignores them and names them for the card', () => {
+    const base = { DATABASE_URL: 'postgres://yoda:x@postgres:5432/yoda', S3_ACCESS_KEY: 'a', S3_SECRET_KEY: 'b' }
+    const c = (env: Record<string, string>) => loadConfig({ ...prodComposeCoreEnv({ YODA_PROXY_ENABLED: 'true', ...env }), ...base }).proxy
+    // The mode defaults to internal, as compose's proxy service does.
+    expect(c({ YODA_PROXY_DOMAIN: 'Portal.Example.org' })).toEqual({ domain: 'portal.example.org', certMode: 'internal', httpsPort: 443, invalid: [] })
+    expect(c({ YODA_PROXY_DOMAIN: '*.example.org', YODA_PROXY_CERT_MODE: 'self', YODA_PROXY_HTTPS_PORT: '99999' })).toEqual({
+      domain: null,
+      certMode: 'internal',
+      httpsPort: 443,
+      invalid: ['YODA_PROXY_DOMAIN', 'YODA_PROXY_CERT_MODE', 'YODA_PROXY_HTTPS_PORT'],
+    })
+    expect(c({ YODA_PROXY_DOMAIN: 'portal.example.org', YODA_PROXY_HTTPS_PORT: 'https' })?.invalid).toEqual(['YODA_PROXY_HTTPS_PORT'])
+    expect(c({ YODA_PROXY_DOMAIN: '10.0.0.5', YODA_PROXY_HTTPS_PORT: '8443' })).toMatchObject({ domain: '10.0.0.5', httpsPort: 8443, invalid: [] })
+    // Anything but `true` is off (a stray value never stops core).
+    for (const v of ['false', 'yes', '1']) expect(loadConfig({ ...prodComposeCoreEnv({ YODA_PROXY_ENABLED: v }), ...base }).proxy, v).toBeUndefined()
   })
 
   it('core starts on the prod compose env with an empty .env (empty values take the defaults)', () => {
@@ -313,7 +332,49 @@ describe('the built-in HTTPS proxy docs (docs/operations.md, section 4b)', () =>
     expect(guide).toContain('--with-proxy --domain portal.example.org')
     expect(guide).toContain('../images/setup-proxy.webp')
     expect(releasing).toMatch(/\| Caddy .*\| `docker-compose\.prod\.yml`, service `proxy`/)
-    expect(read('CHANGELOG.md')).toMatch(/^## Unreleased\n\n### Built-in HTTPS proxy \(optional\)$/m)
+    // The entry itself, wherever its section heading is (Unreleased now, the release's version once it is cut).
+    const changelog = read('CHANGELOG.md')
+    const entry = changelog.indexOf('### Built-in HTTPS proxy (optional)')
+    expect(entry).toBeGreaterThan(-1)
+    expect(entry).toBeLessThan(changelog.indexOf('\n## 1.0.0'))
+    expect(changelog.slice(entry, changelog.indexOf('\n## 1.0.0'))).toContain('install.sh --with-proxy')
+  })
+
+  it('says which release brings it, and how to turn it on for an older install (upgrade first)', () => {
+    // 1.0.0 has no proxy service: never an example that installs it with the proxy.
+    expect(guide).not.toMatch(/--version 1\.0\.\d+[^\n]*--with-proxy/)
+    expect(runbook).not.toMatch(/--version 1\.0\.\d+[^\n]*--with-proxy/)
+    expect(guide).toContain('sh install.sh --version 1.1.0 --dir /srv/yoda --with-proxy --domain portal.example.org')
+    expect(guide).toContain('release 1.1.0 or later')
+    expect(runbook).toContain('It needs **release 1.1.0 or later**')
+    expect(runbook).toContain('The host must run release 1.1.0 or later: on an older one, upgrade first')
+    // Firefox on Linux needs its own import, in the guide as in the runbook.
+    expect(guide).not.toContain('Firefox on Linux imports it itself')
+    expect(guide).toContain('Firefox on Linux does not read the system store and needs its')
+  })
+
+  it('states the internal CA risk, the reload, client addresses, the rollback below 1.1.0 and the owner decisions', () => {
+    for (const s of [
+      'that root has **no name constraints**',
+      'Prefer files mode where the organisation has its own CA',
+      'keep exactly one encrypted copy offline',
+      '`Yoda <domain> internal CA root`',
+      'name constraints to the portal\'s domain',
+      'gpg --symmetric --cipher-algo AES256 yoda-proxy-data.tgz',
+      '- [ ] **Built-in proxy data**',
+      'dc exec proxy caddy reload\n--config /etc/caddy/Caddyfile --force',
+      'core\'s `/mcp` for the staff runners is\nnot reachable until you add it',
+      '**Client addresses.**',
+      'userland proxy',
+      'rootless Docker',
+      '**Rolling back below 1.1.0 with the built-in proxy on**',
+      '(`up --remove-orphans`)',
+      'It sends no `Strict-Transport-Security` (HSTS) header',
+      'refuses a `CORE_BIND`\n  beyond loopback while the proxy is on',
+      'a stray `YODA_PROXY_ENABLED=false`',
+      'never falls back to another CA',
+      '`--acme-staging`',
+    ]) expect(runbook, s).toContain(s)
   })
 
   it.skipIf(process.platform === 'win32')('keeps the Unreleased section out of the release notes and the dry run', () => {
@@ -332,7 +393,7 @@ describe('the built-in HTTPS proxy docs (docs/operations.md, section 4b)', () =>
   it('names only example.org hosts in the proxy files', () => {
     for (const f of ['ops/proxy/Caddyfile', 'docs/operations.md', 'ops/install/install.sh', 'ops/deploy/deploy.sh']) {
       const hosts = [...read(f).matchAll(/\b([a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:org|com|net|io|local|internal|lan))\b/gi)].map((m) => m[1]!.toLowerCase())
-      const odd = hosts.filter((h) => !/(^|\.)example\.(org|com)$|^(github\.com|ghcr\.io|caddyserver\.com|jedisct1\.github\.io|api\.line\.me|api\.telegram\.org|semver\.org|t\.me)$/.test(h))
+      const odd = hosts.filter((h) => !/(^|\.)example\.(org|com)$|^(github\.com|ghcr\.io|caddyserver\.com|jedisct1\.github\.io|acme-v02\.api\.letsencrypt\.org|acme-staging-v02\.api\.letsencrypt\.org|api\.line\.me|api\.telegram\.org|semver\.org|t\.me)$/.test(h))
       expect(odd, f).toEqual([])
     }
   })
