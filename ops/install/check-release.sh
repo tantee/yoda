@@ -6,7 +6,10 @@
 # in release.env: the version, the image prefix and, given a digests file, exactly those image digests (also when
 # installed with a mirror's prefix: digests name content, not a registry). With a
 # real `docker compose` on the machine it also resolves the prod compose files with that release.env and checks
-# every image is <prefix>/<name>:<version>@<digest>. Then it checks that a signature from another key is refused.
+# every image is <prefix>/<name>:<version>@<digest>, that the optional built-in HTTPS proxy runs a Caddy image
+# pinned by version and digest, and that the bundle's ops/proxy/Caddyfile passes `caddy validate` in that image for
+# each certificate mode (internal, acme, and files with a throwaway certificate made here; docs/operations.md,
+# section 4b). Then it checks that a signature from another key is refused.
 # The release workflow (.github/workflows/release.yml) runs it on every dry run and on a real release, before the
 # bundle is kept for the release and before any image is tagged:
 #
@@ -15,7 +18,7 @@
 # <release dir> holds install.sh, yoda-<version>.tar.gz, SHA256SUMS and SHA256SUMS.minisig. The digests file is
 # bundle.sh's ("<name> sha256:<hex>" per image). The signature is checked with YODA_RELEASE_PUBKEY when set (a dry
 # run's throwaway key), else with the key embedded in install.sh.
-# Needs python3 (the HTTP server), curl or wget, minisign, tar.
+# Needs python3 (the HTTP server), curl or wget, minisign, tar (and openssl for the proxy check with docker).
 set -eu
 
 [ $# -eq 3 ] || [ $# -eq 4 ] || { echo 'usage: check-release.sh <version> <release dir> <image prefix> [<digests file>]' >&2; exit 2; }
@@ -112,7 +115,7 @@ else
   want=$(printf '%s\nYODA_CORE_DIGEST=\nYODA_PORTAL_DIGEST=\nYODA_RUNNER_DIGEST=\nYODA_BACKUP_DIGEST=' "$want")
 fi
 [ "$(cat "$work/srv/yoda/release.env")" = "$want" ] || fail "release.env is not: $want"
-for f in docker-compose.yml docker-compose.prod.yml ops/deploy/deploy.sh .env.example bundle.env; do
+for f in docker-compose.yml docker-compose.prod.yml ops/deploy/deploy.sh ops/proxy/Caddyfile .env.example bundle.env; do
   [ -f "$work/srv/yoda/$f" ] || fail "the bundle has no $f"
 done
 grep -qx "YODA_IMAGE_PREFIX=$prefix" "$work/srv/yoda/bundle.env" || fail "bundle.env does not name $prefix"
@@ -132,6 +135,25 @@ if [ -n "$real_docker" ] && "$real_docker" compose version > /dev/null 2>&1; the
     printf '%s\n' "$images" | grep -qxF "$ref" || { printf '%s\n' "$images" >&2; fail "the compose files do not run $ref"; }
   done
   echo "check-release: compose runs the pinned images"
+
+  # The built-in proxy (profile `proxy`): Caddy pinned by version and digest, and its Caddyfile valid in it.
+  proxy_image=$(cd "$work/srv/yoda" && env -u YODA_VERSION -u YODA_IMAGE_PREFIX "$real_docker" compose --env-file .env --env-file release.env \
+    -f docker-compose.yml -f docker-compose.prod.yml --profile proxy config --images 2>&1 | grep '^caddy:') ||
+    fail 'the compose files have no Caddy image for the proxy profile'
+  printf '%s\n' "$proxy_image" | grep -Eqx 'caddy:[0-9]+\.[0-9]+\.[0-9]+@sha256:[0-9a-f]{64}' ||
+    fail "the proxy image is not pinned by version and digest: $proxy_image"
+  mkdir -p "$work/proxy/certs" "$work/proxy/sites"
+  openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 1 -subj '/CN=portal.example.org' \
+    -keyout "$work/proxy/certs/key.pem" -out "$work/proxy/certs/cert.pem" > /dev/null 2>&1 ||
+    fail 'openssl could not make the throwaway certificate for the proxy check'
+  for mode in internal acme files; do
+    out=$("$real_docker" run --rm --network none \
+      -v "$work/srv/yoda/ops/proxy/Caddyfile:/etc/caddy/Caddyfile:ro" -v "$work/proxy/certs:/etc/caddy/certs:ro" \
+      -v "$work/proxy/sites:/etc/caddy/sites:ro" -e YODA_PROXY_DOMAIN=portal.example.org -e "YODA_PROXY_CERT_MODE=$mode" \
+      -e YODA_PROXY_ACME_EMAIL=it@example.org "$proxy_image" caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile 2>&1) ||
+      { printf '%s\n' "$out" | tail -n 3 >&2; fail "the bundle's Caddyfile does not validate in $proxy_image ($mode)"; }
+  done
+  echo "check-release: the built-in proxy runs $proxy_image and its Caddyfile validates (internal, acme, files)"
 else
   echo 'check-release: no docker compose here: skipped the compose image check'
 fi

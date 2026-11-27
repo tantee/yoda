@@ -21,6 +21,13 @@
 #    job queue); exit 1 otherwise;
 # 5. when core's /public-config says setup is still required, print where the setup wizard is and how to get
 #    the setup token.
+# The optional built-in HTTPS proxy (docs/operations.md, section 4b) is on when the compose profiles in effect
+# (COMPOSE_PROFILES in .env, as `install.sh --with-proxy` writes it) run the `proxy` service. Then it also pins
+# YODA_PROXY_ENABLED=true in release.env (compose gives core and the portal YODA_TRUSTED_PROXY_HOPS=2 unless .env
+# sets it), refuses a portal or core published on another address than loopback (anyone reaching the portal
+# directly could then choose their own client address), checks the proxy's Caddyfile and certificate settings with
+# `caddy validate` before anything is replaced (exit 2), and after the start copies the public root certificate
+# of Caddy's internal CA to proxy/root.crt (internal mode; never a private key).
 # It never removes or recreates a volume (the bootstrap volume holds the master key).
 set -eu
 
@@ -45,12 +52,12 @@ fi
 # The prod compose has no default prefix: without one it would pull `yoda/...` from Docker Hub. An install from
 # before install.sh keeps its prefix in .env (release.env, when it holds one, wins over .env).
 # As compose reads .env: the last line wins, surrounding quotes go, and an unquoted value ends at ' #'.
-env_prefix() {
+env_value() {
   [ -f .env ] || return 0
-  sed -n 's/^[[:space:]]*YODA_IMAGE_PREFIX[[:space:]]*=[[:space:]]*//p' .env | tail -n 1 | sed \
+  sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*//p" .env | tail -n 1 | sed \
     -e 's/^"\([^"]*\)".*$/\1/' -e "s/^'\\([^']*\\)'.*\$/\\1/" -e 's/[[:space:]]#.*$//' -e 's/[[:space:]]*$//'
 }
-legacy=$(env_prefix)
+legacy=$(env_value YODA_IMAGE_PREFIX)
 case "$legacy" in
   '' | -* | *[!A-Za-z0-9._:/-]*) legacy='' ;;
 esac
@@ -107,6 +114,28 @@ dc() {
   docker compose --env-file .env --env-file "$release" -f docker-compose.yml -f docker-compose.prod.yml "$@"
 }
 
+# The built-in proxy: on when the profiles in effect run its service (compose reads COMPOSE_PROFILES from .env).
+proxy=no
+if dc config --services 2>/dev/null | grep -qx proxy; then
+  proxy=yes
+  printf 'YODA_PROXY_ENABLED=true\n' >> "$release"
+  # With it, core and the portal believe one more X-Forwarded-For entry: the portal must be reachable only through
+  # the proxy (and core only from this host), or a client could choose its own address and host.
+  for name in PORTAL_BIND CORE_BIND; do
+    eval "bind=\${$name:-}"
+    [ -n "$bind" ] || bind=$(env_value "$name")
+    case "$bind" in
+      '' | 127.* | localhost | ::1 | '[::1]') ;;
+      *)
+        echo "deploy: $name=$bind publishes it beyond this host while the built-in HTTPS proxy is on: remove it from .env (the proxy reaches the portal inside compose; docs/operations.md, section 4b)" >&2
+        rm -f "$release"
+        exit 2
+        ;;
+    esac
+  done
+  mkdir -p proxy/certs proxy/sites
+fi
+
 echo "deploy: $YODA_VERSION"
 pull_failed() {
   echo "deploy: $1 (registry login on this host? the release $YODA_VERSION published? for ghcr.io packages that are not public: docker login ghcr.io with a GitHub token that may read packages; a mirror that rebuilt the images has other digests than the signed bundle: YODA_IGNORE_BUNDLE_DIGESTS=1 runs its tags)" >&2
@@ -119,6 +148,16 @@ for image in $(dc config --images); do
 done
 mv "$release" release.env
 release=release.env
+
+# The proxy's settings, before any running container is replaced: a wrong domain, mode or certificate fails here.
+if [ "$proxy" = yes ]; then
+  out=$(dc run --rm --no-deps -T proxy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile 2>&1) || {
+    printf '%s\n' "$out" | tail -n 3 >&2
+    echo "deploy: the built-in HTTPS proxy's settings are invalid: check YODA_PROXY_DOMAIN, YODA_PROXY_CERT_MODE (internal, files or acme), YODA_PROXY_ACME_EMAIL (acme) or proxy/certs/cert.pem and key.pem (files) in .env and $(pwd)/proxy (docs/operations.md, section 4b); nothing was replaced" >&2
+    exit 2
+  }
+  echo "deploy: built-in HTTPS proxy settings checked (caddy validate)"
+fi
 
 dc run --rm init
 dc run --rm migrate
@@ -136,12 +175,48 @@ until dc exec -T portal node -e "fetch('http://127.0.0.1:3000/api/ready').then((
 done
 echo "deploy: $YODA_VERSION ready"
 
+# The proxy's public address, and in internal mode the public root certificate of its CA for the staff PCs.
+public=''
+if [ "$proxy" = yes ]; then
+  # shellcheck disable=SC2016 # expanded inside the proxy container
+  info=$(dc exec -T proxy sh -c 'printf "%s %s %s\n" "${YODA_PROXY_CERT_MODE:-}" "${YODA_PROXY_DOMAIN:-}" "${YODA_PROXY_HTTPS_PORT:-443}"' 2>/dev/null || true)
+  # shellcheck disable=SC2086 # three plain words
+  set -- $info
+  mode=${1:-}
+  if [ -n "${2:-}" ]; then
+    public="https://$2"
+    [ "${3:-443}" = 443 ] || public="$public:$3"
+    echo "deploy: built-in HTTPS proxy on: $public (certificates: ${mode:-unknown})"
+  fi
+  if [ "$mode" = internal ]; then
+    tries=0
+    until dc cp proxy:/data/caddy/pki/authorities/local/root.crt proxy/root.crt.next >/dev/null 2>&1; do
+      tries=$((tries + 1))
+      if [ "$tries" -ge 6 ]; then
+        echo "deploy: warning: the proxy's internal CA root is not there yet; copy it later with: dc cp proxy:/data/caddy/pki/authorities/local/root.crt proxy/root.crt" >&2
+        break
+      fi
+      sleep 5
+    done
+    if [ -f proxy/root.crt.next ]; then
+      chmod 644 proxy/root.crt.next
+      mv proxy/root.crt.next proxy/root.crt
+      echo "deploy: the internal CA's root certificate (public, no key) is $(pwd)/proxy/root.crt: install it on the staff PCs (docs/operations.md, section 4b)"
+    fi
+  fi
+fi
+
 # Setup state only (public, no secrets); an older core without /public-config prints nothing.
 setup=$(dc exec -T core node -e "fetch('http://127.0.0.1:4000/public-config').then((r) => r.json()).then((c) => console.log(c.setup === 'required' ? 'required' : 'done'), () => console.log('unknown'))" 2>/dev/null || true)
 if [ "$setup" = required ]; then
   port=$(sed -n 's/^PORTAL_PORT=\([0-9][0-9]*\)$/\1/p' .env | tail -n 1)
+  if [ -n "$public" ]; then
+    echo "deploy: setup is not finished. Open the setup wizard through the built-in proxy: $public/setup"
+    echo "  Or, on this host or through an SSH tunnel:"
+  else
+    echo 'deploy: setup is not finished. Open the setup wizard:'
+  fi
   cat <<EOF
-deploy: setup is not finished. Open the setup wizard:
   http://127.0.0.1:${port:-3000}/setup   (through your reverse proxy: https://<public host>/setup)
   From another machine: ssh -L ${port:-3000}:127.0.0.1:${port:-3000} <this host>, then open the address above.
 Get the setup token (this output never shows it), in $(pwd):

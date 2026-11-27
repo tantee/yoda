@@ -1,4 +1,4 @@
-import { CSRF_HEADER, OPTIONAL_SETUP_STEPS, SETUP_STEPS, normaliseCode, passwordIssue, publicUrlIssue, type SetupProgress, type SetupStepId } from '@yoda/shared'
+import { CSRF_HEADER, OPTIONAL_SETUP_STEPS, SETUP_STEPS, normaliseCode, passwordIssue, publicUrlIssue, type ProxyStatus, type SetupProgress, type SetupStepId } from '@yoda/shared'
 
 /**
  * The /setup wizard's plain logic (installer proposal §4.2, §4.3, §8): the cookie-session client, the step order
@@ -319,4 +319,21 @@ export function setupSessionLost(e: unknown): boolean {
 export function setupFinished(e: unknown): boolean {
   const err = e as { statusCode?: number; status?: number }
   return (err?.statusCode ?? err?.status) === 404
+}
+
+// ── Built-in HTTPS proxy (docs/operations.md, section 4b) ──────────────────────────────────────────────────────
+
+const DAY_MS = 86_400_000
+
+/**
+ * How the presented certificate stands: `expired`; `soon` only for the organisation's own files (fewer than 30 days
+ * left: someone has to replace them), since Caddy renews internal and ACME certificates itself (an internal one
+ * lives hours); `ok` otherwise, or null without a certificate.
+ */
+export function proxyCertState(s: ProxyStatus, now: Date): 'ok' | 'soon' | 'expired' | null {
+  const to = s.certificate?.validTo ? new Date(s.certificate.validTo).getTime() : Number.NaN
+  if (Number.isNaN(to)) return null
+  if (to <= now.getTime()) return 'expired'
+  if (s.certMode === 'files' && to - now.getTime() < 30 * DAY_MS) return 'soon'
+  return 'ok'
 }

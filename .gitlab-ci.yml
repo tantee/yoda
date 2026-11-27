@@ -166,8 +166,9 @@ deploy:
   script:
     # A failed tar must fail the job, not ship a partial archive.
     - set -o pipefail
-    # The runbook, .env.example and the changelog too, so the host's copies match the release it runs (never .env).
-    - tar -cf - docker-compose.yml docker-compose.prod.yml ops/deploy/deploy.sh docs/operations.md .env.example CHANGELOG.md
+    # The runbook, .env.example and the changelog too, so the host's copies match the release it runs (never .env);
+    # ops/proxy/Caddyfile for the optional built-in HTTPS proxy.
+    - tar -cf - docker-compose.yml docker-compose.prod.yml ops/deploy/deploy.sh ops/proxy/Caddyfile docs/operations.md .env.example CHANGELOG.md
       | ssh -i "$DEPLOY_SSH_KEY" -o StrictHostKeyChecking=yes -o BatchMode=yes "$DEPLOY_USER@$DEPLOY_HOST"
       "mkdir -p '$DEPLOY_PATH' && tar -xf - -C '$DEPLOY_PATH'"
     - ssh -i "$DEPLOY_SSH_KEY" -o StrictHostKeyChecking=yes -o BatchMode=yes "$DEPLOY_USER@$DEPLOY_HOST"

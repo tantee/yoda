@@ -2,6 +2,7 @@
 # Installs one pinned Yoda release on a fresh host (docs/operations.md, section 4; installer proposal §3.4).
 #
 #   sh install.sh --version 1.2.0 [--dir /srv/yoda] [--base-url URL] [--image-prefix PREFIX] [--no-login]
+#     [--with-proxy --domain portal.example.org [--cert-mode internal|files|acme] [--cert FILE --key FILE] [--acme-email ADDRESS]]
 #
 # 1. preflight: Docker Engine 24+, Compose v2.24+, the user can run docker, curl or wget, sha256sum or shasum,
 #    minisign, tar; warns below 10 GB free;
@@ -15,6 +16,13 @@
 #    and creates an empty .env (0600): nothing has to go in it;
 # 4. `docker login <registry>` when the images' registry is not ghcr.io (public images) and has no saved login
 #    (interactive: the token is typed, never an argument);
+# 4a. with --with-proxy, turns on the optional built-in HTTPS proxy (Caddy; docs/operations.md, section 4b): it
+#    writes COMPOSE_PROFILES=proxy, YODA_PROXY_DOMAIN and YODA_PROXY_CERT_MODE (plus YODA_PROXY_ACME_EMAIL, and
+#    --http-port / --https-port when not 80 and 443) into the new .env, and for --cert-mode files copies --cert and
+#    --key into proxy/certs/ (the key 0600). Modes: internal (default; Caddy's own CA, whose public root deploy.sh
+#    copies to proxy/root.crt for the staff PCs), files (the organisation's certificate) or acme (Let's Encrypt,
+#    only when the host is reachable from the internet on 80 and 443; needs --acme-email). Without it, HTTPS comes
+#    from your own reverse proxy (section 1), as before;
 # 5. pins the image prefix in release.env (never Docker Hub), then runs ops/deploy/deploy.sh (pull, pin release.env
 #    with the bundle's image digests, init, migrate, up, wait for /api/ready), which prints the setup wizard's
 #    address and the setup-token command while setup is not finished. When pulling from ghcr.io fails (packages
@@ -44,7 +52,7 @@ die() {
   exit 1
 }
 usage() {
-  sed -n '3,4p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'
+  sed -n '3,5p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'
   exit "${1:-0}"
 }
 
@@ -53,6 +61,14 @@ dir="${YODA_DIR:-/srv/yoda}"
 base="${YODA_RELEASE_BASE_URL:-$DEFAULT_BASE_URL}"
 prefix="${YODA_IMAGE_PREFIX:-}"
 login=yes
+with_proxy=no
+domain=''
+cert_mode=''
+cert=''
+key=''
+acme_email=''
+http_port=''
+https_port=''
 while [ $# -gt 0 ]; do
   case "$1" in
     --version) [ $# -ge 2 ] || usage 2; version=$2; shift 2 ;;
@@ -64,6 +80,21 @@ while [ $# -gt 0 ]; do
     --image-prefix) [ $# -ge 2 ] || usage 2; prefix=$2; shift 2 ;;
     --image-prefix=*) prefix=${1#*=}; shift ;;
     --no-login) login=no; shift ;;
+    --with-proxy) with_proxy=yes; shift ;;
+    --domain) [ $# -ge 2 ] || usage 2; domain=$2; shift 2 ;;
+    --domain=*) domain=${1#*=}; shift ;;
+    --cert-mode) [ $# -ge 2 ] || usage 2; cert_mode=$2; shift 2 ;;
+    --cert-mode=*) cert_mode=${1#*=}; shift ;;
+    --cert) [ $# -ge 2 ] || usage 2; cert=$2; shift 2 ;;
+    --cert=*) cert=${1#*=}; shift ;;
+    --key) [ $# -ge 2 ] || usage 2; key=$2; shift 2 ;;
+    --key=*) key=${1#*=}; shift ;;
+    --acme-email) [ $# -ge 2 ] || usage 2; acme_email=$2; shift 2 ;;
+    --acme-email=*) acme_email=${1#*=}; shift ;;
+    --http-port) [ $# -ge 2 ] || usage 2; http_port=$2; shift 2 ;;
+    --http-port=*) http_port=${1#*=}; shift ;;
+    --https-port) [ $# -ge 2 ] || usage 2; https_port=$2; shift 2 ;;
+    --https-port=*) https_port=${1#*=}; shift ;;
     -h | --help) usage 0 ;;
     *) printf 'install: unknown option %s\n' "$1" >&2; usage 2 ;;
   esac
@@ -101,6 +132,47 @@ if [ "$pubkey" != "$RELEASE_PUBKEY_EMBEDDED" ]; then
   say 'warning: YODA_RELEASE_PUBKEY replaces the release key built into this script (key id C73EF0AF404BAE84):'
   say "  releases are checked with $pubkey instead. Use it only for tests or a key the release owner announced."
 fi
+# The built-in HTTPS proxy (optional; docs/operations.md, section 4b). Every value goes into .env: plain words only.
+if [ "$with_proxy" = yes ]; then
+  [ -n "$domain" ] || die '--with-proxy needs --domain <the name staff open, e.g. portal.example.org>'
+  printf '%s\n' "$domain" | grep -Eqx '([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)*[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?' ||
+    die "--domain must be a host name such as portal.example.org (no scheme, port or path): $domain"
+  cert_mode=${cert_mode:-internal}
+  case "$cert_mode" in
+    internal | files | acme) ;;
+    *) die "--cert-mode must be internal, files or acme: $cert_mode" ;;
+  esac
+  if [ "$cert_mode" = files ]; then
+    { [ -n "$cert" ] && [ -n "$key" ]; } || die '--cert-mode files needs --cert <certificate chain, PEM> and --key <private key, PEM>'
+    { [ -f "$cert" ] && [ -r "$cert" ]; } || die "cannot read the certificate $cert"
+    { [ -f "$key" ] && [ -r "$key" ]; } || die "cannot read the private key $key"
+    grep -q -- '-----BEGIN CERTIFICATE-----' "$cert" || die "$cert is not a PEM certificate (-----BEGIN CERTIFICATE-----)"
+    grep -Eq -- '-----BEGIN ([A-Z]+ )?PRIVATE KEY-----' "$key" || die "$key is not a PEM private key"
+  elif [ -n "$cert$key" ]; then
+    die "--cert and --key are for --cert-mode files only (this is $cert_mode)"
+  fi
+  if [ "$cert_mode" = acme ]; then
+    [ -n "$acme_email" ] || die '--cert-mode acme needs --acme-email <the address Let'"'"'s Encrypt writes to>'
+    printf '%s\n' "$acme_email" | grep -Eqx '[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+' || die "not an email address: $acme_email"
+  elif [ -n "$acme_email" ]; then
+    die "--acme-email is for --cert-mode acme only (this is $cert_mode)"
+  fi
+  for p in "$http_port" "$https_port"; do
+    case "$p" in
+      '') ;;
+      *[!0-9]* | 0*) die "not a port number: $p" ;;
+      *) [ "$p" -le 65535 ] || die "not a port number: $p" ;;
+    esac
+  done
+  if [ -f "$dir/.env" ] && grep -Eq '^[[:space:]]*(COMPOSE_PROFILES|YODA_PROXY_[A-Z_]*|YODA_TRUSTED_PROXY_HOPS)[[:space:]]*=' "$dir/.env"; then
+    die "$dir/.env already sets COMPOSE_PROFILES, YODA_TRUSTED_PROXY_HOPS or a YODA_PROXY_ value: set the built-in proxy there by hand (docs/operations.md, section 4b), or remove those lines"
+  fi
+  [ "$cert_mode" != acme ] ||
+    say "warning: --cert-mode acme works only when $domain points at this host and it is reachable from the internet on ports 80 and 443"
+elif [ -n "$domain$cert_mode$cert$key$acme_email$http_port$https_port" ]; then
+  die '--domain, --cert-mode, --cert, --key, --acme-email, --http-port and --https-port go with --with-proxy'
+fi
+
 case "$pubkey" in
   *REPLACE-WITH*) die 'this install.sh has no release public key yet (placeholder); get the published install.sh, or set YODA_RELEASE_PUBKEY to the key the release owner gave you' ;;
   *[!A-Za-z0-9+/=]*) die 'the release public key is not a minisign key' ;;
@@ -193,7 +265,9 @@ say 'signature and checksum verified'
 tar -tzf "$tmp/$bundle" > "$tmp/list" || die "cannot read $bundle"
 if grep -Eq '(^/|(^|/)\.\.(/|$))' "$tmp/list"; then die "$bundle holds an unsafe path"; fi
 if tar -tvzf "$tmp/$bundle" | grep -Eqv '^[-d]'; then die "$bundle holds a link or a special file"; fi
-for f in docker-compose.yml docker-compose.prod.yml ops/deploy/deploy.sh; do
+need_files='docker-compose.yml docker-compose.prod.yml ops/deploy/deploy.sh'
+[ "$with_proxy" = no ] || need_files="$need_files ops/proxy/Caddyfile"
+for f in $need_files; do
   grep -qx "\(\./\)\{0,1\}$f" "$tmp/list" || die "$bundle has no $f"
 done
 
@@ -205,6 +279,27 @@ if [ ! -e "$dir/.env" ]; then
   (umask 077 && : > "$dir/.env")
 fi
 chmod 600 "$dir/.env"
+
+if [ "$with_proxy" = yes ]; then
+  mkdir -p "$dir/proxy/certs" "$dir/proxy/sites" || die "cannot create $dir/proxy"
+  if [ "$cert_mode" = files ]; then
+    # Caddy reads them as root inside the container; on the host only this user may read the key.
+    (umask 077 && cp "$key" "$dir/proxy/certs/key.pem") || die "cannot copy $key"
+    cp "$cert" "$dir/proxy/certs/cert.pem" || die "cannot copy $cert"
+    chmod 600 "$dir/proxy/certs/key.pem"
+    chmod 644 "$dir/proxy/certs/cert.pem"
+  fi
+  {
+    printf '# The built-in HTTPS proxy (install.sh --with-proxy; docs/operations.md, section 4b).\n'
+    printf 'COMPOSE_PROFILES=proxy\nYODA_PROXY_DOMAIN=%s\nYODA_PROXY_CERT_MODE=%s\n' "$domain" "$cert_mode"
+    [ -z "$acme_email" ] || printf 'YODA_PROXY_ACME_EMAIL=%s\n' "$acme_email"
+    [ -z "$http_port" ] || printf 'YODA_PROXY_HTTP_PORT=%s\n' "$http_port"
+    [ -z "$https_port" ] || printf 'YODA_PROXY_HTTPS_PORT=%s\n' "$https_port"
+  } >> "$dir/.env"
+  url="https://$domain"
+  [ -z "$https_port" ] || [ "$https_port" = 443 ] || url="$url:$https_port"
+  say "built-in HTTPS proxy: $url (certificates: $cert_mode), written to $dir/.env"
+fi
 
 # The image prefix: the option or env, else the bundle's (the registry the release was pushed to), else GHCR.
 if [ -z "$prefix" ] && [ -f "$dir/bundle.env" ]; then
@@ -269,3 +364,8 @@ install: Yoda $version is running in $dir.
   Upgrade later: cd $dir && YODA_VERSION=<version> sh ops/deploy/deploy.sh (or an internal mirror's deploy job)
   Finish the setup wizard, and store the recovery kit it gives you off this host.
 EOF
+if [ "$with_proxy" = yes ]; then
+  echo "  Built-in HTTPS proxy: $url (docs/operations.md, section 4b; the name must lead to this host on the staff PCs)."
+  [ "$cert_mode" != internal ] ||
+    echo "  Install $dir/proxy/root.crt (the internal CA's public root, no key) on the staff PCs before they open it."
+fi

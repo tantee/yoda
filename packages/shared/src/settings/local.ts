@@ -300,6 +300,42 @@ export const SetupProgress = z.object({
 })
 export type SetupProgress = z.infer<typeof SetupProgress>
 
+/** How the built-in HTTPS proxy gets its certificate (YODA_PROXY_CERT_MODE; docs/operations.md, section 4b). */
+export const PROXY_CERT_MODES = ['internal', 'files', 'acme'] as const
+export const ProxyCertMode = z.enum(PROXY_CERT_MODES)
+export type ProxyCertMode = z.infer<typeof ProxyCertMode>
+
+/**
+ * The setup wizard's read-only card on the built-in HTTPS proxy (`GET /setup/proxy`). Core reads only what the proxy
+ * presents to any client (the certificate of its TLS handshake), never its files or keys. Off: an external reverse
+ * proxy (or none yet) gives the portal its HTTPS.
+ */
+export const ProxyStatus = z.object({
+  enabled: z.boolean(),
+  domain: z.string().nullable(),
+  certMode: ProxyCertMode.nullable(),
+  /** https://<domain>, with the port when it is not 443. */
+  publicUrl: z.string().nullable(),
+  /** The X-Forwarded-For hops core believes (2 with the proxy). */
+  trustedProxyHops: z.number().int(),
+  /** The proxy answered a TLS handshake for the domain; null while it is off. */
+  reachable: z.boolean().nullable(),
+  /** Why it did not: `timeout`, `refused`, `not_found` (no proxy container) or `tls_failed`. */
+  error: z.string().nullable(),
+  certificate: z
+    .object({
+      subject: z.string(),
+      issuer: z.string(),
+      names: z.array(z.string()),
+      validFrom: z.string(),
+      validTo: z.string(),
+      /** SHA-256 of the certificate (public), to compare with what a staff PC shows. */
+      fingerprint256: z.string(),
+    })
+    .nullable(),
+})
+export type ProxyStatus = z.infer<typeof ProxyStatus>
+
 /** Marks a step the server cannot see for itself: the system check viewed, an optional step done or skipped. */
 export const SetupStepBody = z.object({ step: z.enum(['check', 'email', 'line', 'telegram', 'more']), state: z.enum(['done', 'skipped']) })
 export type SetupStepBody = z.infer<typeof SetupStepBody>

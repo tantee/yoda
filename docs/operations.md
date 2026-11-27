@@ -176,6 +176,19 @@ Bootstrap only: release and host (compose reads them before any container exists
 | `PORTAL_BIND` | Host address the portal is published on; another address only for a proxy on another machine | optional (`127.0.0.1`) | `10.0.0.5` |
 | `PORT` | Port core listens on inside its container | fixed (`4000`) | `4000` |
 
+Bootstrap only: the optional built-in HTTPS proxy (section 4b; `install.sh --with-proxy` writes them into `.env`,
+with `COMPOSE_PROFILES=proxy`):
+
+| Variable | Purpose | Required | Example |
+| --- | --- | --- | --- |
+| `YODA_PROXY_ENABLED` | The `proxy` profile is on: `deploy.sh` pins `true` in `release.env` when the profiles in effect run the `proxy` service, and compose then gives core and the portal `YODA_TRUSTED_PROXY_HOPS=2` unless `.env` sets it. Never set it by hand | no (`deploy.sh`) | `true` |
+| `YODA_PROXY_DOMAIN` | The name staff open; the public URL is `https://<domain>` (with `:<port>` when `YODA_PROXY_HTTPS_PORT` is not 443). It must lead to this host on the staff PCs (DNS) | with the proxy | `portal.example.org` |
+| `YODA_PROXY_CERT_MODE` | Where the certificate comes from: `internal` (Caddy's own CA; its public root is copied to `proxy/root.crt` for the staff PCs), `files` (the organisation's certificate in `proxy/certs/cert.pem` and `key.pem`) or `acme` (Let's Encrypt; only for a host reachable from the internet on 80 and 443) | optional (`internal`) | `files` |
+| `YODA_PROXY_ACME_EMAIL` | `acme` only: the address Let's Encrypt writes to about the certificate | with `acme` | `it@example.org` |
+| `YODA_PROXY_HTTPS_PORT` | HTTPS port of the proxy, on the host and inside its container | optional (`443`) | `443` |
+| `YODA_PROXY_HTTP_PORT` | HTTP port of the proxy (redirects to HTTPS; ACME's challenge) | optional (`80`) | `80` |
+| `YODA_PROXY_BIND` | Host address the proxy's ports are published on | optional (`0.0.0.0`, all) | `10.0.0.5` |
+
 Bootstrap only: database and storage (generated into the bootstrap volume when empty, section 4a; shown
 read-only in System settings → Storage):
 
