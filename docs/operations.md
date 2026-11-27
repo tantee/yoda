@@ -345,7 +345,7 @@ in your shell overrides `release.env`, so leave it unset.
    curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.2.0/install.sh
    curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.2.0/SHA256SUMS
    curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.2.0/SHA256SUMS.minisig
-   minisign -Vm SHA256SUMS -P <release public key, README.md> && sha256sum --check --ignore-missing SHA256SUMS
+   minisign -Vm SHA256SUMS -P RWSErktAr/A+x5Gvgr0x29wiu41FmYEVlJYoXyB6oJk4kvwQLOZs9O9j && sha256sum --check --ignore-missing SHA256SUMS
    sh install.sh --version 1.2.0 --dir /srv/yoda
    ```
 
@@ -558,7 +558,7 @@ Simpler, when the mirror only needs to copy what GitHub publishes: put the GitHu
    curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.1.0/yoda-1.1.0.tar.gz
    curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.1.0/SHA256SUMS
    curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.1.0/SHA256SUMS.minisig
-   minisign -Vm SHA256SUMS -P <release public key, README.md> && sha256sum --check --ignore-missing SHA256SUMS
+   minisign -Vm SHA256SUMS -P RWSErktAr/A+x5Gvgr0x29wiu41FmYEVlJYoXyB6oJk4kvwQLOZs9O9j && sha256sum --check --ignore-missing SHA256SUMS
    tar -xzf yoda-1.1.0.tar.gz --no-same-owner && rm yoda-1.1.0.tar.gz SHA256SUMS SHA256SUMS.minisig
    YODA_VERSION=1.1.0 sh ops/deploy/deploy.sh
    ```

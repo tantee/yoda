@@ -39,12 +39,15 @@ download into `sh`). Use the latest release; `1.0.0` here is an example:
 curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.0.0/install.sh
 curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.0.0/SHA256SUMS
 curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.0.0/SHA256SUMS.minisig
-minisign -Vm SHA256SUMS -P RWQ-REPLACE-WITH-THE-YODA-RELEASE-PUBLIC-KEY && sha256sum --check --ignore-missing SHA256SUMS
+minisign -Vm SHA256SUMS -P RWSErktAr/A+x5Gvgr0x29wiu41FmYEVlJYoXyB6oJk4kvwQLOZs9O9j && sha256sum --check --ignore-missing SHA256SUMS
 sh install.sh --version 1.0.0 --dir /srv/yoda
 ```
 
-The images come from `ghcr.io/tantee/yoda` (public, no login). To install from an internal mirror, pass
-`--base-url` and `--image-prefix` ([releasing, internal mirror](docs/releasing.md#internal-mirror)).
+**Verifying releases.** The `-P` key above is the Yoda release key, minisign key id `C73EF0AF404BAE84`, also in
+[`keys/yoda-release.pub`](keys/yoda-release.pub) and built into `install.sh`, which checks every download with it
+([details](docs/releasing.md#verifying-releases)). The images come from `ghcr.io/tantee/yoda` (public, no login).
+To install from an internal mirror, pass `--base-url` and `--image-prefix`
+([releasing, internal mirror](docs/releasing.md#internal-mirror)).
 
 Then open `https://<your portal>/setup` and follow the setup wizard. Details: [install guide](docs/guides/install.md).
 

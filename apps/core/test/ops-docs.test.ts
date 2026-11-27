@@ -199,9 +199,10 @@ describe('release docs (GitHub Releases + GHCR, D1)', () => {
     expect(readme).not.toContain('files.example.org')
   })
 
-  it('shows the same release public key as install.sh embeds (the owner replaces both together)', () => {
+  it('shows the same release public key as install.sh embeds and keys/yoda-release.pub holds', () => {
     expect(embedded).toBeTruthy()
-    for (const [name, text] of [['README', readme], ['install guide', guide]] as const) {
+    expect(read('keys/yoda-release.pub').split('\n')[1]).toBe(embedded)
+    for (const [name, text] of [['README', readme], ['install guide', guide], ['runbook', runbook], ['releasing', releasing]] as const) {
       const keys = [...text.matchAll(/minisign -Vm SHA256SUMS -P (\S+)/g)].map((m) => m[1])
       expect(keys.length, name).toBeGreaterThan(0)
       expect(new Set(keys), name).toEqual(new Set([embedded]))
@@ -217,8 +218,12 @@ describe('release docs (GitHub Releases + GHCR, D1)', () => {
       'Change visibility → Public',
       'git tag -s v1.0.0',
       'git push origin v1.0.0',
+      '## Verifying releases',
+      'C73EF0AF404BAE84',
+      'keys/yoda-release.pub',
       "--base-url 'https://files.example.org/yoda/releases/{version}/'",
     ]) expect(releasing, s).toContain(s)
+    for (const text of [readme, guide]) expect(text).toContain('C73EF0AF404BAE84')
     expect(read('docs/design/installer-proposal.md')).toMatch(/^\| D1 \|.*Decided 2026-11-27 \(owner\): \(b\) GitHub Releases \+ GHCR/m)
   })
 })

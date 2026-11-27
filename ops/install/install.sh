@@ -23,9 +23,10 @@
 # POSIX sh, no sudo inside: run it as a user who may run docker and write --dir.
 set -eu
 
-# The release signing public key (minisign, the second line of the .pub file). PLACEHOLDER: the owner replaces it
-# with the real key before publishing install.sh (docs/operations.md, "Release signing key").
-RELEASE_PUBKEY_EMBEDDED='RWQ-REPLACE-WITH-THE-YODA-RELEASE-PUBLIC-KEY'
+# The release signing public key (minisign key id C73EF0AF404BAE84, the second line of keys/yoda-release.pub;
+# docs/releasing.md, "Verifying releases"). A fork or mirror with its own key replaces it; a placeholder containing
+# REPLACE-WITH is refused below.
+RELEASE_PUBKEY_EMBEDDED='RWSErktAr/A+x5Gvgr0x29wiu41FmYEVlJYoXyB6oJk4kvwQLOZs9O9j'
 # Where releases are published (D1): GitHub Release assets and GHCR images. "{version}" becomes the version.
 # An internal mirror overrides both: --base-url / YODA_RELEASE_BASE_URL and --image-prefix / YODA_IMAGE_PREFIX.
 DEFAULT_BASE_URL='https://github.com/tantee/yoda/releases/download/v{version}/'

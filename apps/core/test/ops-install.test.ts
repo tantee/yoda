@@ -305,8 +305,12 @@ describe.skipIf(!ci && !canInstall)('ops/install/install.sh (fixture bundle, tes
     await refuses(await install(['--version', version]), /not signed for release 1\.2\.0/)
   })
 
-  it('refuses to run with the placeholder public key', async () => {
-    await refuses(await install(['--version', version], {}, null), /no release public key yet/)
+  it('refuses to run with a placeholder public key (a fork or mirror that has not set its own)', async () => {
+    await refuses(await install(['--version', version], {}, 'RWQ-REPLACE-WITH-THE-YODA-RELEASE-PUBLIC-KEY'), /no release public key yet/)
+  })
+
+  it('checks with the embedded release key when none is given, refusing a signature from the test key', async () => {
+    await refuses(await install(['--version', version], {}, null), /signature check FAILED/)
   })
 
   it.each([[[]], [['--version', 'latest']], [['--version', '1.2']]])('refuses an unpinned version %j', async (args) => {
@@ -498,8 +502,18 @@ describe.skipIf(!posix)('install.sh defaults (GitHub Releases + GHCR, stub curl)
 describe('ops/install/install.sh text', () => {
   const sh = readFileSync(join(root, 'ops/install/install.sh'), 'utf8')
 
-  it('ships a placeholder key, the GitHub Release and GHCR defaults, and never pipes a download into a shell', () => {
-    expect(sh).toMatch(/^RELEASE_PUBKEY_EMBEDDED='RWQ-REPLACE-WITH-[A-Z-]+'$/m)
+  it('embeds the published release key, keeps the placeholder refusal, and never pipes a download into a shell', () => {
+    // keys/yoda-release.pub (key id C73EF0AF404BAE84) is the one source; install.sh embeds its second line.
+    const pubFile = readFileSync(join(root, 'keys/yoda-release.pub'), 'utf8')
+    expect(pubFile).toBe('untrusted comment: minisign public key C73EF0AF404BAE84\nRWSErktAr/A+x5Gvgr0x29wiu41FmYEVlJYoXyB6oJk4kvwQLOZs9O9j\n')
+    const key = pubFile.split('\n')[1]!
+    expect(sh).toContain(`RELEASE_PUBKEY_EMBEDDED='${key}'`)
+    // A minisign Ed25519 public key whose key id (little-endian bytes 2..10) is the published one.
+    const raw = Buffer.from(key, 'base64')
+    expect(raw.length).toBe(42)
+    expect(raw.subarray(0, 2).toString()).toBe('Ed')
+    expect(Buffer.from(raw.subarray(2, 10)).reverse().toString('hex').toUpperCase()).toBe('C73EF0AF404BAE84')
+    expect(sh).toContain("*REPLACE-WITH*) die 'this install.sh has no release public key yet (placeholder)")
     expect(sh).toContain("DEFAULT_BASE_URL='https://github.com/tantee/yoda/releases/download/v{version}/'")
     expect(sh).toContain("DEFAULT_IMAGE_PREFIX='ghcr.io/tantee/yoda'")
     expect(sh).toMatch(/^set -eu$/m)

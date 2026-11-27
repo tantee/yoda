@@ -51,9 +51,13 @@ it. Never pipe a download into `sh`. Use the latest release from
 curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.0.0/install.sh
 curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.0.0/SHA256SUMS
 curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.0.0/SHA256SUMS.minisig
-minisign -Vm SHA256SUMS -P RWQ-REPLACE-WITH-THE-YODA-RELEASE-PUBLIC-KEY && sha256sum --check --ignore-missing SHA256SUMS
+minisign -Vm SHA256SUMS -P RWSErktAr/A+x5Gvgr0x29wiu41FmYEVlJYoXyB6oJk4kvwQLOZs9O9j && sha256sum --check --ignore-missing SHA256SUMS
 sh install.sh --version 1.0.0 --dir /srv/yoda
 ```
+
+The key after `-P` is the Yoda release key, minisign key id `C73EF0AF404BAE84`. It is also in
+[`keys/yoda-release.pub`](../../keys/yoda-release.pub) and built into `install.sh`
+([verifying releases](../releasing.md#verifying-releases)).
 
 `install.sh` checks the prerequisites, downloads the **signed release bundle**, verifies its signature and checksum
 (the release key is built into the script) and refuses on any mismatch. It refuses `latest` and an existing
@@ -191,7 +195,7 @@ Rotation and lost keys in detail: [runbook, section 10](../operations.md#10-rota
    curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.1.0/yoda-1.1.0.tar.gz
    curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.1.0/SHA256SUMS
    curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.1.0/SHA256SUMS.minisig
-   minisign -Vm SHA256SUMS -P RWQ-REPLACE-WITH-THE-YODA-RELEASE-PUBLIC-KEY && sha256sum --check --ignore-missing SHA256SUMS
+   minisign -Vm SHA256SUMS -P RWSErktAr/A+x5Gvgr0x29wiu41FmYEVlJYoXyB6oJk4kvwQLOZs9O9j && sha256sum --check --ignore-missing SHA256SUMS
    tar -xzf yoda-1.1.0.tar.gz --no-same-owner && rm yoda-1.1.0.tar.gz SHA256SUMS SHA256SUMS.minisig
    YODA_VERSION=1.1.0 sh ops/deploy/deploy.sh
    ```

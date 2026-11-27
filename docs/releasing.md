@@ -8,6 +8,7 @@ there by default. An internal mirror is optional ([below](#internal-mirror)).
 - [One-time setup](#one-time-setup)
 - [Cut a release](#cut-a-release)
 - [Dry runs](#dry-runs)
+- [Verifying releases](#verifying-releases)
 - [Internal mirror](#internal-mirror)
 - [Rotating the signing key](#rotating-the-signing-key)
 
@@ -36,9 +37,11 @@ The tag starts [`.github/workflows/release.yml`](../.github/workflows/release.ym
 
 ## One-time setup
 
-Do these once, before the first tag.
+Steps 1 to 3 are **done**: the release key pair exists (key id `C73EF0AF404BAE84`), its public half is committed
+and embedded, and the repository secrets are set. They are kept here for a fork, a mirror with its own key, or a
+key rotation. Steps 4 and 5 remain.
 
-1. **Make the signing key pair** on a trusted machine, with a password:
+1. **Make the signing key pair** (done) on a trusted machine, with a password:
 
    ```bash
    minisign -G -p yoda.pub -s yoda.key
@@ -46,14 +49,17 @@ Do these once, before the first tag.
 
    `yoda.key` is the secret half. Keep it offline (an encrypted USB key or the organisation's password vault) and
    keep a backup copy. Nothing in the repository or the workflow stores it except the repository secret below.
-2. **Embed the public key.** The second line of `yoda.pub` (it starts with `RW`) replaces the placeholder in two
-   places:
-   - `ops/install/install.sh`: `RELEASE_PUBKEY_EMBEDDED='RW...'`
-   - the verification snippet in `README.md` and in [the install guide](guides/install.md#1-install-the-release)
-     (`-P RWQ-REPLACE-WITH-THE-YODA-RELEASE-PUBLIC-KEY`)
+2. **Publish the public key** (done). `yoda.pub` is committed as [`keys/yoda-release.pub`](../keys/yoda-release.pub),
+   and its second line (it starts with `RW`) is in:
+   - `ops/install/install.sh`: `RELEASE_PUBKEY_EMBEDDED='RW...'`;
+   - the `-P` key of the `minisign -Vm SHA256SUMS` snippets in `README.md`, [the install guide](guides/install.md) and
+     the runbook.
 
-   A test keeps the README key and the `install.sh` key the same. Commit this through a pull request.
-3. **Set the repository secrets** (Settings → Secrets and variables → Actions, or the CLI):
+   Tests keep all of them equal to the key in `keys/yoda-release.pub`. A fork or mirror with its own key
+   replaces every one of them. `install.sh` refuses to run with a placeholder key (any value containing
+   `REPLACE-WITH`), and the release job refuses to publish with one.
+3. **Set the repository secrets** (done; Settings → Secrets and variables → Actions, or the CLI). The workflow
+   reads exactly these two names:
 
    ```bash
    gh secret set MINISIGN_SECRET_KEY < yoda.key
@@ -95,7 +101,7 @@ Do these once, before the first tag.
    curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.0.0/install.sh
    curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.0.0/SHA256SUMS
    curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.0.0/SHA256SUMS.minisig
-   minisign -Vm SHA256SUMS -P <the RW... key> && sha256sum --check --ignore-missing SHA256SUMS
+   minisign -Vm SHA256SUMS -P RWSErktAr/A+x5Gvgr0x29wiu41FmYEVlJYoXyB6oJk4kvwQLOZs9O9j && sha256sum --check --ignore-missing SHA256SUMS
    sh install.sh --version 1.0.0 --dir /tmp/yoda-check     # on a test host with Docker
    ```
 
@@ -117,6 +123,25 @@ Dockerfiles, the compose files or `CHANGELOG.md`) runs the same workflow as a dr
 
 A manual run with **Dry run** unchecked on a `v*` tag reruns a real release (for example after a failure in the
 **release** job). Without a tag it fails.
+
+## Verifying releases
+
+Every release's `SHA256SUMS` is signed with the Yoda release key:
+
+- key id: `C73EF0AF404BAE84`
+- public key: `RWSErktAr/A+x5Gvgr0x29wiu41FmYEVlJYoXyB6oJk4kvwQLOZs9O9j`
+- where it lives: [`keys/yoda-release.pub`](../keys/yoda-release.pub) in this repository, and built into
+  `ops/install/install.sh` (`RELEASE_PUBKEY_EMBEDDED`), which checks every download with it.
+
+Check a release by hand (in the directory holding the downloaded assets):
+
+```bash
+minisign -Vm SHA256SUMS -P RWSErktAr/A+x5Gvgr0x29wiu41FmYEVlJYoXyB6oJk4kvwQLOZs9O9j
+sha256sum --check --ignore-missing SHA256SUMS
+```
+
+`minisign` prints `Trusted comment: yoda release <version>`; the version must be the one you downloaded. With
+the repository checked out, `minisign -Vm SHA256SUMS -p keys/yoda-release.pub` does the same.
 
 ## Internal mirror
 
