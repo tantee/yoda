@@ -15,7 +15,9 @@ export default defineNuxtPlugin(async () => {
   } catch {
     config.value = null
   }
-  const plan = bootPlan(window.location.pathname, config.value, useRuntimeConfig().public)
+  // Plain http on a LAN address: keycloak-js would throw (no Web Crypto for PKCE) and leave a blank page.
+  const secure = window.isSecureContext && !!window.crypto?.subtle
+  const plan = bootPlan(window.location.pathname, config.value, useRuntimeConfig().public, secure)
   if (plan.kind !== 'keycloak') {
     if (plan.kind === 'error') bootError.value = plan.error
     return { provide: { keycloak: null as unknown as Keycloak } }

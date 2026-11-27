@@ -18,7 +18,8 @@ export type KeycloakEnv = { keycloakUrl?: unknown; keycloakRealm?: unknown; keyc
 export type KeycloakOptions = { url: string; realm: string; clientId: string }
 
 /** Why the portal shows the boot screen instead of the app. */
-export type BootError = 'config_unavailable' | 'not_configured'
+/** `insecure_origin`: keycloak-js needs Web Crypto (PKCE), which a browser gives only to https pages and localhost. */
+export type BootError = 'config_unavailable' | 'not_configured' | 'insecure_origin'
 
 export type BootPlan =
   /** /setup or /recovery: no Keycloak at all. */
@@ -43,14 +44,18 @@ export function keycloakOptions(env: KeycloakEnv, pub: PublicConfig | null): Key
   return url && realm && clientId ? { url, realm, clientId } : null
 }
 
-/** What the boot plugin does for this path, given the config (null: /public-config could not be read). */
-export function bootPlan(path: string, pub: PublicConfig | null, env: KeycloakEnv): BootPlan {
+/**
+ * What the boot plugin does for this path, given the config (null: /public-config could not be read). `secure`: the
+ * page may use Web Crypto (`isSecureContext`); keycloak-js cannot sign in without it (plain http on a LAN address).
+ */
+export function bootPlan(path: string, pub: PublicConfig | null, env: KeycloakEnv, secure = true): BootPlan {
   if (isLocalAuthPath(path)) return { kind: 'local' }
   if (!pub) return { kind: 'error', error: 'config_unavailable' }
   if (pub.setup === 'required') return { kind: 'setup' }
   if (pub.recoveryForced) return { kind: 'recovery' }
   const options = keycloakOptions(env, pub)
-  return options ? { kind: 'keycloak', options } : { kind: 'error', error: 'not_configured' }
+  if (!options) return { kind: 'error', error: 'not_configured' }
+  return secure ? { kind: 'keycloak', options } : { kind: 'error', error: 'insecure_origin' }
 }
 
 /** Where the route middleware sends a navigation before anything else runs; null = carry on. */

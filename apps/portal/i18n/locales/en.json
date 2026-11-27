@@ -2136,6 +2136,8 @@
     "configUnavailable": "The portal could not read its settings from the server. The server may be restarting; try again in a moment.",
     "notConfiguredTitle": "Sign-in is not set up",
     "notConfigured": "This install has no Keycloak sign-in configured. An administrator can fix it from the recovery page.",
+    "insecureTitle": "Sign-in needs HTTPS",
+    "insecure": "This page is plain http on a network address, where the browser does not allow Keycloak sign-in. Open the portal through its https address (a reverse proxy), or on the install host as http://localhost (an SSH tunnel works too). The recovery page still works.",
     "retry": "Try again"
   },
   "recovery": {
@@ -2348,7 +2350,7 @@
       "urlMatches": "Matches the detected address",
       "urlMismatch": "You are reaching Yoda at a different address ({origin}) than the one entered. Check it: otherwise the sign-in at the last step returns to the wrong place.",
       "urlInvalid": "Enter an address like https://portal.example.org (no ? or #)",
-      "httpWarning": "Allowed on an internal network, but passwords and cookies travel unencrypted. Set up an https reverse proxy and use the https address.",
+      "httpWarning": "Allowed for setup on an internal network, but passwords and cookies travel unencrypted, and browsers allow the portal's Keycloak sign-in only over https (or on localhost): after setup, people cannot sign in at a plain http network address. Set up an https reverse proxy and use the https address.",
       "defaultLocale": "Default language",
       "defaultLocaleHelp": "Each person can change their own language.",
       "lockedEnv": "Set by environment on the install host ({name})",

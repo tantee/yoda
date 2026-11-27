@@ -34,6 +34,13 @@ describe('portal boot with /public-config', () => {
     expect(bootPlan('/', pub({ oidc: null }), { keycloakUrl: 'http://localhost:8080', keycloakRealm: 'yoda', keycloakClientId: 'yoda-portal' }).kind).toBe('keycloak')
   })
 
+  it('shows the https screen instead of a blank page where the browser gives no Web Crypto (plain http on a LAN)', () => {
+    expect(bootPlan('/', pub(), noEnv, false)).toEqual({ kind: 'error', error: 'insecure_origin' })
+    // /setup and /recovery need no Keycloak and still work there.
+    expect(bootPlan('/recovery', pub(), noEnv, false)).toEqual({ kind: 'local' })
+    expect(bootPlan('/', pub({ setup: 'required', oidc: null }), noEnv, false)).toEqual({ kind: 'setup' })
+  })
+
   it('sends every other page to /setup while setup is required', () => {
     expect(bootPlan('/', pub({ setup: 'required', oidc: null }), noEnv)).toEqual({ kind: 'setup' })
     expect(bootRedirect('/requests', pub({ setup: 'required' }), null)).toBe('/setup')
