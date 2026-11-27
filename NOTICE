@@ -1,0 +1,9 @@
+Yoda — AI work portal
+Copyright 2026 The Yoda authors
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+It includes third-party open-source components, each under its own licence,
+including the IBM Plex Sans and IBM Plex Sans Thai fonts (SIL Open Font
+License 1.1; see infra/keycloak/themes/yoda/login/resources/fonts/OFL.txt and
+the @fontsource packages).

@@ -1,5 +1,9 @@
 # Yoda operations runbook
 
+The reference for the people who run Yoda. For a guided walk-through start with the
+[install and upgrade guide](guides/install.md); the [admin guide](guides/admin.md) covers System settings in the
+portal, and [docs/README.md](README.md) lists every guide.
+
 How to install, configure, upgrade, back up and troubleshoot a production Yoda. Every hostname here is a
 placeholder (`portal.example.org`, `sso.example.org`, `gitlab.example.org`, `registry.example.org`,
 `files.example.org`, `smtp.example.org`); use your own. Secrets live only in the deploy host's `.env` (mode `600`),
@@ -249,7 +253,7 @@ Portal:
 | `NUXT_PUBLIC_KEYCLOAK_URL` | Deprecated: browser-facing Keycloak base URL. Empty: derived from `OIDC_ISSUER` (`<url>/realms/<realm>`) via `/public-config`; set, it wins, and core logs loudly at start when it disagrees with `OIDC_ISSUER` | — (bootstrap) | restart | optional | `https://sso.example.org` |
 | `NUXT_PUBLIC_KEYCLOAK_REALM` | Deprecated: realm (as `NUXT_PUBLIC_KEYCLOAK_URL`) | — (bootstrap) | restart | optional | `yoda` |
 | `NUXT_PUBLIC_KEYCLOAK_CLIENT_ID` | Deprecated: public client; empty = `OIDC_CLIENT_ID` | — (bootstrap) | restart | optional | `yoda-portal` |
-| `NUXT_PUBLIC_RUNNER_DOCS_URL` | Setup docs linked from the Runners page | General | live | optional (README "Runners") | `https://portal.example.org/docs/runners` |
+| `NUXT_PUBLIC_RUNNER_DOCS_URL` | Setup docs linked from the Runners page | General | live | optional (README "Runners", which links to `docs/development.md`) | `https://portal.example.org/docs/runners` |
 | `NUXT_PUBLIC_LINE_ADD_FRIEND_URL` | The LINE Official Account's add-friend link, shown when linking LINE | LINE | live | optional | `https://line.me/R/ti/p/@example` |
 | `NUXT_PUBLIC_ORG_LINE` | Organisation line at the foot of the side menu, e.g. the department or hospital name | General | live | optional (empty: no line) | `ฝ่ายเทคโนโลยีสารสนเทศ` |
 | `PORTAL_URL` | The portal's public base URL, used in links in emails, chats and GitLab issues; also System settings → General | General | live | optional (`http://localhost:3000`) | `https://portal.example.org` |
@@ -654,7 +658,7 @@ tables created by a newer release in place.
 
 ## 7. GitLab integration
 
-Owner checklist (details in the README, "GitLab integration"):
+Owner checklist (details in [docs/development.md, "GitLab integration"](development.md#gitlab-integration)):
 
 - [ ] A dedicated **bot user** on `gitlab.example.org` (e.g. `yoda-bot`) with **Developer** access to every
       repository linked in the portal (Maintainer only where protected branches require it).
@@ -673,7 +677,7 @@ Core also re-reads the merge requests of active work items every 15 minutes.
 
 ## 8. Runners
 
-Runners work the AI tasks that need a repository; see the README, "Runners", for the full guide.
+Runners work the AI tasks that need a repository; see [docs/development.md, "Runners"](development.md#runners) for the full guide.
 
 - **Server runner.** Add `COMPOSE_PROFILES=runner` to `.env` so deploys pull and restart it. Create the token in
   the portal's Runners page (admin, choosing the staff owner), put it in `YODA_RUNNER_TOKEN`, set
