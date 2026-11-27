@@ -53,6 +53,7 @@ export function isLocalhostHost(host: string | null | undefined): boolean {
  * D8 (owner decision, 2026-11-27): the public URL must be https, unless its host is this machine
  * ({@link isLocalhostHost}: `localhost`, `*.localhost`, 127.0.0.0/8, `::1`), as through an SSH tunnel. A browser
  * refuses the Keycloak sign-in (PKCE needs Web Crypto) on plain http anywhere else, so nobody could sign in.
+ * Any other scheme (`ftp:`, `ws:`, ...) is refused too: the schema accepts any URL, and only https serves the sign-in.
  * `https_required` when refused; null when fine or not a URL at all (the schema reports that).
  */
 export function publicUrlIssue(url: string | null | undefined): 'https_required' | null {
@@ -63,7 +64,8 @@ export function publicUrlIssue(url: string | null | undefined): 'https_required'
   } catch {
     return null
   }
-  return u.protocol === 'http:' && !isLocalhostHost(u.hostname) ? 'https_required' : null
+  if (u.protocol === 'https:') return null
+  return u.protocol === 'http:' && isLocalhostHost(u.hostname) ? null : 'https_required'
 }
 
 export const TotpCode = z.string().trim().regex(/^\d{6}$/, 'must be 6 digits')

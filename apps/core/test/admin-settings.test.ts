@@ -408,7 +408,7 @@ describe('PUT /admin/settings/:category', () => {
 
   it('refuses a plain-http public URL away from this machine (D8): nobody could sign in there', async () => {
     await boot()
-    for (const url of ['http://10.0.0.5:3000', 'http://portal.example.org', 'http://localhost.example.org']) {
+    for (const url of ['http://10.0.0.5:3000', 'http://portal.example.org', 'http://localhost.example.org', 'http://localhost@evil.example.org', 'ftp://10.0.0.5']) {
       const res = await put(boss, 'general', { changes: { 'org.publicUrl': url } })
       expect(res.statusCode, url).toBe(422)
       expect(res.json()).toEqual({ error: 'invalid_settings', issues: [{ key: 'org.publicUrl', message: 'https_required' }] })

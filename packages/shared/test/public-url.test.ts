@@ -9,8 +9,12 @@ describe('public URL rule (D8)', () => {
   })
 
   it('refuses plain http away from this machine with https_required', () => {
-    for (const u of ['http://10.0.0.5:3000', 'http://192.168.1.20', 'http://portal.example.org', 'http://0.0.0.0:3000', 'HTTP://Portal.Example.org']) expect(publicUrlIssue(u), u).toBe('https_required')
-    for (const u of ['https://portal.example.org', 'https://10.0.0.5', 'http://localhost:3000', 'http://127.0.0.1:3000', 'http://[::1]:3000', 'http://yoda.localhost', 'http://127.1']) {
+    for (const u of ['http://10.0.0.5:3000', 'http://192.168.1.20', 'http://portal.example.org', 'http://0.0.0.0:3000', 'HTTP://Portal.Example.org',
+      // userinfo and a trailing dot do not make a host local; an IPv4-mapped address is not counted either.
+      'http://localhost@evil.example.org', 'http://localhost:3000@evil.example.org', 'http://localhost.', 'http://[::ffff:127.0.0.1]',
+      // Other schemes are not https either (core's schema accepts any URL).
+      'ftp://10.0.0.5', 'ws://10.0.0.5', 'ws://localhost:3000']) expect(publicUrlIssue(u), u).toBe('https_required')
+    for (const u of ['https://portal.example.org', 'https://10.0.0.5', 'http://localhost:3000', 'http://127.0.0.1:3000', 'http://[::1]:3000', 'http://yoda.localhost', 'http://127.1', 'HTTP://LOCALHOST:3000', 'http://0x7f000001', 'http://[0:0:0:0:0:0:0:1]', 'HTTPS://10.0.0.5']) {
       expect(publicUrlIssue(u), u).toBeNull()
     }
     // Not a URL: the schema reports it, not this rule.
