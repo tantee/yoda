@@ -4,6 +4,7 @@ import {
   bigserial,
   boolean,
   check,
+  customType,
   date,
   index,
   integer,
@@ -789,5 +790,99 @@ export const notificationDeliveries = pgTable(
     primaryKey({ columns: [t.notificationId, t.channel] }),
     check('notification_deliveries_channel_check', sql`${t.channel} in (${list(ChannelName.options)})`),
     check('notification_deliveries_state_check', sql`${t.state} in ('sent', 'failed', 'skipped')`),
+  ],
+)
+
+const bytea = customType<{ data: Buffer; driverData: Buffer }>({ dataType: () => 'bytea' })
+const inet = customType<{ data: string }>({ dataType: () => 'inet' })
+
+/**
+ * One row per stored setting (installer proposal §10.1); env-only and default values have no row. A row holds a
+ * plain `value` or an encrypted secret (AES-256-GCM envelope: a per-secret data key wrapped by the master key
+ * `key_id`, the setting key as AAD), never both.
+ */
+export const settings = pgTable(
+  'settings',
+  {
+    key: text('key').primaryKey(),
+    value: jsonb('value'),
+    keyId: text('key_id'),
+    wrappedDek: bytea('wrapped_dek'),
+    dekNonce: bytea('dek_nonce'),
+    nonce: bytea('nonce'),
+    /** AES-256-GCM output with the tag appended. */
+    ciphertext: bytea('ciphertext'),
+    /** Secrets: the last 4 characters when the value has 20 or more, else null. */
+    hint: text('hint'),
+    source: text('source').notNull(),
+    /** A staged change (OIDC issuer, 8.6). */
+    pending: jsonb('pending'),
+    version: integer('version').notNull().default(1),
+    updatedBy: uuid('updated_by').references(() => people.id, { onDelete: 'set null' }),
+    updatedByLabel: text('updated_by_label'),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    check('settings_value_or_secret', sql`${t.value} is null or ${t.ciphertext} is null`),
+    check(
+      'settings_secret_complete',
+      sql`(${t.ciphertext} is null) = (${t.keyId} is null) and (${t.ciphertext} is null) = (${t.wrappedDek} is null) and (${t.ciphertext} is null) = (${t.dekNonce} is null) and (${t.ciphertext} is null) = (${t.nonce} is null)`,
+    ),
+    check('settings_source_check', sql`${t.source} in ('ui', 'setup', 'env', 'import', 'cli', 'recovery', 'upgrade')`),
+  ],
+)
+
+/**
+ * Every settings write, test and security event, kept forever (D10). Append-only: a trigger (migration 0022)
+ * rejects UPDATE and DELETE, except the `on delete set null` of `actor_person`. Secrets are never stored, only
+ * HMAC fingerprints of the old and new value. TRUNCATE fires no row trigger, so it bypasses this (the tests'
+ * resetDb relies on that); it needs table ownership, which the app never uses for it. A database owner can
+ * always drop the trigger: append-only guards against the application, not against the DBA.
+ */
+export const settingsAudit = pgTable(
+  'settings_audit',
+  {
+    id: bigserial('id', { mode: 'number' }).primaryKey(),
+    at: timestamp('at', { withTimezone: true }).notNull().defaultNow(),
+    actorPerson: uuid('actor_person').references(() => people.id, { onDelete: 'set null' }),
+    /** Display name, `break-glass:<user>`, `system` or `cli`. */
+    actorLabel: text('actor_label').notNull(),
+    source: text('source').notNull(),
+    /** `set`, `clear`, `import`, `test`, `apply_pending`, `rollback`, `master_key.rotated`, `recovery.signin`, ... */
+    action: text('action').notNull(),
+    key: text('key'),
+    oldValue: jsonb('old_value'),
+    newValue: jsonb('new_value'),
+    oldFp: text('old_fp'),
+    newFp: text('new_fp'),
+    result: text('result'),
+    ip: inet('ip'),
+    requestId: text('request_id'),
+  },
+  (t) => [index('settings_audit_key_at').on(t.key, t.at.desc()), index('settings_audit_at').on(t.at.desc())],
+)
+
+/**
+ * The install's single state row (§10.1 `install_state`, minus the setup-token columns Task 7 adds): install id,
+ * whether setup is done and how, the master key canary and the forced recovery switch.
+ */
+export const setupState = pgTable(
+  'setup_state',
+  {
+    id: integer('id').primaryKey().default(1),
+    installId: uuid('install_id').notNull().defaultRandom(),
+    setupCompletedAt: timestamp('setup_completed_at', { withTimezone: true }),
+    setupCompletedBy: uuid('setup_completed_by').references(() => people.id, { onDelete: 'set null' }),
+    /** `setup` (the wizard) or `upgrade` (an existing env-based install, §6.5). */
+    setupCompletedSource: text('setup_completed_source'),
+    setupProgress: jsonb('setup_progress').notNull().default({}),
+    /** A known constant encrypted with the master key; a key that cannot decrypt it is the wrong key. */
+    keyCanary: bytea('key_canary'),
+    keyCanaryKeyId: text('key_canary_key_id'),
+    recoveryMode: boolean('recovery_mode').notNull().default(false),
+  },
+  (t) => [
+    check('setup_state_single_row', sql`${t.id} = 1`),
+    check('setup_state_source_check', sql`${t.setupCompletedSource} is null or ${t.setupCompletedSource} in ('setup', 'upgrade')`),
   ],
 )

@@ -1,18 +1,20 @@
 import { buildApp } from './app.js'
-import { remoteJwks } from './auth/jwks.js'
 import { loadConfig } from './config.js'
-import { createDb } from './db/client.js'
+import { createDb, pgClient } from './db/client.js'
 import { runMigrations } from './db/migrations.js'
 import { createS3Storage } from './storage/s3.js'
 import { AiGateway } from './ai/gateway.js'
-import { buildModels } from './ai/models.js'
 import { LiveBus } from './live/bus.js'
 import { registerJobHandlers } from './jobs/handlers.js'
 import { createPgBossQueue } from './jobs/queue.js'
-import { GitLabClient } from './gitlab/client.js'
 import { seedTemplates } from './workflow/seed.js'
-import { createMailTransport, emailConfigured } from './notifications/channels/email.js'
+import { takeMasterKey } from './settings/crypto.js'
+import { LiveSettings } from './settings/live.js'
+import { SettingsStore } from './settings/store.js'
+import { internalAddresses } from './settings/outbound.js'
 
+// Read the master key first and drop YODA_MASTER_KEY from process.env, so it does not linger there.
+const masterKey = takeMasterKey(process.env)
 const config = loadConfig(process.env)
 const db = createDb(config.databaseUrl)
 // Dev and a plain `docker run` migrate here; production compose sets MIGRATE_ON_START=false and runs the
@@ -22,16 +24,34 @@ if (config.migrateOnStart) {
   console.log('migrations applied')
 }
 await seedTemplates(db)
-const jwks = remoteJwks(config)
+// Imports env into the settings table (D4) and checks the master key; a missing or wrong key is a recovery
+// state shown on /health, not a crash.
+const settings = await SettingsStore.open({ db, env: process.env, masterKey })
+if (settings.recovery) console.warn(`settings: recovery state (master key ${settings.keyStatus}); stored secrets unavailable`)
+// Live apply (§5.3): `deps.config` and the clients built from settings (JWKS, AI models, GitLab, SMTP) follow
+// every change, here or on another instance (NOTIFY), without a restart. Bootstrap-only values stay from env.
+const live = new LiveSettings({ store: settings, base: config, client: pgClient(db) })
+await live.listen()
 const storage = await createS3Storage(config)
 const bus = new LiveBus()
-const jobs = await createPgBossQueue(config.databaseUrl, config.aiWorkers)
-const ai = new AiGateway({ db, bus, models: buildModels(config), config, jobs })
-const gitlab = config.gitlabUrl && config.gitlabToken ? new GitLabClient({ baseUrl: config.gitlabUrl, token: config.gitlabToken }) : null
-// Caches the bot user for the webhook (which never calls GitLab); best effort, the admin status page retries it.
-if (gitlab) void gitlab.currentUser().catch(() => console.warn('gitlab: bot user not resolved at boot (GitLab unreachable?)'))
-const mailTransport = emailConfigured(config) ? createMailTransport(config) : undefined
-const app = await buildApp({ config, db, jwks, bus, storage, ai, jobs, gitlab, mailTransport })
+// Restart-mode: the worker count is read once, here (the store flags a later change as restart-required).
+const jobs = await createPgBossQueue(config.databaseUrl, live.config.aiWorkers)
+const ai = new AiGateway({
+  db,
+  bus,
+  jobs,
+  get models() {
+    return live.models
+  },
+  get config() {
+    return live.config
+  },
+})
+// Settings tests reach loopback only with YODA_OUTBOUND_ALLOW_LOOPBACK=true (dev: the fakes on 127.0.0.1), and
+// never core's own addresses or the compose services' (looked up once, best effort).
+const outbound = { allowLoopback: settings.get('security.outboundAllowLoopback') === true, blockedAddresses: await internalAddresses() }
+const deps = live.attach({ db, bus, storage, ai, jobs, settings, outbound })
+const app = await buildApp(deps)
 await registerJobHandlers(app.deps)
 
 let stopping = false
@@ -41,8 +61,9 @@ async function shutdown(signal: string) {
   app.log.info({ signal }, 'shutting down')
   try {
     await app.close()
+    await live.close()
     await jobs.stop()
-    await (db as unknown as { $client: { end(): Promise<void> } }).$client.end()
+    await pgClient(db).end()
     process.exit(0)
   } catch (err) {
     app.log.error(err, 'error during shutdown')

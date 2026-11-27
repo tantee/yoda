@@ -6,7 +6,8 @@ import { loadConfig } from '../src/config.js'
 import { buildApp } from '../src/app.js'
 import { jwksUrl, remoteJwks } from '../src/auth/jwks.js'
 import { readiness } from '../src/readiness.js'
-import { testDeps } from './helpers.js'
+import { SettingsStore } from '../src/settings/store.js'
+import { resetDb, testDeps } from './helpers.js'
 import { signToken, testJwksDocument, TEST_ISSUER } from './jwt.js'
 
 const VERSION = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version as string
@@ -101,6 +102,16 @@ describe('app', () => {
     expect(res.statusCode).toBe(200)
     expect(res.json()).toEqual({ status: 'ok', version: VERSION })
     expect(VERSION).toBe('1.0.0')
+    await app.close()
+  })
+  it('GET /health shows the master key state when the settings store is open', async () => {
+    const deps = await testDeps()
+    await resetDb(deps.db)
+    const settings = await SettingsStore.open({ db: deps.db, env: {}, masterKey: { status: 'missing', reason: 'not set' }, log: { warn() {}, info() {} } })
+    const app = await buildApp({ ...deps, settings })
+    const res = await app.inject({ url: '/health' })
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toEqual({ status: 'ok', version: VERSION, settings: { secrets: 'missing', recovery: false } })
     await app.close()
   })
   it('unexpected errors return a generic 500', async () => {

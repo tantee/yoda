@@ -57,7 +57,8 @@ type TelegramUpdate = {
  * background so a slow provider never delays the answer. Logs carry error codes only.
  */
 export function channelWebhookRoutes(app: FastifyInstance): void {
-  const { config, db } = app.deps
+  // Config is read per request (app.deps.config is the live settings snapshot); only the db is fixed.
+  const { db } = app.deps
 
   const background = (channel: string, send: () => Promise<void>) => {
     void send().catch((err) => {
@@ -83,11 +84,14 @@ export function channelWebhookRoutes(app: FastifyInstance): void {
         config: { public: true },
         bodyLimit: WEBHOOK_BODY_LIMIT,
         onRequest: async (request) => {
-          if (!lineConfigured(config)) throw off()
+          if (!lineConfigured(app.deps.config)) throw off()
           if (!request.headers['x-line-signature']) throw unauthorized()
         },
       },
       async (request) => {
+        const config = app.deps.config
+        // Again here: the settings may have changed while the body was read.
+        if (!lineConfigured(config)) throw off()
         const raw = request.body
         if (!Buffer.isBuffer(raw) || !lineSignatureMatches(config.lineChannelSecret!, raw, request.headers['x-line-signature'])) throw unauthorized()
         let events: LineEvent[]
@@ -131,13 +135,14 @@ export function channelWebhookRoutes(app: FastifyInstance): void {
       bodyLimit: WEBHOOK_BODY_LIMIT,
       // Before the body is read; the secret and the headers are never logged or echoed.
       onRequest: async (request) => {
+        const config = app.deps.config
         if (!telegramConfigured(config)) throw off()
         if (!tokenMatches(config.telegramWebhookSecret, request.headers['x-telegram-bot-api-secret-token'])) throw unauthorized()
       },
     },
     async (request) => {
       const update = (request.body ?? {}) as TelegramUpdate
-      const text = replies(config.portalUrl)
+      const text = replies(app.deps.config.portalUrl)
       const member = update.my_chat_member
       if (member?.new_chat_member?.status === 'kicked' && member.chat?.id !== undefined) {
         await unlinkExternal(db, 'telegram', String(member.chat.id))

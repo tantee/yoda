@@ -258,14 +258,18 @@ describe('the gimmick stays on its own surfaces', () => {
       'app/pages/runners.vue SkeletonList': 'caption',
       'app/pages/settings/notifications.vue SkeletonList': 'caption',
       'app/pages/admin/people.vue SkeletonList': 'caption',
-      'app/pages/admin/gitlab.vue SkeletonList': 'caption',
-      'app/pages/admin/notifications.vue SkeletonList': 'caption',
       'app/pages/admin/ai.vue SkeletonList': 'caption',
       // project tabs and in-page sections: quiet
       'app/components/project/KnowledgeTab.vue SkeletonList': 'quiet',
       'app/components/project/WorkItemsTab.vue SkeletonList': 'quiet',
       'app/components/project/AiSettings.vue SkeletonList': 'quiet',
       'app/pages/work-items/[id].vue SkeletonList #2': 'quiet',
+      // system settings: no fun lines in settings forms (owner rule)
+      'app/pages/admin/settings/[page].vue SkeletonList': 'quiet',
+      'app/components/settings/AiDepartment.vue SkeletonList': 'quiet',
+      'app/components/settings/AuditLog.vue SkeletonList': 'quiet',
+      'app/components/settings/AuditPanel.vue SkeletonList': 'quiet',
+      'app/components/settings/GitlabStatus.vue SkeletonList': 'quiet',
     })
   })
   it('no fun line appears in core or shared code (notifications, emails, task data)', () => {

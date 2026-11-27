@@ -37,6 +37,8 @@ export class FakeGitLab {
   private delay: { ms: number; count: number } | null = null
   private token: string | null = null
   url = ''
+  /** The scopes `personal_access_tokens/self` reports for the token. */
+  tokenScopes = ['api']
 
   addProject(path: string, id = this.projects.length + 1, defaultBranch: string | null = 'main'): Project {
     const p = { id, path_with_namespace: path, web_url: `${this.url}/${path}`, default_branch: defaultBranch }
@@ -139,6 +141,7 @@ export class FakeGitLab {
     if (!m) return send(404, { message: '404 Not Found' })
     const parts = m[1]!.split('/')
     if (method === 'GET' && parts[0] === 'user') return send(200, { id: 1, username: 'yoda-bot' })
+    if (method === 'GET' && parts[0] === 'personal_access_tokens' && parts[1] === 'self') return send(200, { id: 7, scopes: this.tokenScopes, expires_at: '2027-06-30' })
     if (parts[0] !== 'projects' || !parts[1]) return send(404, { message: '404 Not Found' })
     const key = decodeURIComponent(parts[1])
     const project = this.projects.find((p) => String(p.id) === key || p.path_with_namespace === key)

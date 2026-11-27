@@ -81,6 +81,13 @@ const LOOKS = {
   knowledge: { draft: dot('neutral'), confirmed: dot('success') },
   project: { active: dot('info'), archived: dot('neutral') },
   yesNo: { yes: dot('success'), no: dot('neutral') },
+  // The settings master key (installer proposal §3.5): anything but ok means stored secrets cannot be read.
+  masterKey: {
+    ok: icon('success', 'mdi-key-outline'),
+    missing: icon('error', 'mdi-key-remove'),
+    malformed: icon('error', 'mdi-alert-circle-outline'),
+    mismatch: icon('error', 'mdi-key-alert-outline'),
+  },
 } as const satisfies Record<string, Record<string, Look>>
 
 export type StatusKind = keyof typeof LOOKS

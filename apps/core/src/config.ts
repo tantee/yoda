@@ -106,8 +106,16 @@ export const envSchema = z.object({
   TELEGRAM_BOT_USERNAME: optional(z.string().regex(/^@?[A-Za-z0-9_]{5,32}$/, 'must be the bot username')),
   TELEGRAM_WEBHOOK_SECRET: optional(z.string().regex(/^[A-Za-z0-9_-]{16,256}$/, 'must be 16-256 characters of A-Z, a-z, 0-9, _ and -')),
   TELEGRAM_API_URL: z.preprocess((v) => (v === '' ? undefined : v), z.string().url().default('https://api.telegram.org')),
+  // Read by the settings store (src/settings), not mapped into Config: the master key never sits in Config. A bad
+  // key does not stop core; it starts in the recovery state instead.
+  YODA_MASTER_KEY: optional(z.string()),
+  YODA_MASTER_KEY_FILE: optional(z.string()),
+  YODA_SETTINGS_IMPORT: z.preprocess((v) => (v === '' ? undefined : v), z.enum(['true', 'false']).default('true')),
+  // Dev and tests only: the settings tests may reach loopback (the fakes). Read by server.ts, not mapped into Config.
+  YODA_OUTBOUND_ALLOW_LOOPBACK: z.preprocess((v) => (v === '' ? undefined : v), z.enum(['true', 'false']).default('false')),
 })
 
+/** URLs lose trailing slashes here as in the settings registry, so the shown value is the one in effect. */
 export function loadConfig(env: NodeJS.ProcessEnv): Config {
   const parsed = envSchema.safeParse(env)
   if (!parsed.success) {
@@ -122,7 +130,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     databaseUrl: e.DATABASE_URL,
     oidcIssuer: e.OIDC_ISSUER.replace(/\/+$/, ''),
     oidcClientId: e.OIDC_CLIENT_ID,
-    oidcJwksUrl: e.OIDC_JWKS_URL,
+    oidcJwksUrl: e.OIDC_JWKS_URL?.replace(/\/+$/, ''),
     migrateOnStart: e.MIGRATE_ON_START === 'true',
     staffGroup: e.STAFF_GROUP,
     bootstrapAdmins: e.BOOTSTRAP_ADMINS.split(',')
@@ -130,11 +138,11 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
       .filter(Boolean),
     anthropicApiKey: e.ANTHROPIC_API_KEY,
     openaiApiKey: e.OPENAI_API_KEY,
-    openaiBaseUrl: e.OPENAI_BASE_URL,
+    openaiBaseUrl: e.OPENAI_BASE_URL?.replace(/\/+$/, ''),
     aiModelDraft: e.AI_MODEL_DRAFT,
     aiModelFast: e.AI_MODEL_FAST,
     aiEmbeddingModel: e.AI_EMBEDDING_MODEL,
-    s3Endpoint: e.S3_ENDPOINT,
+    s3Endpoint: e.S3_ENDPOINT.replace(/\/+$/, ''),
     s3Region: e.S3_REGION,
     s3Bucket: e.S3_BUCKET,
     s3AccessKey: e.S3_ACCESS_KEY,

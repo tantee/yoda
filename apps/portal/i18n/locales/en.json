@@ -24,8 +24,7 @@
     "admin": {
       "people": "People",
       "ai": "AI budget",
-      "gitlab": "GitLab connection",
-      "notifications": "Notification channels"
+      "settings": "System settings"
     },
     "runners": "Runners",
     "agendas": "Meeting agendas",
@@ -1468,6 +1467,12 @@
       "submitted": "Sent",
       "accepted": "Done",
       "rejected": "Sent back for changes"
+    },
+    "masterKey": {
+      "ok": "OK",
+      "missing": "Missing",
+      "malformed": "Malformed",
+      "mismatch": "Mismatch"
     }
   },
   "stateView": {
@@ -1577,5 +1582,520 @@
       "Back to normal soon, all will be."
     ],
     "konami": "May the source be with you"
+  },
+  "settings": {
+    "title": "System settings",
+    "hint": "Values set by the environment cannot be changed here and take precedence over saved ones",
+    "navLabel": "Settings categories",
+    "nav": {
+      "locked": "{n} set by the environment"
+    },
+    "page": {
+      "general": "General",
+      "signin": "Sign-in",
+      "ai": "AI",
+      "gitlab": "GitLab",
+      "channels": "Notification channels",
+      "runners": "Runners",
+      "backups": "Backups",
+      "storage": "Storage and database",
+      "security": "Security",
+      "audit": "Change log"
+    },
+    "category": {
+      "general": "General",
+      "signin": "Sign-in (OIDC)",
+      "ai": "AI providers and models",
+      "gitlab": "GitLab connection",
+      "email": "Email (SMTP)",
+      "line": "LINE Official Account",
+      "telegram": "Telegram",
+      "runners": "Runners",
+      "backups": "Backups",
+      "storage": "Storage and database",
+      "security": "Security"
+    },
+    "apply": {
+      "live": "Applies at once",
+      "reconnect": "Reconnects automatically",
+      "restart": "Needs a restart"
+    },
+    "lock": {
+      "env": "Set by environment · {name}",
+      "bootstrap": "Set at install only",
+      "readonly": "Filled by the system",
+      "recovery_only": "Protected: not changed here",
+      "bound_secret_in_env": "Its secret is set by environment · {name}",
+      "how": {
+        "env": "To manage it here, remove {name} from the .env on the install host and restart. The current value is kept.",
+        "bootstrap": "This lives in the install host's configuration. Change it there and restart.",
+        "readonly": "The system fills this in",
+        "recovery_only": "Changing the issuer, client or JWKS URL can lock everyone out, so it is not changed here. A guarded way to change it, with a test, is coming in the setup update; until then ask the host administrator.",
+        "bound_secret_in_env": "Remove {name} from the .env before moving this endpoint",
+        "managed_on_host": "Set {name} on the {container} container on the install host, then restart that container. It becomes editable here in a later update.",
+        "managed_on_host_unused": "Nothing reads this yet. It becomes editable here with the setup update.",
+        "envCompose": "The prod compose file provides a default for {name}, so it stays set by environment until this install uses generated settings (coming in the setup update). Change it in the .env on the install host.",
+        "envNotKept": "This secret is not stored in the database (the master key is not usable, or YODA_SETTINGS_IMPORT=false). Removing {name} from the .env disconnects the service until the secret is entered here."
+      },
+      "managed_on_host": "Managed on the install host"
+    },
+    "source": {
+      "savedBy": "Saved by {name} · {at}",
+      "savedAt": "Saved {at}",
+      "default": "Default value",
+      "imported": "Imported from environment · {at}"
+    },
+    "secret": {
+      "placeholder": "Paste the new value",
+      "set": "Set",
+      "unset": "Not set",
+      "unavailable": "Stored, but cannot be read (master key mismatch)",
+      "willClear": "Removed on save",
+      "undo": "Keep it",
+      "replace": "Replace",
+      "clear": "Remove",
+      "generate": "Generate",
+      "noReadBack": "cannot be shown again",
+      "writeOnly": "Once saved it shows as “Set” only. Nobody can read it back.",
+      "generatedTitle": "New secret",
+      "generatedOnce": "Copy it now. It will not be shown again.",
+      "generatedDone": "Done",
+      "keyBlocked": "Secrets cannot be saved or changed here until the master key is usable (see Security)."
+    },
+    "option": {
+      "th": "Thai",
+      "en": "English"
+    },
+    "listHint": "Separate values with commas",
+    "boundNote": "Saving clears the stored {secrets}. Enter it again in the same save.",
+    "restart": {
+      "title": "Core needs a restart",
+      "text": "Changed but not in effect yet: {keys}",
+      "how": "Ask the host administrator to restart core on the install host:",
+      "field": "Saved; applies after a restart"
+    },
+    "save": {
+      "saved": "Saved",
+      "cleared": "The stored {secrets} was removed because its endpoint changed. Enter it again.",
+      "conflict": "Someone else changed {name}. Reload the latest values before editing.",
+      "reload": "Reload",
+      "locked": "{name} is set by the environment ({env}) and cannot be changed here",
+      "boundInEnv": "{name} cannot move: its secret is set by the environment ({env})",
+      "invalid": "Some fields are not valid",
+      "invalidField": "Not valid: {message}",
+      "rateLimited": "Too many attempts. Try again in {s} seconds.",
+      "secretsUnavailable": "Secrets cannot be saved: the master key is not usable. See Security.",
+      "dirty": "{n} unsaved changes"
+    },
+    "warning": {
+      "unpriced_model": "{name}: this model has no price, so its cost is not counted against budgets",
+      "embedding_model_changed": "The embedding model changed. {count} knowledge chunks still use the old model; search is off until they are re-embedded.",
+      "other": "Warning: {code}"
+    },
+    "test": {
+      "run": "Test connection",
+      "sendSelf": "Send a test email to me",
+      "draftHint": "Tests use the unsaved form values",
+      "draftNote": "Used the unsaved form values; you can test before saving",
+      "passed": "Passed",
+      "failed": "Failed",
+      "seconds": "{s} s",
+      "code": {
+        "not_configured": "Not configured",
+        "secret_required": "A secret is needed: none is saved, or the address changed and the saved one does not go to a new address",
+        "auth_rejected": "The credentials were rejected",
+        "invalid_response": "The server gave an unexpected answer",
+        "failed": "Failed",
+        "timeout": "Timed out",
+        "connect_failed": "Could not connect",
+        "tls_failed": "TLS failed (certificate or encryption)",
+        "dns_failed": "Host name not found (DNS)",
+        "blocked_host": "This host is not allowed",
+        "blocked_address": "This address is not allowed",
+        "blocked_port": "This port is not allowed",
+        "https_required": "A public host needs https",
+        "scheme_not_allowed": "Only http and https are allowed",
+        "invalid_url": "Not a valid URL",
+        "too_large": "The answer was too large",
+        "issuer_mismatch": "The issuer does not match",
+        "no_keys": "The JWKS has no keys",
+        "client_rejected": "Keycloak rejected the client or redirect URI",
+        "no_address": "Your account has no email address",
+        "no_sender": "No sender (From) is set",
+        "webhook_not_registered": "The webhook is not registered at the portal address",
+        "missing_scope": "The token lacks the api scope",
+        "model_not_found": "The provider does not have this model",
+        "provider_unavailable": "This model's provider is not configured",
+        "no_embeddings": "This provider has no embedding models",
+        "http": "The server answered HTTP {status}",
+        "smtp_error": "The SMTP server returned an error",
+        "invalid_config": "The settings are not valid",
+        "rejected": "The server refused the request",
+        "unreachable": "The storage cannot be reached",
+        "smtp": "The SMTP server answered {status}"
+      },
+      "check": {
+        "discovery": "Issuer discovery",
+        "jwks": "Keys (JWKS)",
+        "client": "Client and redirect",
+        "connect": "Connect and sign in",
+        "send": "Send a test email",
+        "bot": "Bot",
+        "webhook": "Webhook",
+        "user": "Bot account",
+        "scopes": "Token scopes",
+        "anthropic": "Anthropic",
+        "openai": "OpenAI-compatible",
+        "model_draft": "Drafting model",
+        "model_fast": "Fast model",
+        "model_embed": "Embedding model",
+        "config": "Backup settings",
+        "bucket": "Bucket",
+        "other": "Check"
+      }
+    },
+    "reauth": {
+      "title": "Sign in again",
+      "text": "Changing a secret, sign-in, or the public URL needs a sign-in within the last 10 minutes. You will sign in and come back to this page.",
+      "confirm": "Sign in again",
+      "retype": "Secrets you typed are not kept meanwhile; type them again when you are back.",
+      "retypeNow": "Signed in. Type {secrets} again, then save.",
+      "again": "Signed in. Press the button again to continue.",
+      "againGenerate": "Signed in. Press “Generate” again to create the secret.",
+      "againWebhook": "Signed in. Press “Register webhook” again."
+    },
+    "audit": {
+      "recent": "Recent changes",
+      "seeAll": "See all",
+      "all": "Full change log",
+      "empty": "No changes yet",
+      "system": "System",
+      "resultOk": "passed",
+      "resultFailed": "failed ({code})",
+      "cleared": "(removed)",
+      "allCategories": "All categories",
+      "category": "Category",
+      "key": "Setting (e.g. smtp.host)",
+      "more": "Show more",
+      "kept": "The change log is kept forever. Secrets show as fingerprints (fp) only.",
+      "action": {
+        "set": "changed",
+        "clear": "cleared",
+        "import": "imported from the environment",
+        "derived": "filled in",
+        "test": "tested",
+        "setup_completed": "completed setup",
+        "other": "acted on"
+      }
+    },
+    "channels": {
+      "on": "Enabled",
+      "off": "Off",
+      "enable": "Enable {name}",
+      "webhookUrl": "Webhook URL",
+      "lineWebhookUrl": "Webhook URL (put it in LINE Developers)"
+    },
+    "telegram": {
+      "register": "Register webhook",
+      "dropPending": "Drop pending updates",
+      "registerHint": "Uses the saved token and webhook secret: save first",
+      "dropTitle": "Drop the updates Telegram holds?",
+      "dropText": "Messages sent to the bot but not delivered yet are lost, such as a link code just sent.",
+      "dropConfirm": "Drop and register"
+    },
+    "gitlab": {
+      "steps": {
+        "1": "In GitLab, open Settings → Webhooks of the group or project",
+        "2": "Paste the URL above into the URL field",
+        "3": "Set the Secret token to the webhook secret on this page (generate, then copy)",
+        "4": "Select Merge request, Pipeline and Comments events, then save"
+      }
+    },
+    "signin": {
+      "recoveryNote": "The issuer, client and JWKS URL are not changed here, so nobody is locked out. A guarded way to change them is coming in the setup update; until then ask the host administrator.",
+      "loginFunNote": "The login page fun mode is set on the Keycloak host (YODA_LOGIN_FUN_MODE)"
+    },
+    "runners": {
+      "link": "Pause and unattended runs are on the Runners page"
+    },
+    "storage": {
+      "readOnly": "Set at install only. This page shows and tests them."
+    },
+    "security": {
+      "keyStatus": "Master key",
+      "keyId": "Key id",
+      "recovery": "Recovery mode",
+      "keyHelp": "The master key lives on the install host. Ask the host administrator to back it up or rotate it; tools for this are coming in the setup update.",
+      "keyAlert": {
+        "missing": "The master key is missing: stored secrets cannot be used and new ones cannot be saved",
+        "malformed": "The master key is malformed: stored secrets cannot be used",
+        "mismatch": "The master key does not match: stored secrets cannot be used",
+        "missingEnvOnly": "No master key is set. Secrets come from the environment only; to save secrets here, the host administrator adds a master key (see the runbook)."
+      }
+    },
+    "ai": {
+      "usageLink": "See usage and project budgets",
+      "budgetLink": "Budget and fun mode"
+    },
+    "leave": {
+      "title": "Leave without saving?",
+      "text": "Unsaved changes will be lost",
+      "confirm": "Leave",
+      "stay": "Stay"
+    },
+    "field": {
+      "boot": {
+        "port": {
+          "label": "Core port"
+        },
+        "databaseUrl": {
+          "label": "Database connection"
+        },
+        "migrateOnStart": {
+          "label": "Migrate the database on start"
+        }
+      },
+      "storage": {
+        "s3Endpoint": {
+          "label": "File storage endpoint (S3)"
+        },
+        "s3Region": {
+          "label": "Region"
+        },
+        "s3Bucket": {
+          "label": "Bucket"
+        },
+        "s3AccessKey": {
+          "label": "Access key"
+        },
+        "s3SecretKey": {
+          "label": "Secret key"
+        }
+      },
+      "security": {
+        "masterKey": {
+          "label": "Master key",
+          "help": "Encrypts every stored secret. It lives only on the install host."
+        },
+        "masterKeyFile": {
+          "label": "Master key file"
+        },
+        "settingsImport": {
+          "label": "Import env values on start"
+        },
+        "outboundAllowLoopback": {
+          "label": "Allow tests to loopback (development only)"
+        }
+      },
+      "oidc": {
+        "issuer": {
+          "label": "Issuer (OIDC)"
+        },
+        "clientId": {
+          "label": "Client ID"
+        },
+        "jwksUrl": {
+          "label": "JWKS URL",
+          "help": "Leave empty to use the one the issuer publishes"
+        },
+        "staffGroup": {
+          "label": "IT staff group",
+          "help": "Members of this Keycloak group are staff"
+        },
+        "bootstrapAdmins": {
+          "label": "Bootstrap admins (deprecated)"
+        }
+      },
+      "ai": {
+        "anthropicApiKey": {
+          "label": "Anthropic API key"
+        },
+        "openaiApiKey": {
+          "label": "OpenAI-compatible API key"
+        },
+        "openaiBaseUrl": {
+          "label": "OpenAI-compatible base URL",
+          "help": "For example an in-house gateway. Changing it needs the API key again."
+        },
+        "modelDraft": {
+          "label": "Drafting model",
+          "help": "As provider:model, for example anthropic:claude-opus-5-5"
+        },
+        "modelFast": {
+          "label": "Fast model",
+          "help": "As provider:model"
+        },
+        "embeddingModel": {
+          "label": "Embedding model",
+          "help": "Changing it means existing knowledge needs re-embedding"
+        },
+        "workers": {
+          "label": "AI workers"
+        }
+      },
+      "work": {
+        "dailyTaskCap": {
+          "label": "Daily task cap per person"
+        }
+      },
+      "gitlab": {
+        "url": {
+          "label": "GitLab URL",
+          "help": "Changing it needs the token again"
+        },
+        "token": {
+          "label": "Bot account token",
+          "help": "A personal access token with the api scope"
+        },
+        "webhookSecret": {
+          "label": "Webhook secret",
+          "help": "Put the same value in the Secret token of the GitLab webhook"
+        }
+      },
+      "org": {
+        "publicUrl": {
+          "label": "Public portal URL",
+          "help": "Used in email links and webhooks"
+        },
+        "runnerDocsUrl": {
+          "label": "Runner docs link"
+        },
+        "line": {
+          "label": "Side-menu line",
+          "help": "For example the department or hospital name"
+        },
+        "name": {
+          "label": "Organisation name (Thai)"
+        },
+        "nameEn": {
+          "label": "Organisation name (English)"
+        },
+        "defaultLocale": {
+          "label": "Default language"
+        }
+      },
+      "runners": {
+        "leaseSeconds": {
+          "label": "Runner lease (seconds)"
+        },
+        "mcpEnabled": {
+          "label": "MCP endpoint enabled"
+        }
+      },
+      "smtp": {
+        "host": {
+          "label": "SMTP server",
+          "help": "Changing it needs the password again"
+        },
+        "port": {
+          "label": "Port",
+          "help": "Changing it needs the password again"
+        },
+        "secure": {
+          "label": "TLS from the start (port 465)",
+          "help": "Off uses STARTTLS. Changing it needs the password again"
+        },
+        "user": {
+          "label": "User name"
+        },
+        "password": {
+          "label": "Password"
+        },
+        "from": {
+          "label": "Sender (From)"
+        }
+      },
+      "line": {
+        "accessToken": {
+          "label": "Channel access token (long-lived)"
+        },
+        "channelSecret": {
+          "label": "Channel secret"
+        },
+        "apiUrl": {
+          "label": "LINE API URL"
+        },
+        "addFriendUrl": {
+          "label": "LINE add-friend link",
+          "help": "Shown to people when they link LINE"
+        }
+      },
+      "telegram": {
+        "botToken": {
+          "label": "Bot token",
+          "help": "From BotFather"
+        },
+        "botUsername": {
+          "label": "Bot username",
+          "help": "Filled in after a token test"
+        },
+        "webhookSecret": {
+          "label": "Webhook secret"
+        },
+        "apiUrl": {
+          "label": "Telegram API URL"
+        }
+      },
+      "portal": {
+        "coreUrl": {
+          "label": "Core URL (from the portal)"
+        },
+        "keycloakUrl": {
+          "label": "Keycloak URL (portal)"
+        },
+        "keycloakRealm": {
+          "label": "Keycloak realm (portal)"
+        },
+        "keycloakClientId": {
+          "label": "Keycloak client (portal)"
+        }
+      },
+      "compose": {
+        "imagePrefix": {
+          "label": "Image prefix"
+        },
+        "version": {
+          "label": "Version"
+        },
+        "corePort": {
+          "label": "Core host port"
+        },
+        "coreBind": {
+          "label": "Core bind address"
+        },
+        "portalPort": {
+          "label": "Portal host port"
+        },
+        "portalBind": {
+          "label": "Portal bind address"
+        },
+        "postgresUser": {
+          "label": "Database user"
+        },
+        "postgresPassword": {
+          "label": "Database password"
+        },
+        "postgresDb": {
+          "label": "Database name"
+        },
+        "profiles": {
+          "label": "Compose profiles"
+        }
+      },
+      "backup": {
+        "at": {
+          "label": "Backup time (HH:MM)",
+          "help": "In the install host's time zone"
+        },
+        "keepDays": {
+          "label": "Days kept"
+        }
+      },
+      "signin": {
+        "loginFunMode": {
+          "label": "Login page fun mode"
+        }
+      }
+    }
   }
 }

@@ -42,20 +42,22 @@ export function toChannelError(err: unknown): ChannelError {
 const oneLine = (s: string) => s.replace(/[\r\n]+/g, ' ').trim()
 
 export function emailChannel(deps: ChannelDeps): Channel {
-  let transport = deps.mailTransport
+  let own: MailTransport | undefined
   return {
     name: 'email',
     configured: emailConfigured,
     async send(target, msg) {
-      if (!emailConfigured(deps.config)) throw new ChannelError('not_configured', true)
+      // One read of each at the start: a settings change mid-send leaves this send on the old config and transport.
+      const config = deps.config
+      if (!emailConfigured(config)) throw new ChannelError('not_configured', true)
       if (!target.email) throw new ChannelError('no_address', true)
-      transport ??= createMailTransport(deps.config)
+      const transport = deps.mailTransport ?? (own ??= createMailTransport(config))
       try {
         await transport.sendMail({
-          from: deps.config.mailFrom!,
+          from: config.mailFrom!,
           to: target.email,
           subject: oneLine(msg.title),
-          text: renderText(msg, deps.config.portalUrl),
+          text: renderText(msg, config.portalUrl),
         })
       } catch (err) {
         throw toChannelError(err)

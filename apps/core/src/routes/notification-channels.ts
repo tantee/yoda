@@ -16,25 +16,26 @@ function linkable(params: unknown): LinkableChannel {
 
 /** Own notification prefs (requesters too) and the admin's channel switches. Credentials are never returned. */
 export function notificationChannelRoutes(app: FastifyInstance): void {
-  const { db, config } = app.deps
+  // Config is read per request (app.deps.config is the live settings snapshot); only the db is fixed.
+  const { db } = app.deps
 
   app.get('/me/notification-prefs', async (request) => {
     requireSignedIn(request)
-    return getMyPrefs(db, config, request.me)
+    return getMyPrefs(db, app.deps.config, request.me)
   })
 
   app.put('/me/notification-prefs', async (request) => {
     requireSignedIn(request)
     if (!(await setMyPrefs(db, request.me, request.body))) throw invalidPrefs()
-    return getMyPrefs(db, config, request.me)
+    return getMyPrefs(db, app.deps.config, request.me)
   })
 
   /** A one-time code to link a LINE or Telegram account; the channel must be configured and enabled. */
   app.post('/me/channel-links/:channel/code', async (request) => {
     requireSignedIn(request)
     const channel = linkable(request.params)
-    if (!(await availableChannels(db, configuredChannels(config))).includes(channel)) throw channelUnavailable()
-    return createLinkCode({ db, config }, request.me, channel)
+    if (!(await availableChannels(db, configuredChannels(app.deps.config))).includes(channel)) throw channelUnavailable()
+    return createLinkCode({ db, config: app.deps.config }, request.me, channel)
   })
 
   /** Unlinks the person's own account (allowed even when the channel has since been turned off). */
@@ -46,13 +47,13 @@ export function notificationChannelRoutes(app: FastifyInstance): void {
 
   app.get('/admin/notification-channels', async (request) => {
     requireAdmin(request)
-    return channelStatuses(db, config)
+    return channelStatuses(db, app.deps.config)
   })
 
   app.patch('/admin/notification-channels', async (request) => {
     requireAdmin(request)
     const body = ChannelSettingsPatch.parse(request.body)
-    if (!(await patchChannelSettings(db, config, request.me.id, body))) throw channelNotConfigured()
-    return channelStatuses(db, config)
+    if (!(await patchChannelSettings(db, app.deps.config, request.me.id, body))) throw channelNotConfigured()
+    return channelStatuses(db, app.deps.config)
   })
 }

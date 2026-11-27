@@ -154,6 +154,48 @@ Database and storage:
 | `BACKUP_AT` | Daily backup time, Asia/Bangkok | optional (`02:00`) | `02:00` |
 | `BACKUP_KEEP_DAYS` | Days of backups kept on the `backups` volume | optional (`14`) | `14` |
 
+Settings and secrets (installer proposal §3.5, §6):
+
+| Variable | Purpose | Required | Example |
+| --- | --- | --- | --- |
+| `YODA_MASTER_KEY` | Master key for secrets saved in the admin settings, base64 of 32 bytes; never stored in the database. Empty: no secrets stored there (env secrets still work); a wrong key starts core in recovery | optional | `<openssl rand -base64 32>` |
+| `YODA_MASTER_KEY_FILE` | File holding the master key instead (the bootstrap volume); `YODA_MASTER_KEY` wins when both are set | optional | `/run/yoda/core/master-key` |
+| `YODA_SETTINGS_IMPORT` | `false` = env secrets are not copied into the database on start (other values still are) | optional (`true`) | `true` |
+| `YODA_OUTBOUND_ALLOW_LOOPBACK` | Dev only: the admin settings tests may connect to loopback (the dev fakes). Never set in production | optional (`false`) | `false` |
+
+`YODA_MASTER_KEY`, `YODA_MASTER_KEY_FILE` and `YODA_SETTINGS_IMPORT` take effect once they reach core's
+environment. The prod compose file does not pass them to the `core` service yet: that wiring (with the bootstrap
+volume for the key file) arrives with the installer update. Until then a production core runs without a master
+key: secrets set in env work, System settings shows an information note, and secrets cannot be saved there. In
+development core reads the repository's `.env` (`pnpm dev` or `pnpm --filter @yoda/core dev`), so set them there.
+
+On start core copies every env value it reads into the database (D4; secrets too, with a usable master key and
+`YODA_SETTINGS_IMPORT` not `false`). In System settings such a value shows **Imported from environment**. So
+**removing a variable from `.env` does not turn the feature off**: after the restart the imported value stays in
+effect, now editable. To really disable something (email, LINE, Telegram, GitLab, an AI provider), remove the
+variable and restart, then clear the value in System settings (for a secret, **Remove**), or switch the channel
+off there. With `YODA_SETTINGS_IMPORT=false` (or no usable master key) env secrets are not copied, so removing one
+disconnects that service until it is entered in System settings. Variables the prod compose file passes with a
+default (such as `SMTP_PORT`, `AI_WORKERS`) stay set in env, and so locked in the UI, until the install uses the
+generated settings of the installer update. The settings read by the portal and the backup container (the
+`NUXT_PUBLIC_*` values, `BACKUP_AT`, `BACKUP_KEEP_DAYS`, the organisation name) are shown read-only for now:
+they are set on those containers' environment on the install host.
+
+A setting saved in the database applies without a restart, on every core instance: each one listens for
+`NOTIFY settings_changed` (key names only, never values) and reloads its settings, and reloads them again after
+any reconnect. That needs a session-pinned database connection, so a `DATABASE_URL` through PgBouncer in
+transaction mode breaks it. `AI_WORKERS` and `MCP_ENABLED` still need a restart: a change to either is flagged as restart-required.
+
+Saving a secret (or a sign-in setting) in the admin settings needs a sign-in within the last 10 minutes: core
+reads the access token's `auth_time` claim, and the portal signs in again when it is older. Keycloak puts
+`auth_time` in access tokens through the realm's default **basic** client scope (Keycloak 25 and later); keep that
+scope on the `yoda-portal` client, or every secret save is refused with `reauth_required`. The settings **Test**
+buttons connect only through core's outbound guard: private addresses are allowed, cloud metadata, link-local and
+loopback addresses and the compose service names are not, and redirects are not followed. The service names'
+addresses and core's own are looked up once at start and blocked too; that is best effort, since a container
+restarted later may get an address not on the list, and other containers on the compose network (private
+addresses, like the hospital's own hosts) stay reachable by design.
+
 Sign-in (section 2):
 
 | Variable | Purpose | Required | Example |
@@ -270,7 +312,7 @@ leave it unset.
          Set a spending limit in the provider's console as well.
    - [ ] **GitLab** bot and webhook (section 7).
    - [ ] **Runners** (section 8).
-   - [ ] **Email, LINE and Telegram** (section 9), then enable each channel in Admin → Notification channels.
+   - [ ] **Email, LINE and Telegram** (section 9), then enable each channel in System settings → Notification channels.
    - [ ] **Backups** copied off the host (section 6), and a test restore.
    - [ ] **Monitoring:** alert on the `core`, `portal` and `backup` containers turning unhealthy (section 11).
 
@@ -391,7 +433,7 @@ Owner checklist (details in the README, "GitLab integration"):
 - [ ] A **webhook** on each linked project, or once on the group: URL
       `https://portal.example.org/api/gitlab/webhook`, secret token = `GITLAB_WEBHOOK_SECRET`, triggers
       **Merge request events**, **Pipeline events** and **Comments**, SSL verification on.
-- [ ] Admin → GitLab shows core configured, GitLab reachable, the bot user, and the time of the last webhook.
+- [ ] System settings → GitLab shows core configured, GitLab reachable, the bot user, and the time of the last webhook.
 
 GitLab does not retry failed deliveries and disables a webhook that keeps failing. After an outage, open the
 webhook's **Recent events**, re-enable it if needed and **Resend** the failed deliveries; resending is harmless.
@@ -417,7 +459,7 @@ Runners work the AI tasks that need a repository; see the README, "Runners", for
 ## 9. Email, LINE and Telegram
 
 The portal feed always works. Each outside channel is on only when its variables are set **and** an admin
-enables it in Admin → Notification channels; then each person chooses channels per notification kind in
+enables it in System settings → Notification channels; then each person chooses channels per notification kind in
 their settings. Messages carry only the notification's title, body and a portal link. Delivery is at least
 once from the moment it is queued: after a crash during sending a person may rarely get the same message twice.
 A channel error is retried 6 times with exponential backoff (about 30 seconds, doubling up to about 16
@@ -431,7 +473,7 @@ logged, stored or returned by the API.
 - [ ] Ask the mail team for a relay account for `yoda@example.org` on `smtp.example.org` (port 587 with
       STARTTLS, or 465 with `SMTP_SECURE=true`), and that the relay accepts the deploy host.
 - [ ] Set `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASSWORD` and `MAIL_FROM`; deploy.
-- [ ] Enable email in Admin → Notification channels and send a test (assign yourself a task).
+- [ ] Enable email in System settings → Notification channels and send a test (assign yourself a task).
 - [ ] SPF/DKIM for the sender domain are the mail team's; without them messages land in spam.
 
 ### 9.2 LINE Official Account (Messaging API)
@@ -446,7 +488,7 @@ logged, stored or returned by the API.
       messages off, or reword them), so people see Yoda's own linking replies only. Chat mode off.
 - [ ] Copy the account's add-friend link (`https://line.me/R/ti/p/@<id>`) into
       `NUXT_PUBLIC_LINE_ADD_FRIEND_URL`.
-- [ ] Enable LINE in Admin → Notification channels. A person links from Settings: add the account, then send
+- [ ] Enable LINE in System settings → Notification channels. A person links from Settings: add the account, then send
       the `LINK-XXXXXXXX` code shown in the portal (valid 15 minutes). Blocking the account unlinks them.
 
 ### 9.3 Telegram
@@ -470,7 +512,7 @@ logged, stored or returned by the API.
       ```
 
       Expect `{"ok":true,...}`. Check later with `.../getWebhookInfo` (look at `last_error_message`).
-- [ ] Enable Telegram in Admin → Notification channels. A person links from Settings with the
+- [ ] Enable Telegram in System settings → Notification channels. A person links from Settings with the
       `t.me/<bot>?start=<code>` link; blocking the bot unlinks them.
 
 ## 10. Rotating secrets
@@ -484,7 +526,7 @@ after a suspected leak.
 | Postgres password | `dc exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'`, then `\password yoda` (prompts, so the password stays out of history); update `POSTGRES_PASSWORD` and `DATABASE_URL` together and `dc up -d --no-build`. |
 | Storage keys | RustFS takes its credentials from the same variables: change both keys and `dc up -d --no-build` (restarts `rustfs`, `core`, `backup`). |
 | AI provider keys | Create the new key in the provider console, update `.env`, `dc up -d --no-build`, then delete the old key. |
-| GitLab bot token | Create a new token (`api`), update `GITLAB_TOKEN`, `dc up -d --no-build`, revoke the old one. Admin → GitLab should show the bot. |
+| GitLab bot token | Create a new token (`api`), update `GITLAB_TOKEN`, `dc up -d --no-build`, revoke the old one. System settings → GitLab should show the bot. |
 | GitLab webhook secret | Update `GITLAB_WEBHOOK_SECRET`, `dc up -d --no-build`, then the secret in every webhook right away; deliveries in between are refused (resend them). |
 | SMTP password | Change it with the mail team, update `SMTP_PASSWORD`, `dc up -d --no-build`. |
 | LINE token / secret | Issue a new long-lived token (or reissue the channel secret) in LINE Developers, update `.env`, `dc up -d --no-build`. |
@@ -523,9 +565,9 @@ is immediate, so run `dc up -d --no-build` straight after it).
   must be public with PKCE (section 2).
 - **A person is a requester but should be staff.** They are not in `STAFF_GROUP` (full path) in Keycloak, or an
   admin set an override in Admin → People.
-- **GitLab shows not connected.** Admin → GitLab; check `GITLAB_URL`, the token (expired?) and that core can
+- **GitLab shows not connected.** System settings → GitLab; check `GITLAB_URL`, the token (expired?) and that core can
   reach GitLab. Missing webhook events: GitLab's webhook **Recent events** (section 7).
-- **Emails, LINE or Telegram not arriving.** Admin → Notification channels shows whether each channel is
+- **Emails, LINE or Telegram not arriving.** System settings → Notification channels shows whether each channel is
   configured and enabled; the person's settings show what they chose and whether they are linked. Core logs a
   code per failed delivery, never the message or a credential: `smtp_<reply code>` (e.g. `smtp_535`, a wrong
   password), `line_<status>` / `telegram_<status>` (`401`: a wrong or revoked token, section 10),

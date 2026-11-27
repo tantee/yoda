@@ -5,6 +5,7 @@ import {
   Health,
   IssueSyncStatus,
   KnowledgeStatus,
+  MasterKeyView,
   MergeRequestState,
   PipelineStatus,
   Priority,
@@ -39,6 +40,7 @@ const DOMAINS: Record<StatusKind, readonly string[]> = {
   knowledge: KnowledgeStatus.options,
   project: ['active', 'archived'],
   yesNo: ['yes', 'no'],
+  masterKey: MasterKeyView.shape.status.options,
 }
 
 function lookup(o: Record<string, unknown>, key: string): unknown {

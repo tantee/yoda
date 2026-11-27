@@ -2,12 +2,13 @@ import type { Me } from '@yoda/shared'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import { jwtVerify } from 'jose'
 import type { AppDeps } from '../app.js'
+import type { Config } from '../config.js'
 import { isStaff, TokenClaims, upsertPersonFromClaims } from './people.js'
 
 /** Thrown by guards / auth; mapped to `{ error }` bodies by the app error handler. */
 export class HttpError extends Error {
   constructor(
-    readonly statusCode: 400 | 401 | 403 | 404 | 409 | 413 | 415 | 422 | 502 | 503,
+    readonly statusCode: 400 | 401 | 403 | 404 | 409 | 413 | 415 | 422 | 429 | 502 | 503,
     readonly body: {
       error:
         | 'unauthorized'
@@ -33,8 +34,24 @@ export class HttpError extends Error {
         | 'channel_not_configured'
         | 'channel_unavailable'
         | 'bad_request'
-      /** Machine-readable detail for some errors (runner claims: why `invalid_state`). */
+        | 'reauth_required'
+        | 'setting_locked'
+        | 'version_conflict'
+        | 'invalid_settings'
+        | 'secrets_unavailable'
+        | 'settings_unavailable'
+        | 'rate_limited'
+      /** Machine-readable detail for some errors (runner claims: why `invalid_state`; a setting's lock reason). */
       reason?: string
+      /** The setting an error is about (settings API). */
+      key?: string
+      envName?: string
+      /** The current version of a setting that changed meanwhile (`version_conflict`). */
+      version?: number
+      /** Per-key validation messages (`invalid_settings`). */
+      issues?: { key: string; message: string }[]
+      /** Seconds until a rate-limited call may be retried. */
+      retryAfter?: number
     },
   ) {
     super(body.error)
@@ -74,17 +91,17 @@ export const gitlabUnavailable = () => new HttpError(502, { error: 'gitlab_unava
  * Verify the bearer token. Returns validated claims, or null for any failure
  * (missing header, bad signature, expired, wrong issuer, wrong client, missing claims).
  */
-async function verifyRequest(request: FastifyRequest, deps: AppDeps): Promise<TokenClaims | null> {
+async function verifyRequest(request: FastifyRequest, deps: Pick<AppDeps, 'jwks'>, config: Config): Promise<TokenClaims | null> {
   const header = request.headers.authorization
   const match = header?.match(/^Bearer\s+(\S+)$/i)
   if (!match) return null
   try {
     const { payload } = await jwtVerify(match[1], deps.jwks, {
-      issuer: deps.config.oidcIssuer,
+      issuer: config.oidcIssuer,
       algorithms: ['RS256'],
       requiredClaims: ['exp'],
     })
-    if (payload.azp !== deps.config.oidcClientId) return null
+    if (payload.azp !== config.oidcClientId) return null
     // Keycloak ID tokens share issuer/azp with access tokens; only accept access tokens.
     if (payload.typ !== undefined && payload.typ !== 'Bearer') return null
     const claims = TokenClaims.safeParse(payload)
@@ -101,14 +118,18 @@ async function verifyRequest(request: FastifyRequest, deps: AppDeps): Promise<To
 export function registerAuth(app: FastifyInstance): void {
   app.decorateRequest('me', null as unknown as Me)
   app.decorateRequest('tokenExp', 0)
+  app.decorateRequest('authTime', null)
 
   app.addHook('onRequest', async (request) => {
     if (request.routeOptions.config?.public === true) return
     const { deps } = app
-    const claims = await verifyRequest(request, deps)
+    // One snapshot of the settings for the whole check (the issuer, client id and JWKS are swapped together).
+    const config = deps.config
+    const claims = await verifyRequest(request, { jwks: deps.jwks }, config)
     if (!claims) throw unauthorized()
-    const person = await upsertPersonFromClaims(deps.db, claims, deps.config)
+    const person = await upsertPersonFromClaims(deps.db, claims, config)
     request.tokenExp = claims.exp * 1000
+    request.authTime = claims.auth_time ?? null
     request.me = {
       id: person.id,
       username: person.username,
@@ -116,7 +137,7 @@ export function registerAuth(app: FastifyInstance): void {
       email: person.email,
       isAdmin: person.isAdmin,
       // Admins count as staff.
-      isStaff: person.isAdmin || isStaff(person, claims, deps.config.staffGroup),
+      isStaff: person.isAdmin || isStaff(person, claims, config.staffGroup),
     }
   })
 }
@@ -142,6 +163,11 @@ declare module 'fastify' {
     me: Me
     /** Access-token expiry, epoch ms. */
     tokenExp: number
+    /**
+     * When the person last entered their credentials at Keycloak (the token's `auth_time`, epoch seconds), or null
+     * when the token has none. Token refreshes keep it; only a fresh sign-in (`prompt=login` / `max_age`) moves it.
+     */
+    authTime: number | null
   }
   interface FastifyContextConfig {
     public?: boolean

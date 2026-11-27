@@ -14,6 +14,8 @@ export const TokenClaims = z.object({
   email: z.string().optional(),
   groups: z.array(z.string()).optional(),
   exp: z.number(),
+  /** Seconds since the epoch of the last interactive sign-in (OIDC `auth_time`); recent-auth checks (8.6). */
+  auth_time: z.number().optional(),
 })
 export type TokenClaims = z.infer<typeof TokenClaims>
 
