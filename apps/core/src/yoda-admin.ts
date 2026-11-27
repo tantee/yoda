@@ -1,3 +1,5 @@
+// First: drops empty AI base URLs before the AI SDK is imported (env-preload.ts).
+import './env-preload.js'
 import { fileURLToPath } from 'node:url'
 import { eq } from 'drizzle-orm'
 import type { Config } from './config.js'

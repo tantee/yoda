@@ -1,3 +1,5 @@
+// First: drops empty AI base URLs before the AI SDK is imported (env-preload.ts).
+import './env-preload.js'
 import { buildApp } from './app.js'
 import { applyBootstrapFile, loadConfig } from './config.js'
 import { createDb, pgClient } from './db/client.js'
