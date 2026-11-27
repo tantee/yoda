@@ -35,7 +35,7 @@ case "$1" in
     shift
     case " $* " in
       *" caddy validate "*) [ -z "\${FAKE_VALIDATE_FAIL:-}" ] || { echo 'Error: adapting config using caddyfile' >&2; exit 1; } ;;
-      *" config --services "*) for svc in \${FAKE_SERVICES:-}; do echo "$svc"; done ;;
+      *" config --services "*) [ -z "\${FAKE_CONFIG_FAIL:-}" ] || { echo 'yaml: line 3: mapping values are not allowed in this context' >&2; exit 15; }; for svc in \${FAKE_SERVICES:-}; do echo "$svc"; done ;;
       *" exec -T proxy caddy reload "*) [ -z "\${FAKE_RELOAD_FAIL:-}" ] || { echo 'Error: loading new config' >&2; exit 1; } ;;
       *" exec -T proxy "*) echo "\${FAKE_PROXY_INFO:-internal portal.example.org 443}" ;;
       *" cp proxy:"*) [ -z "\${FAKE_NO_ROOT:-}" ] || exit 1; for a; do last=$a; done; echo 'PUBLIC ROOT' > "$last" ;;
@@ -252,9 +252,9 @@ describe.skipIf(!posix)('ops/deploy/deploy.sh (stub docker)', () => {
       expect(readFileSync(join(s.dir, 'release.env'), 'utf8')).toBe(`YODA_VERSION=1.2.0\nYODA_IMAGE_PREFIX=registry.example.org/group/yoda\n${NO_PINS}YODA_PROXY_ENABLED=true\n`)
       const calls = s.calls()
       const at = (x: string) => calls.indexOf(x)
-      expect(at('run --rm --no-deps -T proxy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile')).toBeGreaterThan(at('pull --quiet'))
+      expect(at('run --rm --no-deps -T proxy caddy validate --config /etc/caddy/yoda/Caddyfile --adapter caddyfile')).toBeGreaterThan(at('pull --quiet'))
       expect(at('run --rm init')).toBeGreaterThan(at('caddy validate'))
-      const reload = at('exec -T proxy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile --force')
+      const reload = at('exec -T proxy caddy reload --config /etc/caddy/yoda/Caddyfile --adapter caddyfile --force')
       expect(reload).toBeGreaterThan(at('up -d --no-build'))
       expect(at('cp proxy:/data/caddy/pki/authorities/local/root.crt proxy/root.crt.next')).toBeGreaterThan(reload)
       expect(r.out).toContain('built-in HTTPS proxy configuration reloaded')
@@ -302,6 +302,8 @@ describe.skipIf(!posix)('ops/deploy/deploy.sh (stub docker)', () => {
       expect(r.code).toBe(1)
       expect(r.out).toContain('Error: loading new config')
       expect(r.out).toContain('the built-in HTTPS proxy did not reload its configuration')
+      // It may be stopped or restart-looping, not only on a stale configuration.
+      expect(r.out).toContain('dc ps proxy, dc logs --tail 50 proxy')
       expect(s.calls().match(/caddy reload/g)?.length).toBe(6)
       rmSync(s.dir, { recursive: true, force: true })
     }, 60_000)
@@ -362,6 +364,10 @@ describe.skipIf(!posix)('ops/deploy/deploy.sh (stub docker)', () => {
       ['a bad port', { YODA_PROXY_HTTPS_PORT: '84x3' }, /YODA_PROXY_HTTPS_PORT is not a port number: 84x3/],
       ['acme on another port', { YODA_PROXY_CERT_MODE: 'acme', YODA_PROXY_ACME_EMAIL: 'it@example.org', YODA_PROXY_HTTPS_PORT: '8443' }, /acme needs the proxy on ports 80 and 443/],
       ['acme without an email', { YODA_PROXY_CERT_MODE: 'acme' }, /acme needs YODA_PROXY_ACME_EMAIL/],
+      ['an ACME email with a brace', { YODA_PROXY_CERT_MODE: 'acme', YODA_PROXY_ACME_EMAIL: 'it@example.org}' }, /YODA_PROXY_ACME_EMAIL is not an email address/],
+      ['an ACME email with a space', { YODA_PROXY_CERT_MODE: 'acme', YODA_PROXY_ACME_EMAIL: 'it @example.org' }, /YODA_PROXY_ACME_EMAIL is not an email address/],
+      ['an http ACME directory', { YODA_PROXY_CERT_MODE: 'acme', YODA_PROXY_ACME_EMAIL: 'it@example.org', YODA_PROXY_ACME_CA: 'http://acme.example.org/directory' }, /YODA_PROXY_ACME_CA must be an https:\/\/ ACME directory URL/],
+      ['an ACME directory with a placeholder', { YODA_PROXY_CERT_MODE: 'acme', YODA_PROXY_ACME_EMAIL: 'it@example.org', YODA_PROXY_ACME_CA: 'https://acme.example.org/{x}' }, /YODA_PROXY_ACME_CA must be an https:\/\/ ACME directory URL/],
     ])('refuses settings the proxy cannot run with (%s), before pulling', async (_name, env, message) => {
       const s = sandbox()
       writeFileSync(join(s.dir, 'release.env'), OLD)
@@ -373,9 +379,21 @@ describe.skipIf(!posix)('ops/deploy/deploy.sh (stub docker)', () => {
       rmSync(s.dir, { recursive: true, force: true })
     })
 
-    it('takes the settings from .env too, and acme on 80 and 443', async () => {
+    it('stops with compose\'s own error when it cannot read the compose files (never "no proxy service")', async () => {
       const s = sandbox()
-      writeFileSync(join(s.dir, '.env'), 'YODA_PROXY_CERT_MODE=acme\nYODA_PROXY_ACME_EMAIL=it@example.org\nYODA_PROXY_HTTP_PORT=80\nYODA_PROXY_HTTPS_PORT=443\n')
+      writeFileSync(join(s.dir, 'release.env'), OLD)
+      const r = await run('sh', [deploy], { cwd: s.dir, env: { ...s.env, ...ON, YODA_VERSION: '1.2.0', FAKE_CONFIG_FAIL: '1' } })
+      expect(r.code).toBe(2)
+      expect(r.out).toContain('yaml: line 3: mapping values are not allowed in this context')
+      expect(r.out).toContain('docker compose cannot read the compose files and .env')
+      expect(s.calls()).not.toContain('pull')
+      unchanged(s.dir, s.calls())
+      rmSync(s.dir, { recursive: true, force: true })
+    })
+
+    it('takes the settings from .env too, and acme on 80 and 443 with Let\'s Encrypt staging', async () => {
+      const s = sandbox()
+      writeFileSync(join(s.dir, '.env'), 'YODA_PROXY_CERT_MODE=acme\nYODA_PROXY_ACME_EMAIL=it@example.org\nYODA_PROXY_ACME_CA=https://acme-staging-v02.api.letsencrypt.org/directory\nYODA_PROXY_HTTP_PORT=80\nYODA_PROXY_HTTPS_PORT=443\n')
       const r = await run('sh', [deploy], { cwd: s.dir, env: { ...s.env, ...PREFIX, ...ON, YODA_VERSION: '1.2.0', FAKE_SETUP: 'done' } })
       expect(r.code, r.out).toBe(0)
       rmSync(s.dir, { recursive: true, force: true })
