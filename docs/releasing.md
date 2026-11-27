@@ -29,7 +29,8 @@ The tag starts [`.github/workflows/release.yml`](../.github/workflows/release.ym
    `CHANGELOG.md` has a section for the version whose heading carries a date (not `unreleased`), and that
    `package.json` and `apps/core/package.json` both say that version. It fails before anything is built if any
    of these is wrong.
-2. **images** builds the four images for `linux/amd64` and `linux/arm64` (QEMU), without any build cache, and
+2. **images** builds the four images for `linux/amd64` and `linux/arm64` (QEMU; the portal's Nuxt build runs once
+   on the runner's own platform, its output being plain JavaScript), without any build cache, and
    pushes them to ghcr.io **by digest only**: no tag yet. Each image's manifest digest is kept for the next job.
 3. **bundle** runs `ops/install/bundle.sh`, which builds `yoda-<version>.tar.gz` (compose files, `deploy.sh`,
    `install.sh`, `.env.example`, `CHANGELOG.md`, the runbook and `bundle.env` with
@@ -163,6 +164,9 @@ move them into the `release` environment. Steps 4 and 5 remain as well.
   request, delete the tag (`git push --delete origin v1.0.0 && git tag -d v1.0.0`) and tag the fixed commit. A
   failed run tagged no image and created no release, so nothing is left to clean up (leave its untagged
   digests: see above).
+- **An image job ran out of time** (45 minutes, `timeout-minutes`): a build that slow is stuck, not busy; the
+  images normally build in minutes. Re-running does not help: find the slow step in the job log, fix it through a
+  pull request (whose dry run builds arm64 too, so it shows there), then move the tag as above.
 - **Only the release job failed after the images were tagged**: re-run failed jobs. If you must re-tag instead,
   the next run tags its own new digests, and installs pin whatever their bundle signed.
 
@@ -172,7 +176,8 @@ A pull request that touches the release files (the workflow, `ops/install`, `ops
 Dockerfiles, the compose files or `CHANGELOG.md`) runs the same workflow as a dry run, and so does
 **Actions → Release → Run workflow**. A dry run:
 
-- builds the four images for `linux/amd64` only in the **images-dry** job, which has no `packages` permission,
+- builds the four images for `linux/amd64` and `linux/arm64`, like a release, in the **images-dry** job, which has
+  no `packages` permission,
   no registry login and pushes nothing; it may use the GitHub Actions build cache, which a release never reads;
 - builds the bundle as version `0.0.0-dryrun.<run number>` with those images' digests and signs it with a
   throwaway key made inside the job (never stored or uploaded), so it needs no secret, no environment, and
