@@ -418,7 +418,7 @@ describe('.github/workflows/release.yml (GitHub Releases + GHCR)', () => {
     on: Record<string, any>
     permissions: Record<string, string>
     env: Record<string, string>
-    jobs: Record<string, WfJob & { environment?: string }>
+    jobs: Record<string, WfJob & { environment?: string; 'timeout-minutes'?: number }>
   }
   const jobs = wf.jobs
   const step = (job: string, pred: (s: Step) => boolean) => {
