@@ -1,4 +1,5 @@
 import type { ProxyStatus } from '@yoda/shared'
+import { isIP } from 'node:net'
 import { connect, type PeerCertificate } from 'node:tls'
 import type { Config } from './config.js'
 
@@ -10,7 +11,7 @@ import type { Config } from './config.js'
  * the proxy only. The handshake does not check the chain (an internal CA is not in core's trust store); nothing is
  * sent over it.
  */
-export type ProxyProbe = (target: { host: string; port: number; servername: string; timeoutMs: number }) => Promise<
+export type ProxyProbe = (target: { host: string; port: number; servername?: string; timeoutMs: number }) => Promise<
   { ok: true; cert: PeerCertificate } | { ok: false; error: string }
 >
 
@@ -28,7 +29,7 @@ export const tlsProbe: ProxyProbe = ({ host, port, servername, timeoutMs }) =>
     }
     // rejectUnauthorized: false: the card reports the certificate, it does not trust it (an internal CA's root is
     // on the staff PCs, not in core's store). ALPN http/1.1 only; no request is written.
-    const socket = connect({ host, port, servername, rejectUnauthorized: false, ALPNProtocols: ['http/1.1'] })
+    const socket = connect({ host, port, ...(servername ? { servername } : {}), rejectUnauthorized: false, ALPNProtocols: ['http/1.1'] })
     socket.setTimeout(timeoutMs, () => finish({ ok: false, error: 'timeout' }))
     socket.once('secureConnect', () => {
       const cert = socket.getPeerCertificate()
@@ -63,11 +64,14 @@ const iso = (s: string | undefined): string => {
 export async function proxyStatus(config: Config, probe: ProxyProbe = tlsProbe, timeoutMs = 3000): Promise<ProxyStatus> {
   const hops = config.trustedProxyHops ?? 1
   const p = config.proxy
-  if (!p) return { enabled: false, domain: null, certMode: null, publicUrl: null, trustedProxyHops: hops, reachable: null, error: null, certificate: null }
-  const publicUrl = p.domain ? `https://${p.domain}${p.httpsPort === 443 ? '' : `:${p.httpsPort}`}` : null
-  const base = { enabled: true, domain: p.domain, certMode: p.certMode, publicUrl, trustedProxyHops: hops }
+  if (!p) return { enabled: false, domain: null, certMode: null, publicUrl: null, trustedProxyHops: hops, reachable: null, error: null, invalid: [], certificate: null }
+  const host = isIP(p.domain ?? '') === 6 ? `[${p.domain}]` : p.domain
+  const publicUrl = host ? `https://${host}${p.httpsPort === 443 ? '' : `:${p.httpsPort}`}` : null
+  const base = { enabled: true, domain: p.domain, certMode: p.certMode, publicUrl, trustedProxyHops: hops, invalid: p.invalid }
   if (!p.domain) return { ...base, reachable: false, error: 'no_domain', certificate: null }
-  const r = await probe({ host: PROXY_HOST, port: p.httpsPort, servername: p.domain, timeoutMs })
+  // SNI carries host names only (RFC 6066): for an address the proxy picks its certificate without it.
+  const servername = isIP(p.domain) ? undefined : p.domain
+  const r = await probe({ host: PROXY_HOST, port: p.httpsPort, ...(servername ? { servername } : {}), timeoutMs })
   if (!r.ok) return { ...base, reachable: false, error: r.error, certificate: null }
   const c = r.cert
   return {

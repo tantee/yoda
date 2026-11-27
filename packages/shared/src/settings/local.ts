@@ -320,8 +320,10 @@ export const ProxyStatus = z.object({
   trustedProxyHops: z.number().int(),
   /** The proxy answered a TLS handshake for the domain; null while it is off. */
   reachable: z.boolean().nullable(),
-  /** Why it did not: `timeout`, `refused`, `not_found` (no proxy container) or `tls_failed`. */
+  /** Why it did not: `timeout`, `refused`, `not_found` (no proxy container), `tls_failed` or `no_domain`. */
   error: z.string().nullable(),
+  /** YODA_PROXY_* names whose value core could not use and ignored (e.g. a wildcard domain); empty normally. */
+  invalid: z.array(z.string()),
   certificate: z
     .object({
       subject: z.string(),

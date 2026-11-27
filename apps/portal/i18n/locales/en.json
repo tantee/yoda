@@ -2163,6 +2163,9 @@
         },
         "acmeEmail": {
           "label": "Built-in proxy ACME email"
+        },
+        "acmeCa": {
+          "label": "Built-in proxy ACME directory"
         }
       }
     }
@@ -2567,6 +2570,7 @@
       "names": "Names",
       "validTo": "Valid until",
       "fingerprint": "SHA-256 fingerprint:",
+      "invalid": "Core ignored these values from .env because it cannot use them: {names}. Correct them on the install host and deploy again (deploy.sh checks them).",
       "hopsLow": "YODA_TRUSTED_PROXY_HOPS is 1 although the proxy is on: every client shows as the proxy's address. Remove it from .env (the proxy sets 2) and deploy again.",
       "unreachableHint": "The proxy does not answer for this name ({code}). On the host: dc ps proxy and dc logs proxy (docs/operations.md, section 4b).",
       "expired": "The certificate has expired: browsers refuse the portal. Replace it, then restart the proxy.",

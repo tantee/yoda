@@ -71,7 +71,13 @@ export type Config = {
    * The optional built-in HTTPS proxy (YODA_PROXY_*; docs/operations.md, section 4b), when deploy.sh found its
    * profile on. Read only for the setup wizard's status card.
    */
-  proxy?: { domain: string | null; certMode: 'internal' | 'files' | 'acme' | null; httpsPort: number }
+  proxy?: {
+    domain: string | null
+    certMode: 'internal' | 'files' | 'acme'
+    httpsPort: number
+    /** The YODA_PROXY_* names whose value core could not use (ignored, reported on the card; never a boot failure). */
+    invalid: string[]
+  }
 }
 
 const modelId = z.string().regex(/^(anthropic|openai):.+$/, 'must be provider:model with provider anthropic or openai')
@@ -138,10 +144,11 @@ export const envSchema = z.object({
   // Proxies in front of core whose X-Forwarded-For entry counts: 1 = the portal only, 2 = portal behind a reverse proxy.
   YODA_TRUSTED_PROXY_HOPS: z.preprocess((v) => (v === '' ? undefined : v), z.coerce.number().int().min(1).max(5).default(1)),
   // The built-in HTTPS proxy (deploy.sh pins YODA_PROXY_ENABLED=true when its profile is on): the wizard's status card.
-  YODA_PROXY_ENABLED: z.preprocess((v) => (v === '' ? undefined : v), z.enum(['true', 'false']).default('false')),
-  YODA_PROXY_DOMAIN: optional(z.string().regex(/^[A-Za-z0-9.-]+$/, 'must be a host name such as portal.example.org')),
-  YODA_PROXY_CERT_MODE: optional(z.enum(['internal', 'files', 'acme'])),
-  YODA_PROXY_HTTPS_PORT: z.preprocess((v) => (v === '' ? undefined : v), z.coerce.number().int().min(1).max(65535).default(443)),
+  // Read leniently (proxyConfig below): a status card never stops core from starting; anything but `true` is off.
+  YODA_PROXY_ENABLED: z.string().optional(),
+  YODA_PROXY_DOMAIN: z.string().optional(),
+  YODA_PROXY_CERT_MODE: z.string().optional(),
+  YODA_PROXY_HTTPS_PORT: z.string().optional(),
   YODA_SETTINGS_IMPORT: z.preprocess((v) => (v === '' ? undefined : v), z.enum(['true', 'false']).default('true')),
   // Dev and tests only: the settings tests may reach loopback (the fakes). Read by server.ts, not mapped into Config.
   YODA_OUTBOUND_ALLOW_LOOPBACK: z.preprocess((v) => (v === '' ? undefined : v), z.enum(['true', 'false']).default('false')),
@@ -202,10 +209,29 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     telegramApiUrl: e.TELEGRAM_API_URL.replace(/\/+$/, ''),
     devSkipSetup: e.YODA_DEV_SKIP_SETUP === 'true',
     trustedProxyHops: e.YODA_TRUSTED_PROXY_HOPS,
-    ...(e.YODA_PROXY_ENABLED === 'true'
-      ? { proxy: { domain: e.YODA_PROXY_DOMAIN?.toLowerCase() ?? null, certMode: e.YODA_PROXY_CERT_MODE ?? null, httpsPort: e.YODA_PROXY_HTTPS_PORT } }
-      : {}),
+    ...(e.YODA_PROXY_ENABLED?.trim() === 'true' ? { proxy: proxyConfig(e) } : {}),
   }
+}
+
+/** One host name (no scheme, port, path or wildcard), as install.sh and deploy.sh accept it. */
+const PROXY_DOMAIN = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/
+
+/**
+ * The built-in proxy's values as compose gives them (deploy.sh checked them before the start). A value core cannot
+ * use is ignored and named in `invalid`, for the card: the domain then is null, the mode `internal` (compose's
+ * default, as for an empty one) and the port 443.
+ */
+function proxyConfig(e: { YODA_PROXY_DOMAIN?: string; YODA_PROXY_CERT_MODE?: string; YODA_PROXY_HTTPS_PORT?: string }): NonNullable<Config['proxy']> {
+  const invalid: string[] = []
+  const rawDomain = e.YODA_PROXY_DOMAIN?.trim().toLowerCase() ?? ''
+  const domain = rawDomain === '' ? null : PROXY_DOMAIN.test(rawDomain) ? rawDomain : (invalid.push('YODA_PROXY_DOMAIN'), null)
+  const rawMode = e.YODA_PROXY_CERT_MODE?.trim() ?? ''
+  const modes = ['internal', 'files', 'acme'] as const
+  const certMode = rawMode === '' ? 'internal' : (modes as readonly string[]).includes(rawMode) ? (rawMode as (typeof modes)[number]) : (invalid.push('YODA_PROXY_CERT_MODE'), 'internal')
+  const rawPort = e.YODA_PROXY_HTTPS_PORT?.trim() ?? ''
+  const port = /^[1-9][0-9]{0,4}$/.test(rawPort) ? Number(rawPort) : Number.NaN
+  const httpsPort = rawPort === '' ? 443 : port <= 65535 ? port : (invalid.push('YODA_PROXY_HTTPS_PORT'), 443)
+  return { domain, certMode, httpsPort, invalid }
 }
 
 /** The values the bootstrap file may supply; env always wins (installer proposal §3.2). */

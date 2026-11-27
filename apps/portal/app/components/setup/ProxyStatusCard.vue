@@ -85,6 +85,7 @@ const when = (iso: string) => (iso ? formatDateTime(iso, locale.value) : '—')
         </dl>
         <p v-if="cert" class="setup-help proxy-fingerprint">{{ t('setup.proxy.fingerprint') }} <code>{{ cert.fingerprint256 }}</code></p>
 
+        <v-alert v-if="status.invalid.length" type="warning" variant="tonal" density="compact" class="mt-3" data-testid="setup-proxy-invalid">{{ t('setup.proxy.invalid', { names: status.invalid.join(', ') }) }}</v-alert>
         <v-alert v-if="status.trustedProxyHops < 2" type="warning" variant="tonal" density="compact" class="mt-3" data-testid="setup-proxy-hops">{{ t('setup.proxy.hopsLow') }}</v-alert>
         <v-alert v-if="!status.reachable" type="error" variant="tonal" density="compact" class="mt-3" role="alert" data-testid="setup-proxy-unreachable">{{ t('setup.proxy.unreachableHint', { code: status.error ?? 'failed' }) }}</v-alert>
         <v-alert v-else-if="state === 'expired'" type="error" variant="tonal" density="compact" class="mt-3" role="alert">{{ t('setup.proxy.expired') }}</v-alert>
