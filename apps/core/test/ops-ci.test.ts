@@ -29,15 +29,15 @@ const images = ['core', 'portal', 'runner', 'backup']
 describe('.gitlab-ci.yml', () => {
   it('has the expected jobs and stages', () => {
     const jobs = Object.keys(ci).filter((k) => !k.startsWith('.') && !['stages', 'default', 'variables'].includes(k))
-    expect(jobs.sort()).toEqual(['build-backup', 'build-core', 'build-portal', 'build-runner', 'deploy', 'secrets', 'test'])
-    expect(ci.stages).toEqual(['secrets', 'test', 'build', 'deploy'])
+    expect(jobs.sort()).toEqual(['build-backup', 'build-core', 'build-portal', 'build-runner', 'deploy', 'release-bundle', 'secrets', 'test'])
+    expect(ci.stages).toEqual(['secrets', 'test', 'build', 'release', 'deploy'])
   })
 
-  it('installs bash and flock for the ops script tests', () => {
+  it('installs bash, flock, curl, minisign and shellcheck for the ops script tests', () => {
     const test = ci.test!
     expect(String(test.image)).toMatch(/alpine/)
     expect(test.before_script?.[0]).toMatch(/^apk add --no-cache (.* )?bash( |$)/)
-    expect(test.before_script?.[0]).toMatch(/ util-linux( |$)/)
+    for (const pkg of ['util-linux', 'curl', 'minisign', 'shellcheck']) expect(test.before_script?.[0]).toMatch(new RegExp(` ${pkg}( |$)`))
   })
 
   it('builds and pushes every image to $CI_REGISTRY_IMAGE/<name>', () => {
@@ -65,12 +65,48 @@ describe('.gitlab-ci.yml', () => {
     expect(ci['build-backup']!.variables).toMatchObject({ DOCKERFILE: 'ops/backup/Dockerfile', CONTEXT: 'ops/backup' })
   })
 
-  it('deploys only by hand, only on tags, one deploy at a time', () => {
+  it('deploys only by hand, only on tags, one deploy at a time, after the images (not the bundle)', () => {
     const deploy = ci.deploy!
     expect(deploy.stage).toBe('deploy')
     expect(deploy.rules).toEqual([{ if: '$CI_COMMIT_TAG', when: 'manual' }])
     expect(deploy.resource_group).toBe('production')
     expect(deploy.interruptible).toBe(false)
+    expect((deploy as Job & { needs?: string[] }).needs?.sort()).toEqual(images.map((n) => `build-${n}`).sort())
+  })
+
+  describe('release-bundle (installer proposal §3.4, D1)', () => {
+    const job = ci['release-bundle'] as Job & { artifacts?: { paths?: string[] } }
+    const script = lines(job)
+
+    it('runs on tags only, building the bundle with ops/install/bundle.sh for the tag and the registry path', () => {
+      expect(job.stage).toBe('release')
+      expect(job.rules).toEqual([{ if: '$CI_COMMIT_TAG' }])
+      expect(script).toMatch(/case "\$CI_COMMIT_TAG" in/)
+      expect(script).toContain('sh ops/install/bundle.sh "$CI_COMMIT_TAG" "$CI_REGISTRY_IMAGE" dist')
+      // Reproducible: the commit's time, with GNU tar and git from apk.
+      expect(script).toContain('export SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"')
+      expect(script).toMatch(/apk add --no-cache [^\n]*\btar\b[^\n]*\bgit\b/)
+      expect(job.artifacts?.paths).toEqual(['dist/releases/'])
+    })
+
+    it('signs SHA256SUMS with the protected file key, naming the release, and checks it against install.sh\'s key', () => {
+      expect(script).toContain('test -s "$YODA_RELEASE_SIGNING_KEY"')
+      expect(script).toContain('minisign -S -s "$YODA_RELEASE_SIGNING_KEY" -m "dist/releases/$CI_COMMIT_TAG/SHA256SUMS" -t "yoda release $CI_COMMIT_TAG"')
+      expect(script).toContain('RELEASE_PUBKEY_EMBEDDED')
+      expect(script).toMatch(/minisign -V -P "\$pub"/)
+      // The trusted comment install.sh expects.
+      expect(read('ops/install/install.sh')).toContain('Trusted comment: yoda release $version')
+    })
+
+    it('uploads with the token on stdin only, and skips the upload while no URL is set', () => {
+      expect(script).toContain('if [ -z "${YODA_RELEASE_UPLOAD_URL:-}" ]')
+      expect(script).toMatch(/printf 'header = "Authorization: Bearer %s"\\n' "\$YODA_RELEASE_UPLOAD_TOKEN" \|\s*curl [^\n]*-K -/)
+      expect(script).not.toMatch(/curl [^\n|]*\$YODA_RELEASE_UPLOAD_TOKEN/)
+      // An empty token, or one with quotes, spaces or newlines (it goes into a curl config line), is refused.
+      expect(script).toContain(`if [ -z "$YODA_RELEASE_UPLOAD_TOKEN" ] || printf '%s' "$YODA_RELEASE_UPLOAD_TOKEN" | tr -d 'A-Za-z0-9._~+/=-' | grep -q .; then`)
+      const guard = script.indexOf('if [ -z "$YODA_RELEASE_UPLOAD_TOKEN" ]')
+      expect(guard).toBeLessThan(script.indexOf('--upload-file'))
+    })
   })
 
   it('checks the host key and keeps the SSH key private', () => {
@@ -84,10 +120,11 @@ describe('.gitlab-ci.yml', () => {
     expect(script).toContain('ops/deploy/deploy.sh')
   })
 
-  it('copies the compose files and the deploy script, not the dev init.sql', () => {
+  it('copies the compose files, the deploy script and the runbook files, not the dev init.sql or .env', () => {
     const copy = (ci.deploy!.script ?? []).find((l) => /\btar -cf\b/.test(l)) ?? ''
-    for (const f of ['docker-compose.yml', 'docker-compose.prod.yml', 'ops/deploy/deploy.sh']) expect(copy).toContain(f)
+    for (const f of ['docker-compose.yml', 'docker-compose.prod.yml', 'ops/deploy/deploy.sh', 'docs/operations.md', '.env.example', 'CHANGELOG.md']) expect(copy).toContain(f)
     expect(copy).not.toContain('init.sql')
+    expect(copy.split(/\s+/)).not.toContain('.env')
   })
 
   it('fails the deploy when any part of the copy pipeline fails', () => {
@@ -130,9 +167,12 @@ describe('ops/deploy/deploy.sh', () => {
     return i
   }
 
-  it('pulls, migrates once, starts, then waits for /ready', () => {
+  it('pulls, fills the bootstrap volume, migrates once, starts, then waits for /ready', () => {
     const pull = order(' pull')
+    const init = order(' run --rm init')
     const migrate = order(' run --rm migrate')
+    expect(pull).toBeLessThan(init)
+    expect(init).toBeLessThan(migrate)
     const up = order(' up -d --no-build')
     const ready = order('/api/ready')
     expect(pull).toBeLessThan(migrate)
@@ -160,24 +200,53 @@ describe('ops/deploy/deploy.sh', () => {
     expect(sh).toContain('YODA_VERSION')
     expect(sh).toMatch(/case "\$YODA_VERSION" in/)
   })
+
+  it('creates an empty .env (0600) when there is none instead of failing (§13.3)', () => {
+    expect(code).toContain('(umask 077 && : > .env)')
+    expect(code).not.toMatch(/no \.env in/)
+    expect(order('(umask 077')).toBeLessThan(order(' pull'))
+  })
+
+  it('prints the setup hint after ready, when /public-config says setup is required', () => {
+    const ready = order('/api/ready')
+    const pc = order('/public-config')
+    expect(ready).toBeLessThan(pc)
+    expect(code).toContain('yoda-admin setup-token')
+  })
+
+  it('refuses to run without an image prefix (never Docker Hub), before changing anything', () => {
+    const refuse = order('YODA_IMAGE_PREFIX is not set')
+    expect(refuse).toBeLessThan(order('(umask 077'))
+    expect(refuse).toBeLessThan(order('release=release.env.next'))
+    expect(read('ops/install/install.sh')).toMatch(/printf 'YODA_IMAGE_PREFIX=%s\\n' "\$prefix" > "\$dir\/release\.env"/)
+  })
+
+  it('never touches a volume (the bootstrap volume holds the master key)', () => {
+    expect(code).not.toMatch(/\bvolume\b|\bdown\b|\s-v\b|--volumes/)
+  })
 })
 
 type Service = {
   image?: string
   build?: unknown
+  command?: string[]
+  user?: string
   ports?: string[]
   volumes?: string[]
-  environment?: Record<string, string>
+  group_add?: string[]
+  depends_on?: Record<string, { condition: string }>
+  environment?: Record<string, string | null>
 }
 // `!reset` / `!override` are compose merge tags; the yaml parser keeps the value and only warns about them.
 const prod = parse(read('docker-compose.prod.yml'), { logLevel: 'error' }) as { services: Record<string, Service> }
 
 describe('docker-compose.prod.yml images', () => {
-  const want: Record<string, string> = { migrate: 'core', core: 'core', portal: 'portal', backup: 'backup', runner: 'runner' }
+  const want: Record<string, string> = { init: 'core', migrate: 'core', core: 'core', portal: 'portal', backup: 'backup', runner: 'runner' }
 
   it.each(Object.entries(want))('%s uses the published %s image at a required version and still builds locally', (service, name) => {
     const s = prod.services[service]!
-    expect(s.image).toBe(`\${YODA_IMAGE_PREFIX:-yoda}/${name}:\${YODA_VERSION:?YODA_VERSION is required (see release.env)}`)
+    // No default prefix: a missing one must stop compose, never pull `yoda/...` from Docker Hub.
+    expect(s.image).toBe(`\${YODA_IMAGE_PREFIX:?YODA_IMAGE_PREFIX is required (the registry path; see release.env)}/${name}:\${YODA_VERSION:?YODA_VERSION is required (see release.env)}`)
     expect(s.build).toBeTruthy()
   })
 })
@@ -198,18 +267,108 @@ describe('docker-compose.prod.yml exposure', () => {
     expect(prod.services.rustfs!.environment?.RUSTFS_CONSOLE_ENABLE).toBe('false')
   })
 
-  it('mounts only the database volume into postgres (no dev init.sql)', () => {
+  it('mounts only the database and bootstrap volumes into postgres (no dev init.sql)', () => {
     expect(text).toMatch(/^ {4}volumes: !override$/m)
-    expect(prod.services.postgres!.volumes).toEqual(['pgdata:/var/lib/postgresql/data'])
+    expect(prod.services.postgres!.volumes).toEqual(['pgdata:/var/lib/postgresql/data', 'yoda-bootstrap:/var/lib/yoda:ro'])
   })
 
-  it('requires PORTAL_URL', () => {
-    expect(prod.services.core!.environment?.PORTAL_URL).toBe('${PORTAL_URL:?PORTAL_URL is required}')
+  it('requires nothing but the image prefix and YODA_VERSION (installer proposal §13.3)', () => {
+    const text = read('docker-compose.prod.yml')
+    const required = [...text.matchAll(/\$\{([A-Z][A-Z0-9_]*):\?/g)].map((m) => m[1])
+    expect(new Set(required)).toEqual(new Set(['YODA_IMAGE_PREFIX', 'YODA_VERSION']))
+    expect(text).not.toMatch(/YODA_IMAGE_PREFIX:-/)
+    expect(prod.services.core!.environment?.PORTAL_URL).toBe('${PORTAL_URL:-}')
+    expect(prod.services.core!.environment?.OIDC_ISSUER).toBe('${OIDC_ISSUER:-}')
+  })
+})
+
+describe('docker-compose.prod.yml bootstrap volume (installer proposal §3.2, spike R3)', () => {
+  const s = prod.services
+  const mount = 'yoda-bootstrap:/var/lib/yoda'
+  const afterInit = (name: string) => expect(s[name]!.depends_on?.init, name).toEqual({ condition: 'service_completed_successfully' })
+
+  it('runs init once, as root, from the core image, writing the volume and probing the database read-only', () => {
+    const init = s.init!
+    expect(init.command).toEqual(['node', 'dist/init.js'])
+    expect(init.user).toBe('0:0')
+    expect(init.volumes).toEqual([mount, 'pgdata:/probe/pgdata:ro'])
+    expect((init as { restart?: string }).restart).toBe('no')
+    // Every value is optional: env overrides generation, never required.
+    for (const k of ['POSTGRES_PASSWORD', 'S3_ACCESS_KEY', 'S3_SECRET_KEY', 'YODA_MASTER_KEY']) expect(init.environment?.[k], k).toBe(`\${${k}:-}`)
+    expect((parse(read('docker-compose.prod.yml'), { logLevel: 'error' }) as { volumes: Record<string, unknown> }).volumes).toHaveProperty('yoda-bootstrap')
+  })
+
+  it('starts everything that reads the volume after init', () => {
+    for (const name of ['postgres', 'rustfs', 'migrate', 'core', 'backup']) afterInit(name)
+  })
+
+  it('mounts it read-only everywhere but core (the setup token), with the shared group except for postgres', () => {
+    for (const name of ['postgres', 'rustfs', 'migrate', 'backup']) expect(s[name]!.volumes, name).toContain(`${mount}:ro`)
+    expect(s.core!.volumes).toContain(mount)
+    for (const name of ['rustfs', 'migrate', 'core', 'backup']) expect(s[name]!.group_add, name).toEqual(['10500'])
+    expect(s.postgres!.group_add).toBeUndefined()
+    expect(s.portal!.volumes ?? []).not.toContain(mount)
+    expect(s.portal!.volumes ?? []).not.toContain(`${mount}:ro`)
+  })
+
+  it('gives postgres and RustFS the files, removing the plain variables (the images refuse both forms)', () => {
+    // The parser keeps a scalar `!reset null` as null or 'null' (it only warns about the compose tag); the text
+    // checks below pin the tag itself.
+    const reset = (v: unknown) => v === null || v === 'null'
+    expect(s.postgres!.environment).toMatchObject({ POSTGRES_PASSWORD_FILE: '/var/lib/yoda/postgres-password' })
+    expect(reset(s.postgres!.environment?.POSTGRES_PASSWORD)).toBe(true)
+    expect(reset(s.rustfs!.environment?.RUSTFS_ACCESS_KEY) && reset(s.rustfs!.environment?.RUSTFS_SECRET_KEY)).toBe(true)
+    expect(read('docker-compose.prod.yml')).toMatch(/^ {6}POSTGRES_PASSWORD: !reset null$/m)
+    expect(s.rustfs!.environment).toMatchObject({
+      RUSTFS_ACCESS_KEY_FILE: '/var/lib/yoda/s3-access-key',
+      RUSTFS_SECRET_KEY_FILE: '/var/lib/yoda/s3-secret-key',
+    })
+    expect(read('docker-compose.prod.yml')).toMatch(/^ {6}RUSTFS_ACCESS_KEY: !reset null\n {6}RUSTFS_SECRET_KEY: !reset null$/m)
+  })
+
+  it('lets core, migrate and backup derive DATABASE_URL and the S3 keys from bootstrap.env, env first', () => {
+    for (const name of ['core', 'migrate', 'backup']) {
+      const env = s[name]!.environment!
+      expect(env.DATABASE_URL, name).toBe('${DATABASE_URL:-}')
+      expect(env.YODA_BOOTSTRAP_FILE, name).toBe('/var/lib/yoda/bootstrap.env')
+    }
+    for (const name of ['core', 'backup']) for (const k of ['S3_ACCESS_KEY', 'S3_SECRET_KEY']) expect(s[name]!.environment?.[k], `${name} ${k}`).toBe(`\${${k}:-}`)
+    expect(s.core!.environment?.YODA_MASTER_KEY_FILE).toBe('/var/lib/yoda/core/master-key')
+    // The master key never reaches core's env from compose; init copies an env key into the core-only file.
+    expect(s.core!.environment).not.toHaveProperty('YODA_MASTER_KEY')
+    expect(s.backup!.environment).not.toHaveProperty('YODA_MASTER_KEY_FILE')
+  })
+
+  it('no longer requires the Keycloak variables in the portal (it reads /public-config)', () => {
+    for (const k of ['NUXT_PUBLIC_KEYCLOAK_URL', 'NUXT_PUBLIC_KEYCLOAK_REALM', 'NUXT_PUBLIC_KEYCLOAK_CLIENT_ID']) {
+      expect(s.portal!.environment?.[k], k).toBe(`\${${k}:-}`)
+      // Core sees them too, to log a mismatch with OIDC_ISSUER (§6.4).
+      expect(s.core!.environment?.[k], k).toBe(`\${${k}:-}`)
+    }
+  })
+})
+
+describe('docker-compose.yml (dev) keeps its throwaway credentials', () => {
+  const dev = parse(read('docker-compose.yml')) as { services: Record<string, Service> }
+
+  it('has no init service and no bootstrap volume (dev core runs on the host with .env)', () => {
+    expect(dev.services.init).toBeUndefined()
+    expect(dev.services.postgres!.environment?.POSTGRES_PASSWORD).toBe('yoda')
+    expect(dev.services.rustfs!.environment?.RUSTFS_ACCESS_KEY).toBe('${S3_ACCESS_KEY:-yoda}')
   })
 })
 
 describe('.github/workflows/ci.yml', () => {
   const gh = parse(read('.github/workflows/ci.yml')) as { jobs: Record<string, { steps: { run?: string }[] }> }
+
+  it('installs minisign and shellcheck in the test job, before the tests', () => {
+    const steps = gh.jobs.test!.steps.map((s) => s.run ?? '')
+    const install = steps.findIndex((r) => /apt-get install -y [^\n]*\bminisign\b/.test(r))
+    expect(install).toBeGreaterThan(-1)
+    expect(steps[install]).toMatch(/\bshellcheck\b/)
+    expect(steps[install]).toMatch(/^sudo apt-get update && /)
+    expect(install).toBeLessThan(steps.indexOf('pnpm test'))
+  })
 
   it('builds every image and pushes none', () => {
     const runs = gh.jobs.build!.steps.map((s) => s.run ?? '').join('\n')

@@ -1,8 +1,11 @@
 import type { Me } from '@yoda/shared'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
+import { eq } from 'drizzle-orm'
 import { jwtVerify } from 'jose'
 import type { AppDeps } from '../app.js'
 import type { Config } from '../config.js'
+import { people } from '../db/schema.js'
+import { setupState } from '../setup-state.js'
 import { isStaff, TokenClaims, upsertPersonFromClaims } from './people.js'
 
 /** Thrown by guards / auth; mapped to `{ error }` bodies by the app error handler. */
@@ -41,6 +44,14 @@ export class HttpError extends Error {
         | 'secrets_unavailable'
         | 'settings_unavailable'
         | 'rate_limited'
+        | 'not_configured'
+        | 'setup_required'
+        | 'invalid_credentials'
+        | 'csrf_failed'
+        | 'second_factor_required'
+        | 'invalid_code'
+        | 'weak_password'
+        | 'recovery_mode'
       /** Machine-readable detail for some errors (runner claims: why `invalid_state`; a setting's lock reason). */
       reason?: string
       /** The setting an error is about (settings API). */
@@ -52,6 +63,8 @@ export class HttpError extends Error {
       issues?: { key: string; message: string }[]
       /** Seconds until a rate-limited call may be retried. */
       retryAfter?: number
+      /** The required setup steps still open (`invalid_state` reason `incomplete`, POST /setup/complete). */
+      missing?: string[]
     },
   ) {
     super(body.error)
@@ -59,6 +72,10 @@ export class HttpError extends Error {
 }
 
 const unauthorized = () => new HttpError(401, { error: 'unauthorized' })
+/** Sign-in is not configured yet (no OIDC issuer: setup mode); no bearer token can be checked. */
+export const notConfigured = () => new HttpError(503, { error: 'not_configured' })
+/** Setup mode (§4.1): only /setup, /public-config, /health and /ready answer until setup is done. */
+export const setupRequired = () => new HttpError(503, { error: 'setup_required' })
 export const notFound = () => new HttpError(404, { error: 'not_found' })
 export const lastAdmin = () => new HttpError(409, { error: 'last_admin' })
 export const lastPm = () => new HttpError(409, { error: 'last_pm' })
@@ -92,6 +109,7 @@ export const gitlabUnavailable = () => new HttpError(502, { error: 'gitlab_unava
  * (missing header, bad signature, expired, wrong issuer, wrong client, missing claims).
  */
 async function verifyRequest(request: FastifyRequest, deps: Pick<AppDeps, 'jwks'>, config: Config): Promise<TokenClaims | null> {
+  if (!config.oidcIssuer) return null
   const header = request.headers.authorization
   const match = header?.match(/^Bearer\s+(\S+)$/i)
   if (!match) return null
@@ -114,6 +132,11 @@ async function verifyRequest(request: FastifyRequest, deps: Pick<AppDeps, 'jwks'
 /**
  * Authenticates every route except those marked `config: { public: true }`.
  * Registered directly on the root instance so the hook applies app-wide.
+ *
+ * Setup mode first (§4.1): while setup is required, every route not marked `setupMode: true` answers
+ * 503 `setup_required`, before any token is looked at. The setup and recovery routes are `public` to this hook:
+ * they check their own cookie session (local/session.ts), and that cookie opens nothing else. In forced recovery
+ * mode every authenticated route answers 503 `recovery_mode`.
  */
 export function registerAuth(app: FastifyInstance): void {
   app.decorateRequest('me', null as unknown as Me)
@@ -121,13 +144,19 @@ export function registerAuth(app: FastifyInstance): void {
   app.decorateRequest('authTime', null)
 
   app.addHook('onRequest', async (request) => {
-    if (request.routeOptions.config?.public === true) return
     const { deps } = app
+    const route = request.routeOptions.config
+    if (route?.setupMode !== true && setupState(deps.config, deps.settings) === 'required') throw setupRequired()
+    if (route?.public === true) return
+    // Forced recovery mode (`yoda-admin recovery on`, 7.4): the portal API is closed; /recovery, the public routes
+    // and the webhooks (public too) keep working.
+    if (deps.settings?.recoveryForced) throw new HttpError(503, { error: 'recovery_mode' })
     // One snapshot of the settings for the whole check (the issuer, client id and JWKS are swapped together).
     const config = deps.config
+    if (!config.oidcIssuer) throw notConfigured()
     const claims = await verifyRequest(request, { jwks: deps.jwks }, config)
     if (!claims) throw unauthorized()
-    const person = await upsertPersonFromClaims(deps.db, claims, config)
+    const person = await personOf(deps, claims, config)
     request.tokenExp = claims.exp * 1000
     request.authTime = claims.auth_time ?? null
     request.me = {
@@ -140,6 +169,31 @@ export function registerAuth(app: FastifyInstance): void {
       isStaff: person.isAdmin || isStaff(person, claims, config.staffGroup),
     }
   })
+}
+
+/**
+ * The person for the token. A username pre-granted at /recovery (`oidc.bootstrapAdmins` in the database) becomes
+ * admin when its person row is created, and the pre-grant is used up in that same transaction (T4): it never
+ * makes a later, different person with the same username an admin.
+ */
+async function personOf(deps: FastifyInstance['deps'], claims: TokenClaims, config: Config) {
+  const store = deps.settings
+  // Only a pre-grant stored in the database (not env-set, not a Config built elsewhere) goes through the lock.
+  const preGranted = !!store && store.recoveryWritable('oidc.bootstrapAdmins') && (store.get('oidc.bootstrapAdmins') ?? []).includes(claims.preferred_username)
+  if (!store || !preGranted) {
+    return upsertPersonFromClaims(deps.db, claims, config)
+  }
+  let used = false
+  const person = await deps.db.transaction(async (tx) => {
+    const [known] = await tx.select({ id: people.id }).from(people).where(eq(people.keycloakSub, claims.sub))
+    // The pre-grant row is locked and consumed first; only the sign-in that consumed it creates an admin. The
+    // in-memory list is never trusted for the flag: two first sign-ins at once (or another core that has not
+    // reloaded yet) would both see the username in it. (BOOTSTRAP_ADMINS in env never reaches here.)
+    if (!known) used = await store.consumePreGrant(tx, claims.preferred_username)
+    return upsertPersonFromClaims(tx, claims, { ...config, bootstrapAdmins: used ? [claims.preferred_username] : [] })
+  })
+  if (used) await store.reloadSetting('oidc.bootstrapAdmins')
+  return person
 }
 
 /** Any signed-in person, staff or requester; the route itself must then authorize per resource. */
@@ -171,5 +225,7 @@ declare module 'fastify' {
   }
   interface FastifyContextConfig {
     public?: boolean
+    /** Served in setup mode (§4.1); every other route answers 503 `setup_required` until setup is done. */
+    setupMode?: boolean
   }
 }

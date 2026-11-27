@@ -1,32 +1,69 @@
 # Overlay over docker-compose.yml. All values come from the environment (the host's .env and release.env, or
 # your shell). No secrets here.
-# Images: ${YODA_IMAGE_PREFIX}/<name>:${YODA_VERSION}. YODA_VERSION is required: a deploy host pulls that release
-# from the registry and ops/deploy/deploy.sh pins it in release.env (docs/operations.md). Locally, build and run
-# a prod-like stack under yoda/<name>:latest with:
-#   YODA_VERSION=latest docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
+# Images: ${YODA_IMAGE_PREFIX}/<name>:${YODA_VERSION}. Both are required (no default, so a missing prefix never
+# pulls a `yoda/...` image from Docker Hub): a deploy host pulls that release from the registry, and
+# ops/deploy/deploy.sh pins both in release.env (docs/operations.md). Locally, build and run a prod-like stack
+# under yoda/<name>:latest with:
+#   YODA_IMAGE_PREFIX=yoda YODA_VERSION=latest docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
 # Core and the portal publish on 127.0.0.1 by default (a reverse proxy goes in front); Postgres and RustFS
 # publish nothing (reach them with `docker compose exec`).
+# Nothing but YODA_IMAGE_PREFIX and YODA_VERSION is required: the one-shot `init` service generates the Postgres password, the RustFS
+# keys and the master key into the `yoda-bootstrap` volume (docs/design/installer-proposal.md §3.2). A value set
+# in .env wins and is copied into the volume, so an existing .env install upgrades unchanged.
+# Volume layout: shared files 0640 root:10500 (every reader gets `group_add: ['10500']`, postgres reads as root);
+# core/ (0700, the core image's node user) holds the master key.
 services:
+  init:
+    build:
+      context: .
+      dockerfile: apps/core/Dockerfile
+    image: ${YODA_IMAGE_PREFIX:?YODA_IMAGE_PREFIX is required (the registry path; see release.env)}/core:${YODA_VERSION:?YODA_VERSION is required (see release.env)}
+    command: ['node', 'dist/init.js']
+    # Root: it sets the owners (root:10500, core/ for the node user) and reads the Postgres data directory.
+    user: '0:0'
+    environment:
+      # Every one optional: set only to override generation (or to keep an existing install's values).
+      POSTGRES_USER: ${POSTGRES_USER:-yoda}
+      POSTGRES_DB: ${POSTGRES_DB:-yoda}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-}
+      YODA_MASTER_KEY: ${YODA_MASTER_KEY:-}
+    volumes:
+      - yoda-bootstrap:/var/lib/yoda
+      # Read-only, only to refuse when a database exists but its password is unknown (§3.3).
+      - pgdata:/probe/pgdata:ro
+    restart: 'no'
+
   # Runs the database migrations once, before core starts; the only container that migrates in production.
   migrate:
     build:
       context: .
       dockerfile: apps/core/Dockerfile
-    image: ${YODA_IMAGE_PREFIX:-yoda}/core:${YODA_VERSION:?YODA_VERSION is required (see release.env)}
+    image: ${YODA_IMAGE_PREFIX:?YODA_IMAGE_PREFIX is required (the registry path; see release.env)}/core:${YODA_VERSION:?YODA_VERSION is required (see release.env)}
     command: ['node', 'dist/migrate.js']
     depends_on:
+      init:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
+    group_add: ['10500']
     environment:
-      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      # Empty: derived from the bootstrap volume (an external Postgres sets it).
+      DATABASE_URL: ${DATABASE_URL:-}
+      YODA_BOOTSTRAP_FILE: /var/lib/yoda/bootstrap.env
+    volumes:
+      - yoda-bootstrap:/var/lib/yoda:ro
     restart: 'no'
 
   core:
     build:
       context: .
       dockerfile: apps/core/Dockerfile
-    image: ${YODA_IMAGE_PREFIX:-yoda}/core:${YODA_VERSION:?YODA_VERSION is required (see release.env)}
+    image: ${YODA_IMAGE_PREFIX:?YODA_IMAGE_PREFIX is required (the registry path; see release.env)}/core:${YODA_VERSION:?YODA_VERSION is required (see release.env)}
     depends_on:
+      init:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       rustfs:
@@ -35,39 +72,53 @@ services:
         condition: service_completed_successfully
     ports:
       - '${CORE_BIND:-127.0.0.1}:${CORE_PORT:-4000}:4000'
+    group_add: ['10500']
+    # Read-write: core writes the setup token into its own core/ directory.
+    volumes:
+      - yoda-bootstrap:/var/lib/yoda
     environment:
+      # Every setting the UI can edit is passed with an empty default: empty counts as unset, so it is editable in System
+      # settings (and at /recovery) unless .env sets it. Only bootstrap-only values (§8) have a default or a fixed
+      # value here (a core test checks this).
       PORT: 4000
-      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
-      OIDC_ISSUER: ${OIDC_ISSUER:?OIDC_ISSUER is required}
-      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-yoda-portal}
+      # Empty: derived from the bootstrap volume (an external Postgres sets it).
+      DATABASE_URL: ${DATABASE_URL:-}
+      YODA_BOOTSTRAP_FILE: /var/lib/yoda/bootstrap.env
+      YODA_MASTER_KEY_FILE: /var/lib/yoda/core/master-key
+      YODA_SETTINGS_IMPORT: ${YODA_SETTINGS_IMPORT:-}
+      YODA_TRUSTED_PROXY_HOPS: ${YODA_TRUSTED_PROXY_HOPS:-}
+      # Optional: unset until sign-in is set up (setup mode refuses every token with `not_configured`).
+      OIDC_ISSUER: ${OIDC_ISSUER:-}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
       # Optional: fetch signing keys from an internal address; tokens are still checked against OIDC_ISSUER.
       OIDC_JWKS_URL: ${OIDC_JWKS_URL:-}
       # The `migrate` service has already run; core never migrates in production.
       MIGRATE_ON_START: 'false'
-      STAFF_GROUP: ${STAFF_GROUP:-/it-dev}
+      STAFF_GROUP: ${STAFF_GROUP:-}
       BOOTSTRAP_ADMINS: ${BOOTSTRAP_ADMINS:-}
       S3_ENDPOINT: http://rustfs:9000
       S3_REGION: ${S3_REGION:-us-east-1}
       S3_BUCKET: ${S3_BUCKET:-yoda}
-      S3_ACCESS_KEY: ${S3_ACCESS_KEY:?S3_ACCESS_KEY is required}
-      S3_SECRET_KEY: ${S3_SECRET_KEY:?S3_SECRET_KEY is required}
+      # Empty: from the bootstrap volume (an external S3 sets them).
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
-      AI_MODEL_DRAFT: ${AI_MODEL_DRAFT:-anthropic:claude-opus-5-5}
-      AI_MODEL_FAST: ${AI_MODEL_FAST:-anthropic:claude-haiku-5-5}
+      AI_MODEL_DRAFT: ${AI_MODEL_DRAFT:-}
+      AI_MODEL_FAST: ${AI_MODEL_FAST:-}
       AI_EMBEDDING_MODEL: ${AI_EMBEDDING_MODEL:-}
-      AI_WORKERS: ${AI_WORKERS:-2}
-      DAILY_TASK_CAP: ${DAILY_TASK_CAP:-8}
+      AI_WORKERS: ${AI_WORKERS:-}
+      DAILY_TASK_CAP: ${DAILY_TASK_CAP:-}
       GITLAB_URL: ${GITLAB_URL:-}
       GITLAB_TOKEN: ${GITLAB_TOKEN:-}
       GITLAB_WEBHOOK_SECRET: ${GITLAB_WEBHOOK_SECRET:-}
-      PORTAL_URL: ${PORTAL_URL:?PORTAL_URL is required}
-      RUNNER_LEASE_SECONDS: ${RUNNER_LEASE_SECONDS:-600}
-      MCP_ENABLED: ${MCP_ENABLED:-true}
+      PORTAL_URL: ${PORTAL_URL:-}
+      RUNNER_LEASE_SECONDS: ${RUNNER_LEASE_SECONDS:-}
+      MCP_ENABLED: ${MCP_ENABLED:-}
       SMTP_HOST: ${SMTP_HOST:-}
-      SMTP_PORT: ${SMTP_PORT:-587}
-      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_PORT: ${SMTP_PORT:-}
+      SMTP_SECURE: ${SMTP_SECURE:-}
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       MAIL_FROM: ${MAIL_FROM:-}
@@ -78,6 +129,17 @@ services:
       TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:-}
       TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
       TELEGRAM_API_URL: ${TELEGRAM_API_URL:-https://api.telegram.org}
+      # The portal settings core serves on /public-config (env locks them in the UI), and the deprecated Keycloak
+      # overrides, which core checks against OIDC_ISSUER at boot (a mismatch is logged loudly, §6.4).
+      NUXT_PUBLIC_ORG_LINE: ${NUXT_PUBLIC_ORG_LINE:-}
+      NUXT_PUBLIC_RUNNER_DOCS_URL: ${NUXT_PUBLIC_RUNNER_DOCS_URL:-}
+      NUXT_PUBLIC_LINE_ADD_FRIEND_URL: ${NUXT_PUBLIC_LINE_ADD_FRIEND_URL:-}
+      NUXT_PUBLIC_KEYCLOAK_URL: ${NUXT_PUBLIC_KEYCLOAK_URL:-}
+      NUXT_PUBLIC_KEYCLOAK_REALM: ${NUXT_PUBLIC_KEYCLOAK_REALM:-}
+      NUXT_PUBLIC_KEYCLOAK_CLIENT_ID: ${NUXT_PUBLIC_KEYCLOAK_CLIENT_ID:-}
+      # The backup container's settings, so a value set in .env shows locked in System settings → Backups.
+      BACKUP_AT: ${BACKUP_AT:-}
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-}
     # Ready = database, storage and job queue all answer (GET /ready).
     healthcheck:
       test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:4000/ready').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
@@ -87,25 +149,40 @@ services:
       start_period: 30s
     restart: unless-stopped
 
-  # Replaces the dev credentials: core signs in with the same S3_ACCESS_KEY / S3_SECRET_KEY. No published ports
-  # and no web console in production (`!reset` needs Compose v2.24+).
+  # Replaces the dev credentials with the bootstrap volume's keys (the same ones core and backup use; RustFS reads
+  # *_FILE natively and refuses both forms, so the base file's plain variables are removed, not blanked). No
+  # published ports and no web console in production (`!reset` needs Compose v2.24+).
   rustfs:
     ports: !reset []
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    group_add: ['10500']
     environment:
       RUSTFS_CONSOLE_ENABLE: 'false'
-      RUSTFS_ACCESS_KEY: ${S3_ACCESS_KEY:?S3_ACCESS_KEY is required}
-      RUSTFS_SECRET_KEY: ${S3_SECRET_KEY:?S3_SECRET_KEY is required}
+      RUSTFS_ACCESS_KEY: !reset null
+      RUSTFS_SECRET_KEY: !reset null
+      RUSTFS_ACCESS_KEY_FILE: /var/lib/yoda/s3-access-key
+      RUSTFS_SECRET_KEY_FILE: /var/lib/yoda/s3-secret-key
+    volumes:
+      - yoda-bootstrap:/var/lib/yoda:ro
     restart: unless-stopped
 
-  # Production credentials replace the dev ones (the base file's healthcheck hard-codes the dev user). No
-  # published port, and only the data volume: the base file's dev init.sql (a test database) is not mounted.
+  # Production credentials replace the dev ones (the base file's healthcheck hard-codes the dev user): the password
+  # is the bootstrap volume's (the image refuses POSTGRES_PASSWORD and _FILE together, so the plain one is
+  # removed). It reads the file as root, so no group_add. No published port, and no dev init.sql (a test database).
   postgres:
     ports: !reset []
+    depends_on:
+      init:
+        condition: service_completed_successfully
     volumes: !override
       - pgdata:/var/lib/postgresql/data
+      - yoda-bootstrap:/var/lib/yoda:ro
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-yoda}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_PASSWORD: !reset null
+      POSTGRES_PASSWORD_FILE: /var/lib/yoda/postgres-password
       POSTGRES_DB: ${POSTGRES_DB:-yoda}
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
@@ -123,7 +200,7 @@ services:
     build:
       context: .
       dockerfile: apps/portal/Dockerfile
-    image: ${YODA_IMAGE_PREFIX:-yoda}/portal:${YODA_VERSION:?YODA_VERSION is required (see release.env)}
+    image: ${YODA_IMAGE_PREFIX:?YODA_IMAGE_PREFIX is required (the registry path; see release.env)}/portal:${YODA_VERSION:?YODA_VERSION is required (see release.env)}
     depends_on:
       core:
         condition: service_healthy
@@ -131,11 +208,15 @@ services:
       - '${PORTAL_BIND:-127.0.0.1}:${PORTAL_PORT:-3000}:3000'
     environment:
       NUXT_CORE_URL: http://core:4000
-      NUXT_PUBLIC_KEYCLOAK_URL: ${NUXT_PUBLIC_KEYCLOAK_URL:?NUXT_PUBLIC_KEYCLOAK_URL is required}
-      NUXT_PUBLIC_KEYCLOAK_REALM: ${NUXT_PUBLIC_KEYCLOAK_REALM:-yoda}
-      NUXT_PUBLIC_KEYCLOAK_CLIENT_ID: ${NUXT_PUBLIC_KEYCLOAK_CLIENT_ID:-yoda-portal}
+      # With 1 (no reverse proxy in front) the portal sends core its own scheme and host, never the browser's.
+      YODA_TRUSTED_PROXY_HOPS: ${YODA_TRUSTED_PROXY_HOPS:-}
+      # Deprecated overrides: the portal reads sign-in, the org line and its links from core's /public-config
+      # (derived from OIDC_ISSUER / OIDC_CLIENT_ID and the settings); a non-empty value here still wins.
+      NUXT_PUBLIC_KEYCLOAK_URL: ${NUXT_PUBLIC_KEYCLOAK_URL:-}
+      NUXT_PUBLIC_KEYCLOAK_REALM: ${NUXT_PUBLIC_KEYCLOAK_REALM:-}
+      NUXT_PUBLIC_KEYCLOAK_CLIENT_ID: ${NUXT_PUBLIC_KEYCLOAK_CLIENT_ID:-}
       NUXT_PUBLIC_LINE_ADD_FRIEND_URL: ${NUXT_PUBLIC_LINE_ADD_FRIEND_URL:-}
-      NUXT_PUBLIC_RUNNER_DOCS_URL: ${NUXT_PUBLIC_RUNNER_DOCS_URL:-https://github.com/tantee/yoda#runners}
+      NUXT_PUBLIC_RUNNER_DOCS_URL: ${NUXT_PUBLIC_RUNNER_DOCS_URL:-}
       NUXT_PUBLIC_ORG_LINE: ${NUXT_PUBLIC_ORG_LINE:-}
     healthcheck:
       test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:3000/health').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
@@ -145,30 +226,40 @@ services:
       start_period: 20s
     restart: unless-stopped
 
-  # Daily backups (ops/backup): at BACKUP_AT in TZ a pg_dump -Fc of the database and a mirror of the bucket go
-  # into the `backups` volume, kept BACKUP_KEEP_DAYS days. One-shot: `run --rm backup --now`. Restore (core
-  # and portal stopped): `run --rm -e RESTORE_CONFIRM=yes --entrypoint restore.sh backup <stamp|latest>`.
+  # Daily backups (ops/backup): at the backup time in TZ a pg_dump -Fc of the database and a mirror of the bucket
+  # go into the `backups` volume, kept for the days set (System settings → Backups, or BACKUP_AT and
+  # BACKUP_KEEP_DAYS). One-shot: `run --rm backup --now`. Restore (core and portal stopped):
+  # `run --rm -e RESTORE_CONFIRM=yes --entrypoint restore.sh backup <stamp|latest>`.
   backup:
     build:
       context: ops/backup
-    image: ${YODA_IMAGE_PREFIX:-yoda}/backup:${YODA_VERSION:?YODA_VERSION is required (see release.env)}
+    image: ${YODA_IMAGE_PREFIX:?YODA_IMAGE_PREFIX is required (the registry path; see release.env)}/backup:${YODA_VERSION:?YODA_VERSION is required (see release.env)}
     depends_on:
+      init:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       rustfs:
         condition: service_started
+    group_add: ['10500']
     environment:
-      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL is required}
+      # Empty: from the bootstrap volume's bootstrap.env (env wins).
+      DATABASE_URL: ${DATABASE_URL:-}
+      YODA_BOOTSTRAP_FILE: /var/lib/yoda/bootstrap.env
       S3_ENDPOINT: http://rustfs:9000
       S3_REGION: ${S3_REGION:-us-east-1}
       S3_BUCKET: ${S3_BUCKET:-yoda}
-      S3_ACCESS_KEY: ${S3_ACCESS_KEY:?S3_ACCESS_KEY is required}
-      S3_SECRET_KEY: ${S3_SECRET_KEY:?S3_SECRET_KEY is required}
-      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
-      BACKUP_AT: ${BACKUP_AT:-02:00}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-}
+      # Empty: System settings → Backups (read from the database every minute), else 02:00 and 14 days. Set,
+      # they win and show locked there.
+      BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-}
+      BACKUP_AT: ${BACKUP_AT:-}
       TZ: Asia/Bangkok
     volumes:
       - backups:/backups
+      # Not copied into the backups (§3.6): keep the recovery kit with the backups, but not in the same place.
+      - yoda-bootstrap:/var/lib/yoda:ro
     restart: unless-stopped
 
   # Optional server runner (README "Runners"): docker compose ... --profile runner up -d runner
@@ -178,7 +269,7 @@ services:
     build:
       context: .
       dockerfile: apps/runner/Dockerfile
-    image: ${YODA_IMAGE_PREFIX:-yoda}/runner:${YODA_VERSION:?YODA_VERSION is required (see release.env)}
+    image: ${YODA_IMAGE_PREFIX:?YODA_IMAGE_PREFIX is required (the registry path; see release.env)}/runner:${YODA_VERSION:?YODA_VERSION is required (see release.env)}
     depends_on:
       - core
     environment:
@@ -199,3 +290,5 @@ services:
 volumes:
   runner-work:
   backups:
+  # The bootstrap values (init): never delete it; restoring on a new host needs the master key (recovery kit).
+  yoda-bootstrap:

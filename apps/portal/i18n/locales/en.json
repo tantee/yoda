@@ -686,7 +686,8 @@
       "work_item_stuck": "Work item stuck",
       "secretary_message": "AI secretary messages",
       "budget_alert": "AI budget alerts",
-      "discussion": "Discussions"
+      "discussion": "Discussions",
+      "security_alert": "Security alerts (break-glass use)"
     },
     "channels": {
       "email": "Email",
@@ -1618,23 +1619,23 @@
     "apply": {
       "live": "Applies at once",
       "reconnect": "Reconnects automatically",
-      "restart": "Needs a restart"
+      "restart": "Needs a restart",
+      "minute": "Applies within a minute"
     },
     "lock": {
       "env": "Set by environment · {name}",
       "bootstrap": "Set at install only",
       "readonly": "Filled by the system",
-      "recovery_only": "Protected: not changed here",
+      "recovery_only": "Changed from recovery only",
       "bound_secret_in_env": "Its secret is set by environment · {name}",
       "how": {
         "env": "To manage it here, remove {name} from the .env on the install host and restart. The current value is kept.",
         "bootstrap": "This lives in the install host's configuration. Change it there and restart.",
         "readonly": "The system fills this in",
-        "recovery_only": "Changing the issuer, client or JWKS URL can lock everyone out, so it is not changed here. A guarded way to change it, with a test, is coming in the setup update; until then ask the host administrator.",
+        "recovery_only": "Changing the issuer, client or JWKS URL can lock everyone out, so it is changed from the recovery page (/recovery) only, after a test sign-in passes.",
         "bound_secret_in_env": "Remove {name} from the .env before moving this endpoint",
         "managed_on_host": "Set {name} on the {container} container on the install host, then restart that container. It becomes editable here in a later update.",
         "managed_on_host_unused": "Nothing reads this yet. It becomes editable here with the setup update.",
-        "envCompose": "The prod compose file provides a default for {name}, so it stays set by environment until this install uses generated settings (coming in the setup update). Change it in the .env on the install host.",
         "envNotKept": "This secret is not stored in the database (the master key is not usable, or YODA_SETTINGS_IMPORT=false). Removing {name} from the .env disconnects the service until the secret is entered here."
       },
       "managed_on_host": "Managed on the install host"
@@ -1732,7 +1733,21 @@
         "invalid_config": "The settings are not valid",
         "rejected": "The server refused the request",
         "unreachable": "The storage cannot be reached",
-        "smtp": "The SMTP server answered {status}"
+        "smtp": "The SMTP server answered {status}",
+        "state_mismatch": "The sign-in came back for another attempt; start the test sign-in again",
+        "expired": "The test sign-in took too long; start it again",
+        "pending_changed": "The pending values changed after the test started; test again",
+        "code_rejected": "The server refused the sign-in code (check the client and redirect URI)",
+        "token_invalid": "The token is not valid for these settings (issuer, audience or keys)",
+        "nonce_mismatch": "The ID token does not belong to this sign-in",
+        "azp_mismatch": "The token is for another client",
+        "typ_mismatch": "The access token has the wrong type",
+        "claims_missing": "The token lacks claims Yoda needs (username)",
+        "groups_missing": "The token has no groups claim (add the groups mapper)",
+        "not_admin": "The person who signed in is not a portal admin",
+        "no_pgvector": "The database has no pgvector extension. Use the Postgres image that comes with Yoda.",
+        "not_staff": "You are not in the IT staff group. Check your groups in Keycloak, or the staff group in step 4.",
+        "not_staff_no_groups": "Your token has no groups: you are in no Keycloak group (sign in as a member of the IT staff group), or the client has no groups mapper (section 2 of the runbook)."
       },
       "check": {
         "discovery": "Issuer discovery",
@@ -1751,7 +1766,16 @@
         "model_embed": "Embedding model",
         "config": "Backup settings",
         "bucket": "Bucket",
-        "other": "Check"
+        "other": "Check",
+        "state": "Sign-in round trip",
+        "token": "Code exchange",
+        "id_token": "ID token",
+        "access_token": "Access token and claims",
+        "admin": "Signed in as a portal admin",
+        "staff": "In the IT staff group",
+        "db": "Database",
+        "pgvector": "pgvector extension",
+        "queue": "Job queue"
       }
     },
     "reauth": {
@@ -1812,7 +1836,7 @@
       }
     },
     "signin": {
-      "recoveryNote": "The issuer, client and JWKS URL are not changed here, so nobody is locked out. A guarded way to change them is coming in the setup update; until then ask the host administrator.",
+      "recoveryNote": "The issuer, client and JWKS URL are not changed here, so nobody is locked out; use the recovery page (/recovery) with the break-glass account. If its password is lost, the host administrator runs yoda-admin reset-break-glass.",
       "loginFunNote": "The login page fun mode is set on the Keycloak host (YODA_LOGIN_FUN_MODE)"
     },
     "runners": {
@@ -1880,11 +1904,20 @@
         "masterKeyFile": {
           "label": "Master key file"
         },
+        "bootstrapFile": {
+          "label": "Bootstrap file"
+        },
+        "devSkipSetup": {
+          "label": "Skip the setup wizard (development only)"
+        },
         "settingsImport": {
           "label": "Import env values on start"
         },
         "outboundAllowLoopback": {
           "label": "Allow tests to loopback (development only)"
+        },
+        "trustedProxyHops": {
+          "label": "Trusted proxies in front of core (X-Forwarded-For hops)"
         }
       },
       "oidc": {
@@ -2096,6 +2129,380 @@
           "label": "Login page fun mode"
         }
       }
+    }
+  },
+  "boot": {
+    "configUnavailableTitle": "Cannot start Yoda",
+    "configUnavailable": "The portal could not read its settings from the server. The server may be restarting; try again in a moment.",
+    "notConfiguredTitle": "Sign-in is not set up",
+    "notConfigured": "This install has no Keycloak sign-in configured. An administrator can fix it from the recovery page.",
+    "insecureTitle": "Sign-in needs HTTPS",
+    "insecure": "This page is plain http on a network address, where the browser does not allow Keycloak sign-in. Open the portal through its https address (a reverse proxy), or on the install host as http://localhost (an SSH tunnel works too). The recovery page still works.",
+    "retry": "Try again"
+  },
+  "recovery": {
+    "title": "Yoda recovery",
+    "warning": "For emergencies only: signing in with the break-glass account here notifies every portal administrator, and every action is recorded.",
+    "insecure": "This connection is plain HTTP, so the session cookie is not protected by HTTPS. Use an SSH tunnel or HTTPS when you can.",
+    "signin": {
+      "title": "Break-glass sign-in",
+      "help": "Use the local account created during setup. Keycloak is not needed.",
+      "username": "Username",
+      "password": "Password",
+      "totp": "Authenticator code",
+      "totpHint": "6 digits from your authenticator app (leave empty if TOTP is not set up)",
+      "recoveryCode": "Recovery code",
+      "useTotp": "Use an authenticator code instead",
+      "useCode": "Use a recovery code instead",
+      "submit": "Sign in"
+    },
+    "signedIn": {
+      "title": "Recovery",
+      "as": "Signed in as {username} (break-glass)",
+      "expires": "Session ends at {at} if idle",
+      "signOut": "Sign out"
+    },
+    "reset": {
+      "title": "Finish the account reset",
+      "help": "The account was reset on the install host. Choose a new password, then set up the authenticator again, before anything else."
+    },
+    "account": {
+      "title": "Break-glass account",
+      "totp": "Authenticator (TOTP)",
+      "codesLeft": "Recovery codes left",
+      "password": "Password",
+      "newPassword": "New password",
+      "passwordRule": "At least 14 characters, not containing the username",
+      "confirmPassword": "New password again",
+      "mismatch": "The passwords do not match",
+      "savePassword": "Change password",
+      "passwordChanged": "Password changed. Other sessions of this account were ended.",
+      "currentTotp": "Current authenticator code"
+    },
+    "totp": {
+      "title": "Authenticator (TOTP)",
+      "start": "Set up a new authenticator",
+      "code": "Code from the new authenticator",
+      "currentCode": "Code from the current authenticator",
+      "confirm": "Confirm",
+      "enrolled": "Authenticator set up.",
+      "qrAlt": "QR code for the authenticator app",
+      "scan": "Scan this QR code with an authenticator app, then enter the 6-digit code it shows.",
+      "manual": "Or type this key into the app:"
+    },
+    "codes": {
+      "title": "Recovery codes",
+      "regenerate": "Make 10 new codes",
+      "once": "These codes are shown only now. Store them with the recovery kit; each works once, and the old codes no longer work.",
+      "copy": "Copy",
+      "copied": "Copied"
+    },
+    "status": {
+      "title": "Install state",
+      "masterKey": "Master key",
+      "key": {
+        "ok": "OK",
+        "missing": "Missing",
+        "malformed": "Malformed",
+        "mismatch": "Does not match"
+      },
+      "setup": "Setup",
+      "setupState": {
+        "required": "Not finished",
+        "done": "Done"
+      },
+      "funMode": "Fun mode",
+      "on": "On",
+      "off": "Off",
+      "funOff": "Turn off"
+    },
+    "oidc": {
+      "title": "Sign-in (Keycloak)",
+      "help": "A new issuer, client or JWKS URL is staged first. It applies only after a test sign-in through it passes, and the previous values can be put back for 7 days.",
+      "issuer": "Issuer URL",
+      "clientId": "Client ID",
+      "jwksUrl": "JWKS URL",
+      "jwksUrlOptional": "Internal JWKS URL (optional)",
+      "notSet": "Not set",
+      "fromIssuer": "From the issuer",
+      "envLocked": "Set by environment on the install host ({names}), so it is not changed here.",
+      "stage": "Stage the change",
+      "pending": "Pending:",
+      "tested": "Test sign-in passed as {username} at {at}.",
+      "notTested": "Not tested yet: run the test sign-in before applying.",
+      "check": "Check issuer and keys",
+      "testSignIn": "Test sign-in",
+      "apply": "Apply",
+      "discard": "Discard",
+      "rollbackHelp": "The previous sign-in settings ({issuer}) can be put back until {until}.",
+      "rollback": "Roll back",
+      "applied": "The new sign-in settings are in use.",
+      "rolledBack": "The previous sign-in settings are back.",
+      "providerError": "The identity provider did not complete the test sign-in. Check the client settings in Keycloak and try again."
+    },
+    "error": {
+      "invalidCredentials": "Wrong username or password.",
+      "secondFactorRequired": "Enter the authenticator code or a recovery code.",
+      "invalidCode": "That code is not valid, or was already used.",
+      "rateLimited": "Too many tries. Wait {minutes} min and try again.",
+      "locked": "Too many failed tries: the account is locked for about {minutes} min.",
+      "secretsUnavailable": "The master key is missing or wrong, so the authenticator and recovery codes cannot be checked. Fix the master key on the install host.",
+      "weakPassword": "Choose a longer password with more variety, not containing the username.",
+      "sessionExpired": "The session ended. Sign in again.",
+      "setupRequired": "Setup is not finished. Use the setup page instead.",
+      "settingLocked": "This value is set by environment on the install host.",
+      "invalidState": "That cannot be done in the current state. Reload the page.",
+      "validation": "Check the values you entered.",
+      "generic": "Something went wrong. Try again.",
+      "notKeycloak": "The issuer must be a Keycloak realm (for example https://keycloak.example.org/realms/yoda): the portal signs in with Keycloak."
+    },
+    "statusOnly": {
+      "title": "Status only: the master key is not usable",
+      "help": "The master key on the install host does not open the stored secrets, so the authenticator cannot be checked and nothing can be changed here. On the host, run yoda-admin status; put the right key back from the recovery kit (docs/operations.md, section 4a), or, if it is lost for good, run yoda-admin reset-master-key --yes."
+    },
+    "admins": {
+      "title": "Portal admins",
+      "help": "Who may administer the portal. Grant admin when sign-in moved to another identity provider and the usernames differ, or when no admin is left. A username nobody has signed in with yet becomes admin at its first sign-in. Every change is recorded and every admin is told.",
+      "list": "Admins",
+      "none": "No portal admin.",
+      "preGranted": "Admin at first sign-in",
+      "username": "Username (as the identity provider sends it)",
+      "grant": "Grant admin",
+      "revoke": "Revoke",
+      "locked": "BOOTSTRAP_ADMINS is set on the install host: first-sign-in grants are managed there.",
+      "granted": "Admin granted to {username}.",
+      "revoked": "Admin revoked from {username}.",
+      "lastSeen": "last seen {at}",
+      "lastAdmin": "{username} is the last portal admin. Without an admin nobody can manage the portal until admin is granted again here.",
+      "revokeAnyway": "Revoke anyway",
+      "cancel": "Cancel"
+    }
+  },
+  "recoveryBanner": {
+    "title": "A break-glass session is open",
+    "text": "{username} signed in at /recovery at {at}. If this is not you or your team, check the settings audit log now."
+  },
+  "setup": {
+    "title": "Yoda setup",
+    "subtitle": "IT work portal",
+    "installId": "Install ID {id}",
+    "language": "Language",
+    "aside": "This system is not set up yet. This page goes away once setup is finished.",
+    "stepsLabel": "Setup steps",
+    "optionalTag": "Optional",
+    "stepOf": "Step {n} of {of}",
+    "step": {
+      "token": "Setup token",
+      "organisation": "Organisation and web address",
+      "admin": "Break-glass admin",
+      "check": "System check",
+      "signin": "Sign-in (Keycloak)",
+      "email": "Email",
+      "line": "LINE",
+      "telegram": "Telegram",
+      "more": "GitLab, AI and backups",
+      "kit": "Recovery kit",
+      "claim": "Claim admin and finish"
+    },
+    "welcome": {
+      "title": "Setup token accepted",
+      "body": "This setup session lasts until {at}. Progress is saved at every step: you can close the browser and come back."
+    },
+    "insecure": {
+      "title": "This connection is not encrypted (http)",
+      "token": "The setup token travels over the network unencrypted. Open this page through an https reverse proxy or an SSH tunnel:",
+      "session": "This setup session uses plain http, so its cookie is not protected by HTTPS. It is fine on an internal network; an SSH tunnel or https is better.",
+      "proxy": "With an https reverse proxy in front of the portal, set this in .env on the install host:"
+    },
+    "nav": {
+      "back": "Back",
+      "skip": "Skip",
+      "next": "Next",
+      "nextTo": "Next: {step}",
+      "saveOnNext": "Saved when you press Next"
+    },
+    "token": {
+      "kicker": "Welcome",
+      "title": "Enter the setup token to start",
+      "lead": "The token proves you look after the machine Yoda is installed on. It appears only in the core container's log.",
+      "label": "Setup token",
+      "groupsLabel": "Setup token, 5 groups",
+      "segmentLabel": "Group {n}",
+      "help": "You can paste the whole token into the first box; case does not matter. It works once and expires after 24 hours.",
+      "whereTitle": "Where to find it",
+      "where1": "On the install host, in the folder Yoda is installed in, run:",
+      "where2": "Or look in the log:",
+      "termLabel": "Terminal command",
+      "limit": "5 wrong tries per 15 minutes",
+      "submit": "Start setup"
+    },
+    "org": {
+      "kicker": "Step 1 · Organisation",
+      "title": "Organisation and Yoda's web address",
+      "lead": "The name shows in the side menu, emails and notifications. You can change it later in System settings › General.",
+      "name": "Organisation name (Thai) (required)",
+      "nameEn": "Organisation name (English) (optional)",
+      "nameRequired": "Enter the organisation name",
+      "line": "Side-menu footer line (optional)",
+      "lineHelp": "A short line under the menu, such as the department or hospital name",
+      "publicUrl": "Portal web address (public URL) (required)",
+      "publicUrlHelp": "Detected from the address your browser used to open this page. Used in links in email, LINE, Telegram and GitLab, and must match Valid redirect URIs in Keycloak.",
+      "urlMatches": "Matches the detected address",
+      "urlMismatch": "You are reaching Yoda at a different address ({origin}) than the one entered. Check it: otherwise the sign-in at the last step returns to the wrong place.",
+      "urlInvalid": "Enter an address like https://portal.example.org (no ? or #)",
+      "httpWarning": "Allowed for setup on an internal network, but passwords and cookies travel unencrypted, and browsers allow the portal's Keycloak sign-in only over https (or on localhost): after setup, people cannot sign in at a plain http network address. Set up an https reverse proxy and use the https address.",
+      "defaultLocale": "Default language",
+      "defaultLocaleHelp": "Each person can change their own language.",
+      "lockedEnv": "Set by environment on the install host ({name})",
+      "proxyHint": "Reaching Yoda through a reverse proxy (such as nginx doing https)? Set this in .env and restart, so Yoda sees the proxy's address and https:"
+    },
+    "admin": {
+      "kicker": "Step 2 · Break-glass admin",
+      "title": "Create the break-glass admin",
+      "lead": "A local account for the /recovery page when signing in through Keycloak does not work. It can only see and change the sign-in settings, never anyone's work or data.",
+      "hint": "Every administrator is told each time this account is used.",
+      "create": "Create account",
+      "created": "Account {username} created",
+      "totpOn": "Authenticator app (TOTP) on",
+      "totpOff": "No authenticator app",
+      "codesInKit": "The 10 recovery codes go into the recovery kit (step 9) with the master key.",
+      "lockedByKit": "The recovery kit was downloaded, so this account cannot be replaced during setup. After setup, change its password at /recovery.",
+      "replace": "Create a new account instead",
+      "username": "Username",
+      "usernameHelp": "3–32 characters: a-z 0-9 . _ -",
+      "password": "Password",
+      "passwordHelp": "At least 14 characters, not containing the username, and hard to guess (“Good” or better)",
+      "confirm": "Password again",
+      "mismatch": "The passwords do not match",
+      "totpTitle": "Authenticator app (TOTP)",
+      "totpRequired": "Required, because the web address is not this machine (localhost). Scan the QR code with an app such as Google Authenticator or Microsoft Authenticator, then enter the 6-digit code.",
+      "totpRecommended": "Recommended, even though the web address is this machine (localhost).",
+      "useTotp": "Set up an authenticator app",
+      "totpStart": "Show the QR code",
+      "totpCode": "6-digit code from the app",
+      "score": {
+        "0": "Very easy to guess",
+        "1": "Easy to guess",
+        "2": "Fair, not enough",
+        "3": "Good",
+        "4": "Very good"
+      },
+      "warning": {
+        "short": "shorter than 14",
+        "repeat": "repeated characters or parts",
+        "sequence": "a run such as abc or 123",
+        "common": "a common word",
+        "username": "contains the username"
+      },
+      "addTotpTitle": "Set up the authenticator app",
+      "addTotpLead": "The web address is no longer this machine (localhost), so the break-glass admin needs an authenticator app (TOTP). Enter its password, scan the QR code, then enter the 6-digit code.",
+      "addTotpSave": "Turn on the authenticator app"
+    },
+    "check": {
+      "kicker": "Step 3 · System check",
+      "title": "Check the database, file storage and job queue",
+      "lead": "Read-only: nothing is changed. File storage (S3) is set on the install host only.",
+      "hint": "You can always go on; fix anything that failed before going live.",
+      "failedHint": "Something failed: check core's log and the settings on the install host.",
+      "results": "Results",
+      "again": "Check again"
+    },
+    "signin": {
+      "kicker": "Step 4 · Sign-in",
+      "title": "Connect Keycloak for sign-in",
+      "lead": "Everyone signs in to Yoda through your organisation's Keycloak (OpenID Connect). The test must pass before the next step.",
+      "hint": "Save, then press Test. Next opens once the saved values pass.",
+      "passed": "The saved values passed the test",
+      "mode": "Keycloak source",
+      "existing": "Use your organisation's Keycloak",
+      "existingHelp": "Recommended: people use the same account as for the hospital's other systems",
+      "bundled": "Keycloak bundled with Yoda",
+      "bundledHelp": "Not in this release yet",
+      "formTitle": "Connection",
+      "keycloakValues": "Values to put in Keycloak (Clients › yoda-portal)",
+      "redirectUris": "Valid redirect URIs",
+      "postLogoutUris": "Post logout redirect URIs",
+      "webOrigins": "Web origins",
+      "saveThenTest": "This test checks discovery, the JWKS and the client. The real sign-in through Keycloak is the last step."
+    },
+    "optional": {
+      "later": "You can skip this and set it later in System settings.",
+      "lineVerify": "Put this webhook URL in the LINE Developers Console, then press Verify.",
+      "backupsHost": "The backup container picks up a new backup time or number of days kept within a minute. BACKUP_AT or BACKUP_KEEP_DAYS in the install host's .env override them. The test checks the values.",
+      "email": {
+        "kicker": "Step 5 · Email (optional)",
+        "title": "Email notifications (SMTP)",
+        "lead": "Used to email notifications to staff and requesters."
+      },
+      "line": {
+        "kicker": "Step 6 · LINE (optional)",
+        "title": "LINE notifications",
+        "lead": "Notifications through your organisation's LINE Official Account."
+      },
+      "telegram": {
+        "kicker": "Step 7 · Telegram (optional)",
+        "title": "Telegram notifications",
+        "lead": "Enter the bot token, then register the webhook. The webhook secret is generated for you."
+      },
+      "more": {
+        "kicker": "Step 8 · GitLab, AI and backups (optional)",
+        "title": "GitLab, AI and backups",
+        "lead": "Connect GitLab, enter the AI provider keys and check backups."
+      }
+    },
+    "kit": {
+      "kicker": "Step 9 · Recovery kit",
+      "title": "Download the recovery kit",
+      "lead": "One file to recover the system when something goes wrong. Keep it off this machine, and apart from your backups.",
+      "hint": "Download it before going on",
+      "contains1": "The master key, to decrypt the stored secrets when restoring on a new host",
+      "contains2": "10 recovery codes for the break-glass admin (each works once)",
+      "contains3": "What to do when signing in through Keycloak does not work",
+      "once": "It can be downloaded once: Yoda never shows the master key again. Store the file as soon as you have it.",
+      "download": "Download the recovery kit",
+      "downloaded": "Downloaded at {at}",
+      "saveAgain": "Save the file again",
+      "codesTitle": "Recovery codes (also in the file)",
+      "lost": "If the file is lost: copy the master key from the install host (/var/lib/yoda/core/master-key), and make new recovery codes at /recovery after setup.",
+      "stored": "I have stored the recovery kit somewhere safe",
+      "reissued": "A new recovery kit was issued. The recovery codes in the earlier file no longer work: use this one.",
+      "reissueHelp": "This browser already downloaded the recovery kit. If the file is lost, ask for it again until {at} (the earlier codes then stop working).",
+      "reissue": "Issue the recovery kit again"
+    },
+    "claim": {
+      "kicker": "Step 10 · Claim admin",
+      "title": "Sign in through Keycloak to become the first administrator",
+      "lead": "The person who signs in now becomes the portal's first administrator. From then on everything is done with a Keycloak account.",
+      "hint": "Use your own Keycloak account, in the IT staff group.",
+      "lockHint": "Pressing Finish closes setup for good.",
+      "how": "You go to Keycloak's sign-in page and come back here. The tokens are checked as Yoda will check them, and so is your membership of the staff group.",
+      "signIn": "Sign in through Keycloak",
+      "again": "Sign in with another account",
+      "claimed": "{username} is now an administrator",
+      "finish": "Finish setup",
+      "missing": "Still to do: {steps}",
+      "providerError": "Keycloak did not sign you in (cancelled or refused). Check the client's Valid redirect URIs and try again.",
+      "adminNeedsTotp": "The break-glass admin has no authenticator app, but the web address now needs one. Go back to step 2 and set it up; setup cannot finish before that."
+    },
+    "error": {
+      "invalidToken": "The setup token is wrong, expired or already used. Get a new one with yoda-admin setup-token --new.",
+      "rateLimited": "Too many tries. Wait {minutes} min and try again.",
+      "sessionExpired": "The setup session ended. Enter a setup token again (yoda-admin setup-token).",
+      "weakPassword": "The password is too simple. Use at least 14 characters, not repeated, without the username.",
+      "totpRequired": "Set up the authenticator app first: press “Show the QR code”, then enter the 6-digit code.",
+      "invalidCode": "The 6-digit code is wrong. Check the phone's clock and enter a new code.",
+      "secretsUnavailable": "The master key is not usable. Check the master-key file on the install host, then restart core.",
+      "settingLocked": "This value is set on the install host. Change it in .env and restart.",
+      "invalidSettings": "Some values are not valid. Check the fields marked in red.",
+      "done": "Setup is already finished.",
+      "kitDownloaded": "The recovery kit was already downloaded. Only the browser that downloaded it can ask again, within 10 minutes.",
+      "incomplete": "Some required steps are not finished.",
+      "noIssuer": "Keycloak is not set up yet. Go back to step 4.",
+      "noAdmin": "The break-glass admin is not created yet. Go back to step 2.",
+      "provider": "Could not reach Keycloak. Check the issuer URL in step 4.",
+      "generic": "Something went wrong. Try again.",
+      "csrfFailed": "The request was refused (csrf_failed): the address in the browser is not the one the portal sees. Behind a reverse proxy, pass the browser's Host header (nginx: proxy_set_header Host $host;, runbook section 11), use one address in one tab, then enter a setup token again.",
+      "totpEnabled": "The authenticator app is already on."
     }
   }
 }

@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { useI18n } from '#imports'
 
-/** When a saved change takes effect (proposal §5.1): live, reconnect (about a second), or after a restart. */
-defineProps<{ mode: 'live' | 'reconnect' | 'restart' }>()
+/**
+ * When a saved change takes effect (proposal §5.1): live, reconnect (about a second), or after a restart; `minute`
+ * for the backup settings, which the backup container re-reads every minute.
+ */
+defineProps<{ mode: 'live' | 'reconnect' | 'restart' | 'minute' }>()
 const { t } = useI18n()
-const ICONS = { live: 'mdi-flash-outline', reconnect: 'mdi-sync', restart: 'mdi-restart' } as const
+const ICONS = { live: 'mdi-flash-outline', reconnect: 'mdi-sync', restart: 'mdi-restart', minute: 'mdi-timer-outline' } as const
 </script>
 
 <template>

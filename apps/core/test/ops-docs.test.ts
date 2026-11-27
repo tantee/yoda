@@ -1,8 +1,9 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { PROD_COMPOSE_CORE_ENV, SETTING_KEYS, settingDef } from '@yoda/shared'
+import { SETTING_KEYS, byEnvName, settingDef } from '@yoda/shared'
 import { describe, expect, it } from 'vitest'
-import { envSchema } from '../src/config.js'
+import { envSchema, loadConfig } from '../src/config.js'
+import { prodComposeCoreEnv, prodComposeCoreRaw } from './prod-compose-env.js'
 
 // docs/operations.md's environment table stays in sync with what the code and the prod compose read.
 const root = fileURLToPath(new URL('../../../', import.meta.url))
@@ -88,15 +89,25 @@ describe('settings registry (installer proposal §5.1, §9)', () => {
     expect(envOf(() => true).filter((k) => !tableNames.has(k) && !NOT_IN_RUNBOOK.includes(k))).toEqual([])
   })
 
-  it('knows which core variables the prod compose always sets (a default, required, or fixed)', () => {
-    const src = read('docker-compose.prod.yml')
-    const service = /^  core:\n([\s\S]*?)(?=^  \S)/m.exec(src)?.[1] ?? ''
-    const env = /^    environment:\n((?:^      .*\n)+)/m.exec(service)?.[1] ?? ''
-    const always = [...env.matchAll(/^\s+([A-Z][A-Z0-9_]*):\s*(.*)$/gm)]
-      .filter(([, name, value]) => value !== `\${${name}:-}`)
-      .map(([, name]) => name!)
-    expect(always.length).toBeGreaterThan(10)
-    expect([...PROD_COMPOSE_CORE_ENV].sort()).toEqual(always.sort())
+  it('passes every UI-editable core setting as ${NAME:-}, so an unset variable never locks it', () => {
+    const raw = prodComposeCoreRaw()
+    expect(Object.keys(raw).length).toBeGreaterThan(40)
+    // Always set (a default, required, or fixed value): only bootstrap-only settings or non-settings may be.
+    const always = Object.entries(raw).filter(([name, value]) => value !== `\${${name}:-}`).map(([name]) => name)
+    const editable = always.filter((name) => {
+      const d = byEnvName(name)
+      return d && !d.bootstrapOnly
+    })
+    expect(editable).toEqual([])
+    // With an empty .env, nothing that maps to an editable setting reaches core non-empty.
+    const env = prodComposeCoreEnv()
+    expect(Object.entries(env).filter(([k, v]) => v !== '' && byEnvName(k) && !byEnvName(k)!.bootstrapOnly)).toEqual([])
+  })
+
+  it('core starts on the prod compose env with an empty .env (empty values take the defaults)', () => {
+    const env = { ...prodComposeCoreEnv(), DATABASE_URL: 'postgres://yoda:x@postgres:5432/yoda', S3_ACCESS_KEY: 'a', S3_SECRET_KEY: 'b' }
+    const c = loadConfig(env)
+    expect(c).toMatchObject({ oidcClientId: 'yoda-portal', staffGroup: '/it-dev', aiModelDraft: 'anthropic:claude-opus-5-5', aiWorkers: 2, dailyTaskCap: 8, runnerLeaseSeconds: 600, mcpEnabled: true, smtpPort: 587, smtpSecure: false, migrateOnStart: false })
   })
 
   it('has a row for every runbook variable but the server runner ones', () => {
@@ -140,6 +151,30 @@ describe('docs/operations.md commands', () => {
 
   it('does not copy the dev init.sql to the host', () => {
     expect(runbook).not.toContain('init.sql')
+  })
+})
+
+describe('docs/operations.md installer (installer proposal §3.4, §13.2)', () => {
+  it('downloads install.sh pinned, checks it, then runs it (never curl | sh)', () => {
+    expect(runbook).toContain('curl -fsSLO https://files.example.org/yoda/releases/1.2.0/install.sh')
+    expect(runbook).toContain('sh install.sh --version 1.2.0 --dir /srv/yoda')
+    expect(runbook).toMatch(/minisign -Vm SHA256SUMS/)
+    expect(runbook).not.toMatch(/curl[^\n`]*\|\s*(ba)?sh\b/)
+  })
+
+  it('covers the setup token, the recovery kit, the master key and the troubleshooting entries', () => {
+    for (const s of [
+      'dc exec core yoda-admin setup-token',
+      'Store the recovery kit',
+      '## 4a. Bootstrap volume and master key',
+      '**Setup token lost or expired.**',
+      '**Locked out of Keycloak**',
+      '**Wrong or missing master key**',
+      '"Set by environment" and cannot be edited',
+      'YODA_TRUSTED_PROXY_HOPS=2',
+      'YODA_RELEASE_SIGNING_KEY',
+      'YODA_RELEASE_UPLOAD_URL',
+    ]) expect(runbook, s).toContain(s)
   })
 })
 

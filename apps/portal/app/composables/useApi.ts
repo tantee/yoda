@@ -1,11 +1,13 @@
+import type Keycloak from 'keycloak-js'
 import { loginLocale } from '~/utils/loginLocale'
-import { sessionEnded } from '~/utils/session'
+import { requireKeycloak, sessionEnded } from '~/utils/session'
 
 export function useApi() {
-  const { $keycloak } = useNuxtApp()
+  const kc = useNuxtApp().$keycloak as Keycloak | null
   return $fetch.create({
     baseURL: '/api',
     async onRequest({ options }) {
+      const $keycloak = requireKeycloak(kc)
       try {
         await $keycloak.updateToken(30)
       } catch {

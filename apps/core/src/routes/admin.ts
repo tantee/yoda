@@ -6,7 +6,7 @@ import { departmentMonthUsage } from '../ai/gateway.js'
 import type { Db } from '../db/client.js'
 import { departmentSettings } from '../db/schema.js'
 
-async function funMode(db: Db): Promise<boolean> {
+export async function funMode(db: Db): Promise<boolean> {
   const [row] = await db.select({ funMode: departmentSettings.funMode }).from(departmentSettings).where(eq(departmentSettings.id, 1))
   return row?.funMode ?? true
 }

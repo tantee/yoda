@@ -162,6 +162,13 @@
       "when": 1795677714118,
       "tag": "0022_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1795704181254,
+      "tag": "0023_break_glass",
+      "breakpoints": true
     }
   ]
 }

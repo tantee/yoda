@@ -33,11 +33,9 @@ export const SettingView = z.object({
   /**
    * Env-locked settings only. `importable`: the env value is copied into the database on boot (D4), so removing
    * the variable keeps it; false for a secret when the master key is not usable or YODA_SETTINGS_IMPORT=false
-   * (removing it then disconnects the service). `composeDefault`: the prod compose file passes the variable with
-   * a default (or requires it), so it stays set in env until the install uses generated settings.
+   * (removing it then disconnects the service).
    */
   importable: z.boolean().optional(),
-  composeDefault: z.boolean().optional(),
   /** Non-secrets only (absent when unset). */
   value: z.unknown().optional(),
   /** Secrets only. `unavailable`: stored, but the master key cannot decrypt it (recovery). */
@@ -173,7 +171,7 @@ export const GeneratedSecret = z.object({ key: z.string(), value: z.string(), ve
 export type GeneratedSecret = z.infer<typeof GeneratedSecret>
 
 /**
- * Every fixed result code a settings test can return (core `settings/tests.ts` and `settings/outbound.ts`), so the
+ * Every fixed result code a settings test can return (core `settings/tests.ts`, `settings/outbound.ts` and `local/oidc-change.ts`), so the
  * portal can word each one. `http_<status>` and `smtp_<reply code>` carry a number and are matched by pattern.
  * A portal test reads core's sources and fails when a new code is missing here.
  */
@@ -186,5 +184,10 @@ export const SETTINGS_TEST_CODES = [
   // per action
   'issuer_mismatch', 'no_keys', 'client_rejected', 'smtp_error', 'no_address', 'no_sender', 'webhook_not_registered',
   'missing_scope', 'model_not_found', 'provider_unavailable', 'no_embeddings',
+  // the /recovery test sign-in of a pending OIDC change (core local/oidc-change.ts)
+  'state_mismatch', 'expired', 'pending_changed', 'code_rejected', 'token_invalid', 'nonce_mismatch', 'azp_mismatch',
+  'typ_mismatch', 'claims_missing', 'groups_missing', 'not_admin',
+  // the setup wizard's system check and claim sign-in (core routes/setup-wizard.ts)
+  'no_pgvector', 'not_staff', 'not_staff_no_groups',
 ] as const
 export type SettingsTestCode = (typeof SETTINGS_TEST_CODES)[number]

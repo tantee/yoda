@@ -4,12 +4,13 @@ import { useDisplay } from 'vuetify'
 import { buildCrumbs, type MetaCrumb } from '~/utils/breadcrumbs'
 import { KONAMI_TOAST_KEY } from '~/utils/funMode'
 import { bottomLabelKey, bottomNavFor, isNavActive, navCount, navGroupsFor } from '~/utils/nav'
+import RecoveryBanner from '~/components/settings/RecoveryBanner.vue'
 
 const { me } = useMe()
 const { counts, refreshIfStale: refreshCounts } = useCounts()
 const { t } = useI18n()
 const route = useRoute()
-const orgLine = useRuntimeConfig().public.orgLine as string
+const orgLine = usePublicConfig().values().orgLine
 const meError = useState<string>('meError', () => '')
 const pageCrumbs = usePageCrumbs()
 
@@ -123,7 +124,10 @@ onBeforeUnmount(() => {
         <v-progress-circular indeterminate color="primary" size="32" />
         <span class="text-body-2 text-medium-emphasis">{{ t('shell.signingIn') }}</span>
       </div>
-      <slot v-else />
+      <template v-else>
+        <RecoveryBanner v-if="me.isAdmin" :path="route.path" />
+        <slot />
+      </template>
     </v-container>
   </v-main>
   <v-bottom-navigation v-if="me && mobile" grow height="64" class="bottom-nav" :aria-label="t('shell.mainMenu')" data-testid="bottom-nav">

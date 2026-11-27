@@ -160,7 +160,6 @@ A one-shot `init` service, built from the core image, runs before everything els
   s3-access-key           (0600)
   s3-secret-key           (0600)
   setup-token             (0600) written by core while setup is incomplete; deleted when setup completes
-  install-id              (0644) a random UUID naming this install (recovery kit, logs)
 ```
 
 Rules, in order, for each value:
@@ -179,7 +178,7 @@ Compose changes (sketch, the real diff comes with phase 3):
 ```yaml
 services:
   init:
-    image: ${YODA_IMAGE_PREFIX:-yoda}/core:${YODA_VERSION:?…}
+    image: ${YODA_IMAGE_PREFIX:?…}/core:${YODA_VERSION:?…}
     command: ['node', 'dist/init.js']
     environment:              # every one optional; set only to override generation
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
@@ -281,8 +280,11 @@ Without the script, the same is: copy the bundle, `docker compose -f docker-comp
 - **Losing it** means the encrypted settings cannot be read; everything else (requests, chats, files) is intact.
   Core starts in recovery mode, lists the secrets it cannot decrypt, and the admin re-enters them. It is an
   inconvenience, not data loss, and the docs say so plainly.
-- **Recovery kit.** The wizard's last step (4.2, step 9) produces `yoda-recovery-<install-id>.txt`: install id,
-  public URL, date, the master key, the break-glass username and its recovery codes, and short instructions.
+- **Recovery kit.** The wizard's last step (4.2, step 9) produces `yoda-recovery-kit-<first 8 of the install
+  id>.txt` (the install id is `setup_state.install_id` in the database; the bootstrap volume has none): install id,
+  public URL, date, the master key, the break-glass username and its recovery codes, the Postgres password and the
+  storage keys of the bundled services (for a lost bootstrap volume next to a surviving database; an external
+  database or bucket is only named), and short instructions.
   Warnings on the page and in the file: *print it or store it in the organisation's password vault; anyone with
   this file and a database backup can read every secret; it is shown once.* Setup cannot finish until the person
   ticks "I have stored the recovery kit". Admin → Security can produce a new kit later (break-glass re-auth;

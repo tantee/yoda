@@ -8,7 +8,7 @@ definePageMeta({ crumbs: [{ key: 'notifications.settings.title' }] })
 
 const { t } = useI18n()
 const api = useApi()
-const lineAddFriendUrl = useRuntimeConfig().public.lineAddFriendUrl as string
+const lineAddFriendUrl = usePublicConfig().values().lineAddFriendUrl
 const my = ref<MyNotificationPrefs | null>(null)
 const error = ref('')
 const saved = ref(false)

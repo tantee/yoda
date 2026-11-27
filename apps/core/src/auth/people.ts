@@ -1,7 +1,7 @@
 import { sql } from 'drizzle-orm'
 import { z } from 'zod'
 import type { Config } from '../config.js'
-import type { Db } from '../db/client.js'
+import type { Db, Tx } from '../db/client.js'
 import { people } from '../db/schema.js'
 
 export type PersonRow = typeof people.$inferSelect
@@ -25,7 +25,7 @@ export type TokenClaims = z.infer<typeof TokenClaims>
  * `is_admin` is only set on insert (bootstrap); it is never touched on update.
  */
 export async function upsertPersonFromClaims(
-  db: Db,
+  db: Db | Tx,
   claims: TokenClaims,
   config: Config,
 ): Promise<PersonRow> {

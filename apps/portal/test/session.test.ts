@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { sessionEnded } from '../app/utils/session'
+import { requireKeycloak, sessionEnded } from '../app/utils/session'
 
 const now = Date.UTC(2026, 10, 26, 3, 0, 0)
 const sec = Math.ceil(now / 1000)
@@ -23,5 +23,14 @@ describe('sessionEnded', () => {
     // the browser clock) has already passed for Keycloak; at +120 it runs ahead and an exp 60s ago is still a minute off.
     expect(sessionEnded({ refreshToken: 'r', refreshTokenParsed: { exp: sec + 60 }, timeSkew: -120 }, now)).toBe(true)
     expect(sessionEnded({ refreshToken: 'r', refreshTokenParsed: { exp: sec - 60 }, timeSkew: 120 }, now)).toBe(false)
+  })
+})
+
+describe('requireKeycloak', () => {
+  it('refuses with not_signed_in where the boot plugin started no Keycloak (/setup, /recovery, boot error)', () => {
+    expect(() => requireKeycloak(null)).toThrow('not_signed_in')
+    expect(() => requireKeycloak(undefined)).toThrow('not_signed_in')
+    const kc = { token: 't' }
+    expect(requireKeycloak(kc)).toBe(kc)
   })
 })

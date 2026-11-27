@@ -1,9 +1,11 @@
+import { readFileSync } from 'node:fs'
 import { z } from 'zod'
 
 export type Config = {
   port: number
   databaseUrl: string
-  oidcIssuer: string
+  /** Unset until sign-in is configured (setup mode): every bearer token is refused with `not_configured`. */
+  oidcIssuer?: string
   oidcClientId: string
   /** Where signing keys are fetched, when not the issuer's certs endpoint; the issuer check still uses `oidcIssuer`. */
   oidcJwksUrl?: string
@@ -58,40 +60,53 @@ export type Config = {
   telegramWebhookSecret?: string
   /** Telegram Bot API base URL (no trailing slash); a fake in dev and tests. */
   telegramApiUrl: string
+  /** Dev only: report setup as done without the wizard (YODA_DEV_SKIP_SETUP). */
+  devSkipSetup?: boolean
+  /**
+   * Proxies in front of core whose X-Forwarded-For entry is believed (YODA_TRUSTED_PROXY_HOPS, default 1: the
+   * portal's /api proxy). Decides the client address for rate limits, the audit log and alerts.
+   */
+  trustedProxyHops?: number
 }
 
 const modelId = z.string().regex(/^(anthropic|openai):.+$/, 'must be provider:model with provider anthropic or openai')
 const optional = <T extends z.ZodTypeAny>(s: T) =>
   z.preprocess((v) => (v === '' ? undefined : v), s.optional())
+/**
+ * An empty value counts as unset (its default applies), as in the settings store: the prod compose passes
+ * `${NAME:-}`, so a variable missing from .env reaches core as '' and the setting stays editable in the UI.
+ */
+const emptyUnset = <T extends z.ZodTypeAny>(s: T) => z.preprocess((v) => (v === '' ? undefined : v), s)
 
 /** The environment core reads; exported so the runbook's variable table can be checked against it. */
 export const envSchema = z.object({
-  PORT: z.coerce.number().int().min(0).max(65535).default(4000),
+  PORT: emptyUnset(z.coerce.number().int().min(0).max(65535).default(4000)),
   DATABASE_URL: z.string().min(1),
-  OIDC_ISSUER: z.string().url(),
-  OIDC_CLIENT_ID: z.string().min(1),
+  // Optional (setup mode, R4): without it core starts and refuses every bearer token until sign-in is set up.
+  OIDC_ISSUER: optional(z.string().url()),
+  OIDC_CLIENT_ID: emptyUnset(z.string().min(1).default('yoda-portal')),
   OIDC_JWKS_URL: optional(z.string().url()),
   MIGRATE_ON_START: z.preprocess((v) => (v === '' ? undefined : v), z.enum(['true', 'false']).default('true')),
-  STAFF_GROUP: z.string().min(1).default('/it-dev'),
+  STAFF_GROUP: emptyUnset(z.string().min(1).default('/it-dev')),
   BOOTSTRAP_ADMINS: z.string().default(''),
   ANTHROPIC_API_KEY: optional(z.string()),
   OPENAI_API_KEY: optional(z.string()),
   OPENAI_BASE_URL: optional(z.string().url()),
-  AI_MODEL_DRAFT: modelId.default('anthropic:claude-opus-5-5'),
-  AI_MODEL_FAST: modelId.default('anthropic:claude-haiku-5-5'),
+  AI_MODEL_DRAFT: emptyUnset(modelId.default('anthropic:claude-opus-5-5')),
+  AI_MODEL_FAST: emptyUnset(modelId.default('anthropic:claude-haiku-5-5')),
   AI_EMBEDDING_MODEL: optional(modelId),
-  S3_ENDPOINT: z.string().url().default('http://localhost:9000'),
-  S3_REGION: z.string().min(1).default('us-east-1'),
-  S3_BUCKET: z.string().min(1).default('yoda'),
+  S3_ENDPOINT: emptyUnset(z.string().url().default('http://localhost:9000')),
+  S3_REGION: emptyUnset(z.string().min(1).default('us-east-1')),
+  S3_BUCKET: emptyUnset(z.string().min(1).default('yoda')),
   S3_ACCESS_KEY: z.string().min(1),
   S3_SECRET_KEY: z.string().min(1),
-  AI_WORKERS: z.coerce.number().int().min(1).max(32).default(2),
-  DAILY_TASK_CAP: z.coerce.number().int().min(1).max(1000).default(8),
+  AI_WORKERS: emptyUnset(z.coerce.number().int().min(1).max(32).default(2)),
+  DAILY_TASK_CAP: emptyUnset(z.coerce.number().int().min(1).max(1000).default(8)),
   GITLAB_URL: optional(z.string().url()),
   GITLAB_TOKEN: optional(z.string()),
   GITLAB_WEBHOOK_SECRET: optional(z.string().min(16)),
-  PORTAL_URL: z.string().url().default('http://localhost:3000'),
-  RUNNER_LEASE_SECONDS: z.coerce.number().int().min(180).max(86400).default(600),
+  PORTAL_URL: z.preprocess((v) => (v === '' ? undefined : v), z.string().url().default('http://localhost:3000')),
+  RUNNER_LEASE_SECONDS: emptyUnset(z.coerce.number().int().min(180).max(86400).default(600)),
   MCP_ENABLED: z.preprocess((v) => (v === '' ? undefined : v), z.enum(['true', 'false']).default('true')),
   SMTP_HOST: optional(z.string()),
   SMTP_PORT: z.preprocess((v) => (v === '' ? undefined : v), z.coerce.number().int().min(1).max(65535).default(587)),
@@ -110,6 +125,13 @@ export const envSchema = z.object({
   // key does not stop core; it starts in the recovery state instead.
   YODA_MASTER_KEY: optional(z.string()),
   YODA_MASTER_KEY_FILE: optional(z.string()),
+  // The bootstrap volume's aggregate file (written by the `init` service): fills DATABASE_URL and the S3 keys when
+  // env leaves them empty (applyBootstrapFile). Read before loadConfig, not mapped into Config.
+  YODA_BOOTSTRAP_FILE: optional(z.string()),
+  // Dev only: setup counts as done without the wizard, so the env-only dev flow stays the default.
+  YODA_DEV_SKIP_SETUP: z.preprocess((v) => (v === '' ? undefined : v), z.enum(['true', 'false']).default('false')),
+  // Proxies in front of core whose X-Forwarded-For entry counts: 1 = the portal only, 2 = portal behind a reverse proxy.
+  YODA_TRUSTED_PROXY_HOPS: z.preprocess((v) => (v === '' ? undefined : v), z.coerce.number().int().min(1).max(5).default(1)),
   YODA_SETTINGS_IMPORT: z.preprocess((v) => (v === '' ? undefined : v), z.enum(['true', 'false']).default('true')),
   // Dev and tests only: the settings tests may reach loopback (the fakes). Read by server.ts, not mapped into Config.
   YODA_OUTBOUND_ALLOW_LOOPBACK: z.preprocess((v) => (v === '' ? undefined : v), z.enum(['true', 'false']).default('false')),
@@ -128,7 +150,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
   return {
     port: e.PORT,
     databaseUrl: e.DATABASE_URL,
-    oidcIssuer: e.OIDC_ISSUER.replace(/\/+$/, ''),
+    oidcIssuer: e.OIDC_ISSUER?.replace(/\/+$/, ''),
     oidcClientId: e.OIDC_CLIENT_ID,
     oidcJwksUrl: e.OIDC_JWKS_URL?.replace(/\/+$/, ''),
     migrateOnStart: e.MIGRATE_ON_START === 'true',
@@ -168,5 +190,41 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     telegramBotUsername: e.TELEGRAM_BOT_USERNAME?.replace(/^@/, ''),
     telegramWebhookSecret: e.TELEGRAM_WEBHOOK_SECRET,
     telegramApiUrl: e.TELEGRAM_API_URL.replace(/\/+$/, ''),
+    devSkipSetup: e.YODA_DEV_SKIP_SETUP === 'true',
+    trustedProxyHops: e.YODA_TRUSTED_PROXY_HOPS,
   }
+}
+
+/** The values the bootstrap file may supply; env always wins (installer proposal §3.2). */
+export const BOOTSTRAP_FILE_KEYS = ['DATABASE_URL', 'S3_ACCESS_KEY', 'S3_SECRET_KEY'] as const
+
+/** `KEY=value` lines (no quoting, no expansion); blank lines and `#` comments are skipped. */
+export function parseBootstrapEnv(text: string): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const line of text.split(/\r?\n/)) {
+    const m = /^([A-Z][A-Z0-9_]*)=(.*)$/.exec(line)
+    if (m) out[m[1]!] = m[2]!
+  }
+  return out
+}
+
+/**
+ * Fills DATABASE_URL, S3_ACCESS_KEY and S3_SECRET_KEY from the file YODA_BOOTSTRAP_FILE names when env leaves
+ * them unset or empty (the prod compose passes `${VAR:-}`). The `init` service derives DATABASE_URL there from the
+ * generated (or env-given) Postgres password. Changes `env` in place; a value set in env is never replaced. The
+ * file is read only when a value is missing, and an unreadable file names the path's error code, never a value.
+ */
+export function applyBootstrapFile(env: NodeJS.ProcessEnv, readFile: (path: string) => string = (p) => readFileSync(p, 'utf8')): void {
+  const path = env.YODA_BOOTSTRAP_FILE
+  if (!path) return
+  const missing = BOOTSTRAP_FILE_KEYS.filter((k) => !env[k])
+  if (!missing.length) return
+  let values: Record<string, string>
+  try {
+    values = parseBootstrapEnv(readFile(path))
+  } catch (err) {
+    const code = (err as { code?: string }).code ?? 'read_error'
+    throw new Error(`YODA_BOOTSTRAP_FILE: cannot read ${path} (${code}); did the init service run?`)
+  }
+  for (const k of missing) if (values[k]) env[k] = values[k]
 }

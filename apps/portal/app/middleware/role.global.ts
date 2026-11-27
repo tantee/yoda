@@ -1,7 +1,13 @@
 import type { MyRequest } from '@yoda/shared'
 import { forbiddenFor, workItemIdOf } from '~/utils/nav'
+import { bootRedirect, isLocalAuthPath } from '~/utils/publicConfig'
 
 export default defineNuxtRouteMiddleware(async (to) => {
+  // /setup and /recovery never use Keycloak (useMe reads $keycloak); nor does the boot error screen.
+  const { config, bootError } = usePublicConfig()
+  const redirect = bootRedirect(to.path, config.value, bootError.value)
+  if (redirect) return navigateTo(redirect, { replace: true })
+  if (isLocalAuthPath(to.path) || bootError.value) return
   const { me, refresh } = useMe()
   const meError = useState<string>('meError', () => '')
   if (!me.value) {

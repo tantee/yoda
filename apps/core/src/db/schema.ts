@@ -863,8 +863,8 @@ export const settingsAudit = pgTable(
 )
 
 /**
- * The install's single state row (§10.1 `install_state`, minus the setup-token columns Task 7 adds): install id,
- * whether setup is done and how, the master key canary and the forced recovery switch.
+ * The install's single state row (§10.1 `install_state`): install id, whether setup is done and how, the master key
+ * canary, the forced recovery switch, the setup token (its SHA-256 only) and the staged OIDC change (8.6).
  */
 export const setupState = pgTable(
   'setup_state',
@@ -880,9 +880,75 @@ export const setupState = pgTable(
     keyCanary: bytea('key_canary'),
     keyCanaryKeyId: text('key_canary_key_id'),
     recoveryMode: boolean('recovery_mode').notNull().default(false),
+    /** SHA-256 of the current setup token (8.2); null once it is used or setup is done. */
+    setupTokenHash: bytea('setup_token_hash'),
+    setupTokenExpires: timestamp('setup_token_expires', { withTimezone: true }),
+    /** A staged issuer / client id / JWKS URL change from /recovery and its test sign-in (shared `OidcPending`). */
+    oidcPending: jsonb('oidc_pending'),
+    /** The sign-in values before the last apply, kept 7 days for one-click rollback (shared `OidcRollback`). */
+    oidcRollback: jsonb('oidc_rollback'),
   },
   (t) => [
     check('setup_state_single_row', sql`${t.id} = 1`),
     check('setup_state_source_check', sql`${t.setupCompletedSource} is null or ${t.setupCompletedSource} in ('setup', 'upgrade')`),
   ],
+)
+
+/**
+ * The break-glass admin (§7.2, §10.1 `local_admins`): a local account for /setup and /recovery only, never a
+ * portal session. The password is an argon2id PHC string (R1); the TOTP seed is encrypted with the master key
+ * (one packed envelope, `totp_key_id` names the key). `totp_last_step` is the last accepted 30 s step, so a code
+ * cannot be used twice (R2).
+ */
+export const localAdmins = pgTable('local_admins', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  username: text('username').notNull().unique(),
+  passwordHash: text('password_hash').notNull(),
+  totpSecret: bytea('totp_secret'),
+  totpKeyId: text('totp_key_id'),
+  totpEnabled: boolean('totp_enabled').notNull().default(false),
+  totpLastStep: bigint('totp_last_step', { mode: 'number' }),
+  /** Set by `yoda-admin reset-break-glass`: a temporary password, changed before anything else. */
+  mustChangePassword: boolean('must_change_password').notNull().default(false),
+  failedAttempts: integer('failed_attempts').notNull().default(0),
+  lockedUntil: timestamp('locked_until', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  passwordChangedAt: timestamp('password_changed_at', { withTimezone: true }).notNull().defaultNow(),
+  lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
+})
+
+/** Single-use recovery codes: HMAC-SHA-256 under a key derived from the master key (R2), looked up by hash. */
+export const localRecoveryCodes = pgTable(
+  'local_recovery_codes',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    adminId: uuid('admin_id')
+      .notNull()
+      .references(() => localAdmins.id, { onDelete: 'cascade' }),
+    codeHash: bytea('code_hash').notNull(),
+    usedAt: timestamp('used_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex('local_recovery_codes_hash').on(t.codeHash)],
+)
+
+/**
+ * Setup and recovery cookie sessions (§8.3): only the SHA-256 of the cookie value is kept, bound to the user
+ * agent. `data` holds the session's short-lived state (a TOTP seed being enrolled, encrypted; an OIDC test
+ * sign-in's state, nonce and PKCE verifier).
+ */
+export const localSessions = pgTable(
+  'local_sessions',
+  {
+    idHash: bytea('id_hash').primaryKey(),
+    kind: text('kind').notNull(),
+    adminId: uuid('admin_id').references(() => localAdmins.id, { onDelete: 'cascade' }),
+    uaHash: bytea('ua_hash'),
+    ip: inet('ip'),
+    data: jsonb('data').notNull().default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    lastSeen: timestamp('last_seen', { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [check('local_sessions_kind_check', sql`${t.kind} in ('setup', 'recovery')`), index('local_sessions_expires').on(t.expiresAt)],
 )

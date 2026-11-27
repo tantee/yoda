@@ -154,7 +154,7 @@ export function isLoopback(ip: string): boolean {
 }
 
 /** RFC 1918, ULA and loopback: where plain http is acceptable ("internal" hosts). */
-function isInternal(ip: string): boolean {
+export function isInternalAddress(ip: string): boolean {
   if (isIPv4(ip)) {
     const [a, b] = v4Octets(ip) as [number, number]
     return a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || a === 127
@@ -162,7 +162,7 @@ function isInternal(ip: string): boolean {
   const g = v6Groups(ip)
   if (!g) return false
   if (g.slice(0, 7).every((x) => x === 0) && g[7] === 1) return true
-  if (g.slice(0, 5).every((x) => x === 0) && g[5] === 0xffff) return isInternal(v4Of(g[6]!, g[7]!))
+  if (g.slice(0, 5).every((x) => x === 0) && g[5] === 0xffff) return isInternalAddress(v4Of(g[6]!, g[7]!))
   return (g[0]! & 0xfe00) === 0xfc00
 }
 
@@ -218,7 +218,7 @@ export async function resolveOutbound(rawHost: string, policy: OutboundPolicy = 
   return {
     address: first.address,
     family: first.family,
-    private: addrs.every((a) => isInternal(a.address)),
+    private: addrs.every((a) => isInternalAddress(a.address)),
     addresses: addrs.map((a) => ({ address: a.address, family: a.family })),
   }
 }

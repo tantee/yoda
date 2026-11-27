@@ -20,6 +20,8 @@ import {
   encryptSecret,
   fingerprint,
   makeCanary,
+  openBlob,
+  sealBlob,
   type MasterKey,
   type MasterKeyLoad,
 } from './crypto.js'
@@ -136,6 +138,8 @@ for (const k of SETTING_KEYS) for (const b of settingDef(k).boundTo ?? []) BOUND
 
 /** Read-only settings the system fills itself (`setDerived`). */
 const DERIVED_KEYS = new Set<SettingKey>(['telegram.botUsername'])
+/** Read-only in the UI, written by the break-glass admin at /recovery (`setFromRecovery`): admin pre-grants. */
+const RECOVERY_KEYS = new Set<SettingKey>(['oidc.bootstrapAdmins'])
 
 type Stored = {
   value?: unknown
@@ -187,10 +191,17 @@ export class SettingsStore {
   private loadedAt = 0
   private keyLoadedAt = new Map<SettingKey, number>()
 
+  /** Decrypt-only: the key a rotation replaced (`<key file>.prev`), until `rotate-master-key --finish`. */
+  private prev: MasterKey | null = null
+  /** Re-reads the master key (its file) when the canary names another key: a rotation by `yoda-admin`. */
+  private keyLoader: (() => MasterKeyLoad) | null = null
+  /** Boot found the key file stale and runs on the previous key (`.prev`), which opens the canary. */
+  private onPreviousKey = false
+
   private constructor(
     private readonly db: Db,
     private readonly env: NodeJS.ProcessEnv,
-    private readonly mk: MasterKey | null,
+    private mk: MasterKey | null,
     private status: KeyStatus,
     private readonly log: SettingsLog,
     /** The NOTIFY channel; payloads carry key names only, never values. */
@@ -205,6 +216,14 @@ export class SettingsStore {
     db: Db
     env: NodeJS.ProcessEnv
     masterKey: MasterKeyLoad
+    /** The previous key (rotation, §3.5): decrypt-only; a key that is not 32 bytes or equals the current one is ignored. */
+    previousKey?: MasterKey | null
+    /**
+     * Reads the key again (the key file); when a reload finds the canary written by another key (a rotation by
+     * `yoda-admin`), the store switches to the key this returns if that one passes the canary. Without it, a
+     * rotation applies at the next restart.
+     */
+    keyLoader?: () => MasterKeyLoad
     log?: SettingsLog
     channel?: string
   }): Promise<SettingsStore> {
@@ -214,6 +233,8 @@ export class SettingsStore {
     if (opts.masterKey.status !== 'ok') log.warn({ reason: opts.masterKey.reason }, `master key ${opts.masterKey.status}`)
     else if (opts.masterKey.warning) log.warn({ keyId: opts.masterKey.key.id }, opts.masterKey.warning)
     const store = new SettingsStore(opts.db, opts.env, mk, status, log, opts.channel ?? SETTINGS_CHANNEL)
+    if (opts.previousKey && opts.previousKey.id !== mk?.id) store.prev = opts.previousKey
+    store.keyLoader = opts.keyLoader ?? null
     store.parseEnv()
     await store.checkKey()
     await store.importFromEnv()
@@ -256,6 +277,30 @@ export class SettingsStore {
     return this.status === 'ok' ? this.mk!.id : null
   }
 
+  /** The decrypt-only previous key's id (a rotation not finished), else null. */
+  get previousKeyId(): string | null {
+    return this.status === 'ok' ? (this.prev?.id ?? null) : null
+  }
+
+  /** `yoda-admin recovery on` (7.4): the portal shows only /recovery and the portal API answers 503. */
+  /**
+   * The key that was loaded as current failed the canary and core runs on the previous key instead (`.prev`; an
+   * env install whose `.env` still has the old key). `rotate-master-key --finish` must not delete `.prev` then.
+   */
+  get runsOnPreviousKey(): boolean {
+    return this.onPreviousKey
+  }
+
+  get recoveryForced(): boolean {
+    return this.recoveryMode
+  }
+
+  /** The keys secrets may be decrypted with: the current one first, then the previous one. */
+  private get keyring(): MasterKey[] {
+    if (this.status !== 'ok') return []
+    return this.prev ? [this.mk!, this.prev] : [this.mk!]
+  }
+
   /** Env secrets are copied into the database on boot (D4): a usable master key and YODA_SETTINGS_IMPORT not false. */
   get importsSecrets(): boolean {
     return this.envValues.get('security.settingsImport') !== false && this.status === 'ok'
@@ -281,6 +326,13 @@ export class SettingsStore {
 
   get installId(): string {
     return this.state.installId
+  }
+
+  /** The env variables that set a setting (locked in the UI), sorted: the boot log names them (T14). */
+  get envLockedNames(): string[] {
+    return SETTING_KEYS.filter((k) => this.envSet.has(k))
+      .map((k) => settingDef(k).envName!)
+      .sort()
   }
 
   /** The setting is set in env (and so locked there). */
@@ -350,6 +402,40 @@ export class SettingsStore {
   }
 
   /**
+   * The break-glass admin's write path (/recovery, source `recovery`) for the read-only settings it looks after:
+   * the admin pre-grants (`oidc.bootstrapAdmins`). Env and bootstrap locks still apply. Audited as the actor.
+   */
+  async setFromRecovery(key: SettingKey, value: unknown, actor: SettingActor): Promise<SettingInfo> {
+    if (!RECOVERY_KEYS.has(key)) throw new SettingLockedError(key, this.lockOf(settingDef(key)) ?? 'readonly')
+    await this.apply([{ key, value }], actor, { recovery: true })
+    return this.info(key)
+  }
+
+  /**
+   * A pre-grant was used (§7.4, T4): the person it named was just created as an admin, so the username leaves
+   * `oidc.bootstrapAdmins` in the caller's transaction (the one that inserted the person), audited as `system`.
+   * Reads the locked row, so two first sign-ins cannot both consume it. False when there was nothing to remove.
+   * Call `reloadSetting` after the commit.
+   */
+  async consumePreGrant(tx: Tx, username: string): Promise<boolean> {
+    const key: SettingKey = 'oidc.bootstrapAdmins'
+    const d = settingDef(key)
+    if (this.lockOf(d) !== 'readonly') return false
+    const cur = await this.lockRow(tx, key, undefined)
+    const list = this.rowValue(d, cur) as string[]
+    if (!list.includes(username)) return false
+    await this.write(tx, d, list.filter((u) => u !== username), { ...SYSTEM, source: 'recovery' }, 'set', cur, null)
+    await tx.insert(settingsAudit).values({ ...this.auditActor({ ...SYSTEM, source: 'recovery' }), action: 'recovery.pregrant_used', key, newValue: { username } })
+    await this.notify(tx, [key])
+    return true
+  }
+
+  /** Reads one setting again (after a write in a caller's transaction). */
+  async reloadSetting(key: SettingKey): Promise<void> {
+    await this.reload(key)
+  }
+
+  /**
    * The internal write path for a read-only value the system derives (the Telegram bot username from `getMe`):
    * the UI lock does not apply, env and bootstrap locks still do. Audited as `system`.
    */
@@ -369,9 +455,9 @@ export class SettingsStore {
    * secrets bound to it are cleared in the same transaction, unless the same call sets them. A bound secret set
    * in env cannot be cleared, so moving its endpoint is refused (`BoundSecretInEnvError`).
    */
-  async apply(changes: SettingChange[], actor: SettingActor, opts: { derived?: boolean } = {}): Promise<{ changed: SettingKey[]; cleared: SettingKey[] }> {
+  async apply(changes: SettingChange[], actor: SettingActor, opts: { derived?: boolean; recovery?: boolean } = {}): Promise<{ changed: SettingKey[]; cleared: SettingKey[] }> {
     const plan = changes.map((c) => {
-      const d = this.writable(c.key, opts.derived === true)
+      const d = this.writable(c.key, opts.derived ? DERIVED_KEYS : opts.recovery ? RECOVERY_KEYS : null)
       if (c.value === null) return { d, c, value: null }
       // Every secret schema is a string schema, so a non-string secret is a ZodError (400) here.
       const value: unknown = d.schema.parse(c.value)
@@ -434,6 +520,74 @@ export class SettingsStore {
     return parsed.success ? parsed.data : d.default
   }
 
+  /**
+   * Encrypts a value that lives outside `settings` (the break-glass TOTP seed) under the master key; null when the
+   * key is not usable. The master key itself never leaves the store.
+   */
+  seal(aad: string, plaintext: string): { blob: Buffer; keyId: string } | null {
+    return this.status === 'ok' ? sealBlob(this.mk!, aad, plaintext) : null
+  }
+
+  /** Opens a `seal` blob; null when the key is not usable, is not the blob's key, or the blob does not open. */
+  open(aad: string, blob: Buffer, keyId: string): string | null {
+    const mk = this.keyring.find((k) => k.id === keyId)
+    if (!mk) return null
+    try {
+      return openBlob(mk, aad, blob, keyId)
+    } catch {
+      return null
+    }
+  }
+
+  /** Runs `fn` with the master key (break-glass recovery-code HMACs); null when the key is not usable. */
+  withKey<T>(fn: (mk: MasterKey) => T): T | null {
+    return this.status === 'ok' ? fn(this.mk!) : null
+  }
+
+  /**
+   * Runs `fn` with the current key and every key a secret may still be under (current first, then the previous
+   * one): `yoda-admin rotate-master-key`. Null when the key is not usable. The keys never leave the callback's use.
+   */
+  withKeyring<T>(fn: (current: MasterKey, all: MasterKey[]) => T): T | null {
+    return this.status === 'ok' ? fn(this.mk!, this.keyring) : null
+  }
+
+  /** Forces recovery mode on or off (`yoda-admin recovery on|off`), audited; every instance reloads. */
+  async setRecoveryMode(on: boolean, actor: { personId?: string | null; label: string; source: string; ip?: string | null; requestId?: string | null }): Promise<boolean> {
+    const changed = await this.db.transaction(async (tx) => {
+      const rows = await tx
+        .update(setupState)
+        .set({ recoveryMode: on })
+        .where(and(eq(setupState.id, 1), ne(setupState.recoveryMode, on)))
+        .returning({ id: setupState.id })
+      if (!rows.length) return false
+      await tx.insert(settingsAudit).values({ ...this.auditActor(actor), action: on ? 'recovery.mode_on' : 'recovery.mode_off' })
+      await this.notify(tx, [])
+      return true
+    })
+    this.recoveryMode = on
+    this.changed()
+    return changed
+  }
+
+  /**
+   * An audit row that is not a setting write (§5.4): break-glass sign-ins, setup steps, recovery actions. Never a
+   * secret: callers pass names, codes and booleans only.
+   */
+  async audit(
+    entry: { action: string; actor: { personId?: string | null; label: string; source: string; ip?: string | null; requestId?: string | null }; key?: string | null; newValue?: object | null; result?: string | null },
+    /** The caller's transaction, so the audit row commits (or not) with the change it records. */
+    q?: Tx,
+  ): Promise<void> {
+    await (q ?? this.db).insert(settingsAudit).values({
+      ...this.auditActor(entry.actor),
+      action: entry.action,
+      key: entry.key ?? null,
+      newValue: entry.newValue ?? null,
+      result: entry.result ?? null,
+    })
+  }
+
   /** A test run (§5.4): who, which action, the result code; never a value. */
   async recordTest(category: SettingCategory, action: string, result: string, actor: SettingActor): Promise<void> {
     await this.db.insert(settingsAudit).values({ ...this.auditActor(actor), action: 'test', key: null, newValue: { test: action, category }, result })
@@ -473,6 +627,11 @@ export class SettingsStore {
     await tx.execute(sql`select pg_notify(${this.channel}, ${JSON.stringify(keys)})`)
   }
 
+  /** Tells every instance to read everything again (after `yoda-admin` changed the key or the recovery mode). */
+  async broadcast(): Promise<void> {
+    await this.db.execute(sql`select pg_notify(${this.channel}, '[]')`)
+  }
+
   /** Reads every row again (boot, and the NOTIFY listener in live.ts on every notification and reconnect). */
   async load(): Promise<void> {
     const started = ++this.epoch
@@ -480,6 +639,14 @@ export class SettingsStore {
     const [st] = await this.db.select().from(setupState).where(eq(setupState.id, 1))
     // A load that started later has already applied newer rows.
     if (started < this.loadedAt) return
+    // Before decoding: rows a rotation re-wrapped name the new key; a lost-key reset made this key the master key.
+    if (st?.keyCanary) {
+      if (this.status === 'mismatch' && this.mk && checkCanary(this.mk, st.keyCanary)) {
+        this.status = 'ok'
+        this.log.info({ keyId: this.mk.id }, 'the key canary now matches this master key (yoda-admin reset-master-key); recovery state over')
+      }
+      this.switchKey(st.keyCanary)
+    }
     const next = new Map<SettingKey, Stored>()
     let secrets = 0
     for (const r of rows) {
@@ -500,6 +667,28 @@ export class SettingsStore {
     this.state = { installId: st?.installId ?? '', setupDone: !!st?.setupCompletedAt }
     this.recoveryMode = !!st?.recoveryMode
     this.changed()
+  }
+
+  /**
+   * A rotation by `yoda-admin` wrote the canary with a new key: read the key again and switch to it when it passes
+   * the canary (the old key stays, decrypt-only). True when it switched.
+   */
+  private switchKey(canary: Buffer): boolean {
+    if (this.status !== 'ok' || !this.keyLoader || checkCanary(this.mk!, canary)) return false
+    let loaded: MasterKeyLoad
+    try {
+      loaded = this.keyLoader()
+    } catch {
+      return false
+    }
+    if (loaded.status !== 'ok' || loaded.key.id === this.mk!.id || !checkCanary(loaded.key, canary)) {
+      this.log.warn({ keyId: this.mk!.id }, 'the key canary names another master key and the key file does not match it; restart core after the rotation')
+      return false
+    }
+    this.prev = this.mk
+    this.mk = loaded.key
+    this.log.info({ keyId: loaded.key.id, previousKeyId: this.prev!.id }, 'master key rotated; switched to the new key')
+    return true
   }
 
   private async reload(key: SettingKey): Promise<void> {
@@ -556,7 +745,7 @@ export class SettingsStore {
   private decryptRow(r: Row): string | null {
     if (this.status !== 'ok' || !r.ciphertext || !r.keyId || !r.wrappedDek || !r.dekNonce || !r.nonce) return null
     try {
-      return decryptSecret(this.mk!, r.key, { keyId: r.keyId, wrappedDek: r.wrappedDek, dekNonce: r.dekNonce, nonce: r.nonce, ciphertext: r.ciphertext })
+      return decryptSecret(this.keyring, r.key, { keyId: r.keyId, wrappedDek: r.wrappedDek, dekNonce: r.dekNonce, nonce: r.nonce, ciphertext: r.ciphertext })
     } catch {
       return null
     }
@@ -593,10 +782,21 @@ export class SettingsStore {
     await this.db.transaction(async (tx) => {
       const [st] = await tx.select().from(setupState).where(eq(setupState.id, 1)).for('update')
       if (st?.keyCanary) {
-        if (!checkCanary(mk, st.keyCanary)) {
-          this.status = 'mismatch'
-          this.log.warn({ keyId: mk.id, canaryKeyId: st.keyCanaryKeyId }, 'master key does not match the key canary; recovery state')
+        if (checkCanary(mk, st.keyCanary)) return
+        // A rotation whose new key is in `.prev` (an env install whose .env still holds the old key: init then
+        // keeps the new key as `.prev`): use it, and say so loudly.
+        if (this.prev && checkCanary(this.prev, st.keyCanary)) {
+          this.log.warn(
+            { keyId: this.prev.id, staleKeyId: mk.id },
+            'the master key does not match the key canary, the previous key does: using it; put the current key in YODA_MASTER_KEY (or the key file)',
+          )
+          this.mk = this.prev
+          this.prev = mk
+          this.onPreviousKey = true
+          return
         }
+        this.status = 'mismatch'
+        this.log.warn({ keyId: mk.id, canaryKeyId: st.keyCanaryKeyId }, 'master key does not match the key canary; recovery state')
         return
       }
       const [other] = await tx
@@ -668,12 +868,18 @@ export class SettingsStore {
     this.state = { ...this.state, setupDone: true }
   }
 
-  private writable(key: SettingKey, derived = false): SettingDef {
+  /** `internal`: read-only keys this write path may set anyway (env and bootstrap locks always hold). */
+  private writable(key: SettingKey, internal: Set<SettingKey> | null = null): SettingDef {
     if (!isSettingKey(key)) throw new UnknownSettingError(key)
     const d = settingDef(key)
     const lock = this.lockOf(d)
-    if (lock && !(derived && lock === 'readonly' && DERIVED_KEYS.has(key))) throw new SettingLockedError(key, lock)
+    if (lock && !(lock === 'readonly' && internal?.has(key))) throw new SettingLockedError(key, lock)
     return d
+  }
+
+  /** Whether `setFromRecovery` may write the key now (not set in env). */
+  recoveryWritable(key: SettingKey): boolean {
+    return RECOVERY_KEYS.has(key) && this.lockOf(settingDef(key)) === 'readonly'
   }
 
   private lockOf(d: SettingDef): LockReason | null {

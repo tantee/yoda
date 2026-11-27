@@ -1,6 +1,7 @@
 import type { Attachment } from '@yoda/shared'
+import type Keycloak from 'keycloak-js'
 import { loginLocale } from '~/utils/loginLocale'
-import { sessionEnded } from '~/utils/session'
+import { requireKeycloak, sessionEnded } from '~/utils/session'
 import { validateUpload } from '~/utils/upload'
 
 export class UploadError extends Error {
@@ -10,9 +11,10 @@ export class UploadError extends Error {
 }
 
 export function useUpload() {
-  const { $keycloak } = useNuxtApp()
+  const kc = useNuxtApp().$keycloak as Keycloak | null
 
   async function authHeaders(): Promise<Headers> {
+    const $keycloak = requireKeycloak(kc)
     try {
       await $keycloak.updateToken(30)
     } catch {

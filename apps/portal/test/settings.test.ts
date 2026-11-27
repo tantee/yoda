@@ -12,6 +12,7 @@ import {
   LOCK_REASONS,
   SETTINGS_PAGES,
   applyModes,
+  categoryApplyModes,
   applyReauthStash,
   auditLine,
   DETAIL_MAX,
@@ -145,11 +146,9 @@ describe('fields by registry type', () => {
     expect(lockHowKey('env', { secret: true, importable: true })).toBe('settings.lock.how.env')
     // A secret the import did not copy (no usable key, or import off) is lost: the service disconnects.
     expect(lockHowKey('env', { secret: true, importable: false })).toBe('settings.lock.how.envNotKept')
-    // The prod compose passes it anyway: removing it from .env does not unlock it.
-    expect(lockHowKey('env', { composeDefault: true, importable: true })).toBe('settings.lock.how.envCompose')
-    const port = view('smtp.port', { source: 'env', envName: 'SMTP_PORT', value: 465, locked: { reason: 'env', envName: 'SMTP_PORT' }, importable: true, composeDefault: true })
-    expect(fieldRules(port).lock!.howKey).toBe('settings.lock.how.envCompose')
-    const pw = secret('smtp.password', true, { source: 'env', locked: { reason: 'env', envName: 'SMTP_PASSWORD' }, importable: false, composeDefault: false })
+    const port = view('smtp.port', { source: 'env', envName: 'SMTP_PORT', value: 465, locked: { reason: 'env', envName: 'SMTP_PORT' }, importable: true })
+    expect(fieldRules(port).lock!.howKey).toBe('settings.lock.how.env')
+    const pw = secret('smtp.password', true, { source: 'env', locked: { reason: 'env', envName: 'SMTP_PASSWORD' }, importable: false })
     expect(fieldRules(pw).lock!.howKey).toBe('settings.lock.how.envNotKept')
     expect(lockHowKey('mystery')).toBe('settings.lock.how.readonly')
   })
@@ -184,6 +183,8 @@ describe('fields by registry type', () => {
   })
   it('lists the apply modes of the editable settings', () => {
     expect(applyModes([view('a', { apply: 'restart' }), view('b', { apply: 'live' }), view('c', { apply: 'reconnect', locked: { reason: 'env' } })])).toEqual(['live', 'restart'])
+    expect(categoryApplyModes('backups', [view('backup.at', { apply: 'live' })])).toEqual(['minute'])
+    expect(categoryApplyModes('email', [view('smtp.from', { apply: 'live' })])).toEqual(['live'])
   })
 })
 
@@ -376,9 +377,9 @@ describe('test result codes', () => {
     expect(checkDetails({ id: 'bot', ok: true, ms: 1, detail: { username: 'yoda_bot', scopes: ['api', 'read_user'] } })).toEqual(['username: yoda_bot', 'scopes: api, read_user'])
   })
   it('every code core can return is known and has th and en text', () => {
-    const core = ['tests.ts', 'outbound.ts'].map(f => readFileSync(new URL(`../../core/src/settings/${f}`, import.meta.url), 'utf8')).join('\n')
+    const core = ['settings/tests.ts', 'settings/outbound.ts', 'local/oidc-change.ts', 'routes/setup-wizard.ts'].map(f => readFileSync(new URL(`../../core/src/${f}`, import.meta.url), 'utf8')).join('\n')
     const found = new Set<string>()
-    const patterns = [/fail\('([a-z_]+)'/g, /code: '([a-z_]+)'/g, /OutboundError\('([a-z_]+)'\)/g]
+    const patterns = [/fail\('([a-z_]+)'/g, /code: '([a-z_]+)'/g, /OutboundError\('([a-z_]+)'\)/g, /new Failed\('([a-z_]+)'\)/g]
     for (const re of patterns) for (const m of core.matchAll(re)) found.add(m[1]!)
     // The SMTP error mapping returns codes; the OutboundCode union lists safeOutbound's.
     const smtp = /function smtpCode[\s\S]*?\n}\n/.exec(core)![0]
@@ -395,7 +396,7 @@ describe('test result codes', () => {
       expect(key, c).not.toBe(c === 'failed' ? '' : 'settings.test.code.failed')
       expect(hasText(key), c).toBe(true)
     }
-    for (const id of ['discovery', 'jwks', 'client', 'connect', 'send', 'bot', 'webhook', 'user', 'scopes', 'anthropic', 'openai', 'model.draft', 'model.fast', 'model.embed', 'config', 'bucket', 'x']) {
+    for (const id of ['discovery', 'jwks', 'client', 'connect', 'send', 'bot', 'webhook', 'user', 'scopes', 'anthropic', 'openai', 'model.draft', 'model.fast', 'model.embed', 'config', 'bucket', 'state', 'token', 'id_token', 'access_token', 'admin', 'staff', 'db', 'pgvector', 'queue', 'x']) {
       expect(hasText(checkLabelKey(id)), id).toBe(true)
     }
   })
@@ -429,7 +430,7 @@ describe('labels', () => {
       expect(hasText(`settings.lock.${r}`), r).toBe(true)
       expect(hasText(`settings.lock.how.${r}`), r).toBe(true)
     }
-    for (const k of ['envCompose', 'envNotKept', 'managed_on_host_unused']) expect(hasText(`settings.lock.how.${k}`), k).toBe(true)
+    for (const k of ['envNotKept', 'managed_on_host_unused']) expect(hasText(`settings.lock.how.${k}`), k).toBe(true)
     for (const k of ['settings.source.imported', 'settings.secret.keyBlocked', 'settings.security.keyAlert.missingEnvOnly']) expect(hasText(k), k).toBe(true)
     expect(hasText('nav.admin.settings')).toBe(true)
   })
@@ -523,10 +524,11 @@ describe('EnvLockChip and SettingField', () => {
     expect(field).toContain('data-testid="setting-lock-how"')
   })
   it('an env-locked field uses the help that fits its state', async () => {
-    const v = view('smtp.port', { source: 'env', envName: 'SMTP_PORT', value: 465, locked: { reason: 'env', envName: 'SMTP_PORT' }, importable: true, composeDefault: true })
-    const html = await render(SettingField, { view: v, modelValue: '465' })
-    expect(html).toContain('settings.lock.how.envCompose(name=SMTP_PORT)')
-    expect(html).not.toContain('settings.lock.how.env(name=SMTP_PORT)')
+    const v = secret('smtp.password', true, { source: 'env', envName: 'SMTP_PASSWORD', locked: { reason: 'env', envName: 'SMTP_PASSWORD' }, importable: false })
+    expect(fieldRules(v).lock!.howKey).toBe('settings.lock.how.envNotKept')
+    const port = view('smtp.port', { source: 'env', envName: 'SMTP_PORT', value: 465, locked: { reason: 'env', envName: 'SMTP_PORT' }, importable: true })
+    const html = await render(SettingField, { view: port, modelValue: '465' })
+    expect(html).toContain('settings.lock.how.env(name=SMTP_PORT)')
   })
   it('a value imported from env is marked', async () => {
     const html = await render(SettingField, { view: view('smtp.user', { source: 'db', value: 'yoda@example.org', updatedAt: '2026-11-24T03:02:00Z', writeSource: 'import' }), modelValue: 'yoda@example.org' })
@@ -566,6 +568,8 @@ describe('TestResult, ApplyHint, RestartBanner', () => {
   })
   it('apply hints and the restart banner', async () => {
     expect(await render(ApplyHint, { mode: 'reconnect' })).toContain('settings.apply.reconnect')
+    // The backup settings: the backup container re-reads them every minute.
+    expect(await render(ApplyHint, { mode: 'minute' })).toContain('settings.apply.minute')
     expect(await render(RestartBanner, { keys: ['ai.workers'] })).toContain('settings.restart.text(keys=settings.field.ai.workers.label)')
     expect(await render(RestartBanner, { keys: [] })).not.toContain('restart-banner')
   })

@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 # Daily backups: a pg_dump -Fc of the database and an S3 mirror of the storage bucket, kept for
 # BACKUP_KEEP_DAYS days in BACKUP_DIR.
-#   backup.sh         loop: sleep until the next BACKUP_AT (HH:MM in TZ), back up, repeat; a failed run is
+#   backup.sh         loop: sleep until the next backup time (HH:MM in TZ), back up, repeat; a failed run is
 #                     retried BACKUP_RETRIES (3) times, BACKUP_RETRY_DELAY (900) seconds apart, before it
 #                     waits for the next day
 #   backup.sh --now   one backup, then exit (non-zero on failure)
-# Env: DATABASE_URL (or PG*), S3_ENDPOINT, S3_BUCKET, S3_ACCESS_KEY, S3_SECRET_KEY, S3_REGION,
-#      BACKUP_DIR (/backups), BACKUP_KEEP_DAYS (14), BACKUP_AT (02:00), TZ (Asia/Bangkok).
+# The backup time and days kept come from BACKUP_AT / BACKUP_KEEP_DAYS when set (env wins), else from System
+# settings → Backups (the settings table, re-read every BACKUP_POLL_SECONDS (60) while waiting, so a change
+# applies within a minute), else 02:00 and 14.
+# Env: DATABASE_URL (or PG*), S3_ENDPOINT, S3_BUCKET, S3_ACCESS_KEY, S3_SECRET_KEY, S3_REGION (DATABASE_URL and
+#      the S3 keys default to YODA_BOOTSTRAP_FILE's, the bootstrap volume),
+#      BACKUP_DIR (/backups), BACKUP_KEEP_DAYS, BACKUP_AT, TZ (Asia/Bangkok).
 # Writes pg-<YYYYMMDD-HHMM>.dump, storage-<YYYYMMDD-HHMM>/ and a `latest` marker holding the stamp.
 # Only one backup or restore runs at a time (flock on BACKUP_DIR/.lock); a second one exits non-zero.
 # healthcheck.sh turns unhealthy when `latest` is older than BACKUP_MAX_AGE_HOURS (26).
@@ -17,8 +21,13 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "$here/lib.sh"
 
 dir=${BACKUP_DIR:-/backups}
-keep=${BACKUP_KEEP_DAYS:-14}
-at=${BACKUP_AT:-02:00}
+# Set in env, these win over System settings.
+env_at=${BACKUP_AT:-}
+env_keep=${BACKUP_KEEP_DAYS:-}
+keep=${env_keep:-14}
+at=${env_at:-02:00}
+poll=${BACKUP_POLL_SECONDS:-60}
+settings_warned=
 retries=${BACKUP_RETRIES:-3}
 retry_delay=${BACKUP_RETRY_DELAY:-900}
 
@@ -93,30 +102,49 @@ scheduled_run() {
   return "$status"
 }
 
+# Re-reads the backup time and days kept (env > System settings > the current values). When the database cannot be
+# read (not migrated yet, restarting), keeps the current values and says so once until it can be read again.
+refresh_settings() {
+  local rows picked new_at new_keep
+  if [[ -n $env_at && -n $env_keep ]]; then
+    rows=''
+  elif ! rows=$(db_backup_settings); then
+    [[ -n $settings_warned ]] || log "cannot read the backup settings from the database; keeping $at, $keep days"
+    settings_warned=1
+    return 0
+  fi
+  settings_warned=
+  picked=$(pick_backup_settings "$env_at" "$env_keep" "$at" "$keep" <<<"$rows")
+  new_at=${picked% *}
+  new_keep=${picked#* }
+  if [[ $new_at != "$at" || $new_keep != "$keep" ]]; then
+    log "backup settings: daily at $new_at, keeping $new_keep days"
+  fi
+  at=$new_at
+  keep=$new_keep
+}
+
 # Epoch of the next BACKUP_AT in the local time zone (GNU date), never within 60 s of the last run's start.
 next_target() {
   pick_target "$(date +%s)" "$(date -d "today $at" +%s)" "$(date -d "tomorrow $at" +%s)" "$1"
 }
 
-# Sleeps until <epoch>; sleeps again if woken early.
-sleep_until() {
-  local now
-  now=$(date +%s)
-  while ((now < $1)); do
-    sleep $(($1 - now)) &
-    wait $!
-    now=$(date +%s)
-  done
+# Sleeps <seconds> in the background, so the TERM trap runs at once.
+sleep_for() {
+  sleep "$1" &
+  wait $!
 }
 
 main() {
   [[ $at =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]] || die 'BACKUP_AT must be HH:MM'
   [[ $keep =~ ^[1-9][0-9]*$ ]] || die 'BACKUP_KEEP_DAYS must be a positive integer'
+  [[ $poll =~ ^[1-9][0-9]*$ ]] || die 'BACKUP_POLL_SECONDS must be a positive whole number'
   [[ $retries =~ ^[0-9]+$ ]] || die 'BACKUP_RETRIES must be a whole number'
   [[ $retry_delay =~ ^[0-9]+$ ]] || die 'BACKUP_RETRY_DELAY must be a whole number of seconds'
   [[ -d $dir && -w $dir ]] || die "$dir is not a writable directory"
   setup_pg
   setup_store
+  refresh_settings
 
   case ${1:-} in
     --now)
@@ -126,15 +154,26 @@ main() {
       trap 'log "stopping"; exit 0' TERM INT
       # The healthcheck's grace period before the first backup starts here.
       [[ -e $STARTED_FILE ]] || date +%s >"$STARTED_FILE"
-      local last=0 target
+      local last=0 target='' target_at='' now
       while true; do
-        target=$(next_target "$last")
-        log "next backup at $(date -d "@$target" '+%Y-%m-%d %H:%M %Z') (keeping $keep days)"
-        sleep_until "$target"
-        last=$(date +%s)
+        # The target moves only when the backup time changes; it is never recomputed after it has passed.
+        if [[ -z $target || $at != "$target_at" ]]; then
+          target=$(next_target "$last")
+          target_at=$at
+          log "next backup at $(date -d "@$target" '+%Y-%m-%d %H:%M %Z') (keeping $keep days)"
+        fi
+        now=$(date +%s)
+        if ((now < target)); then
+          sleep_for $((target - now < poll ? target - now : poll))
+          refresh_settings
+          continue
+        fi
+        last=$now
+        target=''
         set +e
         scheduled_run
         set -e
+        refresh_settings
       done
       ;;
     *)

@@ -1,6 +1,7 @@
 import { LiveEvent } from '@yoda/shared'
+import type Keycloak from 'keycloak-js'
 import { loginLocale } from '~/utils/loginLocale'
-import { sessionEnded } from '~/utils/session'
+import { requireKeycloak, sessionEnded } from '~/utils/session'
 import { parseSse, streamStep } from '~/utils/sse'
 
 /**
@@ -9,7 +10,7 @@ import { parseSse, streamStep } from '~/utils/sse'
  * does it send the user to sign in again. A refresh that fails while offline just waits for the next reconnect.
  */
 export function useLiveEvents(onEvent: (e: LiveEvent) => void, onReconnect?: () => void): void {
-  const { $keycloak } = useNuxtApp()
+  const $keycloak = requireKeycloak(useNuxtApp().$keycloak as Keycloak | null)
   let stopped = false
   let controller: AbortController | null = null
   let timer: ReturnType<typeof setTimeout> | null = null

@@ -49,6 +49,12 @@ describe('SettingsStore', () => {
   })
 
   describe('precedence env > db > default', () => {
+    it('names the variables set in env (the boot log, T14): names only, never a value', async () => {
+      const s = await open({ SMTP_HOST: 'smtp.example.org', SMTP_PASSWORD: 'placeholder-env-pass', PORTAL_URL: 'https://portal.example.org' })
+      expect(s.envLockedNames).toEqual(['PORTAL_URL', 'SMTP_HOST', 'SMTP_PASSWORD'])
+      expect(JSON.stringify(s.envLockedNames)).not.toContain('placeholder')
+    })
+
     it('falls back to the default, then the stored value, and env wins over both', async () => {
       let s = await open()
       expect(s.get('smtp.port')).toBe(587)

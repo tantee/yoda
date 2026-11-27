@@ -14,9 +14,9 @@ export const NotificationPrefs = z
   .strict()
 export type NotificationPrefs = z.infer<typeof NotificationPrefs>
 
-/** Role defaults: staff get email for assignments, pending proposals and discussions; requesters for their requests. */
+/** Role defaults: staff get email for assignments, pending proposals, discussions and security alerts (break-glass use); requesters for their requests. */
 export function defaultChannels(kind: NotificationKind, isStaff: boolean): ChannelName[] {
-  const kinds: readonly NotificationKind[] = isStaff ? ['task_assigned', 'proposal_pending', 'discussion'] : ['request_update']
+  const kinds: readonly NotificationKind[] = isStaff ? ['task_assigned', 'proposal_pending', 'discussion', 'security_alert'] : ['request_update']
   return kinds.includes(kind) ? ['email'] : []
 }
 

@@ -202,3 +202,97 @@ describe.skipIf(noBash || !hasFlock)('ops/backup lock and retry (fake pg_dump an
     expect(r.stdout).toContain('has-latest')
   })
 })
+
+describe.skipIf(noBash)('ops/backup bootstrap file', () => {
+  const file = `F=$(mktemp); printf '# init\\nDATABASE_URL=postgres://yoda:gen%%3Apw@postgres:5432/yoda\\nS3_ACCESS_KEY=gen-ak\\nS3_SECRET_KEY=gen-sk\\nOTHER=$(touch /tmp/x)\\n' >"$F"; export YODA_BOOTSTRAP_FILE=$F`
+
+  it('fills the database URL and S3 keys from the bootstrap volume, decoding as before', () => {
+    const r = bash(`${file}; source "${lib}"; setup_pg; S3_ENDPOINT=http://s3.example.org S3_BUCKET=b setup_store
+      printf '%s|%s|%s|%s|%s\\n' "$PGUSER" "$PGPASSWORD" "$PGHOST" "$RCLONE_CONFIG_STORE_ACCESS_KEY_ID" "$RCLONE_CONFIG_STORE_SECRET_ACCESS_KEY"
+      [ -z "\${OTHER:-}" ] && echo no-other`)
+    expect(r).toMatchObject({ code: 0, stdout: 'yoda|gen:pw|postgres|gen-ak|gen-sk\nno-other\n' })
+  })
+
+  it('lets env win', () => {
+    const r = bash(`${file}; export DATABASE_URL=postgres://ext:pw@db.example.org/yoda S3_SECRET_KEY=env-sk; source "${lib}"; load_bootstrap_file
+      printf '%s|%s|%s\\n' "$DATABASE_URL" "$S3_ACCESS_KEY" "$S3_SECRET_KEY"`)
+    expect(r).toMatchObject({ code: 0, stdout: 'postgres://ext:pw@db.example.org/yoda|gen-ak|env-sk\n' })
+  })
+
+  it('fails on an unreadable file without printing a value', () => {
+    const r = bash(`export YODA_BOOTSTRAP_FILE=/nonexistent/bootstrap.env S3_SECRET_KEY=hunter2; source "${lib}"; load_bootstrap_file; echo reached`)
+    expect(r.code).not.toBe(0)
+    expect(r.stdout).not.toContain('reached')
+    expect(r.stderr).toContain('did the init service run?')
+    expect(r.stderr).not.toContain('hunter2')
+  })
+
+  it('does nothing without YODA_BOOTSTRAP_FILE', () => {
+    expect(bash(`source "${lib}"; load_bootstrap_file; echo "[\${DATABASE_URL:-}]"`)).toMatchObject({ code: 0, stdout: '[]\n' })
+  })
+})
+
+describe.skipIf(noBash)('ops/backup settings from the database (System settings → Backups)', () => {
+  const pick = (args: string, rows: string) => bash(`source "${lib}"; pick_backup_settings ${args}`, { input: rows })
+
+  it.each([
+    ['the database values', `'' '' 02:00 14`, 'backup.at\t03:30\nbackup.keepDays\t30\n', '03:30 30\n'],
+    ['the defaults without rows', `'' '' 02:00 14`, '', '02:00 14\n'],
+    ['env over the database', `04:00 7 02:00 14`, 'backup.at\t03:30\nbackup.keepDays\t30\n', '04:00 7\n'],
+    ['env for one, the database for the other', `'' 7 02:00 14`, 'backup.at\t03:30\nbackup.keepDays\t30\n', '03:30 7\n'],
+    ['the current values over an invalid row', `'' '' 01:15 9`, 'backup.at\t25:00\nbackup.keepDays\t0\n', '01:15 9\n'],
+  ])('picks %s', (_label, args, rows, want) => {
+    expect(pick(args, rows)).toMatchObject({ code: 0, stdout: want })
+  })
+
+  it('warns about an invalid database value without echoing it', () => {
+    const r = pick(`'' '' 02:00 14`, 'backup.at\t$(touch /tmp/x)\nbackup.keepDays\t99999\n')
+    expect(r.stdout).toBe('02:00 14\n')
+    expect(r.stderr).toContain('ignoring an invalid backup.at')
+    expect(r.stderr).toContain('ignoring an invalid backup.keepDays')
+    expect(r.stderr).not.toContain('touch')
+  })
+
+  // A fake psql: prints $FAKE_ROWS (or fails while $FAKE/psql-fail exists) and records its arguments.
+  const psql = `
+F=$(mktemp -d)
+cat >"$F/psql" <<'SH'
+#!/usr/bin/env bash
+printf '%s\\n' "$*" >>"$FAKE/psql-args"
+[ -e "$FAKE/psql-fail" ] && { echo 'psql: error: connection to server at "db" failed' >&2; exit 2; }
+printf '%b' "$FAKE_ROWS"
+SH
+chmod +x "$F/psql"
+export FAKE=$F PATH="$F:$PATH" PGPASSWORD=hunter2
+`
+
+  it('reads both keys with one psql query, the password only in PGPASSWORD', () => {
+    const r = bash(`${psql} export FAKE_ROWS='backup.at\\t03:30\\nbackup.keepDays\\t30\\n'; source "${lib}"; db_backup_settings | pick_backup_settings '' '' 02:00 14; cat "$F/psql-args"`)
+    expect(r.code).toBe(0)
+    expect(r.stdout).toMatch(/^03:30 30\n/)
+    expect(r.stdout).toContain("where key in ('backup.at', 'backup.keepDays')")
+    expect(r.stdout).toContain('-v ON_ERROR_STOP=1')
+    expect(r.stdout).not.toContain('hunter2')
+  })
+
+  it('refresh_settings applies a change, then keeps the values and warns once while the database is down', () => {
+    const r = bash(`${psql} export FAKE_ROWS='backup.at\\t03:30\\nbackup.keepDays\\t30\\n' BACKUP_DIR=$(mktemp -d)
+      source "${dir}backup.sh"
+      refresh_settings; echo "1: $at $keep"
+      touch "$F/psql-fail"; refresh_settings; refresh_settings; echo "2: $at $keep"
+      rm "$F/psql-fail"; FAKE_ROWS='backup.at\\t05:00\\n'; refresh_settings; echo "3: $at $keep"`)
+    expect(r.code, r.stderr).toBe(0)
+    expect(r.stdout).toContain('1: 03:30 30')
+    expect(r.stdout).toContain('2: 03:30 30')
+    expect(r.stdout).toContain('3: 05:00 30')
+    expect(r.stdout.match(/cannot read the backup settings/g)).toHaveLength(1)
+    expect(r.stdout).toContain('backup settings: daily at 03:30, keeping 30 days')
+    expect(r.stdout).not.toContain('connection to server')
+  })
+
+  it('does not query the database when env sets both', () => {
+    const r = bash(`${psql} export BACKUP_AT=04:00 BACKUP_KEEP_DAYS=7 BACKUP_DIR=$(mktemp -d)
+      source "${dir}backup.sh"; refresh_settings; echo "$at $keep"; [ -e "$F/psql-args" ] && echo queried || echo none`)
+    expect(r.stdout).toBe('04:00 7\nnone\n')
+  })
+})

@@ -131,8 +131,28 @@ pg_env_from_url() {
   export PGUSER PGPASSWORD PGHOST PGPORT PGDATABASE
 }
 
+# Fills DATABASE_URL, S3_ACCESS_KEY and S3_SECRET_KEY from YODA_BOOTSTRAP_FILE (the bootstrap volume's
+# bootstrap.env, written by the `init` service) when they are unset or empty; a value set in env wins. The file is
+# read as KEY=value lines, never sourced, and only those three keys are taken. Prints no value.
+load_bootstrap_file() {
+  local file=${YODA_BOOTSTRAP_FILE:-} line key value
+  [[ -n $file ]] || return 0
+  [[ -z ${DATABASE_URL:-} || -z ${S3_ACCESS_KEY:-} || -z ${S3_SECRET_KEY:-} ]] || return 0
+  [[ -r $file ]] || die "YODA_BOOTSTRAP_FILE: cannot read $file (did the init service run?)"
+  while IFS= read -r line || [[ -n $line ]]; do
+    [[ $line =~ ^(DATABASE_URL|S3_ACCESS_KEY|S3_SECRET_KEY)=(.*)$ ]] || continue
+    key=${BASH_REMATCH[1]}
+    value=${BASH_REMATCH[2]}
+    if [[ -z ${!key:-} && -n $value ]]; then
+      printf -v "$key" '%s' "$value"
+      export "${key?}"
+    fi
+  done <"$file"
+}
+
 # Database connection from DATABASE_URL, unless libpq's PG* variables are already set.
 setup_pg() {
+  load_bootstrap_file
   if [[ -z ${PGHOST:-} ]]; then
     [[ -n ${DATABASE_URL:-} ]] || die 'DATABASE_URL (or PGHOST, PGUSER, PGPASSWORD, PGDATABASE) is required'
     pg_env_from_url "$DATABASE_URL" || exit 1
@@ -143,6 +163,7 @@ setup_pg() {
 # The S3 store as rclone remote `store:`, configured only through environment variables.
 setup_store() {
   local v
+  load_bootstrap_file
   for v in S3_ENDPOINT S3_BUCKET S3_ACCESS_KEY S3_SECRET_KEY; do
     [[ -n ${!v:-} ]] || die "$v is required"
   done
@@ -155,6 +176,39 @@ setup_store() {
   export RCLONE_CONFIG_STORE_FORCE_PATH_STYLE=true
   # No config file: everything above comes from the environment.
   export RCLONE_CONFIG=/dev/null
+}
+
+# The backup settings saved in System settings → Backups: prints `<key><TAB><value>` lines for backup.at and
+# backup.keepDays from the settings table (non-secret rows hold JSON; `#>> '{}'` gives the bare scalar). Needs the
+# PG* variables (setup_pg). Fails, printing nothing, when the database or the table is not there yet; psql's own
+# messages are dropped (they can name the host, never the password, which stays in PGPASSWORD).
+db_backup_settings() {
+  psql -X -q -A -t -F $'\t' -v ON_ERROR_STOP=1 --no-password \
+    -c "select key, value #>> '{}' from settings where key in ('backup.at', 'backup.keepDays') and value is not null" \
+    2>/dev/null
+}
+
+# Resolves the backup time and days kept: env wins (<env_at>, <env_keep>, '' when unset), then the database rows on
+# stdin (`<key><TAB><value>`, as db_backup_settings prints them), then <current_at>/<current_keep>. An invalid
+# database value is skipped with a warning on stderr. Prints `<at> <keep>`.
+pick_backup_settings() {
+  local env_at=${1:-} env_keep=${2:-} at=${3:-02:00} keep=${4:-14} key value
+  local db_at='' db_keep=''
+  while IFS=$'\t' read -r key value || [[ -n $key ]]; do
+    case $key in
+      backup.at) db_at=$value ;;
+      backup.keepDays) db_keep=$value ;;
+    esac
+  done
+  if [[ -n $db_at ]]; then
+    if [[ $db_at =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]]; then at=$db_at; else echo 'ignoring an invalid backup.at in the database' >&2; fi
+  fi
+  if [[ -n $db_keep ]]; then
+    if [[ $db_keep =~ ^[1-9][0-9]{0,3}$ ]] && ((db_keep <= 3650)); then keep=$db_keep; else echo 'ignoring an invalid backup.keepDays in the database' >&2; fi
+  fi
+  [[ -z $env_at ]] || at=$env_at
+  [[ -z $env_keep ]] || keep=$env_keep
+  printf '%s %s\n' "$at" "$keep"
 }
 
 # rclone with quiet output (errors only) and no progress stats.

@@ -105,13 +105,19 @@ const DEFS = [
   def('storage.s3SecretKey', text, { category: 'storage', envName: 'S3_SECRET_KEY' }, { ...boot, secret: true }),
   def('security.masterKey', text, { category: 'security', envName: 'YODA_MASTER_KEY' }, { ...boot, secret: true }),
   def('security.masterKeyFile', text, { category: 'security', envName: 'YODA_MASTER_KEY_FILE' }, boot),
+  // The bootstrap volume's aggregate file (DATABASE_URL and the S3 keys, written by the `init` service, §3.2).
+  def('security.bootstrapFile', text, { category: 'security', envName: 'YODA_BOOTSTRAP_FILE' }, boot),
+  // Dev only: setup counts as done without the wizard (§13.3).
+  def('security.devSkipSetup', bool, { category: 'security', envName: 'YODA_DEV_SKIP_SETUP' }, { ...boot, default: false }),
+  // How many proxies in front of core are believed for the client address (1: the portal; 2: behind a reverse proxy).
+  def('security.trustedProxyHops', int(1, 5), { category: 'security', envName: 'YODA_TRUSTED_PROXY_HOPS' }, { ...boot, default: 1 }),
   def('security.settingsImport', bool, { category: 'security', envName: 'YODA_SETTINGS_IMPORT' }, { ...boot, default: true }),
   // Dev only: the settings tests may connect to loopback (the fakes on 127.0.0.1).
   def('security.outboundAllowLoopback', bool, { category: 'security', envName: 'YODA_OUTBOUND_ALLOW_LOOPBACK' }, { ...boot, default: false }),
 
   // 9.1 Core: sign-in
   def('oidc.issuer', url, { category: 'signin', envName: 'OIDC_ISSUER', test: 'oidc' }, { apply: 'reconnect' }),
-  def('oidc.clientId', text, { category: 'signin', envName: 'OIDC_CLIENT_ID', test: 'oidc' }, { apply: 'reconnect' }),
+  def('oidc.clientId', text, { category: 'signin', envName: 'OIDC_CLIENT_ID', test: 'oidc' }, { apply: 'reconnect', default: 'yoda-portal' }),
   def('oidc.jwksUrl', url, { category: 'signin', envName: 'OIDC_JWKS_URL', test: 'oidc' }, { apply: 'reconnect' }),
   def('oidc.staffGroup', text, { category: 'signin', envName: 'STAFF_GROUP' }, { default: '/it-dev' }),
   // Deprecated; still honoured from env (§6.6), never set in the UI.
@@ -188,7 +194,7 @@ const DEFS = [
   def('portal.keycloakUrl', url, { category: 'signin', envName: 'NUXT_PUBLIC_KEYCLOAK_URL' }, { ...boot, scope: 'portal', apply: 'live' }),
   def('portal.keycloakRealm', text, { category: 'signin', envName: 'NUXT_PUBLIC_KEYCLOAK_REALM' }, { ...boot, scope: 'portal', apply: 'live' }),
   def('portal.keycloakClientId', text, { category: 'signin', envName: 'NUXT_PUBLIC_KEYCLOAK_CLIENT_ID' }, { ...boot, scope: 'portal', apply: 'live' }),
-  def('org.runnerDocsUrl', z.string().url(), { category: 'general', envName: 'NUXT_PUBLIC_RUNNER_DOCS_URL' }, { scope: 'portal' }),
+  def('org.runnerDocsUrl', z.string().url(), { category: 'general', envName: 'NUXT_PUBLIC_RUNNER_DOCS_URL' }, { scope: 'portal', default: 'https://github.com/tantee/yoda#runners' }),
   def('line.addFriendUrl', z.string().url(), { category: 'line', envName: 'NUXT_PUBLIC_LINE_ADD_FRIEND_URL' }, { scope: 'portal' }),
   def('org.line', z.string().max(200), { category: 'general', envName: 'NUXT_PUBLIC_ORG_LINE' }, { scope: 'portal' }),
   def('org.name', z.string().min(1).max(200), { category: 'general' }, { scope: 'portal' }),
@@ -247,18 +253,11 @@ export function byEnvName(envName: string): SettingDef | undefined {
 export const SETTING_ENV_NAMES: readonly string[] = [...BY_ENV.keys()]
 
 /**
- * Variables the prod compose file passes to core with a default or as required (`${NAME:-value}`, `${NAME:?...}`,
- * or a fixed value), so they are always set in core's env there. Removing one from the host's `.env` does not
- * unlock it in the UI. A core test keeps this list in sync with `docker-compose.prod.yml`.
+ * The container that reads a setting of a scope other than core from its own env only (shown in the "managed on the
+ * host" lock). None today: the portal reads its settings from core's `/public-config` (§5.6), and the backup
+ * container reads `backup.at` / `backup.keepDays` from the settings table (env still wins), so both are editable.
  */
-export const PROD_COMPOSE_CORE_ENV: readonly string[] = [
-  'PORT', 'DATABASE_URL', 'OIDC_ISSUER', 'OIDC_CLIENT_ID', 'MIGRATE_ON_START', 'STAFF_GROUP', 'S3_ENDPOINT', 'S3_REGION',
-  'S3_BUCKET', 'S3_ACCESS_KEY', 'S3_SECRET_KEY', 'AI_MODEL_DRAFT', 'AI_MODEL_FAST', 'AI_WORKERS', 'DAILY_TASK_CAP',
-  'PORTAL_URL', 'RUNNER_LEASE_SECONDS', 'MCP_ENABLED', 'SMTP_PORT', 'SMTP_SECURE', 'LINE_API_URL', 'TELEGRAM_API_URL',
-]
-
-/** The container that reads a setting of a scope other than core (shown in the "managed on the host" lock). */
-export const SCOPE_CONTAINER: Partial<Record<SettingScope, string>> = { portal: 'portal', backup: 'backup' }
+export const SCOPE_CONTAINER: Partial<Record<SettingScope, string>> = {}
 
 /** Secrets of 20+ characters show their last 4 after saving; shorter ones show nothing (5.2). */
 export function secretHint(value: string): string | null {

@@ -126,11 +126,11 @@ describe('GET /admin/settings', () => {
     expect(find(body, 'telegram.botUsername')).toMatchObject({ locked: { reason: 'readonly' } })
     expect(find(body, 'oidc.issuer')).toMatchObject({ locked: { reason: 'recovery_only' } })
     expect(find(body, 'oidc.jwksUrl')).toMatchObject({ locked: { reason: 'recovery_only' } })
-    // Read by the portal or the backup container from their own env (unlocked with Task 6 and later).
-    expect(find(body, 'org.name')).toMatchObject({ locked: { reason: 'managed_on_host', container: 'portal' } })
-    expect(find(body, 'org.line')).toMatchObject({ locked: { reason: 'managed_on_host', container: 'portal', envName: 'NUXT_PUBLIC_ORG_LINE' } })
-    expect(find(body, 'backup.keepDays')).toMatchObject({ locked: { reason: 'managed_on_host', container: 'backup', envName: 'BACKUP_KEEP_DAYS' } })
-    expect(find(body, 'smtp.from')).toMatchObject({ importable: true, composeDefault: false })
+    // The portal reads its settings from /public-config and the backup container from the settings table.
+    expect(find(body, 'org.name')).toMatchObject({ locked: null })
+    expect(find(body, 'org.line')).toMatchObject({ locked: null, envName: 'NUXT_PUBLIC_ORG_LINE' })
+    expect(find(body, 'backup.keepDays')).toMatchObject({ locked: null, envName: 'BACKUP_KEEP_DAYS' })
+    expect(find(body, 'smtp.from')).toMatchObject({ importable: true })
     expect(find(body, 'smtp.host').importable).toBeUndefined()
     expect(find(body, 'ai.workers')).toMatchObject({ apply: 'restart', restartRequired: false })
     expect(body.categories.find((c: { category: string }) => c.category === 'email').test).toBe('smtp')
@@ -140,12 +140,25 @@ describe('GET /admin/settings', () => {
     expect((await app.inject({ url: '/admin/settings?category=nope', headers: h(boss) })).statusCode).toBe(404)
   })
 
-  it('tells per env-locked key what removing the variable would do (kept by the import, prod compose default)', async () => {
+  it('the prod compose env with an empty .env leaves the UI-editable settings unlocked (C1)', async () => {
+    const { prodComposeCoreEnv } = await import('./prod-compose-env.js')
+    await boot(prodComposeCoreEnv())
+    const body = (await app.inject({ url: '/admin/settings', headers: h(boss) })).json()
+    for (const k of ['smtp.port', 'smtp.secure', 'ai.modelDraft', 'ai.modelFast', 'ai.workers', 'work.dailyTaskCap', 'runners.leaseSeconds', 'runners.mcpEnabled', 'oidc.staffGroup']) {
+      expect(find(body, k), k).toMatchObject({ locked: null })
+    }
+    const res = await put(boss, 'email', { changes: { 'smtp.port': 2525 }, versions: { 'smtp.port': 0 } })
+    expect(res.statusCode).toBe(200)
+    expect(store.get('smtp.port')).toBe(2525)
+  })
+
+  it('tells per env-locked key what removing the variable would do (kept by the import)', async () => {
     const env = { SMTP_PORT: '465', SMTP_PASSWORD, GITLAB_TOKEN }
     await boot(env)
     let body = (await app.inject({ url: '/admin/settings?category=email', headers: h(boss) })).json()
-    expect(find(body, 'smtp.port')).toMatchObject({ locked: { reason: 'env', envName: 'SMTP_PORT' }, importable: true, composeDefault: true })
-    expect(find(body, 'smtp.password')).toMatchObject({ locked: { reason: 'env' }, importable: true, composeDefault: false })
+    expect(find(body, 'smtp.port')).toMatchObject({ locked: { reason: 'env', envName: 'SMTP_PORT' }, importable: true })
+    expect(find(body, 'smtp.port').composeDefault).toBeUndefined()
+    expect(find(body, 'smtp.password')).toMatchObject({ locked: { reason: 'env' }, importable: true })
     expect(find(body, 'smtp.password').writeSource).toBe('import')
     await app.close()
     // Import off: env secrets are not copied, so removing one disconnects the service.
@@ -207,7 +220,7 @@ describe('PUT /admin/settings/:category', () => {
   })
 
   it('refuses env-locked, bootstrap-only, read-only and recovery-only settings with 409 and the reason', async () => {
-    await boot({ SMTP_HOST: 'mail.example.org' })
+    await boot({ SMTP_HOST: 'mail.example.org', NUXT_PUBLIC_RUNNER_DOCS_URL: 'https://runners.example.org', BACKUP_AT: '04:00' })
     const cases: [string, object, object][] = [
       ['email', { 'smtp.host': 'other.example.org' }, { key: 'smtp.host', reason: 'env', envName: 'SMTP_HOST' }],
       ['storage', { 'storage.s3Bucket': 'other' }, { key: 'storage.s3Bucket', reason: 'bootstrap' }],
@@ -215,9 +228,8 @@ describe('PUT /admin/settings/:category', () => {
       ['telegram', { 'telegram.botUsername': 'other_bot' }, { key: 'telegram.botUsername', reason: 'readonly' }],
       ['signin', { 'oidc.issuer': 'https://sso.example.org/realms/x' }, { key: 'oidc.issuer', reason: 'recovery_only' }],
       ['signin', { 'oidc.jwksUrl': 'https://sso.example.org/certs' }, { key: 'oidc.jwksUrl', reason: 'recovery_only' }],
-      ['general', { 'org.name': 'Example hospital' }, { key: 'org.name', reason: 'managed_on_host' }],
-      ['general', { 'org.runnerDocsUrl': 'https://docs.example.org' }, { key: 'org.runnerDocsUrl', reason: 'managed_on_host', envName: 'NUXT_PUBLIC_RUNNER_DOCS_URL' }],
-      ['backups', { 'backup.at': '03:00' }, { key: 'backup.at', reason: 'managed_on_host', envName: 'BACKUP_AT' }],
+      ['general', { 'org.runnerDocsUrl': 'https://docs.example.org' }, { key: 'org.runnerDocsUrl', reason: 'env', envName: 'NUXT_PUBLIC_RUNNER_DOCS_URL' }],
+      ['backups', { 'backup.at': '03:00' }, { key: 'backup.at', reason: 'env', envName: 'BACKUP_AT' }],
     ]
     for (const [category, changes, expected] of cases) {
       const res = await put(boss, category, { changes })
@@ -225,6 +237,23 @@ describe('PUT /admin/settings/:category', () => {
       expect(res.json()).toEqual({ error: 'setting_locked', ...expected })
     }
     expect(store.list().filter((i) => i.source === 'db')).toEqual([])
+  })
+
+  it('saves the portal settings /public-config serves (org, LINE add-friend link)', async () => {
+    await boot()
+    const res = await put(boss, 'general', { changes: { 'org.name': 'Example hospital', 'org.line': 'IT department' } })
+    expect(res.statusCode).toBe(200)
+    expect(store.get('org.name')).toBe('Example hospital')
+    expect((await put(boss, 'line', { changes: { 'line.addFriendUrl': 'https://line.example.org/add' } })).statusCode).toBe(200)
+    expect(store.get('line.addFriendUrl')).toBe('https://line.example.org/add')
+  })
+
+  it('saves the backup settings the backup container reads from the database', async () => {
+    await boot()
+    const res = await put(boss, 'backups', { changes: { 'backup.at': '03:30', 'backup.keepDays': 30 } })
+    expect(res.statusCode).toBe(200)
+    expect(store.get('backup.at')).toBe('03:30')
+    expect(store.get('backup.keepDays')).toBe(30)
   })
 
   it('validates per key: unknown keys, other categories and bad values are 422 with every issue, nothing saved', async () => {

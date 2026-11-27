@@ -12,6 +12,10 @@ FROM node:22-alpine
 ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=build /out/ ./
+# Host-side admin commands: docker compose exec core yoda-admin <command> (setup-token, create-break-glass,
+# reset-break-glass, status, rotate-master-key, recovery-kit, reset-master-key, recovery on|off; `yoda-admin` alone
+# lists them).
+RUN printf '#!/bin/sh\nexec node /app/dist/yoda-admin.js "$@"\n' > /usr/local/bin/yoda-admin && chmod 0755 /usr/local/bin/yoda-admin
 USER node
 EXPOSE 4000
 # Configuration (DATABASE_URL, OIDC_*, ...) comes from the environment at runtime.

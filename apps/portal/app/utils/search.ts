@@ -20,6 +20,7 @@ export const NOTIFICATION_ICONS: Record<NotificationKind, string> = {
   secretary_message: 'mdi-robot-outline',
   budget_alert: 'mdi-cash-alert',
   discussion: 'mdi-forum-outline',
+  security_alert: 'mdi-shield-alert-outline',
 }
 
 /** True for a ⌘K / Ctrl K press (the search shortcut). */

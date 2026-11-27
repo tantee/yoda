@@ -67,7 +67,7 @@ function builders(opts: { gitlabFetch?: typeof fetch } = {}) {
   const transports: FakeMail[] = []
   const jwksFor: string[] = []
   const build: Partial<LiveBuilders> = {
-    jwks: (c) => (jwksFor.push(c.oidcIssuer), localJwks),
+    jwks: (c) => (jwksFor.push(c.oidcIssuer ?? ''), localJwks),
     models: (c) => buildModels(c, () => {}),
     gitlab: (c) => (c.gitlabUrl && c.gitlabToken ? new GitLabClient({ baseUrl: c.gitlabUrl, token: c.gitlabToken, fetch: opts.gitlabFetch, retryBaseMs: 1 }) : null),
     mailTransport: (c) => {

@@ -129,14 +129,13 @@ export const SHOW_HOW = ['env', 'managed_on_host']
 export const LOCK_REASONS = ['env', 'bootstrap', 'readonly', 'recovery_only', 'managed_on_host', 'bound_secret_in_env']
 
 /**
- * How a locked setting is changed. An env lock depends on what removing the variable would do: the prod compose
- * file may still pass it (a default), and a secret that was not imported (no usable master key, or
- * YODA_SETTINGS_IMPORT=false) is lost, disconnecting the service. A host-managed setting without a variable is
+ * How a locked setting is changed. An env lock depends on what removing the variable would do: a secret that was
+ * not imported (no usable master key, or YODA_SETTINGS_IMPORT=false) is lost, disconnecting the service. (The prod
+ * compose passes every UI-editable setting as `${NAME:-}`, so removing it from .env unlocks it.) A host-managed setting without a variable is
  * not read by anything yet.
  */
-export function lockHowKey(reason: string, opts: { envName?: string | null; secret?: boolean; importable?: boolean; composeDefault?: boolean } = {}): string {
+export function lockHowKey(reason: string, opts: { envName?: string | null; secret?: boolean; importable?: boolean } = {}): string {
   if (reason === 'env') {
-    if (opts.composeDefault) return 'settings.lock.how.envCompose'
     if (opts.secret && opts.importable === false) return 'settings.lock.how.envNotKept'
     return 'settings.lock.how.env'
   }
@@ -151,7 +150,7 @@ export const lockNamed = (l: { envName?: string | null; container?: string | nul
 export function fieldRules(v: SettingView): FieldRules {
   if (!v.locked) return { editable: true, lock: null }
   const envName = v.locked.envName ?? (v.locked.reason === 'managed_on_host' ? null : v.envName) ?? null
-  const howKey = lockHowKey(v.locked.reason, { envName, secret: v.secret, importable: v.importable, composeDefault: v.composeDefault })
+  const howKey = lockHowKey(v.locked.reason, { envName, secret: v.secret, importable: v.importable })
   return { editable: false, lock: { reason: v.locked.reason, envName, container: v.locked.container ?? null, howKey } }
 }
 
@@ -189,6 +188,11 @@ export function lockedCount(views: SettingView[]): number {
 export function applyModes(views: SettingView[]): SettingView['apply'][] {
   const editable = views.filter(v => !v.locked)
   return (['live', 'reconnect', 'restart'] as const).filter(m => editable.some(v => v.apply === m))
+}
+
+/** The hints a category shows: the backup container re-reads its settings every minute, so `live` reads `minute` there. */
+export function categoryApplyModes(category: string, views: SettingView[]): (SettingView['apply'] | 'minute')[] {
+  return applyModes(views).map(m => (category === 'backups' && m === 'live' ? 'minute' : m))
 }
 
 // --- Drafts ---------------------------------------------------------------------------------------------------
@@ -461,7 +465,7 @@ export function testCodeMessage(code: string | undefined): { key: string; named?
   return { key: KNOWN_CODES.has(code) ? `settings.test.code.${code}` : 'settings.test.code.failed' }
 }
 
-const KNOWN_CHECKS = new Set(['discovery', 'jwks', 'client', 'connect', 'send', 'bot', 'webhook', 'user', 'scopes', 'anthropic', 'openai', 'model_draft', 'model_fast', 'model_embed', 'config', 'bucket'])
+const KNOWN_CHECKS = new Set(['discovery', 'jwks', 'client', 'connect', 'send', 'bot', 'webhook', 'user', 'scopes', 'anthropic', 'openai', 'model_draft', 'model_fast', 'model_embed', 'config', 'bucket', 'state', 'token', 'id_token', 'access_token', 'admin', 'staff', 'db', 'pgvector', 'queue'])
 
 /** A check id (`model.draft`) as the i18n key of its label. */
 export function checkLabelKey(id: string): string {
