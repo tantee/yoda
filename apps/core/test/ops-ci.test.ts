@@ -265,7 +265,14 @@ describe('Dockerfiles pin their base images by digest', () => {
     const froms = read(file).split('\n').filter((l) => l.startsWith('FROM '))
     expect(froms.length).toBeGreaterThan(0)
     // <image>:<exact tag>@sha256:<digest>: the tag for reading, the digest for what is built.
-    for (const f of froms) expect(f).toMatch(/^FROM [a-z0-9./-]+:[0-9][\w.-]*@sha256:[0-9a-f]{64}( AS \w+)?$/)
+    for (const f of froms) expect(f).toMatch(/^FROM (--platform=\$BUILDPLATFORM )?[a-z0-9./-]+:[0-9][\w.-]*@sha256:[0-9a-f]{64}( AS \w+)?$/)
+    // Only a build stage runs on the builder's platform; the image that ships is always the target platform's.
+    expect(froms.at(-1)).not.toContain('--platform')
+  })
+
+  it('builds the portal (plain JavaScript output) on the native platform, not under QEMU', () => {
+    expect(read('apps/portal/Dockerfile')).toMatch(/^FROM --platform=\$BUILDPLATFORM node:\S+ AS build$/m)
+    expect(read('apps/portal/nuxt.config.ts')).toMatch(/ssr: false/)
   })
 })
 
@@ -500,8 +507,12 @@ describe('.github/workflows/release.yml (GitHub Releases + GHCR)', () => {
     expect(text).not.toMatch(/\b\d{1,3}(\.\d{1,3}){3}\b/)
   })
 
-  it('builds the four images: a release multi-arch, pushed by digest, without cache; a dry run amd64, never pushed', () => {
+  it('builds the four images for amd64 and arm64: a release pushed by digest, without cache; a dry run never pushed', () => {
     for (const j of ['images-dry', 'images']) {
+      // A stuck build (v1.0.0: the arm64 portal under QEMU) fails well before GitHub's 6-hour job limit.
+      expect(jobs[j]!['timeout-minutes'], j).toBe(45)
+      const qemuStep = step(j, (s) => !!s.uses?.startsWith('docker/setup-qemu-action@'))
+      expect(qemuStep.with!.platforms, j).toBe('arm64')
       const matrix = jobs[j]!.strategy!.matrix!.include!
       expect(matrix.map((m) => m.name), j).toEqual(images)
       expect(matrix.find((m) => m.name === 'backup')).toMatchObject({ file: 'ops/backup/Dockerfile', context: 'ops/backup' })
@@ -523,13 +534,13 @@ describe('.github/workflows/release.yml (GitHub Releases + GHCR)', () => {
     expect(real.with!['cache-from']).toBeUndefined()
     expect(real.with!['cache-to']).toBeUndefined()
     expect(step('images-dry', (s) => !!s.uses?.startsWith('docker/build-push-action@')).with!['cache-from']).toBe('type=gha,scope=${{ matrix.name }}')
-    // The dry run has no registry login and no QEMU.
-    expect(jobs['images-dry']!.steps.some((s) => s.uses?.startsWith('docker/login-action@') || s.uses?.startsWith('docker/setup-qemu-action@'))).toBe(false)
+    // The dry run has no registry login.
+    expect(jobs['images-dry']!.steps.some((s) => s.uses?.startsWith('docker/login-action@'))).toBe(false)
     const login = step('images', (s) => !!s.uses?.startsWith('docker/login-action@'))
     expect(login.with).toMatchObject({ registry: 'ghcr.io', password: '${{ secrets.GITHUB_TOKEN }}' })
     expect(wf.env).toEqual({ DOCKER_BUILD_RECORD_UPLOAD: 'false' })
-    expect(meta()).toContain('platforms=linux/amd64,linux/arm64')
-    expect(meta()).toMatch(/else\n[\s\S]*platforms=linux\/amd64\n/)
+    // A dry run builds arm64 too, so an arm64-only problem shows on the pull request, not on the tag.
+    expect(meta().match(/^\s*platforms=.*$/gm)!.map((l) => l.trim())).toEqual(['platforms=linux/amd64,linux/arm64'])
     // The image prefix and tags match what install.sh and release.env use: ghcr.io/<owner>/yoda, version without v.
     expect(meta()).toContain(`echo "prefix=ghcr.io/$(printf '%s' "$REPO" | tr '[:upper:]' '[:lower:]')"`)
     expect(meta()).toContain('echo "tag=v$version"')
