@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { AdminSettingsResponse, LocalSession, RecoveryKit, SettingCategory, SettingsCategoryView, SetupClaimResult, SetupProgress, SetupStatus, SetupStepId } from '@yoda/shared'
+import { isLocalhostHost } from '@yoda/shared'
 import StepAdmin from '~/components/setup/StepAdmin.vue'
 import StepCheck from '~/components/setup/StepCheck.vue'
 import StepClaim from '~/components/setup/StepClaim.vue'
@@ -30,7 +31,7 @@ import {
  */
 definePageMeta({ layout: false })
 
-const { t, locale } = useI18n()
+const { t, locale, setLocale } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const { dateTime } = useDateFormat()
@@ -49,6 +50,8 @@ const kit = ref<RecoveryKit | null>(null)
 const api = setupClient((url, opts) => $fetch(url, opts), () => session.value?.csrf ?? null)
 
 const origin = typeof window === 'undefined' ? '' : window.location.origin
+/** Plain http on this machine (the SSH tunnel to 127.0.0.1) is expected: the session banner is information there (D8). */
+const localPage = typeof window !== 'undefined' && isLocalhostHost(window.location.hostname)
 const step = computed<SetupStepId>(() => (session.value ? currentStep(progress.value, route.query.step) : 'token'))
 const steps = computed(() => stepList(progress.value, step.value))
 const bar = computed(() => wizardProgress(step.value))
@@ -187,8 +190,9 @@ onMounted(async () => {
   await finishCallback()
 })
 
+// setLocale, not `locale.value =`: the locale files load lazily, so a plain assignment shows raw keys.
 function switchLocale(l: 'th' | 'en') {
-  locale.value = l
+  void setLocale(l)
 }
 </script>
 
@@ -249,7 +253,7 @@ function switchLocale(l: 'th' | 'en') {
           <div class="font-weight-medium">{{ t('setup.welcome.title') }}</div>
           <div>{{ t('setup.welcome.body', { at: dateTime(session.expiresAt) }) }}</div>
         </v-alert>
-        <v-alert v-if="session.insecure" type="warning" variant="tonal" density="compact" icon="mdi-lock-open-alert-outline" class="mb-4" data-testid="setup-session-insecure">{{ t('setup.insecure.session') }}</v-alert>
+        <v-alert v-if="session.insecure" :type="localPage ? 'info' : 'warning'" variant="tonal" density="compact" :icon="localPage ? 'mdi-lock-open-outline' : 'mdi-lock-open-alert-outline'" class="mb-4" data-testid="setup-session-insecure">{{ t('setup.insecure.session') }}</v-alert>
         <v-alert v-if="error" type="error" variant="tonal" density="compact" class="mb-4" role="alert" data-testid="setup-error">{{ error }}</v-alert>
 
         <template v-if="progress">

@@ -14,7 +14,7 @@ import { formatCode, isLastAdmin, oidcCallback, oidcCallbackError, recoveryClien
  */
 definePageMeta({ layout: false })
 
-const { t, locale } = useI18n()
+const { t, locale, setLocale } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const { dateTime } = useDateFormat()
@@ -284,8 +284,9 @@ const rollbackUntil = computed(() => (rollbackInfo.value ? dateTime(rollbackInfo
 const breakGlass = computed(() => status.value?.breakGlass ?? { totpEnabled: false, recoveryCodesLeft: 0 })
 const asResult = (r: OidcCheckResult) => ({ action: 'oidc' as const, ...r })
 
+// setLocale, not `locale.value =`: the locale files load lazily, so a plain assignment shows raw keys.
 function switchLocale() {
-  locale.value = locale.value === 'th' ? 'en' : 'th'
+  void setLocale(locale.value === 'th' ? 'en' : 'th')
 }
 </script>
 
