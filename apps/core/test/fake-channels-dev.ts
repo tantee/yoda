@@ -23,12 +23,12 @@ const shown = { line: 0, telegram: 0 }
 setInterval(() => {
   for (; shown.line < line.requests.length; shown.line++) {
     const r = line.requests[shown.line]!
-    const b = r.body as { to?: string; replyToken?: string; messages?: { text: string }[] }
+    const b = (r.body ?? {}) as { to?: string; replyToken?: string; messages?: { text: string }[] }
     console.log(`fake-line: ${r.path} ${b.to ?? b.replyToken ?? ''}\n${(b.messages ?? []).map((m) => m.text).join('\n')}\n`)
   }
   for (; shown.telegram < telegram.requests.length; shown.telegram++) {
     const r = telegram.requests[shown.telegram]!
-    const b = r.body as { chat_id?: unknown; text?: string }
+    const b = (r.body ?? {}) as { chat_id?: unknown; text?: string }
     console.log(`fake-telegram: ${r.path.replace(/^\/bot[^/]+/, '/bot<token>')} chat ${String(b.chat_id)}\n${b.text ?? ''}\n`)
   }
 }, 200)

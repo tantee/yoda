@@ -176,9 +176,15 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
   ]).finally(() => clearTimeout(timer))
 }
 
-export type ResolvedTarget = { address: string; family: number; private: boolean }
+export type ResolvedTarget = {
+  address: string
+  family: number
+  private: boolean
+  /** Every checked address in resolver order (`address` is the first); safeFetch tries the next one when a connection is refused. */
+  addresses: { address: string; family: number }[]
+}
 
-/** Resolves a host once and checks every address; the caller connects to `address`. */
+/** Resolves a host once and checks every address; the caller connects to `address` (or each of `addresses`). */
 export async function resolveOutbound(rawHost: string, policy: OutboundPolicy = {}, timeoutMs = 5_000): Promise<ResolvedTarget> {
   let host = rawHost.trim().toLowerCase().replace(/\.$/, '')
   if (host.startsWith('[') && host.endsWith(']')) host = host.slice(1, -1)
@@ -209,7 +215,12 @@ export async function resolveOutbound(rawHost: string, policy: OutboundPolicy = 
   }
   if (addrs.some((a) => addressBlocked(a.address, policy) !== null)) throw new OutboundError('blocked_address')
   const first = addrs[0]!
-  return { address: first.address, family: first.family, private: addrs.every((a) => isInternal(a.address)) }
+  return {
+    address: first.address,
+    family: first.family,
+    private: addrs.every((a) => isInternal(a.address)),
+    addresses: addrs.map((a) => ({ address: a.address, family: a.family })),
+  }
 }
 
 export type SafeResponse = { status: number; headers: http.IncomingHttpHeaders; body: string }
@@ -256,51 +267,79 @@ export async function safeFetch(rawUrl: string | URL, opts: SafeFetchOptions = {
   const hostName = url.hostname.replace(/^\[|\]$/g, '')
   const maxBytes = opts.maxBytes ?? 64 * 1024
 
-  return new Promise<SafeResponse>((resolve, reject) => {
-    let settled = false
-    const fail = (e: unknown) => {
-      if (settled) return
-      settled = true
-      clearTimeout(total)
-      req.destroy()
-      reject(mapError(e))
+  // A name with several checked addresses (localhost → ::1 and 127.0.0.1, or a dual-stack host whose IPv6 is not
+  // served) moves to the next address when the connection itself is refused or unreachable, within the deadline.
+  // Only addresses resolveOutbound already checked are tried; nothing is looked up again.
+  for (let i = 0; ; i++) {
+    const addr = target.addresses[i] ?? target
+    try {
+      return await attempt(addr)
+    } catch (err) {
+      const next = err instanceof NextAddress && i + 1 < target.addresses.length && Date.now() < deadline
+      if (!next) throw err instanceof NextAddress ? err.cause : err
     }
-    const reqOpts: https.RequestOptions = {
-      method: opts.method ?? 'GET',
-      host: target.address,
-      family: target.family,
-      port: url.port ? Number(url.port) : secure ? 443 : 80,
-      path: `${url.pathname}${url.search}`,
-      headers: { host: url.host, 'user-agent': 'yoda-settings-test', ...opts.headers },
-      agent: false,
-      ...(secure && !isIP(hostName) ? { servername: hostName } : {}),
-    }
-    const req = (secure ? https : http).request(reqOpts, (res) => {
-      const chunks: Buffer[] = []
-      let size = 0
-      res.on('data', (c: Buffer) => {
-        size += c.length
-        if (size > maxBytes) return fail(new OutboundError('too_large'))
-        chunks.push(c)
-      })
-      res.on('end', () => {
+  }
+
+  function attempt(addr: { address: string; family: number }): Promise<SafeResponse> {
+    return new Promise<SafeResponse>((resolve, reject) => {
+      let settled = false
+      let connected = false
+      const fail = (e: unknown) => {
         if (settled) return
         settled = true
         clearTimeout(total)
-        resolve({ status: res.statusCode ?? 0, headers: res.headers, body: Buffer.concat(chunks).toString('utf8') })
+        req.destroy()
+        const code = (e as { code?: unknown })?.code
+        if (!connected && typeof code === 'string' && RETRY_NEXT.has(code)) reject(new NextAddress(mapError(e)))
+        else reject(mapError(e))
+      }
+      const reqOpts: https.RequestOptions = {
+        method: opts.method ?? 'GET',
+        host: addr.address,
+        family: addr.family,
+        port: url.port ? Number(url.port) : secure ? 443 : 80,
+        path: `${url.pathname}${url.search}`,
+        headers: { host: url.host, 'user-agent': 'yoda-settings-test', ...opts.headers },
+        agent: false,
+        ...(secure && !isIP(hostName) ? { servername: hostName } : {}),
+      }
+      const req = (secure ? https : http).request(reqOpts, (res) => {
+        const chunks: Buffer[] = []
+        let size = 0
+        res.on('data', (c: Buffer) => {
+          size += c.length
+          if (size > maxBytes) return fail(new OutboundError('too_large'))
+          chunks.push(c)
+        })
+        res.on('end', () => {
+          if (settled) return
+          settled = true
+          clearTimeout(total)
+          resolve({ status: res.statusCode ?? 0, headers: res.headers, body: Buffer.concat(chunks).toString('utf8') })
+        })
+        res.on('error', fail)
       })
-      res.on('error', fail)
+      const total = setTimeout(() => fail(new OutboundError('timeout')), Math.max(deadline - Date.now(), 1))
+      req.on('socket', (socket) => {
+        const connect = setTimeout(() => fail(new OutboundError('timeout')), opts.connectTimeoutMs ?? 5_000)
+        socket.once('connect', () => (connected = true))
+        socket.once(secure ? 'secureConnect' : 'connect', () => clearTimeout(connect))
+        socket.once('close', () => clearTimeout(connect))
+      })
+      req.on('error', fail)
+      if (opts.body !== undefined) req.write(opts.body)
+      req.end()
     })
-    const total = setTimeout(() => fail(new OutboundError('timeout')), Math.max(deadline - Date.now(), 1))
-    req.on('socket', (socket) => {
-      const connect = setTimeout(() => fail(new OutboundError('timeout')), opts.connectTimeoutMs ?? 5_000)
-      socket.once(secure ? 'secureConnect' : 'connect', () => clearTimeout(connect))
-      socket.once('close', () => clearTimeout(connect))
-    })
-    req.on('error', fail)
-    if (opts.body !== undefined) req.write(opts.body)
-    req.end()
-  })
+  }
+}
+
+/** Connection-level failures after which safeFetch tries the next checked address. */
+const RETRY_NEXT = new Set(['ECONNREFUSED', 'EHOSTUNREACH', 'ENETUNREACH', 'EADDRNOTAVAIL'])
+
+class NextAddress extends Error {
+  constructor(readonly cause: OutboundError) {
+    super(cause.message)
+  }
 }
 
 /** The compose services core sits next to (§8.5); their addresses are blocked as well as their names. */

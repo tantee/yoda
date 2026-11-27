@@ -85,7 +85,12 @@ describe('resolveOutbound', () => {
   it('checks every resolved address: one bad answer blocks the host', async () => {
     const t = table({ 'mixed.example.org': ['10.0.0.8', '169.254.169.254'], 'ok.example.org': ['10.0.0.8', '192.168.0.9'] })
     expect(await code(resolveOutbound('mixed.example.org', { lookup: t.lookup }))).toBe('blocked_address')
-    expect(await resolveOutbound('ok.example.org', { lookup: t.lookup })).toEqual({ address: '10.0.0.8', family: 4, private: true })
+    expect(await resolveOutbound('ok.example.org', { lookup: t.lookup })).toEqual({
+      address: '10.0.0.8',
+      family: 4,
+      private: true,
+      addresses: [{ address: '10.0.0.8', family: 4 }, { address: '192.168.0.9', family: 4 }],
+    })
   })
 
   it('reads decimal, octal and hex IPv4 spellings as the address they stand for, without a lookup', async () => {
@@ -183,6 +188,22 @@ describe('safeFetch', () => {
     expect(res.status).toBe(200)
     expect(n).toBe(1)
     expect(hits).toEqual([{ url: '/x', host: `sso.example.org:${port}` }])
+  })
+
+  it('tries the next checked address when one refuses the connection (localhost → ::1, then 127.0.0.1)', async () => {
+    // The server listens on 127.0.0.1 only, so ::1 is refused (or unreachable without IPv6).
+    const t = table({ 'sso.example.org': ['::1', '127.0.0.1'] })
+    const res = await safeFetch(`http://sso.example.org:${port}/x`, { policy: { allowLoopback: true, lookup: t.lookup } })
+    expect(res.status).toBe(200)
+    expect(t.calls).toEqual(['sso.example.org'])
+    expect(hits).toEqual([{ url: '/x', host: `sso.example.org:${port}` }])
+    // Every address refused: the usual short code, still one lookup.
+    const closed = table({ 'down.example.org': ['::1', '127.0.0.1'] })
+    server.closeAllConnections()
+    await new Promise<void>((r) => server.close(() => r()))
+    expect(await code(safeFetch(`http://down.example.org:${port}/`, { policy: { allowLoopback: true, lookup: closed.lookup } }))).toBe('connect_failed')
+    expect(closed.calls).toEqual(['down.example.org'])
+    await new Promise<void>((r) => server.listen(port, '127.0.0.1', r))
   })
 
   it('does not follow redirects', async () => {
