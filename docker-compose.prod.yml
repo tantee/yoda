@@ -255,12 +255,17 @@ services:
       YODA_PROXY_DOMAIN: ${YODA_PROXY_DOMAIN:-}
       YODA_PROXY_CERT_MODE: ${YODA_PROXY_CERT_MODE:-internal}
       YODA_PROXY_ACME_EMAIL: ${YODA_PROXY_ACME_EMAIL:-}
-      # acme only: the ACME directory; empty is Let's Encrypt's production one (install.sh --acme-staging: staging).
-      YODA_PROXY_ACME_CA: ${YODA_PROXY_ACME_CA:-}
+      # acme only: the ACME directory, Let's Encrypt's production one unless .env sets another (install.sh
+      # --acme-staging: staging). The default is here, not in the Caddyfile: Caddy's {$VAR:default} ignores its
+      # default for a variable that is set but empty, as compose passes it.
+      YODA_PROXY_ACME_CA: ${YODA_PROXY_ACME_CA:-https://acme-v02.api.letsencrypt.org/directory}
       YODA_PROXY_HTTP_PORT: ${YODA_PROXY_HTTP_PORT:-80}
       YODA_PROXY_HTTPS_PORT: ${YODA_PROXY_HTTPS_PORT:-443}
+    # The Caddyfile from the mounted directory: unpacking a bundle replaces the file (a new inode), which a
+    # single-file mount would hide from the running container; the directory shows it, and deploy.sh reloads it.
+    command: ['caddy', 'run', '--config', '/etc/caddy/yoda/Caddyfile', '--adapter', 'caddyfile']
     volumes:
-      - ./ops/proxy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./ops/proxy:/etc/caddy/yoda:ro
       # files mode: the organisation's certificate and key (install.sh --cert/--key copies them here).
       - ./proxy/certs:/etc/caddy/certs:ro
       # Optional further sites (*.caddy), e.g. core's /mcp for the staff runners (section 8).
@@ -276,10 +281,11 @@ services:
       retries: 3
       start_period: 10s
     # It faces the network: no capabilities but binding 80 and 443 and reading proxy/certs/key.pem (0600, owned by
-    # the deploy user, read as root here), no privilege gain, and a read-only root file system (it writes only its
-    # two volumes and /tmp).
+    # the deploy user, read as root here: DAC_OVERRIDE, in Docker's default set, confined to the container's own
+    # mounts; never DAC_READ_SEARCH, which reopens open_by_handle_at, the "shocker" escape to host files), no
+    # privilege gain, and a read-only root file system (it writes only its two volumes and /tmp).
     cap_drop: [ALL]
-    cap_add: [NET_BIND_SERVICE, DAC_READ_SEARCH]
+    cap_add: [NET_BIND_SERVICE, DAC_OVERRIDE]
     security_opt: ['no-new-privileges:true']
     read_only: true
     tmpfs: [/tmp]

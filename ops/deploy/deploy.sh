@@ -31,8 +31,9 @@
 # settings the proxy cannot run with (the domain, the mode, the ports, ACME's email and ports; exit 2), warns about
 # hops other than 2 and an organisation certificate (files mode) that does not name the domain or expires within 30
 # days; checks the Caddyfile and certificates with `caddy validate` before release.env or any running container is
-# replaced (exit 2); after the start reloads the proxy's configuration (`caddy reload --force`: a changed
-# Caddyfile, proxy/sites file or certificate file applies even when compose kept the container); and copies the
+# replaced (exit 2); after the start reloads the proxy's configuration (`caddy reload --force` of
+# /etc/caddy/yoda/Caddyfile, the mounted ops/proxy directory, so the unpacked bundle's new Caddyfile, a changed
+# proxy/sites file or certificate file applies even when compose kept the container); and copies the
 # public root certificate of Caddy's internal CA to proxy/root.crt (internal mode; never a private key).
 # It never removes or recreates a volume (the bootstrap volume holds the master key).
 set -eu
@@ -145,7 +146,12 @@ refuse() {
 
 # The built-in proxy: on when the profiles in effect run its service (compose reads COMPOSE_PROFILES from .env).
 proxy=no
-if dc config --services 2>/dev/null | grep -qx proxy; then
+# A compose error is not "no proxy service": stop with compose's own message.
+services=$(dc config --services 2>&1) || {
+  printf '%s\n' "$services" | tail -n 5 >&2
+  refuse "docker compose cannot read the compose files and .env (the lines above); nothing was changed"
+}
+if printf '%s\n' "$services" | grep -qx proxy; then
   proxy=yes
 else
   profiles=$(setting COMPOSE_PROFILES | tr -d '[:space:]')
@@ -208,7 +214,13 @@ if [ "$proxy" = yes ]; then
       :443 | 80:443 | : | 80:) ;;
       *) refuse 'YODA_PROXY_CERT_MODE=acme needs the proxy on ports 80 and 443 (Let'"'"'s Encrypt checks the name there): remove YODA_PROXY_HTTP_PORT and YODA_PROXY_HTTPS_PORT from .env, or use internal or files' ;;
     esac
-    [ -n "$(setting YODA_PROXY_ACME_EMAIL)" ] || refuse 'YODA_PROXY_CERT_MODE=acme needs YODA_PROXY_ACME_EMAIL in .env (the address Let'"'"'s Encrypt writes to)'
+    pemail=$(setting YODA_PROXY_ACME_EMAIL)
+    [ -n "$pemail" ] || refuse 'YODA_PROXY_CERT_MODE=acme needs YODA_PROXY_ACME_EMAIL in .env (the address Let'"'"'s Encrypt writes to)'
+    printf '%s\n' "$pemail" | grep -Eqx '[^[:space:]{}@]+@[^[:space:]{}@]+\.[^[:space:]{}@]+' ||
+      refuse "YODA_PROXY_ACME_EMAIL is not an email address (no spaces or braces): $pemail"
+    pca=$(setting YODA_PROXY_ACME_CA)
+    [ -z "$pca" ] || printf '%s\n' "$pca" | grep -Eqx 'https://[^[:space:]{}]+' ||
+      refuse "YODA_PROXY_ACME_CA must be an https:// ACME directory URL (no spaces or braces), or not set for Let's Encrypt: $pca"
   fi
   mkdir -p proxy/certs proxy/sites
   # The organisation's certificate, when openssl is here: the name and the time left (caddy validate checks the key).
@@ -236,7 +248,7 @@ done
 # The proxy's settings, before release.env or any running container is replaced: a wrong domain, mode or
 # certificate fails here (with the new release's files and images).
 if [ "$proxy" = yes ]; then
-  out=$(dc run --rm --no-deps -T proxy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile 2>&1) || {
+  out=$(dc run --rm --no-deps -T proxy caddy validate --config /etc/caddy/yoda/Caddyfile --adapter caddyfile 2>&1) || {
     printf '%s\n' "$out" | tail -n 3 >&2
     rm -f "$release"
     echo "deploy: the built-in HTTPS proxy's settings are invalid: check YODA_PROXY_DOMAIN, YODA_PROXY_CERT_MODE (internal, files or acme), YODA_PROXY_ACME_EMAIL (acme) or proxy/certs/cert.pem and key.pem (files) in .env and $(pwd)/proxy, and the *.caddy files in proxy/sites (docs/operations.md, section 4b); release.env and the running containers are unchanged" >&2
@@ -269,11 +281,11 @@ if [ "$proxy" = yes ]; then
   # Compose recreates the proxy only when its own settings change, not when the Caddyfile, a proxy/sites file or a
   # certificate file does: reload them now (validated above; Caddy keeps the running configuration on an error).
   tries=0
-  until out=$(dc exec -T proxy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile --force 2>&1); do
+  until out=$(dc exec -T proxy caddy reload --config /etc/caddy/yoda/Caddyfile --adapter caddyfile --force 2>&1); do
     tries=$((tries + 1))
     if [ "$tries" -ge 6 ]; then
       printf '%s\n' "$out" | tail -n 3 >&2
-      echo "deploy: the built-in HTTPS proxy did not reload its configuration (it may still run the previous one): dc logs proxy, then dc restart proxy (docs/operations.md, section 4b)" >&2
+      echo "deploy: the built-in HTTPS proxy did not reload its configuration: it may be stopped or restarting (dc ps proxy, dc logs --tail 50 proxy), or still run the previous configuration (then dc restart proxy; docs/operations.md, section 4b)" >&2
       exit 1
     fi
     sleep 5

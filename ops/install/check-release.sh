@@ -9,7 +9,7 @@
 # every image is <prefix>/<name>:<version>@<digest>, that the optional built-in HTTPS proxy runs a Caddy image
 # pinned by version and digest, and that the bundle's ops/proxy/Caddyfile passes `caddy validate` in that image for
 # each certificate mode (internal, acme, and files with a throwaway certificate made here; docs/operations.md,
-# section 4b). Then it checks that a signature from another key is refused.
+# section 4b), run with the environment compose gives the proxy service, empty values included. Then it checks that a signature from another key is refused.
 # The release workflow (.github/workflows/release.yml) runs it on every dry run and on a real release, before the
 # bundle is kept for the release and before any image is tagged:
 #
@@ -148,12 +148,31 @@ if [ -n "$real_docker" ] && "$real_docker" compose version > /dev/null 2>&1; the
   openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj '/CN=portal.example.org' \
     -keyout "$work/proxy/certs/key.pem" -out "$work/proxy/certs/cert.pem" > /dev/null 2>&1 ||
     fail 'openssl could not make the throwaway certificate for the proxy check'
+  # Each mode with exactly the environment compose gives the proxy (its defaults, and the empty values it passes:
+  # Caddy's {$NAME:default} ignores the default of a set but empty variable), the mounted ops/proxy directory and
+  # the command's Caddyfile path.
+  proxy_validate() {
+    penv=$(cd "$work/srv/yoda" && env -u YODA_VERSION -u YODA_IMAGE_PREFIX YODA_PROXY_DOMAIN=portal.example.org \
+      "YODA_PROXY_CERT_MODE=$1" "YODA_PROXY_ACME_EMAIL=$2" "$real_docker" compose --env-file .env --env-file release.env \
+      -f docker-compose.yml -f docker-compose.prod.yml --profile proxy config --format json proxy 2>"$work/compose-proxy.err" |
+      python3 -c 'import json, sys
+for k, v in sorted((json.load(sys.stdin)["services"]["proxy"].get("environment") or {}).items()):
+    print("%s=%s" % (k, "" if v is None else v))') || { cat "$work/compose-proxy.err" >&2; fail "docker compose config gives no proxy environment ($1)"; }
+    set --
+    while IFS= read -r kv; do
+      [ -z "$kv" ] || set -- "$@" -e "$kv"
+    done <<ENV
+$penv
+ENV
+    "$real_docker" run --rm --network none -v "$work/srv/yoda/ops/proxy:/etc/caddy/yoda:ro" \
+      -v "$work/proxy/certs:/etc/caddy/certs:ro" -v "$work/proxy/sites:/etc/caddy/sites:ro" "$@" \
+      "$proxy_image" caddy validate --config /etc/caddy/yoda/Caddyfile --adapter caddyfile 2>&1
+  }
   for mode in internal acme files; do
-    out=$("$real_docker" run --rm --network none \
-      -v "$work/srv/yoda/ops/proxy/Caddyfile:/etc/caddy/Caddyfile:ro" -v "$work/proxy/certs:/etc/caddy/certs:ro" \
-      -v "$work/proxy/sites:/etc/caddy/sites:ro" -e YODA_PROXY_DOMAIN=portal.example.org -e "YODA_PROXY_CERT_MODE=$mode" \
-      -e YODA_PROXY_ACME_EMAIL=it@example.org "$proxy_image" caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile 2>&1) ||
-      { printf '%s\n' "$out" | tail -n 3 >&2; fail "the bundle's Caddyfile does not validate in $proxy_image ($mode)"; }
+    email=''
+    [ "$mode" != acme ] || email=it@example.org
+    out=$(proxy_validate "$mode" "$email") ||
+      { printf '%s\n' "$out" | tail -n 3 >&2; fail "the bundle's Caddyfile does not validate in $proxy_image ($mode, with compose's environment)"; }
   done
   echo "check-release: the built-in proxy runs $proxy_image and its Caddyfile validates (internal, acme, files)"
 else
