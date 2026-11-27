@@ -34,7 +34,7 @@ Each PR has before/after screenshots of new screens and a checkbox test plan.
 | D5 | One rail item "การตั้งค่าระบบ" absorbs the GitLab and channels pages. |
 | D6 | Every portal admin may change settings, with re-authentication for secrets. |
 | D7 | The recovery kit is one file (master key + break-glass codes). |
-| D8 | Setup over plain HTTP on the LAN is allowed with a warning. |
+| D8 | Setup over plain HTTP on the LAN is allowed with a warning. (Replaced 2026-11-27 by the owner: the public URL must be https unless the host is localhost; see the installer proposal, D8.) |
 | D9 | S3 is env/bootstrap only; the UI is read-only with a test. |
 | D10 | The audit log is kept forever. |
 | D11 | The wizard opens in Thai and can be switched. |

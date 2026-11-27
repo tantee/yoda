@@ -1,4 +1,4 @@
-import { CSRF_HEADER, OPTIONAL_SETUP_STEPS, SETUP_STEPS, normaliseCode, passwordIssue, type SetupProgress, type SetupStepId } from '@yoda/shared'
+import { CSRF_HEADER, OPTIONAL_SETUP_STEPS, SETUP_STEPS, normaliseCode, passwordIssue, publicUrlIssue, type SetupProgress, type SetupStepId } from '@yoda/shared'
 
 /**
  * The /setup wizard's plain logic (installer proposal §4.2, §4.3, §8): the cookie-session client, the step order
@@ -130,16 +130,16 @@ export function pasteLikeText(e: InputLike): string | null {
 export const tokenComplete = (groups: string[]) => groups.length === TOKEN_GROUPS && groups.every((g) => g.length === TOKEN_GROUP_LENGTH)
 export const tokenValue = (groups: string[]) => groups.join('-')
 
-// ── Public URL (D8) ─────────────────────────────────────────────────────────────────────────────────────────────
-
-const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1'])
-export const isLocalhost = (host: string) => LOCAL_HOSTS.has(host) || /^127\./.test(host)
+// ── Public URL (D8: https, or this machine: localhost, *.localhost, 127.0.0.0/8, ::1) ─────────────────────────────────────────────────────────────────────────────────────────────
 
 export type UrlCheck = {
   /** Not an http(s) URL with a host and nothing after the path. */
   invalid: boolean
-  /** Plain http on a host that is not this machine (D8: allowed, with a warning). */
-  plainHttp: boolean
+  /**
+   * D8 (owner decision, 2026-11-27): plain http on a host that is not this machine. Refused, here and by core
+   * (`https_required`): the browser allows the Keycloak sign-in only on https or localhost.
+   */
+  httpsRequired: boolean
   /** The browser reaches Yoda at another address than the one entered (§4.2 step 1 test). */
   mismatch: boolean
   /** The URL without a trailing slash, as core stores it. */
@@ -152,15 +152,15 @@ export function checkPublicUrl(input: string, browserOrigin: string): UrlCheck {
   try {
     u = new URL(raw)
   } catch {
-    return { invalid: true, plainHttp: false, mismatch: false, normalised: raw }
+    return { invalid: true, httpsRequired: false, mismatch: false, normalised: raw }
   }
   if ((u.protocol !== 'http:' && u.protocol !== 'https:') || !u.hostname || u.search || u.hash || u.username || u.password) {
-    return { invalid: true, plainHttp: false, mismatch: false, normalised: raw }
+    return { invalid: true, httpsRequired: false, mismatch: false, normalised: raw }
   }
   const normalised = raw.replace(/\/+$/, '')
   return {
     invalid: false,
-    plainHttp: u.protocol === 'http:' && !isLocalhost(u.hostname),
+    httpsRequired: publicUrlIssue(normalised) === 'https_required',
     mismatch: !!browserOrigin && u.origin !== browserOrigin,
     normalised,
   }
@@ -297,8 +297,10 @@ const STATES: Record<string, string> = {
 
 /** The i18n key and values for a failed setup call. */
 export function setupError(e: unknown): { key: string; named?: Record<string, unknown> } {
-  const data = (e as { data?: { error?: string; retryAfter?: number; reason?: string } })?.data
+  const data = (e as { data?: { error?: string; retryAfter?: number; reason?: string; issues?: { key?: string; message?: string }[] } })?.data
   const code = data?.error
+  // D8: core refuses a plain-http public URL away from this machine (on save and on complete).
+  if (code === 'invalid_settings' && Array.isArray(data?.issues) && data.issues.some(i => i?.message === 'https_required')) return { key: 'setup.error.httpsRequired' }
   if (code === 'rate_limited') return { key: 'setup.error.rateLimited', named: { minutes: Math.max(1, Math.ceil((data?.retryAfter ?? 60) / 60)) } }
   if (code === 'invalid_state' && data?.reason && STATES[data.reason]) return { key: STATES[data.reason]! }
   if (code === 'bad_request' && data?.reason) return { key: 'setup.error.provider' }

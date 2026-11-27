@@ -25,6 +25,12 @@ image tag the deploy job runs. Upgrade steps: [docs/operations.md](docs/operatio
 
 ### Setup wizard, break-glass admin and /recovery
 
+- **Setup refuses a plain-HTTP public URL (D8, owner decision 2026-11-27).** The organisation step, its save
+  (`PUT /setup/settings/general`) and System settings → General refuse `org.publicUrl` on `http://` unless the
+  host is localhost, `*.localhost`, 127.0.0.0/8 or `::1` (422 `invalid_settings`, message `https_required`);
+  `/setup/complete` checks the URL in effect again, so an http LAN URL saved earlier or set in `PORTAL_URL`
+  cannot finish setup. The wizard shows the SSH-tunnel command and how to put HTTPS in front
+  (`YODA_TRUSTED_PROXY_HOPS=2`, runbook section 1). Replaces "allowed with a warning": nobody could sign in there.
 - A fresh install starts in setup mode: `/setup` (Thai by default) takes a setup token
   (`yoda-admin setup-token`), then the organisation and public URL, the break-glass admin (password, TOTP unless
   the URL is localhost), sign-in with a test (Keycloak issuers only, `/realms/<realm>`), a system check, the

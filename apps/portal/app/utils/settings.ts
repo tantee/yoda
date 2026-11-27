@@ -1,4 +1,4 @@
-import { SETTINGS, SETTINGS_TEST_CODES, isSettingKey, type MasterKeyView, type SettingCategory, type SettingView, type SettingsAuditEntry, type SettingsTestCheck } from '@yoda/shared'
+import { SETTINGS, SETTINGS_TEST_CODES, isSettingKey, publicUrlIssue, type MasterKeyView, type SettingCategory, type SettingView, type SettingsAuditEntry, type SettingsTestCheck } from '@yoda/shared'
 import type { ZodTypeAny } from 'zod'
 
 /**
@@ -83,7 +83,14 @@ export function enumOptions(key: string): string[] {
 export function validateField(key: string, form: FormValue): string | null {
   if (!isSettingKey(key) || form === '' || form === null) return null
   const r = (SETTINGS[key].schema as ZodTypeAny).safeParse(fromFormValue(fieldKind(key), form))
-  return r.success ? null : (r.error.issues[0]?.message ?? 'invalid')
+  if (!r.success) return r.error.issues[0]?.message ?? 'invalid'
+  // D8, as core: no plain-http public URL away from this machine (nobody could sign in there).
+  return key === 'org.publicUrl' ? publicUrlIssue(r.data as string) : null
+}
+
+/** The i18n key and values for a field's error: a fixed code core and the form share (D8), else the message. */
+export function fieldErrorMessage(message: string): { key: string; named?: Record<string, unknown> } {
+  return message === 'https_required' ? { key: 'settings.save.httpsRequired' } : { key: 'settings.save.invalidField', named: { message } }
 }
 
 export const fieldLabelKey = (key: string) => `settings.field.${key}.label`

@@ -45,6 +45,7 @@ import {
   testValues,
   toFormValue,
   validateField,
+  fieldErrorMessage,
   visibleSettings,
   webhookUrl,
 } from '../app/utils/settings'
@@ -128,6 +129,15 @@ describe('fields by registry type', () => {
     expect(validateField('smtp.port', '2525')).toBeNull()
     expect(validateField('ai.modelDraft', 'claude')).toMatch(/provider:model/)
     expect(validateField('gitlab.url', '')).toBeNull()
+  })
+  it('refuses a plain-http public URL away from this machine, as core does (D8)', () => {
+    expect(validateField('org.publicUrl', 'http://10.0.0.5:3000')).toBe('https_required')
+    expect(validateField('org.publicUrl', 'http://portal.example.org/')).toBe('https_required')
+    for (const ok of ['https://portal.example.org', 'http://localhost:3000', 'http://127.0.0.1:3000', 'http://[::1]:3000', 'http://yoda.localhost']) expect(validateField('org.publicUrl', ok), ok).toBeNull()
+    // Only the public URL: plain http to an internal GitLab stays a matter for the outbound policy.
+    expect(validateField('gitlab.url', 'http://10.0.0.7')).toBeNull()
+    expect(fieldErrorMessage('https_required')).toEqual({ key: 'settings.save.httpsRequired' })
+    expect(fieldErrorMessage('Invalid url')).toEqual({ key: 'settings.save.invalidField', named: { message: 'Invalid url' } })
   })
   it('locked settings never take input and carry their reason', () => {
     expect(fieldRules(envLocked('smtp.host', 'SMTP_HOST', 'smtp.example.org'))).toEqual({ editable: false, lock: { reason: 'env', envName: 'SMTP_HOST', container: null, howKey: 'settings.lock.how.env' } })

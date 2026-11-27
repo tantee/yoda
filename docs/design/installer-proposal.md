@@ -12,7 +12,7 @@ Mockups: [`mockups/installer-*.html`](mockups/) (static HTML; open them in a bro
 
 | Mockup | Shows | Screenshots |
 | --- | --- | --- |
-| [installer-token.html](mockups/installer-token.html) | (a) setup token gate, where to find the token, plain-HTTP warning | `installer-token-desktop.png`, `installer-token-mobile.png` |
+| [installer-token.html](mockups/installer-token.html) | (a) setup token gate, where to find the token, plain-HTTP warning (session) | `installer-token-desktop.png`, `installer-token-mobile.png` |
 | [installer-organisation.html](mockups/installer-organisation.html) | (a) welcome / organisation step with the detected public URL, step list | `installer-organisation-desktop.png`, `installer-organisation-mobile.png` |
 | [installer-oidc.html](mockups/installer-oidc.html) | (b) Keycloak step: values to paste, **Test connection** result with per-check states (pass, warning, running, failed) | `installer-oidc-desktop.png`, `installer-oidc-mobile.png` |
 | [installer-admin-settings.html](mockups/installer-admin-settings.html) | (c) Admin → System settings → Notification channels: env-locked field, write-only secret, test result, audit panel | `installer-admin-settings-desktop.png`, `installer-admin-settings-mobile.png` |
@@ -339,7 +339,7 @@ Mockups: [token](mockups/installer-token.html), [organisation](mockups/installer
 | # | Step | Required | Asks | Test button checks |
 | --- | --- | --- | --- | --- |
 | 0 | **Setup token** | yes | The token from the log. | — (rate-limited; exchanges the token for a setup session) |
-| 1 | **Organisation** | yes | Organisation name (Thai, optional English), side-menu line (was `NUXT_PUBLIC_ORG_LINE`), **public URL** (pre-filled with the detected one; a warning if it is `http://` and not localhost), default language. | URL is well-formed; the browser's own origin matches it (else "you are reaching Yoda at a different address than the one you entered"). |
+| 1 | **Organisation** | yes | Organisation name (Thai, optional English), side-menu line (was `NUXT_PUBLIC_ORG_LINE`), **public URL** (pre-filled with the detected one; refused if it is `http://` and not localhost, D8), default language. | URL is well-formed; the browser's own origin matches it (else "you are reaching Yoda at a different address than the one you entered"). |
 | 2 | **Break-glass admin** | yes | Username, password (zxcvbn score ≥ 3, 14+ characters), TOTP (recommended; QR code + one code to confirm). | TOTP code verifies. Recovery codes (10) are generated here and shown on step 9. |
 | 3 | **System check** | yes (read-only) | Nothing. | Database (version, `pgvector`, migrations current), storage (put/get/delete a 1 KB object, bucket exists), job queue, free disk on the `backups` volume, time sync (clock skew vs the OIDC server's `Date` header, a frequent cause of token failures). |
 | 4 | **Sign-in (OIDC)** | yes | Mode: *existing Keycloak* (default) or *bundled Keycloak* (only when that profile is running, phase 5). Issuer URL, client id (`yoda-portal`), optional internal JWKS URL, staff group (`/it-dev`). Shows the exact redirect URI, post-logout URI and web origin to paste into Keycloak, with copy buttons. | (a) discovery document at `<issuer>/.well-known/openid-configuration`, issuer matches exactly; (b) JWKS reachable from core, has an RS256 key; (c) **test sign-in** in a popup (PKCE, the real client): token `iss`, `azp`, `typ`, `preferred_username`, a `groups` claim with full paths, membership of the staff group. Each check reports separately (mockup b). Next is disabled until (a)–(c) pass. |
@@ -606,7 +606,19 @@ the root of trust) prints a new one-time password and invalidates sessions; audi
 - Compared in constant time; 5 wrong tries per IP per 15 minutes, 50 overall per hour, then the endpoint refuses
   until the next restart (a brute force is then impossible at 100 bits anyway; this keeps logs quiet).
 - The default prod binding (`127.0.0.1`) means the wizard is reachable only through the reverse proxy or an SSH
-  tunnel. The wizard warns on plain HTTP and recommends the tunnel shown by `install.sh` (decision D8).
+  tunnel. The wizard says so when the session itself is plain HTTP (the token and cookie travel unencrypted) and
+  recommends the tunnel shown by `install.sh`.
+- **Public URL (decision D8, owner decision 2026-11-27).** Setup refuses a public URL on plain `http://` unless its
+  host is this machine: `localhost`, a `*.localhost` name, 127.0.0.0/8 or `::1` (the same `isLocalhostHost` rule
+  as D3, the hosts a browser treats as a secure context). Anything else on http (a LAN address, a host name,
+  `0.0.0.0`) is refused with 422 `invalid_settings` / `https_required` on `org.publicUrl`: browsers allow the
+  portal's Keycloak sign-in (PKCE, Web Crypto) only on https or localhost, so nobody could sign in there. The
+  organisation step checks it in the browser too and shows the way forward: an SSH tunnel
+  (`ssh -L 3000:127.0.0.1:3000 <host>`, then `http://127.0.0.1:3000/setup`) or an https reverse proxy with a
+  certificate (`YODA_TRUSTED_PROXY_HOPS=2`; operations.md section 1). `/setup/complete` checks the URL in effect
+  again (a value saved before this rule, or set in `PORTAL_URL`, cannot finish setup), and the organisation step
+  counts as not done while it fails. System settings → General refuses the same values, for the same reason. The
+  setup session itself may still be plain HTTP (the tunnel on 127.0.0.1 is plain HTTP).
 
 ### 8.3 CSRF and sessions
 
@@ -1023,7 +1035,7 @@ Total phases 0–4 and 6: **33–42 days**; with phase 5: **38–49 days**. Phas
 | D5 | Rail items for system settings | (a) one "การตั้งค่าระบบ" item absorbing GitLab and channels; (b) keep four items and add a fifth | (a) |
 | D6 | Who may change settings | (a) every portal admin, with re-auth for secrets; (b) a new "system admin" role | (a) for v1; a role later if admins become many |
 | D7 | Recovery kit contents | (a) master key + break-glass codes in one file; (b) two separate downloads | (a), with the warning; one thing to store |
-| D8 | Setup over plain HTTP on the LAN | (a) allowed with a warning; (b) HTTPS or SSH tunnel only | (a): first boot usually has no proxy yet; the tunnel is shown |
+| D8 | Setup over plain HTTP on the LAN | (a) allowed with a warning; (b) HTTPS or SSH tunnel only | **Owner decision (2026-11-27): (b).** The public URL must be https unless its host is localhost, `*.localhost`, 127.0.0.0/8 or `::1` (§8.2); otherwise 422 `https_required`, in the wizard and in System settings. First boot without a proxy uses the SSH tunnel (`http://127.0.0.1:3000/setup`). Was (a), replaced: a plain-http LAN install finished setup but nobody could sign in. |
 | D9 | S3 storage settings in the UI | (a) env/bootstrap only, UI read-only with a test; (b) editable | (a): RustFS and backups depend on them too |
 | D10 | Audit log retention | (a) forever; (b) N years then archive | (a): rows are tiny |
 | D11 | Language of the wizard on first open | (a) Thai, switchable; (b) follow the browser | (a), matching the portal default |

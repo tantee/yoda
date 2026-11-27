@@ -135,6 +135,22 @@ describe('setup settings: only through the setup session', () => {
     expect((await put(h, 'signin', { 'oidc.issuer': 'https://sso.example.org/realms/hospital' })).statusCode).toBe(200)
   })
 
+  it('refuses a plain-http public URL unless the host is this machine (D8), naming https_required', async () => {
+    await boot({ PORTAL_URL: '' })
+    const h = await setupSession()
+    for (const url of ['http://10.0.0.5:3000', 'http://192.168.1.20', 'http://portal.example.org/', 'http://127.example.org']) {
+      const res = await put(h, 'general', { 'org.name': 'Example Hospital', 'org.publicUrl': url })
+      expect(res.statusCode, url).toBe(422)
+      expect(res.json()).toEqual({ error: 'invalid_settings', issues: [{ key: 'org.publicUrl', message: 'https_required' }] })
+    }
+    // Nothing of the refused save is kept (the name neither).
+    expect(store.info('org.publicUrl').source).toBe('default')
+    expect(store.info('org.name').isSet).toBe(false)
+    for (const url of ['http://127.0.0.1:3000', 'http://localhost:3000', 'http://[::1]:3000', 'http://yoda.localhost:3000', 'http://127.1.2.3:3000', 'https://10.0.0.5', 'https://portal.example.org']) {
+      expect((await put(h, 'general', { 'org.name': 'Example Hospital', 'org.publicUrl': url })).statusCode, url).toBe(200)
+    }
+  })
+
   it('saves through the store (source setup, audited), an endpoint and its secret together', async () => {
     await boot()
     const h = await setupSession()
@@ -419,6 +435,32 @@ describe('claim and complete (8.1)', () => {
     const audit = await (await db()).select().from(settingsAudit).where(eq(settingsAudit.action, 'break_glass.totp'))
     expect(audit.map((a) => a.result)).toEqual(['invalid_password', 'ok'])
     expect((await app.inject({ method: 'POST', url: '/setup/complete', headers: h })).json()).toEqual({ done: true })
+  })
+
+  it('a plain-http URL saved before D8 (or set in env) does not let setup finish: 422 https_required', async () => {
+    await boot({ PORTAL_URL: '' })
+    let h = await setupSession()
+    await put(h, 'general', { 'org.name': 'Example Hospital', 'org.publicUrl': 'https://portal.example.org' })
+    h = await createAdmin(h)
+    await put(h, 'signin', { 'oidc.issuer': idp.issuer })
+    await app.inject({ method: 'POST', url: '/setup/recovery-kit', headers: h })
+    expect((await claimAs(h, { username: 'somchai' })).json().ok).toBe(true)
+    expect((await progress(h)).missing).toEqual([])
+    // Written straight to the store, as an older release (or a hand edit) would have.
+    await store.apply([{ key: 'org.publicUrl', value: 'http://10.0.0.5:3000' }], { personId: null, label: 'test', source: 'setup' })
+    expect((await progress(h)).steps.organisation).toBe('todo')
+    const refused = await app.inject({ method: 'POST', url: '/setup/complete', headers: h })
+    expect(refused.statusCode).toBe(422)
+    expect(refused.json()).toEqual({ error: 'invalid_settings', issues: [{ key: 'org.publicUrl', message: 'https_required' }] })
+    expect((await (await db()).select().from(setupState))[0]!.setupCompletedAt).toBeNull()
+  })
+
+  it('an env PORTAL_URL on plain http away from localhost blocks completion too', async () => {
+    await boot({ PORTAL_URL: 'http://10.0.0.5:3000' })
+    const h = await setupSession()
+    expect((await put(h, 'general', { 'org.name': 'Example Hospital' })).statusCode).toBe(200)
+    expect((await progress(h)).steps.organisation).toBe('todo')
+    expect((await app.inject({ method: 'POST', url: '/setup/complete', headers: h })).json()).toMatchObject({ issues: [{ key: 'org.publicUrl', message: 'https_required' }] })
   })
 
   it('completes: marks done in the same process, ends every setup session, deletes the token, then /setup is 404', async () => {

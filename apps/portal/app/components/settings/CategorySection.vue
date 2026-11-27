@@ -8,6 +8,7 @@ import {
   boundSecretsInEnv,
   changedFieldErrors,
   draftChanges,
+  fieldErrorMessage,
   fieldLabelKey,
   initialDraft,
   parseReauthStash,
@@ -87,8 +88,12 @@ const notes = computed(() => {
   for (const [k, b] of Object.entries(boundSecretsInEnv(views.value, draft.value))) out[k] = t('settings.save.boundInEnv', { name: label(k), env: b.envName ?? '' })
   return out
 })
+const fieldError = (message: string) => {
+  const m = fieldErrorMessage(message)
+  return t(m.key, m.named ?? {})
+}
 const clientErrors = computed(() =>
-  Object.fromEntries(Object.entries(changedFieldErrors(views.value, draft.value)).map(([k, m]) => [k, t('settings.save.invalidField', { message: m })])),
+  Object.fromEntries(Object.entries(changedFieldErrors(views.value, draft.value)).map(([k, m]) => [k, fieldError(m)])),
 )
 const hasClientErrors = computed(() => Object.keys(clientErrors.value).length > 0)
 const errorOf = (key: string) => serverErrors.value[key] ?? clientErrors.value[key] ?? null
@@ -122,7 +127,7 @@ function handleError(e: unknown, action: ReauthStash['action']) {
       notice.value = { type: 'error', text: t(err.reason === 'bound_secret_in_env' ? 'settings.save.boundInEnv' : 'settings.save.locked', { name: err.key ? label(err.key) : '', env: err.envName ?? '' }) }
       return
     case 'invalid':
-      serverErrors.value = Object.fromEntries(err.issues.map(i => [i.key, t('settings.save.invalidField', { message: i.message })]))
+      serverErrors.value = Object.fromEntries(err.issues.map(i => [i.key, fieldError(i.message)]))
       notice.value = { type: 'error', text: t('settings.save.invalid') }
       return
     case 'rateLimited':
@@ -185,7 +190,7 @@ async function runTest(sendTo?: 'self') {
   } catch (e) {
     const err = saveError(e)
     if (err.kind === 'invalid') {
-      serverErrors.value = Object.fromEntries(err.issues.map(i => [i.key, t('settings.save.invalidField', { message: i.message })]))
+      serverErrors.value = Object.fromEntries(err.issues.map(i => [i.key, fieldError(i.message)]))
       testError.value = t('settings.save.invalid')
     } else if (err.kind === 'rateLimited') testError.value = t('settings.save.rateLimited', { s: err.retryAfter ?? 60 })
     else testError.value = t(errorKey(e))

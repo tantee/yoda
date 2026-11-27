@@ -7,6 +7,7 @@ import {
   SetupStepBody,
   TelegramWebhookBody,
   isSettingKey,
+  publicUrlIssue,
   settingDef,
   type AdminSettingsResponse,
   type GeneratedSecret,
@@ -53,6 +54,7 @@ import {
   locked,
   modelWarnings,
   parseValues,
+  refusePlainHttpUrl,
   safeGet,
   settingsTestContext,
 } from './admin-settings.js'
@@ -149,7 +151,7 @@ export function setupWizardRoutes(app: FastifyInstance): void {
     const url = s.info('org.publicUrl').source
     const states = stepStates({
       session: true,
-      organisation: s.info('org.name').isSet && (url === 'db' || url === 'env'),
+      organisation: s.info('org.name').isSet && (url === 'db' || url === 'env') && !publicUrlIssue(publicUrlOf(s)),
       admin: !!admin && (admin.totpEnabled || !totpRequired(s, host)),
       oidc: oidcHash(oidcNow(s)),
       claim: claimHash(oidcNow(s), staffGroupOf(s)),
@@ -234,6 +236,8 @@ export function setupWizardRoutes(app: FastifyInstance): void {
     // The portal derives its Keycloak URL and realm from the issuer: another provider would save, then never sign in.
     const issue = issuerIssue(values.get('oidc.issuer'))
     if (issue) throw invalidSettings([{ key: 'oidc.issuer', message: issue }])
+    // D8: no plain-http public URL away from this machine (nobody could sign in there).
+    refusePlainHttpUrl(values)
     // As in the admin form: an endpoint a secret is bound to is saved against the version the form loaded (8.6).
     const unversioned = [...values.keys()].filter((k) => BOUND_SECRETS.has(k) && body.versions?.[k] === undefined)
     if (unversioned.length) throw invalidSettings(unversioned.map((key) => ({ key, message: 'version_required' })))
@@ -481,13 +485,17 @@ export function setupWizardRoutes(app: FastifyInstance): void {
   // ── Complete (8.1) ───────────────────────────────────────────────────────────────────────────────────────────
 
   /**
-   * One transaction re-checks every required step (organisation saved, break-glass admin, recovery kit downloaded,
+   * Refuses (422 `https_required`, D8) a public URL on plain http away from this machine. Then one transaction
+ * re-checks every required step (organisation saved, break-glass admin, recovery kit downloaded,
    * the claimed person still a portal admin through the sign-in values in effect) and marks setup done. Then the
    * store reloads (`setupDone`, so setup mode ends now, not at the next restart), every setup session ends and the
    * token is deleted.
    */
   app.post('/setup/complete', SETUP, async (request, reply: FastifyReply) => {
     const { s } = await signed(request)
+    // D8: a plain-http URL saved before the rule (or set in env) must not let setup finish.
+    const urlIssue = publicUrlIssue(publicUrlOf(s))
+    if (urlIssue) throw invalidSettings([{ key: 'org.publicUrl', message: urlIssue }])
     const done = await app.deps.db.transaction(async (tx) => {
       const f = await facts(tx, s, request.hostname, true)
       const missing = missingSteps(f.states)

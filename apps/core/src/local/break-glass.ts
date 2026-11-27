@@ -1,4 +1,4 @@
-import type { BreakGlassView } from '@yoda/shared'
+import { isLocalhostHost, type BreakGlassView } from '@yoda/shared'
 import { and, count, eq, isNull, or, lt, sql } from 'drizzle-orm'
 import type { AppDeps } from '../app.js'
 import type { Db, Tx } from '../db/client.js'
@@ -29,12 +29,8 @@ export function lockoutMs(failures: number): number {
   return Math.min(MAX_LOCK_MS, 60_000 * 2 ** (failures - FAILURES_BEFORE_LOCK))
 }
 
-/** A host name (no port) that is localhost, in 127.0.0.0/8 or ::1. */
-export function isLocalhostHost(host: string | null | undefined): boolean {
-  if (!host) return false
-  const h = host.replace(/^\[|\]$/g, '').toLowerCase()
-  return h === 'localhost' || h.endsWith('.localhost') || /^127\.\d+\.\d+\.\d+$/.test(h) || h === '::1'
-}
+/** localhost, `*.localhost`, 127.0.0.0/8 or ::1 (shared with the portal and the D8 public-URL rule). */
+export { isLocalhostHost }
 
 /** The URL's host is localhost (D3); a missing or unparseable URL is not. */
 export function isLocalhostUrl(url: string | undefined | null): boolean {

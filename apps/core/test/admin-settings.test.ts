@@ -406,6 +406,19 @@ describe('PUT /admin/settings/:category', () => {
     expect((await put(boss, 'general', { changes: { 'org.publicUrl': 'https://portal.example.org' } })).statusCode).toBe(200)
   })
 
+  it('refuses a plain-http public URL away from this machine (D8): nobody could sign in there', async () => {
+    await boot()
+    for (const url of ['http://10.0.0.5:3000', 'http://portal.example.org', 'http://localhost.example.org', 'http://localhost@evil.example.org', 'ftp://10.0.0.5']) {
+      const res = await put(boss, 'general', { changes: { 'org.publicUrl': url } })
+      expect(res.statusCode, url).toBe(422)
+      expect(res.json()).toEqual({ error: 'invalid_settings', issues: [{ key: 'org.publicUrl', message: 'https_required' }] })
+    }
+    expect(store.info('org.publicUrl').source).not.toBe('db')
+    for (const url of ['https://portal.example.org', 'http://localhost:3000', 'http://127.0.0.1:3000', 'http://[::1]:3000', 'http://yoda.localhost:3000']) {
+      expect((await put(boss, 'general', { changes: { 'org.publicUrl': url } })).statusCode, url).toBe(200)
+    }
+  })
+
   it('warns about unpriced models and an embedding model change with embeddings stored', async () => {
     await boot()
     await store.set('ai.embeddingModel', 'openai:text-embedding-3-small', system)

@@ -131,11 +131,16 @@ describe('setup token boxes', () => {
 })
 
 describe('public URL (D8)', () => {
-  it('warns on plain http away from localhost, and when the browser reaches Yoda elsewhere', () => {
-    expect(checkPublicUrl('https://portal.example.org/', 'https://portal.example.org')).toEqual({ invalid: false, plainHttp: false, mismatch: false, normalised: 'https://portal.example.org' })
-    expect(checkPublicUrl('http://10.0.0.5:3000', 'http://10.0.0.5:3000')).toMatchObject({ plainHttp: true, mismatch: false })
-    expect(checkPublicUrl('http://localhost:3000', 'http://localhost:3000')).toMatchObject({ plainHttp: false })
-    expect(checkPublicUrl('http://127.0.0.1:3000', 'http://localhost:3000')).toMatchObject({ plainHttp: false, mismatch: true })
+  it('refuses plain http unless the host is this machine (localhost, *.localhost, 127.0.0.0/8, ::1), and warns on another address', () => {
+    expect(checkPublicUrl('https://portal.example.org/', 'https://portal.example.org')).toEqual({ invalid: false, httpsRequired: false, mismatch: false, normalised: 'https://portal.example.org' })
+    expect(checkPublicUrl('http://10.0.0.5:3000', 'http://10.0.0.5:3000')).toMatchObject({ httpsRequired: true, mismatch: false })
+    for (const refused of ['http://192.168.1.20', 'http://portal.example.org', 'http://localhost.example.org', 'http://127.example.org']) {
+      expect(checkPublicUrl(refused, '').httpsRequired, refused).toBe(true)
+    }
+    for (const local of ['http://localhost:3000', 'http://127.0.0.1:3000', 'http://127.1.2.3', 'http://[::1]:3000', 'http://yoda.localhost:3000', 'https://10.0.0.5']) {
+      expect(checkPublicUrl(local, '').httpsRequired, local).toBe(false)
+    }
+    expect(checkPublicUrl('http://127.0.0.1:3000', 'http://localhost:3000')).toMatchObject({ httpsRequired: false, mismatch: true })
     expect(checkPublicUrl('https://portal.example.org', 'http://10.0.0.5:3000')).toMatchObject({ mismatch: true })
     for (const bad of ['portal.example.org', 'ftp://portal.example.org', 'https://portal.example.org/?x=1', 'https://u:p@portal.example.org', '']) {
       expect(checkPublicUrl(bad, '').invalid, bad).toBe(true)
@@ -196,6 +201,9 @@ describe('setup errors', () => {
     expect(setupError({ data: { error: 'invalid_state', reason: 'incomplete' } })).toEqual({ key: 'setup.error.incomplete' })
     expect(setupError({ data: { error: 'bad_request', reason: 'issuer_mismatch' } })).toEqual({ key: 'setup.error.provider' })
     expect(setupError(new Error('x'))).toEqual({ key: 'setup.error.generic' })
+    // D8: core's 422 on a plain-http public URL (organisation save, or /setup/complete).
+    expect(setupError({ statusCode: 422, data: { error: 'invalid_settings', issues: [{ key: 'org.publicUrl', message: 'https_required' }] } })).toEqual({ key: 'setup.error.httpsRequired' })
+    expect(setupError({ statusCode: 422, data: { error: 'invalid_settings', issues: [{ key: 'org.name', message: 'Required' }] } })).toEqual({ key: 'setup.error.invalidSettings' })
     // A refused CSRF/origin check gets its own hint (the proxy's Host header, runbook section 11).
     expect(setupError({ statusCode: 403, data: { error: 'csrf_failed' } })).toEqual({ key: 'setup.error.csrfFailed' })
     expect(setupError({ data: { error: 'invalid_state', reason: 'totp_enabled' } })).toEqual({ key: 'setup.error.totpEnabled' })
