@@ -568,7 +568,7 @@ deploy job. Owner setup, once:
   `YODA_TRUSTED_PROXY_HOPS=2` in the host's `.env`, and have the proxy send `X-Forwarded-For`,
   `X-Forwarded-Proto` and `X-Forwarded-Host`, and keep the browser's `Host` (nginx: `proxy_set_header Host $host;
   proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for; proxy_set_header X-Forwarded-Proto $scheme;
-  proxy_set_header X-Forwarded-Host $host;`). With the default `1`, the portal still honours the proxy's `https` (so the setup and recovery cookies
+  proxy_set_header X-Forwarded-Host $host;`; nginx's `$host` has no port, so a proxy on a port other than 443 uses `$http_host` in both `Host` lines, or the wizard detects the URL without the port and the CSRF check refuses). With the default `1`, the portal still honours the proxy's `https` (so the setup and recovery cookies
   stay `Secure`), but every client shows as the proxy's address in rate limits, the audit log and break-glass
   alerts, and the setup wizard detects the portal's own `Host` as the public URL. Core logs a warning once when it
   sees a proxy in front of the portal while the value is `1`.
@@ -756,7 +756,7 @@ environment changed). Rotate on a schedule, when a person with access leaves, an
 
 | Secret | How |
 | --- | --- |
-| Postgres password | Host side. `dc exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'`, then `\password yoda` (prompts, so the password stays out of history); put the same value in `.env` as `POSTGRES_PASSWORD` (and in `DATABASE_URL` if you set one), then `dc up -d --no-build` (`init` copies it into the bootstrap volume), then make a new recovery kit (`yoda-admin recovery-kit`; section 4 step 5). |
+| Postgres password | Host side. `dc exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'`, then `\password yoda` (prompts, so the password stays out of history); put the same value in `.env` as `POSTGRES_PASSWORD` (and in `DATABASE_URL` if you set one), then `dc up -d --no-build` (`init` copies it into the bootstrap volume) and `dc restart core backup` (they read the bootstrap volume at start; core's environment did not change, so `up` leaves it running), then make a new recovery kit (`yoda-admin recovery-kit`; section 4 step 5). |
 | Storage keys | Host side. RustFS takes its credentials from the bootstrap volume: set both `S3_ACCESS_KEY` and `S3_SECRET_KEY` in `.env` and `dc up -d --no-build` (restarts `rustfs`, `core`, `backup`), then make a new recovery kit (`yoda-admin recovery-kit`; section 4 step 5). |
 | AI provider keys | Create the new key in the provider console, enter it in System settings → AI, then delete the old key. |
 | GitLab bot token | Create a new token (`api`), enter it in System settings → GitLab (**Test** shows the bot), revoke the old one. |
@@ -881,8 +881,10 @@ after it). For a value still in `.env`, the same holds with `dc up -d --no-build
   break-glass account can still sign in at `/recovery` with its password alone, to a **status-only** session
   (the authenticator cannot be checked without the key, so nothing can be changed there; the admins are told).
   Such a session stays status-only for its whole life and ends as soon as the key works again.
-  Put the right key back (from the recovery kit: `YODA_MASTER_KEY=<key>` in `.env`, then `dc up -d --no-build`;
-  section 4a). If the key is lost for good, `dc exec core yoda-admin reset-master-key --yes` makes the key core
+  Put the right key back (from the recovery kit: `YODA_MASTER_KEY=<key>` in `.env`, then `dc up -d --no-build`
+  and `dc restart core`: `init` writes the key file, but core is not recreated, since its own environment did not
+  change, and reads the key only at start; section 4a). `init` keeps the wrong key as `core/master-key.prev`:
+  `dc exec core yoda-admin rotate-master-key --finish` deletes it once core runs on the right key. If the key is lost for good, `dc exec core yoda-admin reset-master-key --yes` makes the key core
   has now the master key: it lists and drops the secrets the old key encrypted, removes the break-glass
   authenticator and recovery codes, ends every recovery session (including status-only ones) and core leaves
   recovery mode without a restart. Then enter the secrets again, sign in at `/recovery` (the password, which must

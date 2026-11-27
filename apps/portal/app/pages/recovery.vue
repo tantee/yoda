@@ -1,6 +1,10 @@
 <script setup lang="ts">
 import type { OidcCheckResult, OidcPending, OidcSignInStart, RecoveryAdmins, RecoveryCodesResult, RecoverySession, RecoveryStatus, TotpEnrolment } from '@yoda/shared'
 import TestResult from '~/components/settings/TestResult.vue'
+// Explicit: Nuxt would auto-register these as RecoveryCodesOnce / RecoveryTotpEnrol (directory prefix), so the bare
+// names below resolved to nothing and /recovery showed no QR code, secret or new codes.
+import CodesOnce from '~/components/recovery/CodesOnce.vue'
+import TotpEnrol from '~/components/recovery/TotpEnrol.vue'
 import { formatCode, isLastAdmin, oidcCallback, oidcCallbackError, recoveryClient, recoveryError, sessionLost } from '~/utils/recovery'
 
 /**
