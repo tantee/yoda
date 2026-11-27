@@ -5,14 +5,16 @@
 #
 # 1. preflight: Docker Engine 24+, Compose v2.24+, the user can run docker, curl or wget, sha256sum or shasum,
 #    minisign, tar; warns below 10 GB free;
-# 2. downloads <base>/releases/<version>/{SHA256SUMS,SHA256SUMS.minisig,yoda-<version>.tar.gz} into a temp dir,
-#    verifies the minisign signature of SHA256SUMS with the release public key below (and that it was signed for
+# 2. downloads <base>{SHA256SUMS,SHA256SUMS.minisig,yoda-<version>.tar.gz} into a temp dir, where <base> is the
+#    release's directory: by default the GitHub Release assets, https://github.com/tantee/yoda/releases/download/v<version>/;
+#    an internal mirror passes --base-url (a "{version}" in it becomes the version, e.g.
+#    https://files.example.org/yoda/releases/{version}/). It verifies the minisign signature of SHA256SUMS with the release public key below (and that it was signed for
 #    this version), then the bundle's SHA-256 against it; refuses on any mismatch, and never runs anything it
 #    downloaded before that;
 # 3. unpacks the bundle into --dir (default /srv/yoda), refusing an existing install (upgrade with deploy.sh),
 #    and creates an empty .env (0600): nothing has to go in it;
-# 4. `docker login <registry>` when the images' registry has no saved login (interactive: the token is typed,
-#    never an argument);
+# 4. `docker login <registry>` when the images' registry is not ghcr.io (public images) and has no saved login
+#    (interactive: the token is typed, never an argument);
 # 5. pins the image prefix in release.env (never Docker Hub), then runs ops/deploy/deploy.sh (pull, pin release.env, init, migrate, up, wait for /api/ready), which prints the
 #    setup wizard's address and the setup-token command while setup is not finished.
 #
@@ -24,8 +26,10 @@ set -eu
 # The release signing public key (minisign, the second line of the .pub file). PLACEHOLDER: the owner replaces it
 # with the real key before publishing install.sh (docs/operations.md, "Release signing key").
 RELEASE_PUBKEY_EMBEDDED='RWQ-REPLACE-WITH-THE-YODA-RELEASE-PUBLIC-KEY'
-# The internal file server (D1); a placeholder until the owner sets the real one.
-DEFAULT_BASE_URL='https://files.example.org/yoda/'
+# Where releases are published (D1): GitHub Release assets and GHCR images. "{version}" becomes the version.
+# An internal mirror overrides both: --base-url / YODA_RELEASE_BASE_URL and --image-prefix / YODA_IMAGE_PREFIX.
+DEFAULT_BASE_URL='https://github.com/tantee/yoda/releases/download/v{version}/'
+DEFAULT_IMAGE_PREFIX='ghcr.io/tantee/yoda'
 MIN_COMPOSE='2.24'
 MIN_ENGINE=24
 MIN_FREE_KB=10485760
@@ -77,6 +81,8 @@ case "$base" in
   http://*) say "warning: $base is not https; the signature check still protects the bundle" ;;
   *) die "--base-url must be an http(s) URL: $base" ;;
 esac
+# The version is checked above (A-Z a-z 0-9 . -): safe in a sed replacement.
+base=$(printf '%s\n' "$base" | sed "s/{version}/$version/g")
 case "$base" in
   */) ;;
   *) base="$base/" ;;
@@ -153,11 +159,10 @@ fetch() {
 }
 
 bundle="yoda-$version.tar.gz"
-url="${base}releases/$version"
-say "downloading Yoda $version from $url/"
-fetch "$url/SHA256SUMS" "$tmp/SHA256SUMS"
-fetch "$url/SHA256SUMS.minisig" "$tmp/SHA256SUMS.minisig"
-fetch "$url/$bundle" "$tmp/$bundle"
+say "downloading Yoda $version from $base"
+fetch "${base}SHA256SUMS" "$tmp/SHA256SUMS"
+fetch "${base}SHA256SUMS.minisig" "$tmp/SHA256SUMS.minisig"
+fetch "${base}$bundle" "$tmp/$bundle"
 
 # The signature covers SHA256SUMS and its trusted comment, which names the release: an older signed file served
 # for this version is refused too.
@@ -193,19 +198,21 @@ if [ ! -e "$dir/.env" ]; then
 fi
 chmod 600 "$dir/.env"
 
-# The image prefix: the option or env, else the bundle's (the registry the release was pushed to).
+# The image prefix: the option or env, else the bundle's (the registry the release was pushed to), else GHCR.
 if [ -z "$prefix" ] && [ -f "$dir/bundle.env" ]; then
   prefix=$(sed -n 's/^YODA_IMAGE_PREFIX=\([A-Za-z0-9._:/-]*\)$/\1/p' "$dir/bundle.env" | tail -n 1)
 fi
-[ -n "$prefix" ] || die 'no image prefix: pass --image-prefix <registry path of the images>'
+[ -n "$prefix" ] || prefix=$DEFAULT_IMAGE_PREFIX
 # Pinned before the first deploy, so no compose command on this host can fall back to Docker Hub. release.env wins
 # over .env; deploy.sh keeps the prefix there on every later deploy.
 printf 'YODA_IMAGE_PREFIX=%s\n' "$prefix" > "$dir/release.env"
 say "images: $prefix/<core|portal|runner|backup>:$version"
 
 # --- registry login -------------------------------------------------------------------------------------------
+# The GHCR images are public: no login. A mirror's registry usually needs one.
 registry=${prefix%%/*}
 case "$registry" in
+  ghcr.io) registry='' ;;
   *.* | *:* | localhost) ;;
   *) registry='' ;;
 esac
@@ -225,12 +232,12 @@ fi
 say "deploying $version in $dir"
 cd "$dir"
 YODA_VERSION="$version" YODA_IMAGE_PREFIX="$prefix" sh ops/deploy/deploy.sh ||
-  die "deploy of $version failed (images $prefix/<name>:$version; registry login? see docs/operations.md, Troubleshooting). Fix it, then: cd $dir && YODA_VERSION=$version sh ops/deploy/deploy.sh"
+  die "deploy of $version failed (images $prefix/<name>:$version; registry login: docker login ${prefix%%/*}? see docs/operations.md, Troubleshooting). Fix it, then: cd $dir && YODA_VERSION=$version sh ops/deploy/deploy.sh"
 
 cat <<EOF
 install: Yoda $version is running in $dir.
   Commands there (docs/operations.md, section 4):
     alias dc='docker compose --env-file .env --env-file release.env -f docker-compose.yml -f docker-compose.prod.yml'
-  Upgrade later with the GitLab deploy job, or: cd $dir && YODA_VERSION=<tag> sh ops/deploy/deploy.sh
+  Upgrade later: cd $dir && YODA_VERSION=<version> sh ops/deploy/deploy.sh (or an internal mirror's deploy job)
   Finish the setup wizard, and store the recovery kit it gives you off this host.
 EOF

@@ -1,5 +1,5 @@
 import { execFile, spawnSync } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -209,7 +209,8 @@ describe.skipIf(!ci && !canInstall)('ops/install/install.sh (fixture bundle, tes
       res.writeHead(200).end(body)
     })
     await new Promise<void>((r) => server.listen(0, '127.0.0.1', r))
-    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/yoda/`
+    // The internal-mirror layout: "{version}" in --base-url becomes the version.
+    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/yoda/releases/{version}/`
   })
 
   afterAll(async () => {
@@ -256,6 +257,23 @@ describe.skipIf(!ci && !canInstall)('ops/install/install.sh (fixture bundle, tes
     expect(r.calls()).not.toContain('compose --env-file')
     rmSync(r.dir, { recursive: true, force: true })
   }
+
+  it('takes a --base-url without "{version}" as the release directory itself', async () => {
+    const dir = base.replace('{version}/', `${version}`)
+    const r = await install(['--version', version, '--base-url', dir])
+    expect(r.code, r.out).toBe(0)
+    expect(r.out).toContain(`downloading Yoda ${version} from ${dir}/`)
+    rmSync(r.dir, { recursive: true, force: true })
+  })
+
+  it('needs no registry login for the public GHCR images', async () => {
+    const r = await install(['--version', version, '--image-prefix', 'ghcr.io/tantee/yoda'])
+    expect(r.code, r.out).toBe(0)
+    expect(readFileSync(join(r.target, 'release.env'), 'utf8')).toBe(`YODA_VERSION=${version}\nYODA_IMAGE_PREFIX=ghcr.io/tantee/yoda\n`)
+    expect(r.calls()).not.toMatch(/^login/m)
+    expect(r.out).not.toContain('docker login')
+    rmSync(r.dir, { recursive: true, force: true })
+  })
 
   it('refuses a changed bundle (checksum mismatch)', async () => {
     const tampered = Buffer.from(good[`yoda-${version}.tar.gz`]!)
@@ -336,6 +354,24 @@ describe.skipIf(!ci && !canInstall)('ops/install/install.sh (fixture bundle, tes
     rmSync(r.dir, { recursive: true, force: true })
   })
 
+  it.skipIf(!has('python3'))('check-release.sh verifies the signed bundle end to end, as the release workflow runs it', async () => {
+    const r = await run('sh', ['ops/install/check-release.sh', version, join(work, 'dist/releases', version), 'registry.example.org/group/yoda'], {
+      cwd: root,
+      env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: work, YODA_RELEASE_PUBKEY: pub },
+    })
+    expect(r.code, r.out).toBe(0)
+    expect(r.out).toContain(`check-release: ${version} verified end to end`)
+  }, 30_000)
+
+  it.skipIf(!has('python3'))('check-release.sh fails a release signed by another key than the one it checks with', async () => {
+    const r = await run('sh', ['ops/install/check-release.sh', version, join(work, 'dist/releases', version), 'registry.example.org/group/yoda'], {
+      cwd: root,
+      env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: work, YODA_RELEASE_PUBKEY: otherPub },
+    })
+    expect(r.code).not.toBe(0)
+    expect(r.out).toContain('signature check FAILED')
+  }, 30_000)
+
   it('refuses to install over an existing install', async () => {
     const s = sandbox()
     const target = join(s.dir, 'srv')
@@ -348,6 +384,57 @@ describe.skipIf(!ci && !canInstall)('ops/install/install.sh (fixture bundle, tes
     expect(r.out).toContain('already holds an install')
     expect(readFileSync(join(target, 'release.env'), 'utf8')).toBe('YODA_VERSION=1.1.0\n')
     rmSync(s.dir, { recursive: true, force: true })
+  })
+})
+
+describe.skipIf(!posix)('release assets: bundle.sh, install.sh and release.yml agree on the file names', () => {
+  it('bundle.sh writes the files install.sh downloads (plus the signature the release job adds)', () => {
+    const out = mkdtempSync(join(tmpdir(), 'yoda-assets-'))
+    const r = spawnSync('sh', ['ops/install/bundle.sh', '1.2.0', 'ghcr.io/tantee/yoda', out], { cwd: root, encoding: 'utf8' })
+    expect(r.status, r.stderr).toBe(0)
+    const files = readdirSync(join(out, 'releases/1.2.0')).sort()
+    expect(files).toEqual(['SHA256SUMS', 'install.sh', 'yoda-1.2.0.tar.gz'])
+    expect(readFileSync(join(out, 'releases/1.2.0/SHA256SUMS'), 'utf8')).toMatch(/^[0-9a-f]{64} [ *]?yoda-1\.2\.0\.tar\.gz\n[0-9a-f]{64} [ *]?install\.sh\n$/)
+    const bundleEnv = spawnSync('tar', ['-xzOf', join(out, 'releases/1.2.0/yoda-1.2.0.tar.gz'), 'bundle.env'], { encoding: 'utf8' }).stdout
+    expect(bundleEnv).toBe('YODA_IMAGE_PREFIX=ghcr.io/tantee/yoda\nYODA_VERSION=1.2.0\n')
+    rmSync(out, { recursive: true, force: true })
+
+    const sh = readFileSync(join(root, 'ops/install/install.sh'), 'utf8')
+    const fetched = [...sh.matchAll(/^fetch "\$\{base\}([^"]+)"/gm)].map((m) => m[1]!.replace('$bundle', 'yoda-$version.tar.gz'))
+    expect(fetched).toEqual(['SHA256SUMS', 'SHA256SUMS.minisig', 'yoda-$version.tar.gz'])
+    expect(sh).toContain('bundle="yoda-$version.tar.gz"')
+    // The GitHub Release gets exactly those, plus install.sh on its own.
+    const wf = readFileSync(join(root, '.github/workflows/release.yml'), 'utf8')
+    expect(wf).toContain('set -- assets/install.sh "assets/yoda-$VERSION.tar.gz" assets/SHA256SUMS assets/SHA256SUMS.minisig')
+  })
+})
+
+describe.skipIf(!posix)('ops/install/release-notes.sh', () => {
+  const notes = (version: string, changelog: string) => {
+    const dir = mkdtempSync(join(tmpdir(), 'yoda-notes-'))
+    writeFileSync(join(dir, 'CHANGELOG.md'), changelog)
+    const r = spawnSync('sh', [join(root, 'ops/install/release-notes.sh'), version, join(dir, 'CHANGELOG.md')], { encoding: 'utf8' })
+    rmSync(dir, { recursive: true, force: true })
+    return r
+  }
+  const log = '# Changelog\n\n## Unreleased\n\n- next\n\n## 1.1.0-rc.1 — 2026-12-01\n\n- candidate\n\n## 1.0.0 — 2026-11-25\n\nFirst.\n\n### Part\n\n- one\n\n'
+
+  it('prints the section of the version, without the heading or surrounding blank lines', () => {
+    expect(notes('1.0.0', log)).toMatchObject({ status: 0, stdout: 'First.\n\n### Part\n\n- one\n' })
+    expect(notes('1.1.0-rc.1', log)).toMatchObject({ status: 0, stdout: '- candidate\n' })
+  })
+
+  it('fails for a version without a section, or an empty one, so no release goes out without notes', () => {
+    expect(notes('1.0.1', log).status).toBe(1)
+    expect(notes('1.0.1', log).stderr).toContain('no notes for 1.0.1')
+    expect(notes('1.0.0', '## 1.0.0\n\n## 0.9.0\n- x\n').status).toBe(1)
+    expect(notes('1.0', log).status).toBe(2)
+  })
+
+  it('finds the notes of the released 1.0.0 in the real CHANGELOG.md', () => {
+    const r = spawnSync('sh', ['ops/install/release-notes.sh', '1.0.0'], { cwd: root, encoding: 'utf8' })
+    expect(r.status, r.stderr).toBe(0)
+    expect(r.stdout.length).toBeGreaterThan(200)
   })
 })
 
@@ -375,6 +462,8 @@ describe.skipIf(!posix || (!ci && !has('shellcheck')))('shellcheck', () => {
   it.each([
     'ops/install/install.sh',
     'ops/install/bundle.sh',
+    'ops/install/release-notes.sh',
+    'ops/install/check-release.sh',
     'ops/deploy/deploy.sh',
     'ops/backup/backup.sh',
     'ops/backup/restore.sh',
@@ -388,17 +477,40 @@ describe.skipIf(!posix || (!ci && !has('shellcheck')))('shellcheck', () => {
   }, 30_000) // shellcheck -x on install.sh can take >5 s on a busy CI runner
 })
 
+describe.skipIf(!posix)('install.sh defaults (GitHub Releases + GHCR, stub curl)', () => {
+  // A curl that records the URL and fails: the default base URL is the GitHub Release of the version.
+  it('downloads from https://github.com/tantee/yoda/releases/download/v<version>/ by default', async () => {
+    const s = sandbox()
+    writeFileSync(join(s.dir, 'bin', 'curl'), '#!/bin/sh\nfor a; do last=$a; done\necho "$last" >> "$FAKE/curl-calls"\nexit 22\n')
+    writeFileSync(join(s.dir, 'bin', 'minisign'), '#!/bin/sh\nexit 0\n')
+    chmodSync(join(s.dir, 'bin', 'curl'), 0o755)
+    chmodSync(join(s.dir, 'bin', 'minisign'), 0o755)
+    const r = await run('sh', [join(root, 'ops/install/install.sh'), '--version', '1.2.0', '--dir', join(s.dir, 'srv')], {
+      env: { ...s.env, YODA_RELEASE_PUBKEY: 'RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3' },
+    })
+    expect(r.code).not.toBe(0)
+    expect(r.out).toContain('downloading Yoda 1.2.0 from https://github.com/tantee/yoda/releases/download/v1.2.0/')
+    expect(readFileSync(join(s.dir, 'curl-calls'), 'utf8').split('\n')[0]).toBe('https://github.com/tantee/yoda/releases/download/v1.2.0/SHA256SUMS')
+    rmSync(s.dir, { recursive: true, force: true })
+  })
+})
+
 describe('ops/install/install.sh text', () => {
   const sh = readFileSync(join(root, 'ops/install/install.sh'), 'utf8')
 
-  it('ships a placeholder key and file server only, and never pipes a download into a shell', () => {
+  it('ships a placeholder key, the GitHub Release and GHCR defaults, and never pipes a download into a shell', () => {
     expect(sh).toMatch(/^RELEASE_PUBKEY_EMBEDDED='RWQ-REPLACE-WITH-[A-Z-]+'$/m)
-    expect(sh).toContain("DEFAULT_BASE_URL='https://files.example.org/yoda/'")
+    expect(sh).toContain("DEFAULT_BASE_URL='https://github.com/tantee/yoda/releases/download/v{version}/'")
+    expect(sh).toContain("DEFAULT_IMAGE_PREFIX='ghcr.io/tantee/yoda'")
     expect(sh).toMatch(/^set -eu$/m)
     expect(sh).not.toMatch(/\|\s*(ba)?sh\b/)
     expect(sh).not.toMatch(/\bsudo\b(?! inside)/)
-    // Every URL host is a placeholder.
+    // Every URL host is GitHub or a placeholder.
     const hosts = [...sh.matchAll(/https?:\/\/([a-z0-9][a-z0-9.-]*)/gi)].map((m) => m[1]!)
-    expect(hosts.filter((h) => !/(^|\.)example\.org$|^127\.0\.0\.1|^jedisct1\.github\.io$/.test(h))).toEqual([])
+    expect(hosts.filter((h) => !/(^|\.)example\.org$|^127\.0\.0\.1|^jedisct1\.github\.io$|^github\.com$/.test(h))).toEqual([])
+  })
+
+  it('logs in only to a registry that is not ghcr.io', () => {
+    expect(sh).toMatch(/case "\$registry" in\n\s+ghcr\.io\) registry='' ;;/)
   })
 })

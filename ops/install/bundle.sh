@@ -1,5 +1,7 @@
 #!/bin/sh
-# Builds the release bundle for the internal file server (installer proposal §3.4, D1), from the repository root:
+# Builds the release bundle (installer proposal §3.4, D1), from the repository root. The GitHub release workflow
+# (.github/workflows/release.yml) uploads these files as the GitHub Release's assets; the GitLab release-bundle job
+# uploads the same directory to an internal mirror:
 #
 #   sh ops/install/bundle.sh <version> <image prefix> <out dir>
 #
@@ -8,8 +10,9 @@
 #                          CHANGELOG.md, docs/operations.md and bundle.env (YODA_IMAGE_PREFIX, YODA_VERSION)
 #   install.sh             the installer, also on its own (download it, check it, then run it)
 #   SHA256SUMS             both of the above
-# Signing is a separate step (the release job): minisign -S -s <key> -m SHA256SUMS -t "yoda release <version>"
-# writes SHA256SUMS.minisig, which install.sh verifies. No secret is read here.
+# The file names are the asset names install.sh downloads. Signing is a separate step (the release job):
+# minisign -S -s <key> -m SHA256SUMS -t "yoda release <version>" writes SHA256SUMS.minisig, which install.sh
+# verifies. No secret is read here.
 # Reproducible with GNU tar (CI): sorted names, owner 0:0, fixed modes, every mtime = SOURCE_DATE_EPOCH (default:
 # the last commit's time), gzip -n. Other tars (macOS) give the same contents, not the same bytes.
 set -eu

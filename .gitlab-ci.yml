@@ -1,4 +1,8 @@
 # No secrets here: deploy/registry credentials come from CI/CD variables (docs/operations.md, "Upgrade").
+# The internal-mirror pipeline. Releases are published on GitHub (.github/workflows/release.yml: GitHub Release
+# assets and ghcr.io images, docs/releasing.md); this pipeline keeps a mirror inside the network: images in this
+# project's registry, the signed bundle on an internal file server, and the manual deploy job. A tag `v1.2.0` (a
+# mirrored GitHub tag) or `1.2.0` is release 1.2.0 here: images, bundle and deploy use the version without the `v`.
 stages: [secrets, test, build, release, deploy]
 
 default:
@@ -48,11 +52,12 @@ test:
     - if: $CI_COMMIT_TAG
   before_script:
     - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
-  # $CI_REGISTRY_IMAGE/<name>: the commit SHA always, the git tag on tags, `latest` on the default branch.
+  # $CI_REGISTRY_IMAGE/<name>: the commit SHA always, the version (the tag without a `v`) on tags, `latest` on the
+  # default branch.
   script:
     - IMAGE="$CI_REGISTRY_IMAGE/$IMAGE_NAME"
     - docker build -f "$DOCKERFILE" -t "$IMAGE:$CI_COMMIT_SHORT_SHA" "$CONTEXT"
-    - if [ -n "$CI_COMMIT_TAG" ]; then docker tag "$IMAGE:$CI_COMMIT_SHORT_SHA" "$IMAGE:$CI_COMMIT_TAG"; fi
+    - if [ -n "$CI_COMMIT_TAG" ]; then docker tag "$IMAGE:$CI_COMMIT_SHORT_SHA" "$IMAGE:${CI_COMMIT_TAG#v}"; fi
     - if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then docker tag "$IMAGE:$CI_COMMIT_SHORT_SHA" "$IMAGE:latest"; fi
     - docker push --all-tags "$IMAGE"
 
@@ -84,15 +89,18 @@ build-backup:
     DOCKERFILE: ops/backup/Dockerfile
     CONTEXT: ops/backup
 
-# Tags only: the release bundle install.sh downloads (docs/operations.md, "Release bundle"). Builds
-# releases/<tag>/ with ops/install/bundle.sh (the compose files, deploy.sh, install.sh, SHA256SUMS), signs
-# SHA256SUMS with minisign, keeps it as a job artifact and uploads it to the internal file server (D1).
+# Tags only: the release bundle for an internal mirror (docs/releasing.md, "Internal mirror"; the public release
+# is the GitHub Release). Builds releases/<version>/ with ops/install/bundle.sh (the compose files, deploy.sh,
+# install.sh, SHA256SUMS), signs SHA256SUMS with minisign, keeps it as a job artifact and uploads it to the
+# internal file server; hosts install from there with install.sh --base-url <server>/releases/{version}/ and
+# --image-prefix $CI_REGISTRY_IMAGE.
 # CI/CD variables (protected, for protected tags), none in this file:
-# - YODA_RELEASE_SIGNING_KEY (type File): the minisign secret key, made without a password (minisign -G -W);
-#   its public half is embedded in ops/install/install.sh;
+# - YODA_RELEASE_SIGNING_KEY (type File): the minisign secret key whose public half is embedded in
+#   ops/install/install.sh (the same yoda.key the GitHub release workflow signs with);
+# - YODA_RELEASE_SIGNING_PASSWORD (masked, optional): its password, sent to minisign on stdin;
 # - YODA_RELEASE_UPLOAD_URL: the file server's base for releases (empty: the upload is skipped, the artifact stays);
 # - YODA_RELEASE_UPLOAD_TOKEN (masked): sent as a bearer token on stdin, never on the command line.
-# The upload is a template: one HTTP PUT per file to $YODA_RELEASE_UPLOAD_URL/releases/<tag>/<file>; change it to
+# The upload is a template: one HTTP PUT per file to $YODA_RELEASE_UPLOAD_URL/releases/<version>/<file>; change it to
 # what the file server takes (WebDAV, the GitLab generic package registry, rsync over SSH, ...).
 release-bundle:
   stage: release
@@ -105,13 +113,15 @@ release-bundle:
     - apk add --no-cache curl minisign tar git
     - test -s "$YODA_RELEASE_SIGNING_KEY" || { echo "YODA_RELEASE_SIGNING_KEY (a File variable) is not set" >&2; exit 1; }
   script:
+    # The release version: the tag without a `v` (a mirrored GitHub tag v1.2.0 is release 1.2.0).
+    - export YODA_RELEASE="${CI_COMMIT_TAG#v}"
     # Reproducible: every mtime is the tagged commit's time (GNU tar, gzip -n).
     - export SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
-    - sh ops/install/bundle.sh "$CI_COMMIT_TAG" "$CI_REGISTRY_IMAGE" dist
-    - minisign -S -s "$YODA_RELEASE_SIGNING_KEY" -m "dist/releases/$CI_COMMIT_TAG/SHA256SUMS" -t "yoda release $CI_COMMIT_TAG"
+    - sh ops/install/bundle.sh "$YODA_RELEASE" "$CI_REGISTRY_IMAGE" dist
+    - printf '%s\n' "$YODA_RELEASE_SIGNING_PASSWORD" | minisign -S -s "$YODA_RELEASE_SIGNING_KEY" -m "dist/releases/$YODA_RELEASE/SHA256SUMS" -t "yoda release $YODA_RELEASE"
     # Self-check against the public key install.sh embeds: a placeholder or a mismatched key fails the release.
     - pub=$(sed -n "s/^RELEASE_PUBKEY_EMBEDDED='\\(.*\\)'$/\\1/p" ops/install/install.sh)
-    - minisign -V -P "$pub" -m "dist/releases/$CI_COMMIT_TAG/SHA256SUMS"
+    - minisign -V -P "$pub" -m "dist/releases/$YODA_RELEASE/SHA256SUMS"
     - |
       if [ -z "${YODA_RELEASE_UPLOAD_URL:-}" ]; then
         echo "YODA_RELEASE_UPLOAD_URL is not set: the bundle stays a job artifact only"
@@ -122,9 +132,9 @@ release-bundle:
         echo "YODA_RELEASE_UPLOAD_TOKEN is empty or holds characters a bearer token cannot" >&2
         exit 1
       fi
-      for f in "dist/releases/$CI_COMMIT_TAG"/*; do
+      for f in "dist/releases/$YODA_RELEASE"/*; do
         printf 'header = "Authorization: Bearer %s"\n' "$YODA_RELEASE_UPLOAD_TOKEN" |
-          curl -fsS --retry 3 -K - --upload-file "$f" "${YODA_RELEASE_UPLOAD_URL%/}/releases/$CI_COMMIT_TAG/$(basename "$f")"
+          curl -fsS --retry 3 -K - --upload-file "$f" "${YODA_RELEASE_UPLOAD_URL%/}/releases/$YODA_RELEASE/$(basename "$f")"
       done
   artifacts:
     paths: [dist/releases/]
@@ -161,4 +171,4 @@ deploy:
       | ssh -i "$DEPLOY_SSH_KEY" -o StrictHostKeyChecking=yes -o BatchMode=yes "$DEPLOY_USER@$DEPLOY_HOST"
       "mkdir -p '$DEPLOY_PATH' && tar -xf - -C '$DEPLOY_PATH'"
     - ssh -i "$DEPLOY_SSH_KEY" -o StrictHostKeyChecking=yes -o BatchMode=yes "$DEPLOY_USER@$DEPLOY_HOST"
-      "cd '$DEPLOY_PATH' && YODA_VERSION='$CI_COMMIT_TAG' sh ops/deploy/deploy.sh"
+      "cd '$DEPLOY_PATH' && YODA_VERSION='${CI_COMMIT_TAG#v}' sh ops/deploy/deploy.sh"
