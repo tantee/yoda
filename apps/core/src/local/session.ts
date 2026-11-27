@@ -10,8 +10,8 @@ import { randomToken, sameBytes, sha256 } from './codes.js'
 /**
  * Setup and recovery cookie sessions (installer proposal §7.2, §8.3). The cookie holds 256 random bits; only its
  * SHA-256 is stored, bound to the user agent. The cookie is `HttpOnly; SameSite=Strict`, scoped to its API path
- * (the portal proxies core under /api), and `Secure` unless the request came over plain HTTP (D8: allowed on the
- * LAN, with a warning). Every non-GET call also needs the CSRF token in `X-Yoda-CSRF` (derived from the cookie
+ * (the portal proxies core under /api), and `Secure` unless the request came over plain HTTP (the SSH tunnel to
+ * 127.0.0.1 is; D8 refuses only a plain-http public URL away from localhost, not the session). Every non-GET call also needs the CSRF token in `X-Yoda-CSRF` (derived from the cookie
  * value, so the page can read it again after a reload) and an `Origin`, when the browser sends one, of the public
  * URL or the address the request came to.
  */

@@ -49,8 +49,15 @@ Contents:
     reachable from them (LINE and Telegram need a public HTTPS URL with a valid certificate).
 - **Reaching the setup wizard.** The first open of `/setup` goes through the reverse proxy
   (`https://portal.example.org/setup`) or, before the proxy exists, an SSH tunnel to the loopback-only portal:
-  `ssh -L 3000:127.0.0.1:3000 <deploy host>`, then `http://127.0.0.1:3000/setup` (plain HTTP on the LAN works,
-  with a warning, D8).
+  `ssh -L 3000:127.0.0.1:3000 <deploy host>`, then `http://127.0.0.1:3000/setup`.
+  **Setup over plain HTTP (D8).** The public URL must be `https://`, unless its host is this machine:
+  `localhost`, a `*.localhost` name, 127.0.0.0/8 (`127.0.0.1`) or `::1`. The wizard and System settings → General
+  refuse anything else on `http://` (a LAN address such as `http://10.0.0.5:3000`, a host name, `0.0.0.0`) with
+  `https_required`, and setup does not finish while such a URL is in effect (also one set in `PORTAL_URL`):
+  browsers allow the portal's Keycloak sign-in only on https or localhost, so nobody could sign in. The wizard
+  page itself may be plain HTTP (the tunnel is), and says so. To put HTTPS in front: a reverse proxy with a
+  certificate for the portal's name, forwarding to `PORTAL_PORT` (3000) and passing `Host` and the
+  `X-Forwarded-*` headers (section 5), plus `YODA_TRUSTED_PROXY_HOPS=2` in `.env` and a restart.
 - **Outbound network.** Core needs HTTPS to the AI providers, to GitLab, to `api.line.me` and
   `api.telegram.org` when those channels are used, and SMTP to the mail relay.
 
@@ -856,6 +863,12 @@ after it). For a value still in `.env`, the same holds with `dc up -d --no-build
   `proxy_set_header Host $host;` (and the `X-Forwarded-*` headers, section 5), reload the proxy, then reload the
   wizard. Through the SSH tunnel, open exactly `http://127.0.0.1:3000/setup` (not `localhost` on one tab and
   `127.0.0.1` on another), and finish in the same tab.
+- **The wizard (or System settings → General) refuses the public URL: "https_required"** (*Yoda's address must
+  use https*). The URL is `http://` on a host that is not this machine (D8, section 1). Enter the `https://`
+  address of the reverse proxy (it may be set up later, before the claim), or finish setup through the SSH tunnel
+  (`ssh -L 3000:127.0.0.1:3000 <deploy host>`, then `http://127.0.0.1:3000/setup`). If the field is locked, the
+  value comes from `PORTAL_URL` in `.env`: change it there and restart. `/setup/complete` answers the same code
+  when an http URL was saved before this rule: go back to the organisation step and change it.
 - **Setup token lost or expired.** `dc exec core yoda-admin setup-token` prints the current one, or a new one
   when it was used or is older than 24 hours (`--new` always makes a new one); a restart of core also makes a new
   one (in the "Yoda setup" banner of `dc logs core`). Once setup is done there is no token: the command says so.

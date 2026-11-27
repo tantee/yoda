@@ -38,6 +38,34 @@ export function passwordIssue(username: string, password: string): 'too_short' |
   return null
 }
 
+/**
+ * A host name (no port; `[::1]` brackets allowed) that is this machine: `localhost`, a `*.localhost` name,
+ * 127.0.0.0/8 or `::1`. The browser treats exactly these as a secure context over plain http, so Web Crypto (and
+ * the portal's Keycloak sign-in) work there. Used by D3 (TOTP optional only on localhost) and D8.
+ */
+export function isLocalhostHost(host: string | null | undefined): boolean {
+  if (!host) return false
+  const h = host.replace(/^\[|\]$/g, '').toLowerCase()
+  return h === 'localhost' || h.endsWith('.localhost') || /^127\.\d+\.\d+\.\d+$/.test(h) || h === '::1'
+}
+
+/**
+ * D8 (owner decision, 2026-11-27): the public URL must be https, unless its host is this machine
+ * ({@link isLocalhostHost}: `localhost`, `*.localhost`, 127.0.0.0/8, `::1`), as through an SSH tunnel. A browser
+ * refuses the Keycloak sign-in (PKCE needs Web Crypto) on plain http anywhere else, so nobody could sign in.
+ * `https_required` when refused; null when fine or not a URL at all (the schema reports that).
+ */
+export function publicUrlIssue(url: string | null | undefined): 'https_required' | null {
+  if (!url) return null
+  let u: URL
+  try {
+    u = new URL(url)
+  } catch {
+    return null
+  }
+  return u.protocol === 'http:' && !isLocalhostHost(u.hostname) ? 'https_required' : null
+}
+
 export const TotpCode = z.string().trim().regex(/^\d{6}$/, 'must be 6 digits')
 /** A recovery code as typed (dashes and spaces allowed). */
 export const RecoveryCodeInput = z.string().trim().min(8).max(40)

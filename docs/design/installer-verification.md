@@ -104,9 +104,10 @@ again, as it was before the run. `yoda_demo`, the `yoda-demo` bucket and `dev1` 
 
 ## Remaining gaps and notes
 
-- **D8 decision.** A plain-http LAN install can finish the wizard but nobody can sign in to the portal there
-  afterwards (browser rule, now explained on screen). The owner may prefer the organisation step to refuse an http
-  non-localhost public URL.
+- **D8 decision.** A plain-http LAN install could finish the wizard but nobody could sign in to the portal there
+  afterwards (browser rule). Resolved by the owner (2026-11-27): setup now refuses an http public URL unless the
+  host is localhost, `*.localhost`, 127.0.0.0/8 or `::1` (`https_required`; installer proposal §8.2, D8). Rows B2
+  and the `portal.yodatest.orb.local:3000` run above predate that rule.
 - **Small things seen, not changed:** the wizard shows core's English validation text for a non-Keycloak issuer
   inside the Thai UI; the check step lists "database password: not set" although it is in the bootstrap volume
   (it is part of `DATABASE_URL`); `deploy.sh`'s setup hint reads `PORTAL_PORT` from `.env` only; CLI security

@@ -8,6 +8,7 @@ import {
   SettingsTestBody,
   TelegramWebhookBody,
   isSettingKey,
+  publicUrlIssue,
   settingDef,
   type AdminSettingsResponse,
   type GeneratedSecret,
@@ -97,6 +98,17 @@ const reauthRequired = () => new HttpError(401, { error: 'reauth_required' })
 export const locked = (key: string, reason: string, envName?: string) =>
   new HttpError(409, { error: 'setting_locked', key, reason, ...(envName ? { envName } : {}) })
 export const invalidSettings = (issues: { key: string; message: string }[]) => new HttpError(422, { error: 'invalid_settings', issues })
+
+/**
+ * D8 (owner decision, 2026-11-27): a public URL on plain http is refused unless its host is this machine
+ * (`publicUrlIssue`: localhost, `*.localhost`, 127.0.0.0/8, ::1). Browsers allow the Keycloak sign-in only on
+ * https or localhost, so such a URL would leave nobody able to sign in. Used by the wizard and System settings.
+ */
+export function refusePlainHttpUrl(values: Map<SettingKey, unknown>): void {
+  const v = values.get('org.publicUrl')
+  const issue = typeof v === 'string' ? publicUrlIssue(v) : null
+  if (issue) throw invalidSettings([{ key: 'org.publicUrl', message: issue }])
+}
 
 function rateLimited(retryAfter: number): HttpError {
   return new HttpError(429, { error: 'rate_limited', retryAfter })
@@ -322,6 +334,7 @@ export function adminSettingsRoutes(app: FastifyInstance): void {
     // the admin saw.
     const unversioned = [...values.keys()].filter((k) => BOUND_SECRETS.has(k) && body.versions?.[k] === undefined)
     if (unversioned.length) throw invalidSettings(unversioned.map((key) => ({ key, message: 'version_required' })))
+    refusePlainHttpUrl(values)
     // Recent sign-in: any secret (set, cleared, or cleared with its endpoint), any sign-in setting, and the public
     // URL (where webhooks and links point).
     const sensitive = [...values.keys()].some((k) => settingDef(k).secret || BOUND_SECRETS.has(k) || k === 'org.publicUrl')

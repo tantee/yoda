@@ -1684,6 +1684,7 @@
       "boundInEnv": "{name} cannot move: its secret is set by the environment ({env})",
       "invalid": "Some fields are not valid",
       "invalidField": "Not valid: {message}",
+      "httpsRequired": "Plain http works only on this machine (localhost, 127.0.0.1, ::1): nobody could sign in. Use an https address.",
       "rateLimited": "Too many attempts. Try again in {s} seconds.",
       "secretsUnavailable": "Secrets cannot be saved: the master key is not usable. See Security.",
       "dirty": "{n} unsaved changes"
@@ -2311,7 +2312,7 @@
     "insecure": {
       "title": "This connection is not encrypted (http)",
       "token": "The setup token travels over the network unencrypted. Open this page through an https reverse proxy or an SSH tunnel:",
-      "session": "This setup session uses plain http, so its cookie is not protected by HTTPS. It is fine on an internal network; an SSH tunnel or https is better.",
+      "session": "This setup session uses plain http, so its cookie is not protected by HTTPS. That is expected through an SSH tunnel to 127.0.0.1; on a network address, use the tunnel or https instead.",
       "proxy": "With an https reverse proxy in front of the portal, set this in .env on the install host:"
     },
     "nav": {
@@ -2350,7 +2351,13 @@
       "urlMatches": "Matches the detected address",
       "urlMismatch": "You are reaching Yoda at a different address ({origin}) than the one entered. Check it: otherwise the sign-in at the last step returns to the wrong place.",
       "urlInvalid": "Enter an address like https://portal.example.org (no ? or #)",
-      "httpWarning": "Allowed for setup on an internal network, but passwords and cookies travel unencrypted, and browsers allow the portal's Keycloak sign-in only over https (or on localhost): after setup, people cannot sign in at a plain http network address. Set up an https reverse proxy and use the https address.",
+      "httpsRequired": "Plain http works only on this machine (localhost, 127.0.0.1, ::1). Use an https address.",
+      "httpsTitle": "Yoda's address must use https",
+      "httpsWhy": "Browsers allow the portal's Keycloak sign-in only over https or on localhost, so nobody could sign in at a plain http network address, and passwords and cookies would travel unencrypted. Setup does not accept it. If the address is set in .env (PORTAL_URL), change it there and restart.",
+      "httpsTunnel": "No https yet? Finish setup through an SSH tunnel from your computer:",
+      "httpsTunnelThen": "then open",
+      "httpsProxy": "To put https in front: a reverse proxy (such as nginx) with a certificate for the portal's name, forwarding to port 3000; set this in .env and restart, then use the https address here:",
+      "httpsRunbook": "Details: docs/operations.md, section 1 (Reaching the setup wizard) and section 11 (https_required).",
       "defaultLocale": "Default language",
       "defaultLocaleHelp": "Each person can change their own language.",
       "lockedEnv": "Set by environment on the install host ({name})",
@@ -2497,6 +2504,7 @@
       "done": "Setup is already finished.",
       "kitDownloaded": "The recovery kit was already downloaded. Only the browser that downloaded it can ask again, within 10 minutes.",
       "incomplete": "Some required steps are not finished.",
+      "httpsRequired": "The public URL uses plain http on a network address. Go back to step 1 and enter an https address (or use an SSH tunnel and http://127.0.0.1:3000).",
       "noIssuer": "Keycloak is not set up yet. Go back to step 4.",
       "noAdmin": "The break-glass admin is not created yet. Go back to step 2.",
       "provider": "Could not reach Keycloak. Check the issuer URL in step 4.",

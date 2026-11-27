@@ -6,8 +6,9 @@ import StepFrame from './StepFrame.vue'
 
 /**
  * Step 1 (proposal §4.2, mockup `installer-organisation.html`): the organisation's names, the side-menu line, the
- * public URL (pre-filled with the address the browser came through, confirmed here; a warning on plain HTTP, D8,
- * and when it is not the address in the browser) and the default language. Saved on Next.
+ * public URL (pre-filled with the address the browser came through, confirmed here; refused on plain http unless
+ * the host is this machine, D8, with the SSH-tunnel and https hints; a warning when it is not the address in the
+ * browser) and the default language. Saved on Next.
  */
 const props = defineProps<{ api: SetupFetcher; view: SettingsCategoryView | null; detectedUrl: string; origin: string }>()
 const emit = defineEmits<{ saved: [] }>()
@@ -54,7 +55,7 @@ function changes(): Record<string, unknown> {
 }
 
 async function save() {
-  if (nameMissing.value || url.value.invalid || busy.value) return
+  if (nameMissing.value || url.value.invalid || url.value.httpsRequired || busy.value) return
   busy.value = true
   error.value = ''
   try {
@@ -78,7 +79,7 @@ async function save() {
     :hint="t('setup.nav.saveOnNext')"
     hint-icon="mdi-content-save-outline"
     :next-label="t('setup.nav.nextTo', { step: t('setup.step.admin') })"
-    :next-disabled="nameMissing || url.invalid"
+    :next-disabled="nameMissing || url.invalid || url.httpsRequired"
     :busy="busy"
     @next="save"
   >
@@ -93,21 +94,24 @@ async function save() {
           prepend-inner-icon="mdi-web"
           spellcheck="false"
           :disabled="locked('org.publicUrl')"
-          :error-messages="url.invalid && form['org.publicUrl'] ? t('setup.org.urlInvalid') : ''"
+          :error-messages="url.invalid && form['org.publicUrl'] ? t('setup.org.urlInvalid') : url.httpsRequired ? t('setup.org.httpsRequired') : ''"
           :hint="locked('org.publicUrl') ? lockHint('org.publicUrl') : t('setup.org.publicUrlHelp')"
           persistent-hint
           data-testid="setup-org-url"
         >
           <template #append-inner>
-            <v-chip v-if="!url.invalid && !url.mismatch" size="small" color="success" variant="tonal" data-testid="setup-url-match">{{ t('setup.org.urlMatches') }}</v-chip>
+            <v-chip v-if="!url.invalid && !url.httpsRequired && !url.mismatch" size="small" color="success" variant="tonal" data-testid="setup-url-match">{{ t('setup.org.urlMatches') }}</v-chip>
           </template>
         </v-text-field>
         <v-alert v-if="!url.invalid && url.mismatch" type="warning" variant="tonal" density="compact" class="mt-3" data-testid="setup-url-mismatch">{{ t('setup.org.urlMismatch', { origin }) }}</v-alert>
-        <v-alert v-if="!url.invalid && url.plainHttp" type="warning" variant="tonal" density="compact" icon="mdi-lock-open-alert-outline" class="mt-3" data-testid="setup-url-http">
-          <div class="font-weight-medium">{{ t('setup.insecure.title') }}</div>
-          <div>{{ t('setup.org.httpWarning') }}</div>
+        <v-alert v-if="!url.invalid && url.httpsRequired" type="error" variant="tonal" density="compact" icon="mdi-lock-open-alert-outline" class="mt-3" role="alert" data-testid="setup-url-https-required">
+          <div class="font-weight-medium">{{ t('setup.org.httpsTitle') }}</div>
+          <div>{{ t('setup.org.httpsWhy') }}</div>
+          <div class="mt-2">{{ t('setup.org.httpsTunnel') }} <code>ssh -L 3000:127.0.0.1:3000 &lt;host&gt;</code> {{ t('setup.org.httpsTunnelThen') }} <code>http://127.0.0.1:3000/setup</code></div>
+          <div class="mt-1">{{ t('setup.org.httpsProxy') }} <code>YODA_TRUSTED_PROXY_HOPS=2</code></div>
+          <div class="mt-1">{{ t('setup.org.httpsRunbook') }}</div>
         </v-alert>
-        <p v-if="!url.invalid && (url.mismatch || url.plainHttp)" class="setup-help" data-testid="setup-url-proxy">{{ t('setup.org.proxyHint') }} <code>YODA_TRUSTED_PROXY_HOPS=2</code></p>
+        <p v-if="!url.invalid && !url.httpsRequired && url.mismatch" class="setup-help" data-testid="setup-url-proxy">{{ t('setup.org.proxyHint') }} <code>YODA_TRUSTED_PROXY_HOPS=2</code></p>
       </div>
       <div>
         <div class="setup-label">{{ t('setup.org.defaultLocale') }}</div>
