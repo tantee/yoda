@@ -163,8 +163,8 @@ menu → **Notification settings**.
 ## Runners
 
 A **runner** works AI tasks that need a repository (code changes, repository analysis, running tests) with a
-coding agent such as Claude Code, on your machine or on a server. It acts on your behalf: its results show as
-"AI on behalf of" you, and every code change arrives as a GitLab merge request for a person to review.
+coding agent such as Claude Code, on your machine or on a server. It acts on your behalf: its results are
+marked as AI work done for you, and every code change arrives as a GitLab merge request for a person to review.
 
 ![The Runners page](../images/staff-runners.webp)
 

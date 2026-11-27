@@ -90,9 +90,9 @@ setting.
 
 - **Anthropic API key** and/or an **OpenAI-compatible API key** with its **base URL** (for example an internal
   gateway). Jobs whose provider has no key are unavailable; the portal says "AI is not configured" on such tasks.
-- **Model for drafts** and **model for quick jobs**, as `provider:model` (defaults `anthropic:claude-opus-5-5`
+- **Drafting model** and **Fast model**, as `provider:model` (defaults `anthropic:claude-opus-5-5`
   and `anthropic:claude-haiku-5-5`), the optional **embedding model** (empty: keyword search only) and the number
-  of **concurrent AI jobs** (needs a restart).
+  of **AI workers**, the AI jobs run at once (needs a restart).
 - **Monthly budget (USD)** for the whole department; empty means no limit.
 
 ![AI providers, models, the monthly budget and the fun switch](../images/admin-settings-ai.webp)
@@ -114,11 +114,11 @@ test passes; people then link their own accounts in their notification settings.
 ![Email, LINE and Telegram settings](../images/admin-settings-channels.webp)
 
 - **Email (SMTP)**: server, port, TLS, user, password and sender. **Test connection**, then **Send a test email to
-  myself**.
+  me**.
 - **LINE Official Account**: the channel access token and channel secret from LINE Developers, and the add-friend
   link shown to people when they link. Copy the **Webhook URL** into LINE Developers.
 - **Telegram**: the bot token from BotFather (the bot's name fills in by itself) and a webhook secret
-  (**Generate**). **Register webhook** points Telegram at Yoda; tick *Drop pending messages* to discard what
+  (**Generate**). **Register webhook** points Telegram at Yoda; tick **Drop pending updates** to discard what
   queued while it was off.
 
 Step-by-step provider setup is in the [runbook, section 9](../operations.md#9-email-line-and-telegram).
@@ -131,8 +131,8 @@ Step-by-step provider setup is in the [runbook, section 9](../operations.md#9-em
 ![GitLab connection, token, webhook secret and webhook URL](../images/admin-settings-gitlab.webp)
 
 The **Connection** card shows whether GitLab is configured and reachable, the bot user and the last webhook
-received. In GitLab, add a webhook on each linked project (or once on the group) with the **URL for the GitLab
-webhook** shown here, the webhook secret as *Secret token*, and the **Merge request**, **Pipeline** and
+received. In GitLab, add a webhook on each linked project (or once on the group) with the **Webhook URL to configure in
+GitLab** shown here, the webhook secret as *Secret token*, and the **Merge request**, **Pipeline** and
 **Comments** events. Projects link their repositories on their **Repository** tab. Details:
 [runbook, section 7](../operations.md#7-gitlab-integration).
 

@@ -4,7 +4,8 @@
 
 How to install Yoda on a server, finish the setup wizard, keep a way back in, and upgrade. This guide walks the
 common path; every detail and edge case is in the [operations runbook](../operations.md). Hostnames here are
-placeholders (`portal.example.org`, `sso.example.org`, `files.example.org`); use your own.
+placeholders (`portal.example.org`, `sso.example.org`, `files.example.org`); use your own. `files.example.org`
+stands for your organisation's own internal release server, where the signed release files are published.
 
 - [Before you start](#before-you-start)
 - [1. Install the release](#1-install-the-release)
@@ -18,12 +19,17 @@ placeholders (`portal.example.org`, `sso.example.org`, `files.example.org`); use
 
 - A Linux host with Docker Engine 24+, Docker Compose v2.24+ and about 10 GB free, and a deploy user who may run
   `docker` and owns the install directory (for example `/srv/yoda`).
+- On that host: `minisign` (to check the release signature), `tar`, and `curl` or `wget`. `install.sh` stops and
+  names any that are missing.
 - A Keycloak realm with a client for the portal and a staff group
   ([runbook, section 2](../operations.md#2-keycloak)).
 - HTTPS in front of the portal: a reverse proxy with a certificate (set `YODA_TRUSTED_PROXY_HOPS=2` in `.env`).
-  The setup wizard refuses a plain-HTTP public URL unless it is `localhost`, `127.0.0.1` or `::1`, because browsers
-  block Keycloak sign-in on plain HTTP. Until HTTPS is ready, run the wizard through an SSH tunnel
-  (`ssh -L 3000:127.0.0.1:3000 <host>`, then open `http://127.0.0.1:3000/setup`).
+  The public URL must use `https://`. Plain `http://` is accepted only when the host is this machine: `localhost`
+  or a `*.localhost` name, an address in `127.0.0.0/8`, or `::1`. Any other `http://` address (a LAN address or
+  host name) is refused, because browsers allow the portal's Keycloak sign-in only over HTTPS or on localhost.
+  When it refuses, the organisation step shows both ways forward: the SSH-tunnel command and how to put HTTPS in
+  front. Until HTTPS is ready, run the wizard through an SSH tunnel (`ssh -L 3000:127.0.0.1:3000 <host>`, then open
+  `http://127.0.0.1:3000/setup`).
 - Optional: SMTP, a LINE Official Account, a Telegram bot, a GitLab bot account, AI provider keys. Each can be
   added later in System settings.
 
@@ -36,7 +42,8 @@ alias dc='docker compose --env-file .env --env-file release.env -f docker-compos
 
 ## 1. Install the release
 
-Download `install.sh` and the checksums for a pinned release from your release file server, check the signature,
+Download `install.sh` and the checksums for a pinned release from your organisation's internal release server
+(`files.example.org` below), check the signature,
 then run it. Never pipe a download into `sh`.
 
 ```bash
@@ -81,7 +88,7 @@ redirect.
 
 **Step 2 · Break-glass admin.** A local account for `/recovery`, used only when Keycloak sign-in fails. Choose a
 username and a strong password (14+ characters), scan the QR code with an authenticator app and enter its code
-(TOTP is skipped only for a `localhost` URL).
+(the authenticator is optional only when both the public URL and the address in your browser are `localhost`).
 
 ![Create the break-glass admin (QR code and key hidden in this screenshot)](../images/setup-admin.webp)
 

@@ -15,7 +15,7 @@ pnpm monorepo: `apps/core` (Fastify + Drizzle), `apps/portal` (Nuxt 4 SPA), `app
 ```bash
 pnpm install            # also installs the lefthook git hooks (gitleaks pre-commit)
 cp .env.example .env    # adjust ports if needed
-docker compose up -d    # postgres, rustfs (S3), keycloak (bound to 127.0.0.1)
+docker compose up -d    # postgres, rustfs (S3), keycloak, mailpit (bound to 127.0.0.1)
 pnpm --filter @yoda/core db:migrate
 pnpm dev                # core on PORT, portal on PORTAL_PORT
 ```
@@ -23,7 +23,7 @@ pnpm dev                # core on PORT, portal on PORTAL_PORT
 The root `.env` is loaded automatically by `pnpm --filter @yoda/core dev`, `db:migrate` and
 `pnpm --filter @yoda/portal dev` (so `PORTAL_PORT` and `NUXT_PUBLIC_*` apply). For local dev set
 `BOOTSTRAP_ADMINS=somchai` in your `.env` to get an admin on first login. Never set a common real
-username against the hospital Keycloak.
+username against the organisation's Keycloak.
 
 ### Object storage (RustFS)
 

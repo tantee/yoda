@@ -32,7 +32,7 @@ Requesters outside IT get a simpler portal: their own requests, questions to ans
 ## Quick start
 
 **Production** (Docker Engine 24+ and Compose v2.24+). Download a pinned release, check its signature, then run it
-(never pipe a download into `sh`):
+(never pipe a download into `sh`). `files.example.org` stands for your organisation's own internal release server:
 
 ```bash
 curl -fsSLO https://files.example.org/yoda/releases/1.0.0/install.sh
