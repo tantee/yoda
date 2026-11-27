@@ -25,7 +25,7 @@ placeholders (`portal.example.org`, `sso.example.org`); use your own. Releases a
 - A Keycloak realm with a client for the portal and a staff group
   ([runbook, section 2](../operations.md#2-keycloak)).
 - HTTPS in front of the portal: a reverse proxy with a certificate (set `YODA_TRUSTED_PROXY_HOPS=2` in `.env`),
-  or the optional **built-in HTTPS proxy** that `install.sh --with-proxy` turns on (below, and
+  or the optional **built-in HTTPS proxy** that `install.sh --with-proxy` turns on (release 1.1.0 or later; below, and
   [runbook, section 4b](../operations.md#4b-built-in-https-proxy-optional)).
   The public URL must use `https://`. Plain `http://` is accepted only when the host is this machine: `localhost`
   or a `*.localhost` name, an address in `127.0.0.0/8`, or `::1`. Any other `http://` address (a LAN address or
@@ -80,24 +80,31 @@ signed bundle (`bundle.env`), and `deploy.sh` pins them in `release.env`. The de
 migrations, starts everything and prints the setup address.
 
 **Built-in HTTPS proxy (optional).** With no reverse proxy on the network, let Yoda run one (Caddy, ports 80 and
-443) and give it the name staff will open (its DNS name must lead to this host):
+443) and give it the name staff will open (its DNS name must lead to this host). It needs **release 1.1.0 or
+later**, the first that ships it: `install.sh` refuses `--with-proxy` with an older `--version`. A host already
+on an older release upgrades first, then turns the proxy on
+([runbook 4b, "Turn it on later"](../operations.md#4b-built-in-https-proxy-optional)).
 
 ```bash
-sh install.sh --version 1.0.0 --dir /srv/yoda --with-proxy --domain portal.example.org
+sh install.sh --version 1.1.0 --dir /srv/yoda --with-proxy --domain portal.example.org
 ```
 
 The certificate comes from one of three places, `--cert-mode`:
 
 - `internal` (the default): Caddy's own certificate authority. The deploy copies its root certificate (public, no
   key) to `/srv/yoda/proxy/root.crt`; install it as a trusted root on every staff PC (a Windows Group Policy, a
-  macOS profile, `update-ca-certificates` on Linux; Firefox on Linux imports it itself). The steps per system are in
-  [runbook 4b](../operations.md#certificate-modes).
-- `files`: the organisation's certificate, `--cert <chain.pem> --key <key.pem>` (copied to `proxy/certs/`).
+  macOS profile, `update-ca-certificates` on Linux; Firefox on Linux does not read the system store and needs its
+  own import, or the `Certificates` enterprise policy). The steps per system are in
+  [runbook 4b](../operations.md#certificate-modes). Its root is trusted for every site, not only the portal: where
+  the organisation has its own CA, prefer `files`.
+- `files`: the organisation's certificate, `--cert <chain.pem> --key <key.pem>` (copied to `proxy/certs/`). With
+  `openssl` on the host, `install.sh` checks that it names the domain, matches the key and has not expired.
 - `acme`: Let's Encrypt, `--acme-email <address>`, only when the host is reachable from the internet on ports 80
-  and 443 under that name.
+  and 443 under that name (other ports are refused). `--acme-staging` makes a trial certificate from Let's
+  Encrypt's staging CA first.
 
-The deploy then prints `https://portal.example.org/setup`, and sets the trusted proxy hops (2) by itself. Back up
-the proxy's certificate volume as the runbook says. Without `--with-proxy`, nothing about the proxy is installed
+The deploy then prints `https://portal.example.org/setup`, and sets the trusted proxy hops (2) by itself. Keep one
+encrypted, offline copy of the proxy's certificate volume with the recovery kit, as the runbook says. Without `--with-proxy`, nothing about the proxy is installed
 or started.
 
 Options: `--base-url` (another file server), `--image-prefix` (another registry path), `--no-login`. **Internal

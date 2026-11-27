@@ -14,19 +14,32 @@ as a GitHub Release, and the version without the `v` is the image tag a host run
   `X-Forwarded-*` headers, and keeps `/api/ready` inside the host ([runbook 4b](docs/operations.md#4b-built-in-https-proxy-optional)).
 - Three certificate modes: `internal` (Caddy's own CA; `deploy.sh` copies its public root to `proxy/root.crt`
   for the staff PCs, with instructions for Windows, macOS, Linux and Firefox), `files` (the organisation's
-  certificate and key) and `acme` (Let's Encrypt, for a host reachable from the internet).
+  certificate and key; preferred where the organisation has a CA) and `acme` (Let's Encrypt only, for a host
+  reachable from the internet on 80 and 443). The internal CA is named `Yoda <domain> internal CA`; its root has no
+  name constraints, so `proxy-data` is kept as one encrypted offline copy with the recovery kit (runbook 4b).
 - `install.sh --with-proxy --domain <name> [--cert-mode internal|files|acme] [--cert F --key F]
-  [--acme-email A] [--http-port N --https-port N]` writes the choice into the new `.env`.
-- With the profile on, `deploy.sh` pins `YODA_PROXY_ENABLED=true` in `release.env` (compose then gives core and the
-  portal `YODA_TRUSTED_PROXY_HOPS=2` unless `.env` sets it), refuses a portal or core published beyond loopback,
-  and runs `caddy validate` before anything is replaced.
+  [--acme-email A [--acme-staging]] [--http-port N --https-port N]` writes the choice into the new `.env`. It
+  refuses a release before this one, acme on other ports than 80 and 443, and (with `openssl`) a certificate that
+  does not name the domain, does not match the key or has expired.
+- `deploy.sh` pins `YODA_PROXY_ENABLED` in `release.env` on every deploy (`true` with the profile on, empty
+  otherwise; compose gives core and the portal `YODA_TRUSTED_PROXY_HOPS=2` only for `true`, unless `.env` sets
+  it) and refuses another value in `.env`. With the profile on it refuses a portal or core published beyond
+  loopback and settings the proxy cannot run with, runs `caddy validate` before `release.env` or any container is
+  replaced, reloads the proxy after the start (a changed Caddyfile, `proxy/sites` file or certificate applies), and
+  warns about an organisation certificate that expires within 30 days. `COMPOSE_PROFILES=proxy` with compose files
+  that have no proxy service stops the deploy.
+- The proxy container runs without capabilities but binding 80/443 and reading the key, with `no-new-privileges`
+  and a read-only root; request bodies are capped at 32 MiB, slow request headers time out after 30 s, uploads
+  after 10 minutes (server-sent events are not affected). No HSTS header.
 - The setup wizard's system check shows a read-only card: proxy on or off, address, certificate mode, trusted hops
   and the presented certificate's issuer, names, expiry and fingerprint (core reads it with a TLS handshake, never
   the proxy's files).
 - The release bundle carries `ops/proxy/Caddyfile`; `check-release.sh` checks the Caddy image is digest-pinned and
   that the Caddyfile validates in it for every mode. The GitLab deploy job copies the Caddyfile too.
-- **Upgrade notes:** nothing changes unless you turn the profile on. The new `proxy-data` volume holds the
-  certificates and the internal CA's keys: back it up off the host (runbook 4b).
+- **Upgrade notes:** nothing changes unless you turn the profile on (`release.env` gains an empty
+  `YODA_PROXY_ENABLED=`; delete any `YODA_PROXY_ENABLED` line from `.env`). The new `proxy-data` volume holds the
+  certificates and the internal CA's keys: keep one encrypted copy off the host (runbook 4b). Rolling back below
+  this release with the proxy on takes the portal off HTTPS (runbook 5, rollback).
 
 ## 1.0.0 — 2026-11-27
 

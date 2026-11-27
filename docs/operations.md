@@ -185,10 +185,11 @@ with `COMPOSE_PROFILES=proxy`):
 
 | Variable | Purpose | Required | Example |
 | --- | --- | --- | --- |
-| `YODA_PROXY_ENABLED` | The `proxy` profile is on: `deploy.sh` pins `true` in `release.env` when the profiles in effect run the `proxy` service, and compose then gives core and the portal `YODA_TRUSTED_PROXY_HOPS=2` unless `.env` sets it. Never set it by hand | no (`deploy.sh`) | `true` |
+| `YODA_PROXY_ENABLED` | The `proxy` profile is on: `deploy.sh` pins it in `release.env` on every deploy, `true` when the profiles in effect run the `proxy` service and empty otherwise, and compose gives core and the portal `YODA_TRUSTED_PROXY_HOPS=2` only for `true` (unless `.env` sets the hops). Never set it by hand: `deploy.sh` refuses (exit 2) a value in `.env` or its environment that is not the one it pins | no (`deploy.sh`) | `true` |
 | `YODA_PROXY_DOMAIN` | The name staff open; the public URL is `https://<domain>` (with `:<port>` when `YODA_PROXY_HTTPS_PORT` is not 443). It must lead to this host on the staff PCs (DNS) | with the proxy | `portal.example.org` |
 | `YODA_PROXY_CERT_MODE` | Where the certificate comes from: `internal` (Caddy's own CA; its public root is copied to `proxy/root.crt` for the staff PCs), `files` (the organisation's certificate in `proxy/certs/cert.pem` and `key.pem`) or `acme` (Let's Encrypt; only for a host reachable from the internet on 80 and 443) | optional (`internal`) | `files` |
 | `YODA_PROXY_ACME_EMAIL` | `acme` only: the address Let's Encrypt writes to about the certificate | with `acme` | `it@example.org` |
+| `YODA_PROXY_ACME_CA` | `acme` only: the ACME directory. Empty is Let's Encrypt's production CA (the only issuer: no fallback to another CA); `install.sh --acme-staging` writes Let's Encrypt's staging directory for a trial (browsers do not trust its certificates; remove the line for a real one) | optional | `https://acme-staging-v02.api.letsencrypt.org/directory` |
 | `YODA_PROXY_HTTPS_PORT` | HTTPS port of the proxy, on the host and inside its container | optional (`443`) | `443` |
 | `YODA_PROXY_HTTP_PORT` | HTTP port of the proxy (redirects to HTTPS; ACME's challenge) | optional (`80`) | `80` |
 | `YODA_PROXY_BIND` | Host address the proxy's ports are published on | optional (`0.0.0.0`, all) | `10.0.0.5` |
@@ -417,8 +418,12 @@ in your shell overrides `release.env`, so leave it unset.
    password vault, **off this host and apart from the backups**: anyone with it and a database backup can read
    every secret. Setup finishes only once you confirm you stored it; a new kit can be made later on the host
    with `(umask 077; dc exec -T core yoda-admin recovery-kit > yoda-recovery-kit.txt)` (it replaces the
-   recovery codes; section 10). The `umask` keeps the file readable by you only.
+   recovery codes; section 10). The `umask` keeps the file readable by you only. With the built-in proxy
+   (section 4b), its `proxy-data` volume goes with the kit: one encrypted copy, offline, never in the daily backups.
 6. Finish the services around it:
+   - [ ] **Built-in proxy data** (only with the built-in proxy, section 4b): one encrypted, offline copy of
+         `proxy-data` (**Keep the proxy's data**), stored with the recovery kit; in internal mode it holds the key
+         of a root every staff PC trusts.
    - [ ] **AI budgets.** In Admin → AI budget set the department's monthly budget, and on each project's AI
          settings tab its budget or no-AI. A model that is not in `apps/core/src/ai/prices.json` is logged at
          startup and refused for projects with a budget. Set a spending limit in the provider's console as well.
@@ -515,18 +520,40 @@ the portal container). The public URL is `https://<domain>` (`https://<domain>:<
 the setup wizard detects; the D8 rule (section 1) is met. The configuration is `ops/proxy/Caddyfile` from the
 release bundle; nothing on the host edits it.
 
-With the profile on, `deploy.sh`:
+It needs **release 1.1.0 or later** (the first with the `proxy` service): `install.sh --with-proxy` refuses an
+older `--version`, and `deploy.sh` refuses (exit 2) `COMPOSE_PROFILES=proxy` with compose files that have no
+`proxy` service, instead of running without it.
 
-- pins `YODA_PROXY_ENABLED=true` in `release.env`, and compose then gives core and the portal
-  `YODA_TRUSTED_PROXY_HOPS=2` (unless `.env` sets it): there is no hop count to set by hand;
+On every deploy `deploy.sh` pins `YODA_PROXY_ENABLED` in `release.env`: `true` with the profile on, empty with it
+off. Compose gives core and the portal `YODA_TRUSTED_PROXY_HOPS=2` only for `true` (unless `.env` sets the hops),
+so there is no hop count to set by hand, and a stray `YODA_PROXY_ENABLED=false` in `.env` cannot turn two hops on
+without the proxy: `deploy.sh` refuses (exit 2, before pulling) any value in `.env` or its environment other than
+the one it pins. With the profile on, it also:
+
 - refuses (exit 2, before pulling) a `PORTAL_BIND` or `CORE_BIND` other than loopback: the proxy reaches the portal
   inside compose, so neither port is needed beyond the host, and a portal reachable directly with two trusted hops
-  would let a client choose its own address;
-- checks the Caddyfile and the certificate settings with `caddy validate` before any running container is replaced
-  (exit 2, with Caddy's error: a missing domain, an unknown mode, a missing or mismatched certificate file, ACME
-  without an email);
+  would let a client choose its own address. Staff runners reach core's `/mcp` through the proxy too (**More
+  sites**, below), never through a published `CORE_BIND`;
+- refuses (exit 2, before pulling) settings the proxy cannot run with: no `YODA_PROXY_DOMAIN`, or one that is not a
+  single host name (a scheme, port, path or wildcard), an unknown `YODA_PROXY_CERT_MODE`, a port that is not a
+  number, and for acme a missing `YODA_PROXY_ACME_EMAIL` or ports other than 80 and 443;
+- warns when `.env` sets `YODA_TRUSTED_PROXY_HOPS` to anything but `2` (right only with yet another proxy in
+  front), and in files mode, with `openssl` on the host, when `proxy/certs/cert.pem` does not name the domain in
+  its subject alternative names, has expired, or expires within 30 days;
+- checks the Caddyfile, the `proxy/sites` files and the certificates with `caddy validate` (the new release's
+  files and image) before `release.env` or any running container is replaced (exit 2, with Caddy's error: a missing
+  domain, an unknown mode, a missing or mismatched certificate file, ACME without an email);
+- after the start reloads the proxy's configuration (`caddy reload --force`): compose recreates the container only
+  when its own settings change, so this is what applies a new Caddyfile, a changed `proxy/sites` file or a
+  replaced certificate file (exit 1 when the proxy does not take it; Caddy then keeps its previous configuration);
 - in internal mode copies the public root certificate of Caddy's CA to `proxy/root.crt` in the deploy directory
   (never a key), and prints the address and, while setup is not finished, `https://<domain>/setup`.
+
+The proxy container runs with no Linux capabilities but binding ports 80 and 443 and reading the `0600` key of
+files mode, with `no-new-privileges` and a read-only root file system (it writes only its two volumes and
+`/tmp`). Its admin endpoint (`localhost:2019`) exists only inside the container, for the healthcheck and the
+reload. It sends no `Strict-Transport-Security` (HSTS) header: in internal mode a lost root would otherwise lock
+browsers out until the new one is trusted. HSTS may come later as an option for files and acme mode only.
 
 The setup wizard's system check shows a read-only **Built-in HTTPS proxy** card: on or off, the address, the
 certificate mode, the trusted hops and the certificate the proxy presents (issuer, names, valid until, SHA-256
@@ -535,7 +562,8 @@ proxy's files.
 
 ![The built-in proxy card in the system check](images/setup-proxy.webp)
 
-**Turn it on at install** (`install.sh` writes the lines below into the new `.env`, then deploys):
+**Turn it on at install** (release 1.1.0 or later; `install.sh` writes the lines below into the new `.env`, then
+deploys):
 
 ```bash
 # Internal CA (default): Caddy issues the certificate; trust proxy/root.crt on the staff PCs (below).
@@ -548,14 +576,21 @@ sh install.sh --version 1.2.0 --dir /srv/yoda --with-proxy --domain portal.examp
   --cert-mode acme --acme-email it@example.org
 ```
 
-`--http-port` and `--https-port` choose other ports (the public URL then carries the HTTPS port; ACME needs 80
-and 443). In files mode `install.sh` copies the certificate to `proxy/certs/cert.pem` and the key to
-`proxy/certs/key.pem` (mode `0600`, readable only by the deploy user; Caddy reads it as root in its container).
+`--http-port` and `--https-port` choose other ports (the public URL then carries the HTTPS port); acme refuses
+them, since Let's Encrypt checks the name on 80 and 443. `--acme-staging` (acme only) uses Let's Encrypt's staging
+CA for a trial run: its certificates are not trusted by browsers, so remove `YODA_PROXY_ACME_CA` from `.env` and
+deploy again for the real one. In files mode `install.sh` copies the certificate to `proxy/certs/cert.pem` and the
+key to `proxy/certs/key.pem` (mode `0600`, readable only by the deploy user; Caddy reads it as root in its
+container). With `openssl` on the host it first refuses a certificate that does not name `--domain` in its subject
+alternative names (browsers ignore the subject's CN), a key that is not the certificate's, and an expired
+certificate, and warns when fewer than 30 days are left.
 
-**Turn it on later, or by hand.** Add to the host's `.env` (with the runner too: `COMPOSE_PROFILES=runner,proxy`),
-put the files in place for files mode, remove any `PORTAL_BIND` / `CORE_BIND` and `YODA_TRUSTED_PROXY_HOPS` line,
-and deploy the running release again (`cd /srv/yoda && YODA_VERSION=<current> sh ops/deploy/deploy.sh`). Stop the
-external proxy on 80 and 443 first.
+**Turn it on later, or by hand.** The host must run release 1.1.0 or later: on an older one, upgrade first
+(section 5), then turn it on. Add to the host's `.env` (with the runner too: `COMPOSE_PROFILES=runner,proxy`), put
+the files in place for files mode, remove any `PORTAL_BIND` / `CORE_BIND` and `YODA_TRUSTED_PROXY_HOPS` line, and
+deploy the running release again (`cd /srv/yoda && YODA_VERSION=<current> sh ops/deploy/deploy.sh`). Stop the
+external proxy on 80 and 443 first. With compose files from before 1.1.0, `deploy.sh` stops with "the compose files
+of <version> have no proxy service" rather than deploying without it.
 
 ```bash
 COMPOSE_PROFILES=proxy
@@ -567,10 +602,21 @@ Then change the public URL in System settings → General to `https://portal.exa
 the Keycloak client's redirect URIs and web origins with it (section 2).
 
 **Turn it off.** Remove those lines (and the profile from `COMPOSE_PROFILES`), `dc stop proxy && dc rm -f proxy`,
-deploy again (`YODA_PROXY_ENABLED` is no longer pinned, so the hops go back to `1` unless `.env` sets `2` for an
+deploy again (`YODA_PROXY_ENABLED` is pinned empty, so the hops go back to `1` unless `.env` sets `2` for an
 external proxy), and put the external proxy in front (section 5, upgrade notes).
 
 ### Certificate modes
+
+**Prefer files mode where the organisation has its own CA** (or a certificate from a public one): staff PCs then
+trust nothing new. Internal mode adds a root to every staff PC, and that root has **no name constraints**: whoever
+holds its key (the `proxy-data` volume, any copy of it, or root on this host) can make certificates those PCs trust
+for **any** site, not only the portal (a bank, a mail service, an update server). Treat `proxy-data` like the
+master key: keep exactly one encrypted copy offline (below), no other copies, and keep root on this host to the
+few people who hold the recovery kit. The CA is named after the domain (`Yoda <domain> internal CA root`, its
+intermediate `... intermediate`), so staff and IT recognise it in the trust store and can remove it when the proxy
+is retired; a root made by an earlier proxy keeps Caddy's default name (`Caddy Local Authority`) until
+`proxy-data` is replaced. A root limited by name constraints to the portal's domain would remove most of this risk;
+Caddy cannot make one today (a follow-up: a constrained root made outside Caddy and given to it).
 
 - **internal** (default). Caddy runs its own certificate authority in the `proxy-data` volume: a root (valid 10
   years) and an intermediate sign a short-lived certificate for the domain, which Caddy renews by itself. Browsers
@@ -597,28 +643,35 @@ external proxy), and put the external proxy in front (section 5, upgrade notes).
     internal mode cannot serve them (section 1).
 - **files.** The organisation's certificate for the domain: `proxy/certs/cert.pem` (the chain, leaf first) and
   `proxy/certs/key.pem` (unencrypted). It is renewed by you: put the new files in place before the old ones
-  expire (the wizard card warns 30 days before), then `dc exec proxy caddy reload --config /etc/caddy/Caddyfile
-  --force` (or `dc restart proxy`). Check them first with `dc run --rm --no-deps proxy caddy validate --config
-  /etc/caddy/Caddyfile`.
-- **acme.** Let's Encrypt issues and renews the certificate (every 60 to 90 days, by itself) when the domain's
+  expire (the wizard card and `deploy.sh` warn 30 days before), then
+  `dc exec proxy caddy reload --config /etc/caddy/Caddyfile --force` (or deploy again, which reloads; or
+  `dc restart proxy`). Check them first with `dc run --rm --no-deps proxy caddy validate --config /etc/caddy/Caddyfile`.
+- **acme.** Let's Encrypt (and only Let's Encrypt: the issuer is named, so Caddy never falls back to another CA such
+  as ZeroSSL) issues and renews the certificate (every 60 to 90 days, by itself) when the domain's
   public DNS points at this host and ports 80 and 443 are reachable from the internet. Not for a host inside the
   hospital network only. `YODA_PROXY_ACME_EMAIL` receives Let's Encrypt's notices. Keep `proxy-data`: it holds the
   ACME account and the certificates (issuing again and again hits Let's Encrypt's rate limits).
 
 **Keep the proxy's data.** The `proxy-data` volume holds the certificates, and in internal mode the CA's private
 keys: lose it and Caddy makes a new root, which every staff PC must then trust again. It is not in the daily
-backups (like the master key, a CA key does not belong in the backups volume). After the first deploy, save it off
-the host, next to the recovery kit and with the same care:
+backups (like the master key, a CA key does not belong in the backups volume), and should not be: one copy, made
+once after the first deploy, encrypted and kept offline next to the recovery kit (it is an item of the recovery
+kit checklist, section 4 steps 5 and 6). Make a new copy only when the root changes:
 
 ```bash
 (umask 077; dc run --rm --no-deps -T --entrypoint tar proxy -czf - -C /data caddy > yoda-proxy-data.tgz)
+# Encrypt it before it leaves the host (a passphrase kept with the recovery kit), then delete the plain file:
+gpg --symmetric --cipher-algo AES256 yoda-proxy-data.tgz && shred -u yoda-proxy-data.tgz
 # On a new host, before its first start of the proxy:
 dc run --rm --no-deps -T --entrypoint tar proxy -xzf - -C /data < yoda-proxy-data.tgz
 ```
 
 **More sites on the proxy.** Files named `*.caddy` in `proxy/sites/` are added to the configuration (checked by
-the same `caddy validate`). For example core's runner endpoint for the staff machines (section 8), on its own
-name, limited to the networks the runners use:
+the same `caddy validate`). Nothing but the portal is routed by default: core's `/mcp` for the staff runners is
+not reachable until you add it. A changed file applies on the next deploy (which reloads the proxy) or at once
+with `dc run --rm --no-deps proxy caddy validate --config /etc/caddy/Caddyfile && dc exec proxy caddy reload
+--config /etc/caddy/Caddyfile --force`; compose never restarts the proxy for it by itself. For example core's
+runner endpoint for the staff machines (section 8), on its own name, limited to the networks the runners use:
 
 ```caddy
 yoda-core.example.org {
@@ -633,6 +686,16 @@ yoda-core.example.org {
 	respond 404
 }
 ```
+
+**Client addresses.** `remote_ip` above, the rate limits, the audit log and break-glass alerts all rely on Caddy
+seeing each client's own address. Docker's userland proxy (when the host's NAT rules for published ports are off
+or unavailable), hairpin connections from the host itself, and rootless Docker can hand every connection to
+Caddy from the Docker gateway (e.g. `172.18.0.1`) instead. Check it once after the start: sign in from a staff PC
+and look at the address the audit log shows for it, or at the `from <address>` of a TLS error in `dc logs proxy`
+(open the portal once with a PC that does not trust the root). If it is the gateway's, publish the ports
+without the userland proxy (rootful Docker with its iptables rules on, `"userland-proxy": false` in
+`/etc/docker/daemon.json`), or put the external proxy of section 1 in front instead; until then do not rely on a
+`remote_ip` allow-list.
 
 ## 5. Upgrade and rollback
 
@@ -807,7 +870,13 @@ out=$(minisign -Vm SHA256SUMS -P RWSErktAr/A+x5Gvgr0x29wiu41FmYEVlJYoXyB6oJk4kvw
 ```
 
 Each command runs only when the one before it passed, as in step 3; `deploy.sh` then pins that release's
-digests in `release.env`. On a mirror, run the deploy job again in the **previous tag's** pipeline (CI/CD →
+digests in `release.env`.
+
+**Rolling back below 1.1.0 with the built-in proxy on** (section 4b) takes the portal off HTTPS: the older compose
+files have no `proxy` service, so that release's `deploy.sh` removes the proxy container (`up --remove-orphans`)
+and nothing answers on 80 and 443 (the `proxy-data` volume stays). Before such a rollback, put the external proxy
+of section 1 in front (or plan to reach the portal through the SSH tunnel), remove the proxy lines from `.env`,
+and set `YODA_TRUSTED_PROXY_HOPS` for the external proxy. On a mirror, run the deploy job again in the **previous tag's** pipeline (CI/CD →
 Pipelines, filter by tag); it pins that version in `release.env` again. Migrations only move
 forward: an older release usually runs on a newer schema, but if the changelog says a release changed data in a
 way the older one cannot read, restore the backup taken in step 2 of the upgrade instead (section 6).
@@ -909,7 +978,9 @@ Runners work the AI tasks that need a repository; see [docs/development.md, "Run
   token. The agent can read everything the runner can, so give it scoped credentials only.
 - **Staff machines.** Each staff member creates a runner for their own machine in the Runners page; the token
   is shown once. Core must be reachable from those machines over HTTPS (e.g. a reverse-proxy host
-  `https://yoda-core.example.org` that serves only core's `/mcp`, limited to the networks runners use).
+  `https://yoda-core.example.org` that serves only core's `/mcp`, limited to the networks runners use). With the
+  built-in proxy that is a `proxy/sites` file (section 4b, **More sites**): `deploy.sh` refuses a `CORE_BIND`
+  beyond loopback while the proxy is on, and the proxy routes nothing but the portal by default.
 - **Revoke** a runner's token in the portal when a machine is lost or a person leaves; it stops at once.
 - `RUNNER_LEASE_SECONDS` (600) is how long a claim survives without a heartbeat; `MCP_ENABLED=false` turns
   the runner endpoint off.
@@ -1159,8 +1230,16 @@ after it). For a value still in `.env`, the same holds with `dc up -d --no-build
   - *deploy: the built-in HTTPS proxy's settings are invalid:* the lines above it are Caddy's: `server block without
     any key` (no `YODA_PROXY_DOMAIN`), `File to import not found: tls-<x>` (`YODA_PROXY_CERT_MODE` is not internal,
     files or acme), `wrong argument count ... 'tls'` (acme without `YODA_PROXY_ACME_EMAIL`), `no such file` or
-    `private key does not match` (files mode: `proxy/certs/cert.pem` and `key.pem`). Fix `.env` or the files and
-    deploy again; nothing was replaced.
+    `private key does not match` (files mode: `proxy/certs/cert.pem` and `key.pem`), or an error in a
+    `proxy/sites/*.caddy` file. Fix `.env` or the files and deploy again; `release.env` and the running containers
+    were not changed.
+  - *deploy: YODA_PROXY_ENABLED=… in the .env:* delete the line; `deploy.sh` pins it itself.
+  - *deploy: COMPOSE_PROFILES names the built-in HTTPS proxy (proxy), but the compose files of … have no proxy
+    service:* the release is older than 1.1.0. Upgrade (section 5), or remove `proxy` from `COMPOSE_PROFILES`.
+  - *deploy: the built-in HTTPS proxy did not reload its configuration:* `dc logs --tail 50 proxy` names why; the
+    proxy keeps running its previous configuration. `dc restart proxy` starts it on the new one.
+  - *A changed `proxy/sites` file or certificate has no effect:* reload the proxy (section 4b, **More sites**), or
+    deploy again.
   - *deploy: PORTAL_BIND=… publishes it beyond this host while the built-in HTTPS proxy is on:* remove
     `PORTAL_BIND` / `CORE_BIND` from `.env` (the proxy reaches the portal inside compose).
   - *Port 80 or 443 is already allocated:* another web server (or the external proxy) holds it; stop it, or set
@@ -1173,6 +1252,9 @@ after it). For a value still in `.env`, the same holds with `dc up -d --no-build
   - *acme: no certificate:* `dc logs proxy` names Let's Encrypt's reason (DNS not pointing here, port 80 or 443 not
     reachable from the internet, a rate limit). Internal-only hosts use internal or files mode.
   - *Every client shows as one address:* `.env` sets `YODA_TRUSTED_PROXY_HOPS=1`; remove the line and deploy
-    again (the wizard card warns).
+    again (the wizard card warns). If the hops are 2 and every client is still the Docker gateway's address, see
+    **Client addresses** in section 4b.
+  - *413 Request Entity Too Large:* the proxy refuses a request body above 32 MiB (the portal's own limit for an
+    upload is 25 MiB).
 - **Disk full.** `docker system df`; old images: `docker image prune -a` (keeps the running ones); the
   `backups` volume (section 6).
