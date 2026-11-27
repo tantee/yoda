@@ -24,7 +24,9 @@ placeholders (`portal.example.org`, `sso.example.org`); use your own. Releases a
   names any that are missing.
 - A Keycloak realm with a client for the portal and a staff group
   ([runbook, section 2](../operations.md#2-keycloak)).
-- HTTPS in front of the portal: a reverse proxy with a certificate (set `YODA_TRUSTED_PROXY_HOPS=2` in `.env`).
+- HTTPS in front of the portal: a reverse proxy with a certificate (set `YODA_TRUSTED_PROXY_HOPS=2` in `.env`),
+  or the optional **built-in HTTPS proxy** that `install.sh --with-proxy` turns on (below, and
+  [runbook, section 4b](../operations.md#4b-built-in-https-proxy-optional)).
   The public URL must use `https://`. Plain `http://` is accepted only when the host is this machine: `localhost`
   or a `*.localhost` name, an address in `127.0.0.0/8`, or `::1`. Any other `http://` address (a LAN address or
   host name) is refused, because browsers allow the portal's Keycloak sign-in only over HTTPS or on localhost.
@@ -77,6 +79,27 @@ signed bundle (`bundle.env`), and `deploy.sh` pins them in `release.env`. The de
 **bootstrap volume** (generated database password, storage keys, master key and setup token), runs the database
 migrations, starts everything and prints the setup address.
 
+**Built-in HTTPS proxy (optional).** With no reverse proxy on the network, let Yoda run one (Caddy, ports 80 and
+443) and give it the name staff will open (its DNS name must lead to this host):
+
+```bash
+sh install.sh --version 1.0.0 --dir /srv/yoda --with-proxy --domain portal.example.org
+```
+
+The certificate comes from one of three places, `--cert-mode`:
+
+- `internal` (the default): Caddy's own certificate authority. The deploy copies its root certificate (public, no
+  key) to `/srv/yoda/proxy/root.crt`; install it as a trusted root on every staff PC (a Windows Group Policy, a
+  macOS profile, `update-ca-certificates` on Linux; Firefox on Linux imports it itself). The steps per system are in
+  [runbook 4b](../operations.md#certificate-modes).
+- `files`: the organisation's certificate, `--cert <chain.pem> --key <key.pem>` (copied to `proxy/certs/`).
+- `acme`: Let's Encrypt, `--acme-email <address>`, only when the host is reachable from the internet on ports 80
+  and 443 under that name.
+
+The deploy then prints `https://portal.example.org/setup`, and sets the trusted proxy hops (2) by itself. Back up
+the proxy's certificate volume as the runbook says. Without `--with-proxy`, nothing about the proxy is installed
+or started.
+
 Options: `--base-url` (another file server), `--image-prefix` (another registry path), `--no-login`. **Internal
 mirror:** a host that cannot reach GitHub installs from a copy inside the network with
 `--base-url 'https://files.example.org/yoda/releases/{version}/' --image-prefix registry.example.org/group/yoda`
@@ -115,6 +138,12 @@ username and a strong password (14+ characters), scan the QR code with an authen
 The storage and database values are set on the host and shown read-only.
 
 ![System check](../images/setup-check.webp)
+
+Below the results, the **Built-in HTTPS proxy** card says whether Yoda's own proxy is on, and if so its address,
+certificate mode and the certificate it presents (issuer, names, valid until). Off is normal when your own reverse
+proxy provides HTTPS. Nothing on it can be changed here: the proxy is set on the host.
+
+![The built-in proxy card](../images/setup-proxy.webp)
 
 **Step 4 · Sign-in (Keycloak).** The issuer URL, client ID, optional internal JWKS URL and the staff group. Copy
 the redirect URIs and web origin shown into the Keycloak client, then **Test connection**: the wizard checks

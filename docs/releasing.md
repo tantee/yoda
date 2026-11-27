@@ -33,14 +33,15 @@ The tag starts [`.github/workflows/release.yml`](../.github/workflows/release.ym
    on the runner's own platform, its output being plain JavaScript), without any build cache, and
    pushes them to ghcr.io **by digest only**: no tag yet. Each image's manifest digest is kept for the next job.
 3. **bundle** runs `ops/install/bundle.sh`, which builds `yoda-<version>.tar.gz` (compose files, `deploy.sh`,
-   `install.sh`, `.env.example`, `CHANGELOG.md`, the runbook and `bundle.env` with
+   `install.sh`, the built-in proxy's `ops/proxy/Caddyfile`, `.env.example`, `CHANGELOG.md`, the runbook and `bundle.env` with
    `YODA_IMAGE_PREFIX=ghcr.io/tantee/yoda`, `YODA_VERSION` and the four image digests), `install.sh` and
    `SHA256SUMS`. It signs `SHA256SUMS` with minisign, using the `MINISIGN_SECRET_KEY` and `MINISIGN_PASSWORD`
    secrets and the trusted comment `yoda release <version>`. The job fails if either secret is missing or empty,
    if `install.sh` still has the placeholder key, or if the key in `install.sh` does not match the secret. It then
    serves the files from a local HTTP server and runs that `install.sh` against them with the key it embeds, as a
-   host would, and checks that `release.env` and the compose files pin the pushed digests
-   (`ops/install/check-release.sh`).
+   host would, and checks that `release.env` and the compose files pin the pushed digests, that the optional
+   built-in proxy runs a Caddy image pinned by version and digest, and that the bundle's Caddyfile passes
+   `caddy validate` in it for each certificate mode (`ops/install/check-release.sh`).
 4. **tag** checks the signed bundle's signature again, reads the digests from its `bundle.env` and only then
    tags those digests `<version>` and `sha-<short commit>` (`docker buildx imagetools create`), checking that
    each tag resolves to the signed digest. No `latest` tag: hosts always pin a version.
@@ -119,9 +120,10 @@ move them into the `release` environment. Steps 4 and 5 remain as well.
 ## Cut a release
 
 1. **Prepare the release commit** through a pull request to `main`:
-   - `CHANGELOG.md`: the section is `## <version> — <date>`. Work in progress sits under
-     `## <version> — unreleased`; set the date in this commit (the workflow refuses a heading that still says
-     `unreleased`), and add a new `## <next> — unreleased` above it later if you like.
+   - `CHANGELOG.md`: the section is `## <version> — <date>`. Work in progress sits under `## Unreleased` (no
+     version yet) or `## <version> — unreleased`; in this commit rename it to `## <version> — <date>` (the
+     workflow refuses a tag whose version has no section, so an `## Unreleased` section is never published, and a
+     heading that still says `unreleased`), and start a new `## Unreleased` above it later.
    - `version` in `package.json` and `apps/core/package.json` (core reports it on `/health`): both must equal the
      tag without the `v`, including a suffix (`1.1.0-rc.1`); the workflow refuses a mismatch.
 
@@ -220,6 +222,7 @@ Everything a release build pulls is pinned, so a moved upstream tag cannot chang
 | BuildKit | `release.yml`, `setup-buildx-action` `driver-opts` | `moby/buildkit:<tag>@sha256:…` |
 | QEMU binfmt | `release.yml`, `setup-qemu-action` `image` | `tonistiigi/binfmt:<tag>@sha256:…` |
 | Base images | `apps/core/Dockerfile`, `apps/portal/Dockerfile`, `apps/runner/Dockerfile`, `ops/backup/Dockerfile` | `FROM <image>:<exact tag>@sha256:…` |
+| Caddy (the optional built-in HTTPS proxy, [runbook 4b](operations.md#4b-built-in-https-proxy-optional)) | `docker-compose.prod.yml`, service `proxy`, `image` | `caddy:<exact tag>@sha256:…` (the multi-platform index) |
 
 The tag stays next to each digest for reading; the digest is what is pulled. To bump one, pick the new exact tag,
 look up its digest and replace both together, in a pull request (its dry run builds with the new inputs):
@@ -229,6 +232,21 @@ docker buildx imagetools inspect node:22.23.5-alpine --format '{{json .Manifest}
 docker buildx imagetools inspect moby/buildkit:v0.35.1 --format '{{json .Manifest}}' | jq -r .digest
 gh api repos/docker/setup-buildx-action/git/ref/tags/v4.4.1 --jq .object.sha   # an action's commit (annotated tags: follow .object)
 ```
+
+**Caddy.** It is pulled on the deploy hosts, not built, so the release images do not change with it, but the
+signed bundle carries the compose file that names it. Take a Caddy release at least two weeks old with no open
+security advisory against it, then:
+
+```bash
+docker buildx imagetools inspect caddy:2.11.4 --format '{{json .Manifest}}' | jq -r .digest   # the index digest
+```
+
+Replace both the tag and the digest of the `proxy` service's `image`. In the pull request,
+`apps/core/test/ops-proxy.test.ts` runs `caddy validate` on `ops/proxy/Caddyfile` in the new image for every
+certificate mode (CI, with docker), and the release dry run's `check-release.sh` does it again on the bundle. Read
+Caddy's release notes for changes to the Caddyfile, `tls internal`, or the `X-Forwarded-*` defaults
+(section 4b of the runbook relies on them), and do one container run with the proxy (internal mode) before
+merging a minor or major bump.
 
 `node:22-alpine` and `node:22-slim` follow the `.nvmrc` major (22); `postgres` in the backup image follows the
 server's major (17, `pgvector/pgvector:pg17` in `docker-compose.yml`).

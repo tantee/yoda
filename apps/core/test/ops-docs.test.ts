@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { SETTING_KEYS, byEnvName, settingDef } from '@yoda/shared'
@@ -276,8 +277,64 @@ describe('release docs (GitHub Releases + GHCR, D1)', () => {
     // 1.0.0 is dated for its release; the release workflow refuses an undated heading.
     expect(read('CHANGELOG.md')).toMatch(/^## 1\.0\.0 — 2026-11-27$/m)
     expect(read('CHANGELOG.md')).not.toMatch(/^## 1\.0\.0 — unreleased$/m)
-    expect(read('CHANGELOG.md')).not.toMatch(/^## Unreleased$/m)
+    // Work in progress sits under "## Unreleased", above the released sections; it is never a release's notes.
+    const changelog = read('CHANGELOG.md')
+    const headings = [...changelog.matchAll(/^## (.+)$/gm)].map((m) => m[1]!)
+    expect(headings.filter((h) => h === 'Unreleased').length).toBeLessThanOrEqual(1)
+    if (headings.includes('Unreleased')) expect(headings.indexOf('Unreleased')).toBe(0)
+    expect(releasing).toContain('an `## Unreleased` section is never published')
     expect(read('docs/design/installer-proposal.md')).toMatch(/^\| D1 \|.*Decided 2026-11-27 \(owner\): \(b\) GitHub Releases \+ GHCR/m)
+  })
+})
+
+describe('the built-in HTTPS proxy docs (docs/operations.md, section 4b)', () => {
+  const guide = read('docs/guides/install.md')
+  const releasing = read('docs/releasing.md')
+
+  it('documents turning it on, the three certificate modes, trusting the internal root and keeping its data', () => {
+    for (const s of [
+      '## 4b. Built-in HTTPS proxy (optional)',
+      '--with-proxy --domain portal.example.org',
+      '--cert-mode files --cert',
+      '--cert-mode acme --acme-email it@example.org',
+      '### Certificate modes',
+      'certutil -addstore -f Root root.crt',
+      'sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain root.crt',
+      'update-ca-certificates',
+      'update-ca-trust',
+      'Certificates → View Certificates → Authorities → Import',
+      'caddy reload --config /etc/caddy/Caddyfile',
+      'yoda-proxy-data.tgz',
+      'proxy/root.crt',
+      'YODA_TRUSTED_PROXY_HOPS=2',
+      'stays the default',
+    ]) expect(runbook, s).toContain(s)
+    expect(runbook).toContain('- **Built-in HTTPS proxy** (section 4b).')
+    expect(guide).toContain('--with-proxy --domain portal.example.org')
+    expect(guide).toContain('../images/setup-proxy.webp')
+    expect(releasing).toMatch(/\| Caddy .*\| `docker-compose\.prod\.yml`, service `proxy`/)
+    expect(read('CHANGELOG.md')).toMatch(/^## Unreleased\n\n### Built-in HTTPS proxy \(optional\)$/m)
+  })
+
+  it.skipIf(process.platform === 'win32')('keeps the Unreleased section out of the release notes and the dry run', () => {
+    const notes = spawnSync('sh', ['ops/install/release-notes.sh', '1.0.0'], { cwd: root, encoding: 'utf8' })
+    expect(notes.status, notes.stderr).toBe(0)
+    expect(notes.stdout).not.toContain('Built-in HTTPS proxy')
+    expect(notes.stdout).toMatch(/^The first release/)
+    // A tag never matches it: it is not a version (the release workflow then refuses the tag).
+    expect(spawnSync('sh', ['ops/install/release-notes.sh', 'Unreleased'], { cwd: root }).status).not.toBe(0)
+    // The dry run's "newest released section" skips it too (the same sed as release.yml).
+    const latest = spawnSync('sh', ['-c', "sed -n 's/^## \\([0-9][0-9A-Za-z.-]*\\).*$/\\1/p' CHANGELOG.md | head -n 1"], { cwd: root, encoding: 'utf8' })
+    expect(latest.stdout.trim()).toBe('1.0.0')
+    expect(read('.github/workflows/release.yml')).toContain("latest=$(sed -n 's/^## \\([0-9][0-9A-Za-z.-]*\\).*$/\\1/p' CHANGELOG.md | head -n 1)")
+  })
+
+  it('names only example.org hosts in the proxy files', () => {
+    for (const f of ['ops/proxy/Caddyfile', 'docs/operations.md', 'ops/install/install.sh', 'ops/deploy/deploy.sh']) {
+      const hosts = [...read(f).matchAll(/\b([a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:org|com|net|io|local|internal|lan))\b/gi)].map((m) => m[1]!.toLowerCase())
+      const odd = hosts.filter((h) => !/(^|\.)example\.(org|com)$|^(github\.com|ghcr\.io|caddyserver\.com|jedisct1\.github\.io|api\.line\.me|api\.telegram\.org|semver\.org|t\.me)$/.test(h))
+      expect(odd, f).toEqual([])
+    }
   })
 })
 

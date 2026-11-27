@@ -19,6 +19,7 @@ Contents:
 3. [Settings](#3-settings)
 4. [First install](#4-first-install)
    - [4a. Bootstrap volume and master key](#4a-bootstrap-volume-and-master-key)
+   - [4b. Built-in HTTPS proxy (optional)](#4b-built-in-https-proxy-optional)
 5. [Upgrade and rollback](#5-upgrade-and-rollback)
 6. [Backups and restore](#6-backups-and-restore)
 7. [GitLab integration](#7-gitlab-integration)
@@ -42,7 +43,9 @@ Contents:
 - **Tools for `install.sh`:** `curl` (or `wget`), `sha256sum` (or `shasum`), `tar` and `minisign`
   (`apt install minisign` / `dnf install minisign`), to check the release signature.
 - **DNS and TLS.** A reverse proxy (nginx, Traefik, the organisation's load balancer) terminates HTTPS for
-  `https://portal.example.org` and forwards to the portal on `PORTAL_PORT` (3000). Only the portal is public:
+  `https://portal.example.org` and forwards to the portal on `PORTAL_PORT` (3000). That is the default. Without
+  one, turn on the **built-in HTTPS proxy** (Caddy, `install.sh --with-proxy`, section 4b): it publishes 80 and
+  443 itself, with the organisation's certificate, its own internal CA or Let's Encrypt. Only the portal is public:
   - The prod overlay publishes the portal (`PORTAL_PORT`, 3000) and core (`CORE_PORT`, 4000) on `127.0.0.1`
     only, for a reverse proxy on the same host. Core is not exposed to users. When the proxy runs on another
     machine, set `PORTAL_BIND` (and `CORE_BIND` only if that proxy also serves core's `/mcp`, section 8) to the
@@ -66,7 +69,8 @@ Contents:
   browsers allow the portal's Keycloak sign-in only on https or localhost, so nobody could sign in. The wizard
   page itself may be plain HTTP (the tunnel is), and says so. To put HTTPS in front: a reverse proxy with a
   certificate for the portal's name, forwarding to `PORTAL_PORT` (3000) and passing `Host` and the
-  `X-Forwarded-*` headers (section 5), plus `YODA_TRUSTED_PROXY_HOPS=2` in `.env` and a restart.
+  `X-Forwarded-*` headers (section 5), plus `YODA_TRUSTED_PROXY_HOPS=2` in `.env` and a restart; or the built-in
+  proxy (section 4b), which sets all of that itself.
 - **Outbound network.** Core needs HTTPS to the AI providers, to GitLab, to `api.line.me` and
   `api.telegram.org` when those channels are used, and SMTP to the mail relay.
 
@@ -392,7 +396,8 @@ in your shell overrides `release.env`, so leave it unset.
    (section 1). The wizard asks for the setup token: `dc exec core yoda-admin setup-token` prints it (it is also
    in the "Yoda setup" banner of `dc logs core`; it is valid 24 hours, single use, and changes when core
    restarts). Behind a reverse proxy, set `YODA_TRUSTED_PROXY_HOPS=2` first (section 5, upgrade notes), so the
-   wizard detects the public URL and the client addresses correctly. **Tunnel or public URL:** through the SSH
+   wizard detects the public URL and the client addresses correctly (the built-in proxy, section 4b, sets it
+   itself; open `https://<its domain>/setup`). **Tunnel or public URL:** through the SSH
    tunnel the wizard detects `http://127.0.0.1:3000` as the public URL; replace it with the real one
    (`https://portal.example.org`) in the organisation step, or the portal links, the TOTP rule (D3: TOTP is
    skipped only for a localhost URL) and the Keycloak redirect will be wrong. The claim (the last step) signs in
@@ -494,6 +499,140 @@ found but its password is unknown". Never let it generate a new one:
 - **Rotating the master key:** see section 10 ("Master key rotation"). A rotation keeps the replaced key as
   `core/master-key.prev` (decrypt-only) until `yoda-admin rotate-master-key --finish` deletes it. Backups taken
   before the rotation need the old key: keep the old kit until they have all aged out (section 6).
+
+## 4b. Built-in HTTPS proxy (optional)
+
+By default HTTPS comes from a reverse proxy you run yourself (section 1), and that stays the default. When the
+host has none, Yoda can run its own: the `proxy` service of `docker-compose.prod.yml`, [Caddy](https://caddyserver.com)
+pinned by version and digest, under the compose profile `proxy`. It is off unless that profile is on.
+
+**What it does.** It publishes ports 80 and 443 on the host (`YODA_PROXY_BIND`, `YODA_PROXY_HTTP_PORT`,
+`YODA_PROXY_HTTPS_PORT`), redirects `http://` to `https://`, and forwards everything for `YODA_PROXY_DOMAIN` to the
+portal over the compose network, the same way section 5 asks of an external proxy: it keeps the browser's `Host`
+and sets `X-Forwarded-For` (the address it saw, replacing any a client sent), `X-Forwarded-Proto` and
+`X-Forwarded-Host`. It answers `/api/ready` with 404 (readiness stays inside the host; `deploy.sh` checks it in
+the portal container). The public URL is `https://<domain>` (`https://<domain>:<port>` on another port), which
+the setup wizard detects; the D8 rule (section 1) is met. The configuration is `ops/proxy/Caddyfile` from the
+release bundle; nothing on the host edits it.
+
+With the profile on, `deploy.sh`:
+
+- pins `YODA_PROXY_ENABLED=true` in `release.env`, and compose then gives core and the portal
+  `YODA_TRUSTED_PROXY_HOPS=2` (unless `.env` sets it): there is no hop count to set by hand;
+- refuses (exit 2, before pulling) a `PORTAL_BIND` or `CORE_BIND` other than loopback: the proxy reaches the portal
+  inside compose, so neither port is needed beyond the host, and a portal reachable directly with two trusted hops
+  would let a client choose its own address;
+- checks the Caddyfile and the certificate settings with `caddy validate` before any running container is replaced
+  (exit 2, with Caddy's error: a missing domain, an unknown mode, a missing or mismatched certificate file, ACME
+  without an email);
+- in internal mode copies the public root certificate of Caddy's CA to `proxy/root.crt` in the deploy directory
+  (never a key), and prints the address and, while setup is not finished, `https://<domain>/setup`.
+
+The setup wizard's system check shows a read-only **Built-in HTTPS proxy** card: on or off, the address, the
+certificate mode, the trusted hops and the certificate the proxy presents (issuer, names, valid until, SHA-256
+fingerprint). Core reads that with a TLS handshake to the proxy, as any browser would; it never mounts the
+proxy's files.
+
+![The built-in proxy card in the system check](images/setup-proxy.webp)
+
+**Turn it on at install** (`install.sh` writes the lines below into the new `.env`, then deploys):
+
+```bash
+# Internal CA (default): Caddy issues the certificate; trust proxy/root.crt on the staff PCs (below).
+sh install.sh --version 1.2.0 --dir /srv/yoda --with-proxy --domain portal.example.org
+# The organisation's own certificate (PEM: the certificate chain, leaf first, and its unencrypted key).
+sh install.sh --version 1.2.0 --dir /srv/yoda --with-proxy --domain portal.example.org \
+  --cert-mode files --cert /root/portal.example.org.fullchain.pem --key /root/portal.example.org.key.pem
+# Let's Encrypt: only for a host reachable from the internet on ports 80 and 443 under that name.
+sh install.sh --version 1.2.0 --dir /srv/yoda --with-proxy --domain portal.example.org \
+  --cert-mode acme --acme-email it@example.org
+```
+
+`--http-port` and `--https-port` choose other ports (the public URL then carries the HTTPS port; ACME needs 80
+and 443). In files mode `install.sh` copies the certificate to `proxy/certs/cert.pem` and the key to
+`proxy/certs/key.pem` (mode `0600`, readable only by the deploy user; Caddy reads it as root in its container).
+
+**Turn it on later, or by hand.** Add to the host's `.env` (with the runner too: `COMPOSE_PROFILES=runner,proxy`),
+put the files in place for files mode, remove any `PORTAL_BIND` / `CORE_BIND` and `YODA_TRUSTED_PROXY_HOPS` line,
+and deploy the running release again (`cd /srv/yoda && YODA_VERSION=<current> sh ops/deploy/deploy.sh`). Stop the
+external proxy on 80 and 443 first.
+
+```bash
+COMPOSE_PROFILES=proxy
+YODA_PROXY_DOMAIN=portal.example.org
+YODA_PROXY_CERT_MODE=internal
+```
+
+Then change the public URL in System settings → General to `https://portal.example.org` if it was another, and
+the Keycloak client's redirect URIs and web origins with it (section 2).
+
+**Turn it off.** Remove those lines (and the profile from `COMPOSE_PROFILES`), `dc stop proxy && dc rm -f proxy`,
+deploy again (`YODA_PROXY_ENABLED` is no longer pinned, so the hops go back to `1` unless `.env` sets `2` for an
+external proxy), and put the external proxy in front (section 5, upgrade notes).
+
+### Certificate modes
+
+- **internal** (default). Caddy runs its own certificate authority in the `proxy-data` volume: a root (valid 10
+  years) and an intermediate sign a short-lived certificate for the domain, which Caddy renews by itself. Browsers
+  trust it only once the **root** is installed on each staff PC (once; it stays the same as long as `proxy-data`
+  lives). `deploy.sh` copies it to `proxy/root.crt` (public, no key); copy it off with
+  `scp <deploy user>@<host>:/srv/yoda/proxy/root.crt .`, or by hand: `dc cp
+  proxy:/data/caddy/pki/authorities/local/root.crt proxy/root.crt`. Check the fingerprint on the PC against the
+  host's (`openssl x509 -in proxy/root.crt -noout -fingerprint -sha256`; the wizard card shows the presented
+  certificate's). Install it as a trusted root:
+  - **Windows** (Chrome, Edge, and Firefox, which reads the Windows store by default): for all PCs, a Group Policy
+    (Computer Configuration → Policies → Windows Settings → Security Settings → Public Key Policies → Trusted Root
+    Certification Authorities → Import); on one PC, as administrator: `certutil -addstore -f Root root.crt`.
+  - **macOS** (Safari, Chrome, Edge; Firefox reads the keychain by default): a configuration profile from the MDM,
+    or `sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain root.crt`.
+  - **Linux** (system tools): Debian and Ubuntu `sudo cp root.crt /usr/local/share/ca-certificates/yoda-proxy.crt
+    && sudo update-ca-certificates`; RHEL and Fedora `sudo cp root.crt /etc/pki/ca-trust/source/anchors/yoda-proxy.crt
+    && sudo update-ca-trust`. Chrome and Chromium on Linux use their own store:
+    `certutil -d sql:$HOME/.pki/nssdb -A -t C,, -n yoda-proxy -i root.crt` (package `libnss3-tools`).
+  - **Firefox** where it does not read the system store (Linux, or turned off): Settings → Privacy & Security →
+    Certificates → View Certificates → Authorities → Import, tick "Trust this CA to identify websites"; for many
+    PCs the enterprise policy `Certificates` → `Install` (or `ImportEnterpriseRoots` on Windows and macOS).
+  - Phones and tablets: install the root as a profile (iOS: then Settings → General → About → Certificate Trust
+    Settings), or use files or acme mode instead. LINE and Telegram webhooks need a publicly trusted certificate:
+    internal mode cannot serve them (section 1).
+- **files.** The organisation's certificate for the domain: `proxy/certs/cert.pem` (the chain, leaf first) and
+  `proxy/certs/key.pem` (unencrypted). It is renewed by you: put the new files in place before the old ones
+  expire (the wizard card warns 30 days before), then `dc exec proxy caddy reload --config /etc/caddy/Caddyfile
+  --force` (or `dc restart proxy`). Check them first with `dc run --rm --no-deps proxy caddy validate --config
+  /etc/caddy/Caddyfile`.
+- **acme.** Let's Encrypt issues and renews the certificate (every 60 to 90 days, by itself) when the domain's
+  public DNS points at this host and ports 80 and 443 are reachable from the internet. Not for a host inside the
+  hospital network only. `YODA_PROXY_ACME_EMAIL` receives Let's Encrypt's notices. Keep `proxy-data`: it holds the
+  ACME account and the certificates (issuing again and again hits Let's Encrypt's rate limits).
+
+**Keep the proxy's data.** The `proxy-data` volume holds the certificates, and in internal mode the CA's private
+keys: lose it and Caddy makes a new root, which every staff PC must then trust again. It is not in the daily
+backups (like the master key, a CA key does not belong in the backups volume). After the first deploy, save it off
+the host, next to the recovery kit and with the same care:
+
+```bash
+(umask 077; dc run --rm --no-deps -T --entrypoint tar proxy -czf - -C /data caddy > yoda-proxy-data.tgz)
+# On a new host, before its first start of the proxy:
+dc run --rm --no-deps -T --entrypoint tar proxy -xzf - -C /data < yoda-proxy-data.tgz
+```
+
+**More sites on the proxy.** Files named `*.caddy` in `proxy/sites/` are added to the configuration (checked by
+the same `caddy validate`). For example core's runner endpoint for the staff machines (section 8), on its own
+name, limited to the networks the runners use:
+
+```caddy
+yoda-core.example.org {
+	import tls-internal
+	@runners {
+		path /mcp
+		remote_ip 10.20.0.0/16
+	}
+	handle @runners {
+		reverse_proxy core:4000
+	}
+	respond 404
+}
+```
 
 ## 5. Upgrade and rollback
 
@@ -639,6 +778,9 @@ Simpler, when the mirror only needs to copy what GitHub publishes: put the GitHu
   matches the release it runs.
 - **Backups:** the prod compose no longer passes `BACKUP_AT=02:00` / `BACKUP_KEEP_DAYS=14` by default; the
   `backup` container reads System settings → Backups (same defaults). A value in `.env` still wins.
+- **The built-in proxy** (section 4b) upgrades with the release: the bundle brings `ops/proxy/Caddyfile` and the
+  compose file the Caddy image pinned by digest, and `deploy.sh` validates them before anything is replaced. The
+  `proxy-data` volume (certificates, internal CA) is kept. The GitLab deploy job copies the Caddyfile too.
 
 - **A reverse proxy in front of the portal** (nginx, Caddy, a load balancer, usually where TLS ends): set
   `YODA_TRUSTED_PROXY_HOPS=2` in the host's `.env`, and have the proxy send `X-Forwarded-For`,
@@ -1013,5 +1155,24 @@ after it). For a value still in `.env`, the same holds with `dc up -d --no-build
 - **Backups.** `dc ps backup` unhealthy or `dc logs backup` (section 6). "cannot read the backup settings from the
   database" right after the first install is harmless (the migrations had not run yet); later it means the
   database is down.
+- **Built-in HTTPS proxy** (section 4b). `dc ps proxy`, `dc logs --tail 100 proxy`.
+  - *deploy: the built-in HTTPS proxy's settings are invalid:* the lines above it are Caddy's: `server block without
+    any key` (no `YODA_PROXY_DOMAIN`), `File to import not found: tls-<x>` (`YODA_PROXY_CERT_MODE` is not internal,
+    files or acme), `wrong argument count ... 'tls'` (acme without `YODA_PROXY_ACME_EMAIL`), `no such file` or
+    `private key does not match` (files mode: `proxy/certs/cert.pem` and `key.pem`). Fix `.env` or the files and
+    deploy again; nothing was replaced.
+  - *deploy: PORTAL_BIND=… publishes it beyond this host while the built-in HTTPS proxy is on:* remove
+    `PORTAL_BIND` / `CORE_BIND` from `.env` (the proxy reaches the portal inside compose).
+  - *Port 80 or 443 is already allocated:* another web server (or the external proxy) holds it; stop it, or set
+    `YODA_PROXY_HTTP_PORT` / `YODA_PROXY_HTTPS_PORT`.
+  - *The browser says the certificate is not trusted* (internal mode): the PC does not trust `proxy/root.crt` yet
+    (section 4b, per system), or `proxy-data` was recreated and the root changed (compare the fingerprints). Firefox
+    on Linux needs its own import.
+  - *Wrong certificate or a TLS error for the name:* `YODA_PROXY_DOMAIN` must be exactly the name in the browser's
+    address bar (Caddy picks the certificate by that name); the wizard card shows the one presented.
+  - *acme: no certificate:* `dc logs proxy` names Let's Encrypt's reason (DNS not pointing here, port 80 or 443 not
+    reachable from the internet, a rate limit). Internal-only hosts use internal or files mode.
+  - *Every client shows as one address:* `.env` sets `YODA_TRUSTED_PROXY_HOPS=1`; remove the line and deploy
+    again (the wizard card warns).
 - **Disk full.** `docker system df`; old images: `docker image prune -a` (keeps the running ones); the
   `backups` volume (section 6).
