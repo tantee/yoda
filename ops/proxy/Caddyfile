@@ -1,0 +1,94 @@
+# Yoda's optional built-in HTTPS proxy (docs/operations.md, section 4b). The `proxy` service of
+# docker-compose.prod.yml runs it under the `proxy` profile (COMPOSE_PROFILES=proxy, written by
+# `install.sh --with-proxy`); the external reverse proxy of section 1 stays the default. The release bundle ships
+# this file; nothing on the host edits it. Every value comes from the proxy service's environment, which compose
+# fills from the host's .env:
+#   YODA_PROXY_DOMAIN       the portal's name, e.g. portal.example.org (the public URL is https://<domain>)
+#   YODA_PROXY_CERT_MODE    internal (Caddy's own CA; export proxy/root.crt to the staff PCs), files (the
+#                           organisation's certificate in proxy/certs/cert.pem and key.pem) or acme (Let's Encrypt,
+#                           only for a host reachable from the internet on ports 80 and 443)
+#   YODA_PROXY_ACME_EMAIL   acme only: the address Let's Encrypt writes to about the certificate
+#   YODA_PROXY_ACME_CA      acme only: the ACME directory; compose passes Let's Encrypt's production one unless
+#                           .env sets another (install.sh --acme-staging writes its staging one, for a trial run)
+#   YODA_PROXY_HTTP_PORT / YODA_PROXY_HTTPS_PORT   the ports, 80 and 443 unless set (the same inside the container)
+# Like an external proxy (section 5, upgrade notes) it keeps the browser's Host and sets X-Forwarded-For (the
+# client address it saw, replacing any a client sent), X-Forwarded-Proto and X-Forwarded-Host: Caddy's defaults.
+# With the profile on, deploy.sh pins YODA_PROXY_ENABLED=true in release.env, and compose then gives core and the
+# portal YODA_TRUSTED_PROXY_HOPS=2 unless .env sets it.
+# Compose always passes every variable above, empty ones included, and Caddy's {$NAME:default} uses its default
+# only for an unset variable: so the defaults live in docker-compose.prod.yml, and only a variable compose never
+# leaves empty may carry one here (the ports).
+# The proxy runs it from the mounted directory ops/proxy (/etc/caddy/yoda/Caddyfile, not a single-file mount: an
+# unpacked bundle replaces the file, which a file mount would never show the running container). Checked before
+# every deploy replaces a container (caddy validate --config /etc/caddy/yoda/Caddyfile); after the start, deploy.sh
+# reloads it (caddy reload --force), so a new Caddyfile, a changed proxy/sites file or certificate applies.
+{
+	http_port {$YODA_PROXY_HTTP_PORT:80}
+	https_port {$YODA_PROXY_HTTPS_PORT:443}
+	# Inside the container only (never published): the healthcheck and deploy.sh's `caddy reload` use it.
+	admin localhost:2019
+	# The internal CA's root goes to the staff PCs, not into this container's trust store.
+	skip_install_trust
+	servers {
+		# Only TCP is published: no HTTP/3 (UDP) advertised.
+		protocols h1 h2
+		timeouts {
+			# A client gets 30 s for its request headers (slow-header clients cannot hold connections open). No
+			# read_body and no write timeout: on HTTP/1.1 Go's read timeout covers the whole request and cancels a
+			# long GET, and the portal's live events (server-sent events) stay open for as long as a page is; the
+			# body size is capped below (request_body) instead.
+			read_header 30s
+			idle 5m
+		}
+	}
+	# The internal CA (internal mode) under a name staff recognise in their trust store. The names apply when the
+	# root is made (the first start); an existing proxy-data volume keeps its root (docs/operations.md, section 4b).
+	pki {
+		ca local {
+			name "Yoda {$YODA_PROXY_DOMAIN} internal CA"
+			root_cn "Yoda {$YODA_PROXY_DOMAIN} internal CA root"
+			intermediate_cn "Yoda {$YODA_PROXY_DOMAIN} internal CA intermediate"
+		}
+	}
+}
+
+(tls-internal) {
+	tls internal
+}
+
+(tls-files) {
+	tls /etc/caddy/certs/cert.pem /etc/caddy/certs/key.pem
+}
+
+# Let's Encrypt only (no fallback to another CA): the issuer is named, so Caddy uses none other. The directory
+# comes from compose (Let's Encrypt's production one by default; empty would fail validation, never fall back).
+(tls-acme) {
+	tls {
+		issuer acme {
+			dir {$YODA_PROXY_ACME_CA}
+			email {$YODA_PROXY_ACME_EMAIL}
+		}
+	}
+}
+
+# http:// on the same name goes to https://, keeping a port other than 443 (Caddy's own redirect would drop it,
+# since the port inside the container is the host's; a browser shows ":443" as no port). ACME's HTTP challenge is
+# still answered on this port first.
+http://{$YODA_PROXY_DOMAIN}:{$YODA_PROXY_HTTP_PORT:80} {
+	redir https://{host}:{$YODA_PROXY_HTTPS_PORT:443}{uri} 308
+}
+
+{$YODA_PROXY_DOMAIN} {
+	import tls-{$YODA_PROXY_CERT_MODE}
+	# Readiness names the failing dependency: never outside the host (section 1). deploy.sh checks it inside.
+	@ready path /api/ready /api/ready/*
+	respond @ready 404
+	# A little above the portal's largest upload (MAX_UPLOAD_BYTES, 25 MiB): a larger body gets 413 here.
+	request_body {
+		max_size 32MiB
+	}
+	reverse_proxy portal:3000
+}
+
+# Further sites of this host (e.g. core's /mcp for the staff runners, section 8): *.caddy files in proxy/sites/.
+import /etc/caddy/sites/*.caddy

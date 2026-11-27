@@ -131,3 +131,41 @@ All in `docs/design/screenshots/after/`, `<name>-desktop.png` (1440) and `<name>
 | Portal | `portal-http-lan-insecure`, `proxy-https-portal-after-setup` (desktop) |
 | Recovery | `recovery-signin`, `recovery-signin-wrong`, `recovery-signin-code` (desktop), `recovery-status`, `recovery-lockout-portal` (desktop), `recovery-oidc-broken`, `recovery-oidc-staged`, `recovery-oidc-tested`, `recovery-oidc-applied`, `recovery-oidc-rolled-back`, `recovery-admins`, `recovery-banner-admin`, `recovery-forced-mode`, `recovery-status-only`, `recovery-restricted-new-password`, `recovery-restricted-totp`, `recovery-restricted-codes`, `recovery-totp-enrol`, `recovery-codes-once` |
 | Upgrade | `upgrade-before-old-release` (desktop), `upgrade-settings-signin`, `upgrade-settings-general` (desktop), `upgrade-settings-backups` (desktop) |
+
+## Built-in HTTPS proxy run (2026-11-27)
+
+Branch `feat/builtin-https-proxy`, compose project `yodaproxy`, images `core`, `portal` and `backup` built from the
+branch into a throwaway local registry (127.0.0.1:15001), a bundle signed with a throwaway minisign key and served
+locally. Everything was removed afterwards.
+
+- **Install.** `install.sh --version 0.9.1-proxy --with-proxy --domain portal.example.org --http-port 18080
+  --https-port 18443` (with `PORTAL_PORT` / `CORE_PORT` moved off the dev ports in a pre-existing `.env`, and
+  `YODA_PROXY_BIND=127.0.0.1` in the shell). `.env` got the profile, domain and mode; `release.env`
+  `YODA_PROXY_ENABLED=true`; core and portal ran with `YODA_TRUSTED_PROXY_HOPS=2`; `caddy validate` ran before
+  init; `proxy/root.crt` (Caddy Local Authority - 2026 ECC Root, valid 10 years) was exported and the deploy
+  printed `https://portal.example.org:18443/setup`.
+- **Proxy.** `http://…:18080/setup?x=1` → 308 `https://portal.example.org:18443/setup?x=1`; curl with
+  `--cacert proxy/root.crt` verified (HTTP/2); `/api/ready` and `/api/ready/x` 404 from outside, `/health` 200; a
+  client `X-Forwarded-For` is replaced; `X-Forwarded-Host` keeps the port.
+- **Browser.** Headless Chrome 158 over CDP, driven through the Playwright MCP, with
+  `--host-resolver-rules` (portal.example.org and sso.example.org → 127.0.0.1) and
+  `--ignore-certificate-errors-spki-list` holding only the exported root's and the intermediate's SPKI hashes (the
+  stand-in for installing the root; no blanket `--ignore-certificate-errors`). The wizard detected
+  `https://portal.example.org:18443` (match chip), the admin got TOTP, the system check showed the proxy card (on,
+  internal CA, hops 2, issuer, expiry, fingerprint), the sign-in test and the claim against a throwaway Keycloak
+  passed, setup completed and the portal opened signed in as admin over https. The throwaway Keycloak ran on plain
+  http (`http://sso.example.org:18180`, reachable by core under a network alias), so for the final portal sign-in
+  only, Chrome also had `--allow-running-insecure-content` (keycloak-js token call from the https page); a real
+  install has Keycloak on https. Audit rows carry the client address (the docker gateway), not the proxy's.
+- **Operations.** Redeploy kept the same root (fingerprint unchanged); `caddy reload --force`, `caddy validate`
+  and the runbook's `proxy-data` tar backup worked (the tar holds `root.key`: hence "off the host"); a bad
+  `YODA_PROXY_CERT_MODE` stopped the deploy with exit 2 and Caddy's error before anything was replaced;
+  `PORTAL_BIND=0.0.0.0` was refused; switching to files mode with an organisation-style certificate served that
+  certificate.
+- **Bug found and fixed in the run:** Caddy's automatic redirect dropped a non-443 port (the port inside the
+  container is the host's, so Caddy took it as the default); an explicit `http://` site now redirects to
+  `https://{host}:<https port>{uri}`.
+- **Screenshots** (`docs/design/screenshots/after/`): `proxy-setup-organisation-desktop`,
+  `proxy-setup-check-desktop`, `proxy-setup-check-mobile`, `proxy-setup-check-en-desktop`,
+  `proxy-setup-card-en-desktop`, `proxy-setup-claimed-desktop`, `proxy-https-portal-desktop`,
+  `proxy-https-portal-mobile`; `docs/images/setup-proxy.webp` for the guide and runbook.

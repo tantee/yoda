@@ -20,6 +20,7 @@ import {
   type SettingsTestCheck,
   type SettingsTestResult,
   type SetupClaimResult,
+  type ProxyStatus,
   type SetupProgress,
 } from '@yoda/shared'
 import { randomBytes } from 'node:crypto'
@@ -35,6 +36,7 @@ import { currentOidc, finishTestSignIn, OidcChangeFailed, startTestSignIn } from
 import { clearSessionCookie, isHttps, requireSession, revokeSessions, updateSessionData, type ActiveSession, type SessionData } from '../local/session.js'
 import { claimHash, KIT_REISSUE_MS, kitBootstrapValues, missingSteps, oidcHash, parseProgress, recoveryKitFilename, recoveryKitText, stepStates, type ProgressRecord } from '../local/setup-progress.js'
 import { clearSetupToken } from '../local/setup-token.js'
+import { proxyStatus } from '../proxy-status.js'
 import { readiness } from '../readiness.js'
 import { RateLimiter } from '../settings/rate-limit.js'
 import type { SettingActor, SettingsStore } from '../settings/store.js'
@@ -347,6 +349,16 @@ export function setupWizardRoutes(app: FastifyInstance): void {
     const ok = checks.every((c) => c.ok)
     await s.recordTest('storage', 'setup.check', ok ? 'ok' : (checks.find((c) => !c.ok)?.code ?? 'failed'), actorOf(request))
     return { action: 'storage', ok, checks }
+  })
+
+  /**
+   * The built-in HTTPS proxy, for the system check's read-only card: on or off, the certificate mode and name from
+   * the env, and the certificate the proxy presents (a TLS handshake to the `proxy` service; never its files).
+   */
+  app.get('/setup/proxy', SETUP, async (request, reply): Promise<ProxyStatus> => {
+    await signed(request)
+    reply.header('cache-control', 'no-store')
+    return proxyStatus(app.deps.config, app.deps.proxyProbe)
   })
 
   // ── Recovery kit (§4.2 step 9, D7) ───────────────────────────────────────────────────────────────────────────

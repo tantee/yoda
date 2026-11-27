@@ -4,6 +4,45 @@ Releases follow [semantic versioning](https://semver.org); each is a git tag `v<
 as a GitHub Release, and the version without the `v` is the image tag a host runs. Upgrade steps:
 [docs/operations.md](docs/operations.md#5-upgrade-and-rollback).
 
+## Unreleased
+
+### Built-in HTTPS proxy (optional)
+
+- An optional `proxy` service (Caddy 2.11.4, pinned by version and digest) under the compose profile `proxy`,
+  for hosts without a reverse proxy of their own. Off by default: the external reverse proxy stays the default.
+  It publishes 80 and 443, redirects http to https, forwards to the portal with the browser's `Host` and the
+  `X-Forwarded-*` headers, and keeps `/api/ready` inside the host ([runbook 4b](docs/operations.md#4b-built-in-https-proxy-optional)).
+- Three certificate modes: `internal` (Caddy's own CA; `deploy.sh` copies its public root to `proxy/root.crt`
+  for the staff PCs, with instructions for Windows, macOS, Linux and Firefox), `files` (the organisation's
+  certificate and key; preferred where the organisation has a CA) and `acme` (Let's Encrypt only, for a host
+  reachable from the internet on 80 and 443). The internal CA is named `Yoda <domain> internal CA`; its root has no
+  name constraints, so `proxy-data` is kept as one encrypted offline copy with the recovery kit (runbook 4b).
+- `install.sh --with-proxy --domain <name> [--cert-mode internal|files|acme] [--cert F --key F]
+  [--acme-email A [--acme-staging]] [--http-port N --https-port N]` writes the choice into the new `.env`. It
+  refuses a release before this one, acme on other ports than 80 and 443, and (with `openssl`) a certificate that
+  does not name the domain, does not match the key or has expired.
+- `deploy.sh` pins `YODA_PROXY_ENABLED` in `release.env` on every deploy (`true` with the profile on, empty
+  otherwise; compose gives core and the portal `YODA_TRUSTED_PROXY_HOPS=2` only for `true`, unless `.env` sets
+  it) and refuses another value in `.env`. With the profile on it refuses a portal or core published beyond
+  loopback and settings the proxy cannot run with, runs `caddy validate` before `release.env` or any container is
+  replaced, reloads the proxy after the start (it reads the Caddyfile from the mounted `ops/proxy` directory, so a
+  new bundle's Caddyfile, a changed `proxy/sites` file or certificate applies), and
+  warns about an organisation certificate that expires within 30 days. `COMPOSE_PROFILES=proxy` with compose files
+  that have no proxy service stops the deploy.
+- The proxy container runs without capabilities but binding 80/443 and reading the key (`NET_BIND_SERVICE`,
+  `DAC_OVERRIDE`; not `DAC_READ_SEARCH`), with `no-new-privileges` and a read-only root; request bodies are capped
+  at 32 MiB and slow request headers time out after 30 s (no body or write timeout: server-sent events stay open).
+  ACME uses Let's Encrypt's directory from compose unless `YODA_PROXY_ACME_CA` names another. No HSTS header.
+- The setup wizard's system check shows a read-only card: proxy on or off, address, certificate mode, trusted hops
+  and the presented certificate's issuer, names, expiry and fingerprint (core reads it with a TLS handshake, never
+  the proxy's files).
+- The release bundle carries `ops/proxy/Caddyfile`; `check-release.sh` checks the Caddy image is digest-pinned and
+  that the Caddyfile validates in it for every mode, with the environment compose gives the proxy. The GitLab deploy job copies the Caddyfile too.
+- **Upgrade notes:** nothing changes unless you turn the profile on (`release.env` gains an empty
+  `YODA_PROXY_ENABLED=`; delete any `YODA_PROXY_ENABLED` line from `.env`). The new `proxy-data` volume holds the
+  certificates and the internal CA's keys: keep one encrypted copy off the host (runbook 4b). Rolling back below
+  this release with the proxy on takes the portal off HTTPS (runbook 5, rollback).
+
 ## 1.0.0 — 2026-11-27
 
 The first release: an AI work portal for the IT department, in Thai (default) and English.

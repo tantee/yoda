@@ -88,7 +88,15 @@ services:
       YODA_BOOTSTRAP_FILE: /var/lib/yoda/bootstrap.env
       YODA_MASTER_KEY_FILE: /var/lib/yoda/core/master-key
       YODA_SETTINGS_IMPORT: ${YODA_SETTINGS_IMPORT:-}
-      YODA_TRUSTED_PROXY_HOPS: ${YODA_TRUSTED_PROXY_HOPS:-}
+      # 2 when the built-in proxy is on, unless .env sets it: deploy.sh pins YODA_PROXY_ENABLED in release.env, `true`
+      # with the proxy profile and empty without, and refuses any other value in .env or its environment.
+      YODA_TRUSTED_PROXY_HOPS: ${YODA_TRUSTED_PROXY_HOPS:-${YODA_PROXY_ENABLED:+2}}
+      # The built-in proxy, for the setup wizard's read-only status card (core reads only the certificate the proxy
+      # presents to anyone, never its files).
+      YODA_PROXY_ENABLED: ${YODA_PROXY_ENABLED:-}
+      YODA_PROXY_DOMAIN: ${YODA_PROXY_DOMAIN:-}
+      YODA_PROXY_CERT_MODE: ${YODA_PROXY_CERT_MODE:-}
+      YODA_PROXY_HTTPS_PORT: ${YODA_PROXY_HTTPS_PORT:-}
       # Optional: unset until sign-in is set up (setup mode refuses every token with `not_configured`).
       OIDC_ISSUER: ${OIDC_ISSUER:-}
       OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
@@ -210,8 +218,9 @@ services:
       - '${PORTAL_BIND:-127.0.0.1}:${PORTAL_PORT:-3000}:3000'
     environment:
       NUXT_CORE_URL: http://core:4000
-      # With 1 (no reverse proxy in front) the portal sends core its own scheme and host, never the browser's.
-      YODA_TRUSTED_PROXY_HOPS: ${YODA_TRUSTED_PROXY_HOPS:-}
+      # With 1 (no reverse proxy in front) the portal sends core its own scheme and host, never the browser's; 2
+      # with the built-in proxy, as for core.
+      YODA_TRUSTED_PROXY_HOPS: ${YODA_TRUSTED_PROXY_HOPS:-${YODA_PROXY_ENABLED:+2}}
       # Deprecated overrides: the portal reads sign-in, the org line and its links from core's /public-config
       # (derived from OIDC_ISSUER / OIDC_CLIENT_ID and the settings); a non-empty value here still wins.
       NUXT_PUBLIC_KEYCLOAK_URL: ${NUXT_PUBLIC_KEYCLOAK_URL:-}
@@ -226,6 +235,60 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
+    restart: unless-stopped
+
+  # Optional built-in HTTPS proxy (docs/operations.md, section 4b): off unless the `proxy` profile is on
+  # (COMPOSE_PROFILES=proxy in .env; `install.sh --with-proxy` writes it). Caddy, pinned by version and digest (a
+  # bump: docs/releasing.md, "Pinned build inputs"), with ops/proxy/Caddyfile from the release bundle. It publishes
+  # 80 and 443 (http is redirected) and forwards everything to the portal over the compose network, so the portal
+  # and core stay on 127.0.0.1. Certificates: YODA_PROXY_CERT_MODE internal (Caddy's CA; deploy.sh copies its
+  # public root to proxy/root.crt), files (proxy/certs/cert.pem and key.pem) or acme (Let's Encrypt).
+  proxy:
+    profiles: [proxy]
+    image: caddy:2.11.4@sha256:0c994536bddb66445885237f1a5dcc1916bccea922661c76b4e9fc24061f9b52
+    depends_on:
+      - portal
+    ports:
+      - '${YODA_PROXY_BIND:-0.0.0.0}:${YODA_PROXY_HTTP_PORT:-80}:${YODA_PROXY_HTTP_PORT:-80}'
+      - '${YODA_PROXY_BIND:-0.0.0.0}:${YODA_PROXY_HTTPS_PORT:-443}:${YODA_PROXY_HTTPS_PORT:-443}'
+    environment:
+      YODA_PROXY_DOMAIN: ${YODA_PROXY_DOMAIN:-}
+      YODA_PROXY_CERT_MODE: ${YODA_PROXY_CERT_MODE:-internal}
+      YODA_PROXY_ACME_EMAIL: ${YODA_PROXY_ACME_EMAIL:-}
+      # acme only: the ACME directory, Let's Encrypt's production one unless .env sets another (install.sh
+      # --acme-staging: staging). The default is here, not in the Caddyfile: Caddy's {$VAR:default} ignores its
+      # default for a variable that is set but empty, as compose passes it.
+      YODA_PROXY_ACME_CA: ${YODA_PROXY_ACME_CA:-https://acme-v02.api.letsencrypt.org/directory}
+      YODA_PROXY_HTTP_PORT: ${YODA_PROXY_HTTP_PORT:-80}
+      YODA_PROXY_HTTPS_PORT: ${YODA_PROXY_HTTPS_PORT:-443}
+    # The Caddyfile from the mounted directory: unpacking a bundle replaces the file (a new inode), which a
+    # single-file mount would hide from the running container; the directory shows it, and deploy.sh reloads it.
+    command: ['caddy', 'run', '--config', '/etc/caddy/yoda/Caddyfile', '--adapter', 'caddyfile']
+    volumes:
+      - ./ops/proxy:/etc/caddy/yoda:ro
+      # files mode: the organisation's certificate and key (install.sh --cert/--key copies them here).
+      - ./proxy/certs:/etc/caddy/certs:ro
+      # Optional further sites (*.caddy), e.g. core's /mcp for the staff runners (section 8).
+      - ./proxy/sites:/etc/caddy/sites:ro
+      # The certificates Caddy holds, its internal CA (root key included) and the ACME account: keep it (back it
+      # up as section 4b says, off this host like the recovery kit). Never mounted anywhere else.
+      - proxy-data:/data
+      - proxy-config:/config
+    healthcheck:
+      test: ['CMD', 'wget', '-q', '-O', '/dev/null', 'http://127.0.0.1:2019/config/']
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    # It faces the network: no capabilities but binding 80 and 443 and reading proxy/certs/key.pem (0600, owned by
+    # the deploy user, read as root here: DAC_OVERRIDE, in Docker's default set, confined to the container's own
+    # mounts; never DAC_READ_SEARCH, which reopens open_by_handle_at, the "shocker" escape to host files), no
+    # privilege gain, and a read-only root file system (it writes only its two volumes and /tmp).
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE, DAC_OVERRIDE]
+    security_opt: ['no-new-privileges:true']
+    read_only: true
+    tmpfs: [/tmp]
     restart: unless-stopped
 
   # Daily backups (ops/backup): at the backup time in TZ a pg_dump -Fc of the database and a mirror of the bucket
@@ -292,5 +355,8 @@ services:
 volumes:
   runner-work:
   backups:
+  # The built-in proxy's certificates and internal CA (section 4b); created only when the profile is on.
+  proxy-data:
+  proxy-config:
   # The bootstrap values (init): never delete it; restoring on a new host needs the master key (recovery kit).
   yoda-bootstrap:

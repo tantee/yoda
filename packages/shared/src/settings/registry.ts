@@ -216,6 +216,16 @@ const DEFS = [
   def('compose.postgresPassword', text, { category: 'storage', envName: 'POSTGRES_PASSWORD' }, { ...boot, scope: 'compose', secret: true }),
   def('compose.postgresDb', text, { category: 'storage', envName: 'POSTGRES_DB' }, { ...boot, scope: 'compose', default: 'yoda' }),
   def('compose.profiles', z.string(), { category: 'general', envName: 'COMPOSE_PROFILES' }, { ...boot, scope: 'compose' }),
+  // The optional built-in HTTPS proxy (docs/operations.md, section 4b). Core reads these for the wizard's status card;
+  // YODA_PROXY_ENABLED is pinned in release.env by deploy.sh when the `proxy` profile is on.
+  def('proxy.enabled', bool, { category: 'general', envName: 'YODA_PROXY_ENABLED' }, { ...boot, default: false }),
+  def('proxy.domain', text, { category: 'general', envName: 'YODA_PROXY_DOMAIN' }, boot),
+  def('proxy.certMode', z.enum(['internal', 'files', 'acme']), { category: 'general', envName: 'YODA_PROXY_CERT_MODE' }, { ...boot, default: 'internal' }),
+  def('proxy.httpsPort', int(1, 65535), { category: 'general', envName: 'YODA_PROXY_HTTPS_PORT' }, { ...boot, default: 443 }),
+  def('proxy.httpPort', int(1, 65535), { category: 'general', envName: 'YODA_PROXY_HTTP_PORT' }, { ...boot, scope: 'compose', default: 80 }),
+  def('proxy.bind', text, { category: 'general', envName: 'YODA_PROXY_BIND' }, { ...boot, scope: 'compose', default: '0.0.0.0' }),
+  def('proxy.acmeEmail', text, { category: 'general', envName: 'YODA_PROXY_ACME_EMAIL' }, { ...boot, scope: 'compose' }),
+  def('proxy.acmeCa', text, { category: 'general', envName: 'YODA_PROXY_ACME_CA' }, { ...boot, scope: 'compose' }),
   def('backup.at', time, { category: 'backups', envName: 'BACKUP_AT', test: 'backup' }, { scope: 'backup', default: '02:00' }),
   def('backup.keepDays', int(1, 3650), { category: 'backups', envName: 'BACKUP_KEEP_DAYS' }, { scope: 'backup', default: 14 }),
   // Lives on the Keycloak server; the UI only explains it.

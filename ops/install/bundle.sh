@@ -6,8 +6,9 @@
 #   sh ops/install/bundle.sh <version> <image prefix> <out dir> [<digests file>]
 #
 # writes <out dir>/releases/<version>/:
-#   yoda-<version>.tar.gz  the compose files, ops/deploy/deploy.sh, ops/install/install.sh, .env.example,
-#                          CHANGELOG.md, docs/operations.md and bundle.env (YODA_IMAGE_PREFIX, YODA_VERSION, and
+#   yoda-<version>.tar.gz  the compose files, ops/deploy/deploy.sh, ops/install/install.sh, ops/proxy/Caddyfile
+#                          (the optional built-in HTTPS proxy; its Caddy image is pinned by digest in
+#                          docker-compose.prod.yml), .env.example, CHANGELOG.md, docs/operations.md and bundle.env (YODA_IMAGE_PREFIX, YODA_VERSION, and
 #                          with a digests file YODA_<NAME>_DIGEST for core, portal, runner and backup)
 #   install.sh             the installer, also on its own (download it, check it, then run it)
 #   SHA256SUMS             both of the above
@@ -45,7 +46,7 @@ if [ -n "$digests" ]; then
   done
 fi
 
-files='docker-compose.yml docker-compose.prod.yml ops/deploy/deploy.sh ops/install/install.sh .env.example CHANGELOG.md docs/operations.md'
+files='docker-compose.yml docker-compose.prod.yml ops/deploy/deploy.sh ops/install/install.sh ops/proxy/Caddyfile .env.example CHANGELOG.md docs/operations.md'
 for f in $files; do
   [ -f "$f" ] || { echo "bundle: $f is missing (run from the repository root)" >&2; exit 1; }
 done

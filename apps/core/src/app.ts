@@ -42,6 +42,7 @@ import { publicConfigRoutes } from './routes/public-config.js'
 import { setupRoutes } from './routes/setup.js'
 import { setupWizardRoutes } from './routes/setup-wizard.js'
 import { recoveryRoutes } from './routes/recovery.js'
+import type { ProxyProbe } from './proxy-status.js'
 import { readiness } from './readiness.js'
 import { VERSION } from './version.js'
 
@@ -70,6 +71,8 @@ export type AppDeps = {
   outbound?: OutboundPolicy
   /** The Anthropic API base for the AI settings test; tests point it at a fake. */
   anthropicUrl?: string
+  /** The TLS handshake behind the wizard's built-in proxy card (proxy-status.ts); tests inject a fake. */
+  proxyProbe?: ProxyProbe
   /** The clock (tests move it); defaults to the system time. */
   now?: () => Date
   /** Where the setup token is written (0600, the core-only bootstrap directory); null or unset: log only. */

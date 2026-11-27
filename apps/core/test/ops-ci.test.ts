@@ -1,7 +1,9 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import { MAX_UPLOAD_BYTES } from '@yoda/shared'
 import { parse } from 'yaml'
+import { interpolate } from './prod-compose-env.js'
 
 // Structure of the release pipeline (.gitlab-ci.yml), the deploy script it runs and the prod compose images.
 const root = fileURLToPath(new URL('../../../', import.meta.url))
@@ -126,7 +128,7 @@ describe('.gitlab-ci.yml', () => {
 
   it('copies the compose files, the deploy script and the runbook files, not the dev init.sql or .env', () => {
     const copy = (ci.deploy!.script ?? []).find((l) => /\btar -cf\b/.test(l)) ?? ''
-    for (const f of ['docker-compose.yml', 'docker-compose.prod.yml', 'ops/deploy/deploy.sh', 'docs/operations.md', '.env.example', 'CHANGELOG.md']) expect(copy).toContain(f)
+    for (const f of ['docker-compose.yml', 'docker-compose.prod.yml', 'ops/deploy/deploy.sh', 'ops/proxy/Caddyfile', 'docs/operations.md', '.env.example', 'CHANGELOG.md']) expect(copy).toContain(f)
     expect(copy).not.toContain('init.sql')
     expect(copy.split(/\s+/)).not.toContain('.env')
   })
@@ -229,6 +231,32 @@ describe('ops/deploy/deploy.sh', () => {
   it('never touches a volume (the bootstrap volume holds the master key)', () => {
     expect(code).not.toMatch(/\bvolume\b|\bdown\b|\s-v\b|--volumes/)
   })
+
+  it('turns the built-in proxy on from the profiles in effect, pins it, validates it before release.env and init, and reloads it after the start', () => {
+    const detect = order(`printf '%s\\n' "$services" | grep -qx proxy`)
+    // A compose error stops the deploy with compose's message: it is never read as "no proxy service".
+    expect(order('services=$(dc config --services 2>&1) || {')).toBeLessThan(detect)
+    expect(code).not.toContain('config --services 2>/dev/null')
+    const enabled = order(`printf 'YODA_PROXY_ENABLED=%s\\n' "$enabled" >> "$release"`)
+    const pull = order(' pull')
+    const validate = order('run --rm --no-deps -T proxy caddy validate --config /etc/caddy/yoda/Caddyfile --adapter caddyfile')
+    const pin = order('mv "$release" release.env')
+    const init = order(' run --rm init')
+    const up = order(' up -d --no-build')
+    const root = order('cp proxy:/data/caddy/pki/authorities/local/root.crt proxy/root.crt.next')
+    const reload = order('exec -T proxy caddy reload --config /etc/caddy/yoda/Caddyfile --adapter caddyfile --force')
+    expect(detect).toBeLessThan(enabled)
+    expect(enabled).toBeLessThan(pull)
+    expect(pull).toBeLessThan(validate)
+    // Validated with the new release's files before release.env names it (a refused proxy leaves the old one).
+    expect(validate).toBeLessThan(pin)
+    expect(pin).toBeLessThan(init)
+    // Compose keeps a container whose own settings did not change: the Caddyfile, sites and certificates reload.
+    expect(up).toBeLessThan(reload)
+    expect(reload).toBeLessThan(root)
+    // Only the public root certificate leaves the proxy: never a key.
+    expect(code).not.toMatch(/\.key\b/)
+  })
 })
 
 type Service = {
@@ -241,6 +269,11 @@ type Service = {
   group_add?: string[]
   depends_on?: Record<string, { condition: string }>
   environment?: Record<string, string | null>
+  cap_drop?: string[]
+  cap_add?: string[]
+  security_opt?: string[]
+  read_only?: boolean
+  tmpfs?: string[]
 }
 // `!reset` / `!override` are compose merge tags; the yaml parser keeps the value and only warns about them.
 const prod = parse(read('docker-compose.prod.yml'), { logLevel: 'error' }) as { services: Record<string, Service> }
@@ -257,6 +290,134 @@ describe('docker-compose.prod.yml images', () => {
       `\${YODA_IMAGE_PREFIX:?YODA_IMAGE_PREFIX is required (the registry path; see release.env)}/${name}:\${YODA_VERSION:?YODA_VERSION is required (see release.env)}\${${D}:+@\${${D}}}`,
     )
     expect(s.build).toBeTruthy()
+  })
+})
+
+describe('docker-compose.prod.yml built-in HTTPS proxy (docs/operations.md, section 4b)', () => {
+  const p = prod.services.proxy as Service & { profiles?: string[]; healthcheck?: { test: string[] } }
+
+  it('is off unless the proxy profile is on, and runs Caddy pinned by version and digest', () => {
+    expect(p.profiles).toEqual(['proxy'])
+    expect(p.image).toMatch(/^caddy:\d+\.\d+\.\d+@sha256:[0-9a-f]{64}$/)
+    expect(p.build).toBeUndefined()
+  })
+
+  it('publishes 80 and 443 (the same ports inside), and forwards to the portal over the compose network', () => {
+    expect(p.ports).toEqual([
+      '${YODA_PROXY_BIND:-0.0.0.0}:${YODA_PROXY_HTTP_PORT:-80}:${YODA_PROXY_HTTP_PORT:-80}',
+      '${YODA_PROXY_BIND:-0.0.0.0}:${YODA_PROXY_HTTPS_PORT:-443}:${YODA_PROXY_HTTPS_PORT:-443}',
+    ])
+    expect(p.depends_on).toEqual(['portal'])
+    expect(read('ops/proxy/Caddyfile')).toMatch(/^\treverse_proxy portal:3000$/m)
+    // The portal and core stay on loopback: the proxy needs neither port.
+    expect(prod.services.portal!.ports).toEqual(['${PORTAL_BIND:-127.0.0.1}:${PORTAL_PORT:-3000}:3000'])
+  })
+
+  it('mounts the bundle Caddyfile and the certificate directory read-only, and keeps its data in its own volume', () => {
+    expect(p.volumes).toEqual([
+      './ops/proxy:/etc/caddy/yoda:ro',
+      './proxy/certs:/etc/caddy/certs:ro',
+      './proxy/sites:/etc/caddy/sites:ro',
+      'proxy-data:/data',
+      'proxy-config:/config',
+    ])
+    // The internal CA's private key lives in proxy-data: no other service mounts it (core reads the presented certificate).
+    for (const [name, svc] of Object.entries(prod.services)) {
+      if (name === 'proxy') continue
+      expect((svc.volumes ?? []).some((v) => v.startsWith('proxy-data') || v.startsWith('proxy-config')), name).toBe(false)
+    }
+    expect(read('docker-compose.prod.yml')).toMatch(/^ {2}proxy-data:$/m)
+    expect(p.environment).toMatchObject({ YODA_PROXY_DOMAIN: '${YODA_PROXY_DOMAIN:-}', YODA_PROXY_CERT_MODE: '${YODA_PROXY_CERT_MODE:-internal}' })
+  })
+
+  it('makes core and the portal trust two hops when deploy.sh pins YODA_PROXY_ENABLED, unless .env sets it', () => {
+    for (const name of ['core', 'portal']) {
+      expect(prod.services[name]!.environment?.YODA_TRUSTED_PROXY_HOPS, name).toBe('${YODA_TRUSTED_PROXY_HOPS:-${YODA_PROXY_ENABLED:+2}}')
+    }
+    expect(prod.services.core!.environment).toMatchObject({ YODA_PROXY_ENABLED: '${YODA_PROXY_ENABLED:-}', YODA_PROXY_DOMAIN: '${YODA_PROXY_DOMAIN:-}' })
+  })
+
+  it('runs hardened: no capabilities but binding low ports and reading the 0600 key, no privilege gain, read-only root', () => {
+    expect(p.cap_drop).toEqual(['ALL'])
+    // DAC_OVERRIDE (Docker's default set, the container's own mounts) reads the 0600 key; never DAC_READ_SEARCH,
+    // which re-enables open_by_handle_at (the "shocker" escape) under Docker's default seccomp profile.
+    expect(p.cap_add).toEqual(['NET_BIND_SERVICE', 'DAC_OVERRIDE'])
+    expect(read('docker-compose.prod.yml')).not.toMatch(/^\s*cap_add:.*DAC_READ_SEARCH/m)
+    expect(p.security_opt).toEqual(['no-new-privileges:true'])
+    expect(p.read_only).toBe(true)
+    expect(p.tmpfs).toEqual(['/tmp'])
+    expect(p.environment).toMatchObject({ YODA_PROXY_ACME_CA: '${YODA_PROXY_ACME_CA:-https://acme-v02.api.letsencrypt.org/directory}' })
+  })
+
+  it('runs the Caddyfile from the mounted ops/proxy directory (a new bundle\'s file is seen; a file mount keeps the old inode)', () => {
+    expect(p.command).toEqual(['caddy', 'run', '--config', '/etc/caddy/yoda/Caddyfile', '--adapter', 'caddyfile'])
+    expect(p.volumes).toContain('./ops/proxy:/etc/caddy/yoda:ro')
+    expect((p.volumes ?? []).some((v) => v.includes('Caddyfile'))).toBe(false)
+    // deploy.sh validates and reloads that same path.
+    const deployCode = read('ops/deploy/deploy.sh')
+    expect(deployCode).toContain('caddy validate --config /etc/caddy/yoda/Caddyfile --adapter caddyfile')
+    expect(deployCode).toContain('caddy reload --config /etc/caddy/yoda/Caddyfile --adapter caddyfile --force')
+    expect(deployCode).not.toMatch(/\/etc\/caddy\/Caddyfile/)
+  })
+
+  it('gives Caddy no {$NAME:default} for a variable compose passes empty (Caddy keeps the default for unset ones only)', () => {
+    const env = p.environment ?? {}
+    const caddyfile = read('ops/proxy/Caddyfile').split('\n').filter((l) => !/^\s*#/.test(l)).join('\n')
+    const withDefault = [...caddyfile.matchAll(/\{\$([A-Z_][A-Z0-9_]*):([^}]*)\}/g)].map((m) => [m[1]!, m[2]!] as const)
+    expect(withDefault.length).toBeGreaterThan(0)
+    for (const [name, fallback] of withDefault) {
+      if (!(name in env)) continue
+      // With an empty .env compose passes its own default: it must be the Caddyfile's, never empty.
+      expect(interpolate(String(env[name]), {}), name).toBe(fallback)
+      expect(interpolate(String(env[name]), { [name]: '' }), name).toBe(fallback)
+    }
+    // Every variable the Caddyfile reads bare that compose passes and acme needs is non-empty by default.
+    expect(interpolate(String(env.YODA_PROXY_ACME_CA), {})).toBe('https://acme-v02.api.letsencrypt.org/directory')
+    expect(caddyfile).toMatch(/^\t\t\tdir \{\$YODA_PROXY_ACME_CA\}$/m)
+  })
+
+  it('has a healthcheck on Caddy\'s admin endpoint inside the container', () => {
+    expect(p.healthcheck?.test).toEqual(['CMD', 'wget', '-q', '-O', '/dev/null', 'http://127.0.0.1:2019/config/'])
+  })
+})
+
+describe('ops/proxy/Caddyfile', () => {
+  const caddy = read('ops/proxy/Caddyfile')
+
+  it('has one TLS snippet per certificate mode, chosen by YODA_PROXY_CERT_MODE', () => {
+    expect(caddy).toMatch(/^\(tls-internal\) \{\n\ttls internal\n\}$/m)
+    expect(caddy).toMatch(/^\(tls-files\) \{\n\ttls \/etc\/caddy\/certs\/cert\.pem \/etc\/caddy\/certs\/key\.pem\n\}$/m)
+    // Let's Encrypt only (a named issuer: no fallback to another CA), production unless YODA_PROXY_ACME_CA says.
+    expect(caddy).toMatch(/^\(tls-acme\) \{\n\ttls \{\n\t\tissuer acme \{\n\t\t\tdir \{\$YODA_PROXY_ACME_CA\}\n\t\t\temail \{\$YODA_PROXY_ACME_EMAIL\}\n\t\t\}\n\t\}\n\}$/m)
+    // No port in the address: an empty YODA_PROXY_DOMAIN must fail validation, not become a catch-all site.
+    expect(caddy).toMatch(/^\{\$YODA_PROXY_DOMAIN\} \{\n\timport tls-\{\$YODA_PROXY_CERT_MODE\}$/m)
+  })
+
+  it('redirects http to https keeping a port other than 443 (Caddy\'s own redirect drops it: same port inside)', () => {
+    expect(caddy).toMatch(/^http:\/\/\{\$YODA_PROXY_DOMAIN\}:\{\$YODA_PROXY_HTTP_PORT:80\} \{\n\tredir https:\/\/\{host\}:\{\$YODA_PROXY_HTTPS_PORT:443\}\{uri\} 308\n\}$/m)
+  })
+
+  it('names the admin endpoint (container-local), caps request bodies above the largest upload and times out slow clients only', () => {
+    expect(caddy).toMatch(/^\tadmin localhost:2019$/m)
+    const max = /^\t\tmax_size (\d+)MiB$/m.exec(caddy)
+    expect(max, 'request_body max_size').not.toBeNull()
+    const bytes = Number(max![1]) * 1024 * 1024
+    expect(bytes).toBeGreaterThan(MAX_UPLOAD_BYTES)
+    expect(bytes).toBeLessThanOrEqual(2 * MAX_UPLOAD_BYTES)
+    expect(caddy).toMatch(/^\t\ttimeouts \{\n\t\t\t(?:#.*\n\t\t\t)*read_header 30s\n\t\t\tidle 5m\n\t\t\}$/m)
+    // Never a body or write timeout: on HTTP/1.1 Go's read timeout covers the whole request and would cancel the
+    // portal's long server-sent-events GETs.
+    expect(caddy).not.toMatch(/^\s*(read_body|write)\s/m)
+  })
+
+  it('names the internal CA after the domain, so staff recognise it in their trust store', () => {
+    expect(caddy).toMatch(/^\tpki \{\n\t\tca local \{\n\t\t\tname "Yoda \{\$YODA_PROXY_DOMAIN\} internal CA"\n\t\t\troot_cn "Yoda \{\$YODA_PROXY_DOMAIN\} internal CA root"\n/m)
+  })
+
+  it('keeps readiness inside the host and leaves the forwarded headers to Caddy (it replaces a client\'s X-Forwarded-For)', () => {
+    expect(caddy).toMatch(/@ready path \/api\/ready \/api\/ready\/\*\n\trespond @ready 404/)
+    expect(caddy).not.toMatch(/trusted_proxies/)
+    expect(caddy).not.toMatch(/header_up/)
   })
 })
 
