@@ -265,8 +265,9 @@ describe('release docs (GitHub Releases + GHCR, D1)', () => {
       "--base-url 'https://files.example.org/yoda/releases/{version}/'",
     ]) expect(releasing, s).toContain(s)
     for (const text of [readme, guide]) expect(text).toContain('C73EF0AF404BAE84')
-    // 1.0.0 is not tagged yet: its section waits for the date set in the tagging commit.
-    expect(read('CHANGELOG.md')).toMatch(/^## 1\.0\.0 — unreleased$/m)
+    // 1.0.0 is dated for its release; the release workflow refuses an undated heading.
+    expect(read('CHANGELOG.md')).toMatch(/^## 1\.0\.0 — 2026-11-27$/m)
+    expect(read('CHANGELOG.md')).not.toMatch(/^## 1\.0\.0 — unreleased$/m)
     expect(read('CHANGELOG.md')).not.toMatch(/^## Unreleased$/m)
     expect(read('docs/design/installer-proposal.md')).toMatch(/^\| D1 \|.*Decided 2026-11-27 \(owner\): \(b\) GitHub Releases \+ GHCR/m)
   })

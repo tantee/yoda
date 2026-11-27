@@ -4,7 +4,7 @@ Releases follow [semantic versioning](https://semver.org); each is a git tag `v<
 as a GitHub Release, and the version without the `v` is the image tag a host runs. Upgrade steps:
 [docs/operations.md](docs/operations.md#5-upgrade-and-rollback).
 
-## 1.0.0 — unreleased
+## 1.0.0 — 2026-11-27
 
 The first release: an AI work portal for the IT department, in Thai (default) and English.
 
