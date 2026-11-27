@@ -104,6 +104,14 @@ describe('settings registry (installer proposal §5.1, §9)', () => {
     expect(Object.entries(env).filter(([k, v]) => v !== '' && byEnvName(k) && !byEnvName(k)!.bootstrapOnly)).toEqual([])
   })
 
+  it('trusts two proxy hops when deploy.sh pinned the built-in proxy, unless .env sets them', () => {
+    expect(prodComposeCoreEnv().YODA_TRUSTED_PROXY_HOPS).toBe('')
+    expect(prodComposeCoreEnv({ YODA_PROXY_ENABLED: 'true' }).YODA_TRUSTED_PROXY_HOPS).toBe('2')
+    expect(prodComposeCoreEnv({ YODA_PROXY_ENABLED: 'true', YODA_TRUSTED_PROXY_HOPS: '3' }).YODA_TRUSTED_PROXY_HOPS).toBe('3')
+    const env = { ...prodComposeCoreEnv({ YODA_PROXY_ENABLED: 'true', YODA_PROXY_DOMAIN: 'portal.example.org', YODA_PROXY_CERT_MODE: 'internal' }), DATABASE_URL: 'postgres://yoda:x@postgres:5432/yoda', S3_ACCESS_KEY: 'a', S3_SECRET_KEY: 'b' }
+    expect(loadConfig(env)).toMatchObject({ trustedProxyHops: 2, proxy: { domain: 'portal.example.org', certMode: 'internal', httpsPort: 443 } })
+  })
+
   it('core starts on the prod compose env with an empty .env (empty values take the defaults)', () => {
     const env = { ...prodComposeCoreEnv(), DATABASE_URL: 'postgres://yoda:x@postgres:5432/yoda', S3_ACCESS_KEY: 'a', S3_SECRET_KEY: 'b' }
     const c = loadConfig(env)

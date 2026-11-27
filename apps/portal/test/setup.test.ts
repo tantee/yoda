@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs'
-import { SETUP_STEPS, type SetupProgress, type SetupStepId, type SetupStepState } from '@yoda/shared'
+import { SETUP_STEPS, type ProxyStatus, type SetupProgress, type SetupStepId, type SetupStepState } from '@yoda/shared'
 import { describe, expect, it, vi } from 'vitest'
 import { forwardedHeaders, trustedHops } from '../server/utils/forwarded'
 import { isLocalAuthPath } from '../app/utils/publicConfig'
@@ -10,6 +10,7 @@ import {
   nextStep,
   passwordAcceptable,
   passwordStrength,
+  proxyCertState,
   prevStep,
   reachable,
   resumeStep,
@@ -275,5 +276,37 @@ describe('/setup page', () => {
       const s = readFileSync(new URL(f, import.meta.url), 'utf8')
       for (const m of s.matchAll(/<(v-btn|v-text-field|v-checkbox|v-btn-toggle)\b[^>]*>/g)) expect(m[0], `${f}: ${m[0]}`).toMatch(/data-testid=|:data-testid=/)
     }
+  })
+})
+
+describe('built-in HTTPS proxy card', () => {
+  const now = new Date('2026-11-27T03:00:00Z')
+  const status = (certMode: ProxyStatus['certMode'], validTo: string | null): ProxyStatus => ({
+    enabled: true,
+    domain: 'portal.example.org',
+    certMode,
+    publicUrl: 'https://portal.example.org',
+    trustedProxyHops: 2,
+    reachable: validTo !== null,
+    error: null,
+    certificate: validTo ? { subject: 'portal.example.org', issuer: 'x', names: ['portal.example.org'], validFrom: '2026-11-01T00:00:00Z', validTo, fingerprint256: 'AB' } : null,
+  })
+
+  it('warns about expiry only for the organisation files (Caddy renews internal and ACME ones itself)', () => {
+    expect(proxyCertState(status('internal', '2026-11-27T12:00:00Z'), now)).toBe('ok')
+    expect(proxyCertState(status('acme', '2026-12-10T00:00:00Z'), now)).toBe('ok')
+    expect(proxyCertState(status('files', '2026-12-10T00:00:00Z'), now)).toBe('soon')
+    expect(proxyCertState(status('files', '2027-06-01T00:00:00Z'), now)).toBe('ok')
+    expect(proxyCertState(status('internal', '2026-11-27T02:00:00Z'), now)).toBe('expired')
+    expect(proxyCertState(status('files', null), now)).toBeNull()
+  })
+
+  it('has every proxy card text in both languages', () => {
+    const en = JSON.parse(readFileSync(new URL('../i18n/locales/en.json', import.meta.url), 'utf8')).setup.proxy
+    const th = JSON.parse(readFileSync(new URL('../i18n/locales/th.json', import.meta.url), 'utf8')).setup.proxy
+    const keys = (o: Record<string, unknown>, p = ''): string[] => Object.entries(o).flatMap(([k, v]) => (typeof v === 'object' && v ? keys(v as Record<string, unknown>, `${p}${k}.`) : [`${p}${k}`]))
+    expect(keys(th).sort()).toEqual(keys(en).sort())
+    const card = readFileSync(new URL('../app/components/setup/ProxyStatusCard.vue', import.meta.url), 'utf8')
+    for (const m of card.matchAll(/t\('setup\.proxy\.([\w.]+)'/g)) expect(keys(en), m[1]).toContain(m[1])
   })
 })

@@ -143,7 +143,7 @@ if [ -n "$real_docker" ] && "$real_docker" compose version > /dev/null 2>&1; the
   printf '%s\n' "$proxy_image" | grep -Eqx 'caddy:[0-9]+\.[0-9]+\.[0-9]+@sha256:[0-9a-f]{64}' ||
     fail "the proxy image is not pinned by version and digest: $proxy_image"
   mkdir -p "$work/proxy/certs" "$work/proxy/sites"
-  openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 1 -subj '/CN=portal.example.org' \
+  openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj '/CN=portal.example.org' \
     -keyout "$work/proxy/certs/key.pem" -out "$work/proxy/certs/cert.pem" > /dev/null 2>&1 ||
     fail 'openssl could not make the throwaway certificate for the proxy check'
   for mode in internal acme files; do

@@ -1,11 +1,12 @@
 import { existsSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
+import type { PeerCertificate } from 'node:tls'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { eq } from 'drizzle-orm'
 import type { FastifyInstance, LightMyRequestResponse } from 'fastify'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { buildApp } from '../src/app.js'
+import { buildApp, type AppDeps } from '../src/app.js'
 import { pgClient } from '../src/db/client.js'
 import { localAdmins, localRecoveryCodes, localSessions, people, settings, settingsAudit, setupState } from '../src/db/schema.js'
 import { recoveryCodeHash } from '../src/local/codes.js'
@@ -33,13 +34,15 @@ let clock: Date
 let tokenFile: string
 let idp: FakeOidc
 
-async function boot(env: NodeJS.ProcessEnv = {}) {
+async function boot(env: NodeJS.ProcessEnv = {}, extra: Partial<AppDeps> & { configPatch?: Partial<AppDeps['config']> } = {}) {
   const db = await testDb()
   store = await SettingsStore.open({ db, env: { PORTAL_URL: 'https://portal.example.org', ...env }, masterKey: KEY, log: quiet(), channel: `settings_test_${randomUUID().slice(0, 8)}` })
   const deps = await testDeps()
+  const { configPatch, ...rest } = extra
   app = await buildApp({
     ...deps,
-    config: { ...deps.config, devSkipSetup: false },
+    ...rest,
+    config: { ...deps.config, devSkipSetup: false, ...configPatch },
     settings: store,
     outbound: { allowLoopback: true },
     now: () => clock,
@@ -496,5 +499,65 @@ describe('claim and complete (8.1)', () => {
     const audit = await (await db()).select().from(settingsAudit).where(eq(settingsAudit.action, 'setup.completed'))
     expect(audit[0]).toMatchObject({ source: 'setup', newValue: { admin: 'somchai' } })
     expect((await app.inject({ url: '/public-config' })).json().setup).toBe('done')
+  })
+})
+
+describe('built-in HTTPS proxy card (GET /setup/proxy)', () => {
+  const cert = {
+    subject: { CN: 'portal.example.org' },
+    issuer: { CN: 'Caddy Local Authority - ECC Intermediate' },
+    subjectaltname: 'DNS:portal.example.org',
+    valid_from: 'Nov 27 03:00:00 2026 GMT',
+    valid_to: 'Nov 27 15:00:00 2026 GMT',
+    fingerprint256: 'AB:CD',
+  } as unknown as PeerCertificate
+
+  it('needs the setup session', async () => {
+    await boot()
+    expect((await app.inject({ url: '/setup/proxy', headers: UA })).statusCode).toBe(401)
+  })
+
+  it('says off (the default: an external reverse proxy), without probing anything', async () => {
+    const probe = vi.fn()
+    await boot({}, { proxyProbe: probe })
+    const h = await setupSession()
+    const res = await app.inject({ url: '/setup/proxy', headers: h })
+    expect(res.statusCode).toBe(200)
+    expect(res.headers['cache-control']).toBe('no-store')
+    expect(res.json()).toEqual({ enabled: false, domain: null, certMode: null, publicUrl: null, trustedProxyHops: 1, reachable: null, error: null, certificate: null })
+    expect(probe).not.toHaveBeenCalled()
+  })
+
+  it('reports the mode, the address and the certificate the proxy presents for its name', async () => {
+    const probe = vi.fn(async () => ({ ok: true as const, cert }))
+    await boot({}, { proxyProbe: probe, configPatch: { trustedProxyHops: 2, proxy: { domain: 'portal.example.org', certMode: 'internal', httpsPort: 443 } } })
+    const h = await setupSession()
+    const body = (await app.inject({ url: '/setup/proxy', headers: h })).json()
+    expect(probe).toHaveBeenCalledWith({ host: 'proxy', port: 443, servername: 'portal.example.org', timeoutMs: 3000 })
+    expect(body).toEqual({
+      enabled: true,
+      domain: 'portal.example.org',
+      certMode: 'internal',
+      publicUrl: 'https://portal.example.org',
+      trustedProxyHops: 2,
+      reachable: true,
+      error: null,
+      certificate: {
+        subject: 'portal.example.org',
+        issuer: 'Caddy Local Authority - ECC Intermediate',
+        names: ['portal.example.org'],
+        validFrom: '2026-11-27T03:00:00.000Z',
+        validTo: '2026-11-27T15:00:00.000Z',
+        fingerprint256: 'AB:CD',
+      },
+    })
+    expect(JSON.stringify(body)).not.toMatch(/PRIVATE|BEGIN/)
+  })
+
+  it('says why when the proxy does not answer', async () => {
+    await boot({}, { proxyProbe: async () => ({ ok: false, error: 'refused' }), configPatch: { proxy: { domain: 'portal.example.org', certMode: 'files', httpsPort: 8443 } } })
+    const h = await setupSession()
+    const body = (await app.inject({ url: '/setup/proxy', headers: h })).json()
+    expect(body).toMatchObject({ enabled: true, publicUrl: 'https://portal.example.org:8443', reachable: false, error: 'refused', certificate: null })
   })
 })

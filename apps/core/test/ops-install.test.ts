@@ -34,6 +34,10 @@ case "$1" in
   compose)
     shift
     case " $* " in
+      *" caddy validate "*) [ -z "\${FAKE_VALIDATE_FAIL:-}" ] || { echo 'Error: adapting config using caddyfile' >&2; exit 1; } ;;
+      *" config --services "*) for svc in \${FAKE_SERVICES:-}; do echo "$svc"; done ;;
+      *" exec -T proxy "*) echo "\${FAKE_PROXY_INFO:-internal portal.example.org 443}" ;;
+      *" cp proxy:"*) [ -z "\${FAKE_NO_ROOT:-}" ] || exit 1; for a; do last=$a; done; echo 'PUBLIC ROOT' > "$last" ;;
       *" version --short "*) echo "\${FAKE_COMPOSE:-2.29.1}" ;;
       *" config --images "*) echo "registry.example.org/group/yoda/core:1.2.0" ;;
       *" exec -T core "*) echo "\${FAKE_SETUP:-required}" ;;
@@ -225,6 +229,92 @@ describe.skipIf(!posix)('ops/deploy/deploy.sh (stub docker)', () => {
     rmSync(s.dir, { recursive: true, force: true })
   })
 
+  describe('with the built-in HTTPS proxy (profile `proxy`)', () => {
+    const ON = { FAKE_SERVICES: 'init migrate core portal proxy' }
+
+    it('pins YODA_PROXY_ENABLED, validates the Caddyfile before anything is replaced, and copies the public root', async () => {
+      const s = sandbox()
+      writeFileSync(join(s.dir, '.env'), 'COMPOSE_PROFILES=proxy\nYODA_PROXY_DOMAIN=portal.example.org\n')
+      const r = await run('sh', [deploy], { cwd: s.dir, env: { ...s.env, ...PREFIX, ...ON, YODA_VERSION: '1.2.0' } })
+      expect(r.code, r.out).toBe(0)
+      expect(readFileSync(join(s.dir, 'release.env'), 'utf8')).toBe(`YODA_VERSION=1.2.0\nYODA_IMAGE_PREFIX=registry.example.org/group/yoda\n${NO_PINS}YODA_PROXY_ENABLED=true\n`)
+      const calls = s.calls()
+      const at = (x: string) => calls.indexOf(x)
+      expect(at('run --rm --no-deps -T proxy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile')).toBeGreaterThan(at('pull --quiet'))
+      expect(at('run --rm init')).toBeGreaterThan(at('caddy validate'))
+      expect(at('cp proxy:/data/caddy/pki/authorities/local/root.crt proxy/root.crt.next')).toBeGreaterThan(at('up -d --no-build'))
+      expect(readFileSync(join(s.dir, 'proxy/root.crt'), 'utf8')).toBe('PUBLIC ROOT\n')
+      expect(mode(join(s.dir, 'proxy/root.crt'))).toBe('644')
+      expect(existsSync(join(s.dir, 'proxy/root.crt.next'))).toBe(false)
+      for (const d of ['proxy/certs', 'proxy/sites']) expect(statSync(join(s.dir, d)).isDirectory(), d).toBe(true)
+      expect(r.out).toContain('built-in HTTPS proxy settings checked')
+      expect(r.out).toContain('built-in HTTPS proxy on: https://portal.example.org (certificates: internal)')
+      expect(r.out).toContain('through the built-in proxy: https://portal.example.org/setup')
+      expect(r.out).toContain('/proxy/root.crt: install it on the staff PCs')
+      // .env is never changed, also with the proxy.
+      expect(readFileSync(join(s.dir, '.env'), 'utf8')).toBe('COMPOSE_PROFILES=proxy\nYODA_PROXY_DOMAIN=portal.example.org\n')
+      rmSync(s.dir, { recursive: true, force: true })
+    })
+
+    it('names a port other than 443 in the address, and copies no root for the files and acme modes', async () => {
+      const s = sandbox()
+      const r = await run('sh', [deploy], { cwd: s.dir, env: { ...s.env, ...PREFIX, ...ON, YODA_VERSION: '1.2.0', FAKE_PROXY_INFO: 'files portal.example.org 8443' } })
+      expect(r.code, r.out).toBe(0)
+      expect(r.out).toContain('built-in HTTPS proxy on: https://portal.example.org:8443 (certificates: files)')
+      expect(r.out).toContain('https://portal.example.org:8443/setup')
+      expect(s.calls()).not.toContain('cp proxy:')
+      expect(existsSync(join(s.dir, 'proxy/root.crt'))).toBe(false)
+      rmSync(s.dir, { recursive: true, force: true })
+    })
+
+    it('stops before init when caddy validate refuses the settings (exit 2)', async () => {
+      const s = sandbox()
+      const r = await run('sh', [deploy], { cwd: s.dir, env: { ...s.env, ...PREFIX, ...ON, YODA_VERSION: '1.2.0', FAKE_VALIDATE_FAIL: '1' } })
+      expect(r.code).toBe(2)
+      expect(r.out).toContain("the built-in HTTPS proxy's settings are invalid")
+      expect(r.out).toContain('Error: adapting config using caddyfile')
+      expect(s.calls()).not.toContain('run --rm init')
+      expect(s.calls()).not.toContain('up -d')
+      rmSync(s.dir, { recursive: true, force: true })
+    })
+
+    it.each([
+      ['.env', 'PORTAL_BIND=0.0.0.0\n', {}],
+      ['.env', 'CORE_BIND="10.0.0.5"\n', {}],
+      ['env', '', { PORTAL_BIND: '10.0.0.5' }],
+    ])('refuses a portal or core published beyond the host (%s %j %j), before pulling', async (_where, dotenv, env) => {
+      const s = sandbox()
+      writeFileSync(join(s.dir, '.env'), dotenv)
+      writeFileSync(join(s.dir, 'release.env'), 'YODA_VERSION=1.1.0\nYODA_IMAGE_PREFIX=registry.example.org/group/yoda\n')
+      const r = await run('sh', [deploy], { cwd: s.dir, env: { ...s.env, ...ON, ...env, YODA_VERSION: '1.2.0' } })
+      expect(r.code).toBe(2)
+      expect(r.out).toMatch(/(PORTAL|CORE)_BIND=.* publishes it beyond this host while the built-in HTTPS proxy is on/)
+      expect(s.calls()).not.toContain('pull')
+      expect(readFileSync(join(s.dir, 'release.env'), 'utf8')).toBe('YODA_VERSION=1.1.0\nYODA_IMAGE_PREFIX=registry.example.org/group/yoda\n')
+      expect(existsSync(join(s.dir, 'release.env.next'))).toBe(false)
+      rmSync(s.dir, { recursive: true, force: true })
+    })
+
+    it('accepts loopback binds, and warns when the internal root is not there yet', async () => {
+      const s = sandbox()
+      writeFileSync(join(s.dir, '.env'), 'PORTAL_BIND=127.0.0.1\nCORE_BIND=localhost\n')
+      const r = await run('sh', [deploy], { cwd: s.dir, env: { ...s.env, ...PREFIX, ...ON, YODA_VERSION: '1.2.0', FAKE_NO_ROOT: '1', FAKE_SETUP: 'done' } })
+      expect(r.code, r.out).toBe(0)
+      expect(r.out).toContain("warning: the proxy's internal CA root is not there yet")
+      rmSync(s.dir, { recursive: true, force: true })
+    }, 60_000)
+
+    it('leaves everything as before with the profile off: no pin, no validate, no proxy directory', async () => {
+      const s = sandbox()
+      const r = await run('sh', [deploy], { cwd: s.dir, env: { ...s.env, ...PREFIX, YODA_VERSION: '1.2.0', FAKE_SERVICES: 'init migrate core portal' } })
+      expect(r.code, r.out).toBe(0)
+      expect(readFileSync(join(s.dir, 'release.env'), 'utf8')).not.toContain('YODA_PROXY_ENABLED')
+      expect(s.calls()).not.toContain('proxy')
+      expect(existsSync(join(s.dir, 'proxy'))).toBe(false)
+      rmSync(s.dir, { recursive: true, force: true })
+    })
+  })
+
   it.each([['latest;rm'], ['-x'], ['']])('refuses the version %j', async (v) => {
     const s = sandbox()
     const r = await run('sh', [deploy], { cwd: s.dir, env: { ...s.env, ...PREFIX, YODA_VERSION: v } })
@@ -322,6 +412,81 @@ describe.skipIf(!ci && !canInstall)('ops/install/install.sh (fixture bundle, tes
     expect(r.calls()).not.toContain('compose --env-file')
     rmSync(r.dir, { recursive: true, force: true })
   }
+
+  describe('--with-proxy (the built-in HTTPS proxy)', () => {
+    const certs = (dir: string) => {
+      // A throwaway self-signed pair, made here and never committed.
+      const r = spawnSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1', '-subj', '/CN=portal.example.org', '-keyout', join(dir, 'k.pem'), '-out', join(dir, 'c.pem')], { encoding: 'utf8' })
+      expect(r.status, r.stderr).toBe(0)
+      return { cert: join(dir, 'c.pem'), key: join(dir, 'k.pem') }
+    }
+
+    it('writes the profile, the name and the mode (internal by default) into the new .env, and deploys', async () => {
+      const r = await install(['--version', version, '--with-proxy', '--domain', 'portal.example.org'])
+      expect(r.code, r.out).toBe(0)
+      expect(readFileSync(join(r.target, '.env'), 'utf8')).toBe(
+        '# The built-in HTTPS proxy (install.sh --with-proxy; docs/operations.md, section 4b).\nCOMPOSE_PROFILES=proxy\nYODA_PROXY_DOMAIN=portal.example.org\nYODA_PROXY_CERT_MODE=internal\n',
+      )
+      expect(mode(join(r.target, '.env'))).toBe('600')
+      expect(existsSync(join(r.target, 'ops/proxy/Caddyfile'))).toBe(true)
+      expect(statSync(join(r.target, 'proxy/certs')).isDirectory()).toBe(true)
+      expect(r.out).toContain('built-in HTTPS proxy: https://portal.example.org (certificates: internal), written to')
+      expect(r.out).toContain('/proxy/root.crt (the internal CA')
+      expect(r.calls()).toContain('up -d --no-build')
+      rmSync(r.dir, { recursive: true, force: true })
+    })
+
+    it.runIf(has('openssl'))('copies the organisation certificate and key for --cert-mode files (key 0600), with other ports', async () => {
+      const s = mkdtempSync(join(tmpdir(), 'yoda-certs-'))
+      const c = certs(s)
+      const r = await install(['--version', version, '--with-proxy', '--domain=portal.example.org', '--cert-mode', 'files', '--cert', c.cert, '--key', c.key, '--http-port', '8080', '--https-port', '8443'])
+      expect(r.code, r.out).toBe(0)
+      expect(readFileSync(join(r.target, 'proxy/certs/cert.pem'))).toEqual(readFileSync(c.cert))
+      expect(readFileSync(join(r.target, 'proxy/certs/key.pem'))).toEqual(readFileSync(c.key))
+      expect(mode(join(r.target, 'proxy/certs/key.pem'))).toBe('600')
+      expect(mode(join(r.target, 'proxy/certs/cert.pem'))).toBe('644')
+      const env = readFileSync(join(r.target, '.env'), 'utf8')
+      expect(env).toContain('YODA_PROXY_CERT_MODE=files\nYODA_PROXY_HTTP_PORT=8080\nYODA_PROXY_HTTPS_PORT=8443\n')
+      expect(env).not.toContain('PRIVATE KEY')
+      expect(r.out).toContain('https://portal.example.org:8443 (certificates: files)')
+      rmSync(r.dir, { recursive: true, force: true })
+      rmSync(s, { recursive: true, force: true })
+    })
+
+    it('writes the ACME email for --cert-mode acme and warns that the host must be reachable', async () => {
+      const r = await install(['--version', version, '--with-proxy', '--domain', 'portal.example.org', '--cert-mode', 'acme', '--acme-email', 'it@example.org'])
+      expect(r.code, r.out).toBe(0)
+      expect(readFileSync(join(r.target, '.env'), 'utf8')).toContain('YODA_PROXY_CERT_MODE=acme\nYODA_PROXY_ACME_EMAIL=it@example.org\n')
+      expect(r.out).toContain('reachable from the internet on ports 80 and 443')
+      rmSync(r.dir, { recursive: true, force: true })
+    })
+
+    it.each([
+      [['--with-proxy'], /--with-proxy needs --domain/],
+      [['--with-proxy', '--domain', 'https://portal.example.org'], /--domain must be a host name/],
+      [['--with-proxy', '--domain', 'portal.example.org/x'], /--domain must be a host name/],
+      [['--with-proxy', '--domain', 'portal.example.org', '--cert-mode', 'self'], /--cert-mode must be internal, files or acme/],
+      [['--with-proxy', '--domain', 'portal.example.org', '--cert-mode', 'files'], /needs --cert .* and --key/],
+      [['--with-proxy', '--domain', 'portal.example.org', '--cert-mode', 'files', '--cert', '/nonexistent/c.pem', '--key', '/nonexistent/k.pem'], /cannot read the certificate/],
+      [['--with-proxy', '--domain', 'portal.example.org', '--cert', '/etc/hosts'], /--cert and --key are for --cert-mode files only/],
+      [['--with-proxy', '--domain', 'portal.example.org', '--cert-mode', 'acme'], /--cert-mode acme needs --acme-email/],
+      [['--with-proxy', '--domain', 'portal.example.org', '--cert-mode', 'acme', '--acme-email', 'it@example.org;x'], /not an email address/],
+      [['--with-proxy', '--domain', 'portal.example.org', '--acme-email', 'it@example.org'], /--acme-email is for --cert-mode acme only/],
+      [['--with-proxy', '--domain', 'portal.example.org', '--https-port', '70000'], /not a port number/],
+      [['--domain', 'portal.example.org'], /go with --with-proxy/],
+      [['--cert-mode', 'internal'], /go with --with-proxy/],
+    ])('refuses %j before downloading anything', async (args, message) => {
+      await refuses(await install(['--version', version, ...args]), message)
+    })
+
+    it('refuses a non-PEM key for --cert-mode files', async () => {
+      const s = mkdtempSync(join(tmpdir(), 'yoda-certs-'))
+      writeFileSync(join(s, 'c.pem'), '-----BEGIN CERTIFICATE-----\nx\n-----END CERTIFICATE-----\n')
+      writeFileSync(join(s, 'k.pem'), 'not a key\n')
+      await refuses(await install(['--version', version, '--with-proxy', '--domain', 'portal.example.org', '--cert-mode', 'files', '--cert', join(s, 'c.pem'), '--key', join(s, 'k.pem')]), /is not a PEM private key/)
+      rmSync(s, { recursive: true, force: true })
+    })
+  })
 
   it('takes a --base-url without "{version}" as the release directory itself', async () => {
     const dir = base.replace('{version}/', `${version}`)
