@@ -224,8 +224,8 @@ phase-0 spike checks (13.1).
 
 ### 3.4 One-line installer (optional)
 
-For a fresh host, `install.sh` wraps the same steps. The URL is a placeholder: where it is published is an owner
-decision (14, D1). The script is only ever run **pinned and verified**: the documented form downloads it, checks
+For a fresh host, `install.sh` wraps the same steps. Where it is published was an owner decision (14, D1):
+GitHub Releases and GHCR (decided 2026-11-27); the URLs below are placeholders from before that decision. The script is only ever run **pinned and verified**: the documented form downloads it, checks
 it against a published SHA-256, and only then runs it, rather than piping an unverified script into `sh`:
 
 ```bash
@@ -1028,7 +1028,7 @@ Total phases 0–4 and 6: **33–42 days**; with phase 5: **38–49 days**. Phas
 
 | # | Decision | Options | Recommendation |
 | --- | --- | --- | --- |
-| D1 | Where `install.sh`, the release bundle and images are published | (a) internal registry and file server only (needs `docker login`); (b) public GitHub Releases + a public image registry; (c) both | (a) now; (b) only if Yoda is offered to other hospitals |
+| D1 | Where `install.sh`, the release bundle and images are published | (a) internal registry and file server only (needs `docker login`); (b) public GitHub Releases + a public image registry; (c) both | **Decided 2026-11-27 (owner): (b) GitHub Releases + GHCR**, replacing the earlier (a). `install.sh` defaults to the GitHub Release assets and `ghcr.io/tantee/yoda` (public, no login); an internal mirror stays supported (`--base-url`, `--image-prefix`, the GitLab pipeline). See `docs/releasing.md` |
 | D2 | Bundled Keycloak | (a) never; (b) later phase 5; (c) in v1 | (b), existing Keycloak as default |
 | D3 | Break-glass TOTP | (a) optional; (b) required | (b) required whenever the public URL is not localhost |
 | D4 | Mirror env secrets into the DB on boot | (a) yes, default on, `YODA_SETTINGS_IMPORT=false` to opt out; (b) never | (a): makes "move to UI" a one-line change |

@@ -1,9 +1,23 @@
 # Changelog
 
-Releases follow [semantic versioning](https://semver.org); each is a git tag of the same name (`1.0.0`) and the
-image tag the deploy job runs. Upgrade steps: [docs/operations.md](docs/operations.md#5-upgrade-and-rollback).
+Releases follow [semantic versioning](https://semver.org); each is a git tag `v<version>` (`v1.0.0`), published
+as a GitHub Release, and the version without the `v` is the image tag a host runs. Upgrade steps:
+[docs/operations.md](docs/operations.md#5-upgrade-and-rollback).
 
 ## Unreleased
+
+### Releases on GitHub
+
+- Releases are published on GitHub (owner decision D1, 2026-11-27): a `v<version>` tag runs
+  `.github/workflows/release.yml`, which pushes the images to `ghcr.io/tantee/yoda/<name>` (linux/amd64 and
+  linux/arm64, tagged `<version>` and `sha-<short>`), signs the release bundle with minisign and attaches it to the
+  GitHub Release with the changelog section as notes. Pull requests that touch the release files run it as a dry
+  run (amd64, nothing pushed, a throwaway key, an end-to-end `install.sh` check). See `docs/releasing.md`.
+- `install.sh` downloads from `https://github.com/tantee/yoda/releases/download/v<version>/` and uses the public
+  `ghcr.io/tantee/yoda` images by default, without `docker login`. `--base-url` now names the release's own
+  directory (`{version}` in it becomes the version), for an internal mirror together with `--image-prefix`.
+- Release tags carry a `v` (`v1.0.0`); the version a host runs stays `1.0.0`. The GitLab pipeline remains as an
+  internal mirror and maps a `v` tag to the version.
 
 ### System settings (in the portal)
 

@@ -314,10 +314,12 @@ Worktrees and clones live in the `runner-work` volume.
 `build-core` / `build-portal` / `build-runner` / `build-backup` (on the default branch and on tags: push to
 `$CI_REGISTRY_IMAGE/<name>` tagged with the short commit SHA, plus the git tag on tags and `latest` on the
 default branch), and a manual `deploy` job on tags that runs `ops/deploy/deploy.sh` on the deploy host over
-SSH (pull, migrate, up, wait for `/ready`). `.github/workflows/ci.yml` runs the same checks and only builds
-the images: the GitHub repository is public, so nothing is published from it.
+SSH (pull, migrate, up, wait for `/ready`); it is the optional internal mirror. `.github/workflows/ci.yml` runs
+the same checks and builds the images without pushing them. `.github/workflows/release.yml` publishes releases:
+on a `v*` tag it pushes the images to `ghcr.io/tantee/yoda/<name>` and creates the GitHub Release with the signed
+bundle; on a pull request that touches the release files it runs as a dry run ([docs/releasing.md](releasing.md)).
 
-**Versioning.** Releases follow [semantic versioning](https://semver.org) and are git tags without a `v`
-(`1.0.0`); the tag is the image tag the deploy job runs. Bump `version` in the root and `apps/core` `package.json` with the
+**Versioning.** Releases follow [semantic versioning](https://semver.org) and are git tags `v<version>`
+(`v1.0.0`); the version without the `v` is the image tag and the `YODA_VERSION` a host runs. Bump `version` in the root and `apps/core` `package.json` with the
 release (core reports it on `/health`) and add a `CHANGELOG.md` entry. Upgrade and rollback steps are in the
 [runbook](operations.md#5-upgrade-and-rollback).

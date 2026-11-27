@@ -23,5 +23,6 @@
 | Document | Contents |
 | --- | --- |
 | [Development](development.md) | Running from source, tests, images, GitLab integration and runner reference, CI and releases |
+| [Releasing](releasing.md) | Maintainers: the signing key and secrets, cutting a release on GitHub (Releases + GHCR), dry runs, an internal mirror |
 | [CHANGELOG](../CHANGELOG.md) | Changes per release |
 | [Design notes](design/) | Design refresh, installer proposal and verification, the fun touches |

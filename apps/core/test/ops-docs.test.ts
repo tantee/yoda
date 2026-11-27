@@ -156,7 +156,7 @@ describe('docs/operations.md commands', () => {
 
 describe('docs/operations.md installer (installer proposal §3.4, §13.2)', () => {
   it('downloads install.sh pinned, checks it, then runs it (never curl | sh)', () => {
-    expect(runbook).toContain('curl -fsSLO https://files.example.org/yoda/releases/1.2.0/install.sh')
+    expect(runbook).toContain('curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.2.0/install.sh')
     expect(runbook).toContain('sh install.sh --version 1.2.0 --dir /srv/yoda')
     expect(runbook).toMatch(/minisign -Vm SHA256SUMS/)
     expect(runbook).not.toMatch(/curl[^\n`]*\|\s*(ba)?sh\b/)
@@ -175,6 +175,51 @@ describe('docs/operations.md installer (installer proposal §3.4, §13.2)', () =
       'YODA_RELEASE_SIGNING_KEY',
       'YODA_RELEASE_UPLOAD_URL',
     ]) expect(runbook, s).toContain(s)
+  })
+})
+
+describe('release docs (GitHub Releases + GHCR, D1)', () => {
+  const readme = read('README.md')
+  const guide = read('docs/guides/install.md')
+  const releasing = read('docs/releasing.md')
+  const installSh = read('ops/install/install.sh')
+  const embedded = /^RELEASE_PUBKEY_EMBEDDED='([^']+)'$/m.exec(installSh)?.[1]
+
+  it('installs from the GitHub Release assets, pinned and verified, in the README and the install guide', () => {
+    for (const [name, text] of [['README', readme], ['install guide', guide]] as const) {
+      for (const f of ['install.sh', 'SHA256SUMS', 'SHA256SUMS.minisig']) {
+        expect(text, `${name} ${f}`).toContain(`curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.0.0/${f}\n`)
+      }
+      expect(text, name).toContain('sh install.sh --version 1.0.0 --dir /srv/yoda')
+      expect(text, name).toMatch(/latest release/)
+      expect(text, name).toContain('--image-prefix')
+      expect(text, name).not.toMatch(/curl[^\n`]*\|\s*(ba)?sh\b/)
+    }
+    // The mirror is the only place for the placeholder file server.
+    expect(readme).not.toContain('files.example.org')
+  })
+
+  it('shows the same release public key as install.sh embeds (the owner replaces both together)', () => {
+    expect(embedded).toBeTruthy()
+    for (const [name, text] of [['README', readme], ['install guide', guide]] as const) {
+      const keys = [...text.matchAll(/minisign -Vm SHA256SUMS -P (\S+)/g)].map((m) => m[1])
+      expect(keys.length, name).toBeGreaterThan(0)
+      expect(new Set(keys), name).toEqual(new Set([embedded]))
+    }
+  })
+
+  it('documents the owner steps for the signing key, secrets, packages and the tag', () => {
+    for (const s of [
+      'minisign -G -p yoda.pub -s yoda.key',
+      'RELEASE_PUBKEY_EMBEDDED',
+      'gh secret set MINISIGN_SECRET_KEY < yoda.key',
+      'gh secret set MINISIGN_PASSWORD',
+      'Change visibility → Public',
+      'git tag -s v1.0.0',
+      'git push origin v1.0.0',
+      "--base-url 'https://files.example.org/yoda/releases/{version}/'",
+    ]) expect(releasing, s).toContain(s)
+    expect(read('docs/design/installer-proposal.md')).toMatch(/^\| D1 \|.*Decided 2026-11-27 \(owner\): \(b\) GitHub Releases \+ GHCR/m)
   })
 })
 
