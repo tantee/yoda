@@ -53,7 +53,8 @@ describe('.gitlab-ci.yml', () => {
     const script = lines(build)
     expect(script).toContain('"$CI_REGISTRY_IMAGE/$IMAGE_NAME"')
     expect(script).toContain('$CI_COMMIT_SHORT_SHA')
-    expect(script).toMatch(/CI_COMMIT_TAG/)
+    // The version without a `v`: a mirrored GitHub tag v1.2.0 is image 1.2.0.
+    expect(script).toContain('"$IMAGE:${CI_COMMIT_TAG#v}"')
     expect(script).toMatch(/\$CI_COMMIT_BRANCH" = "\$CI_DEFAULT_BRANCH"[^\n]*:latest/)
     expect(script).toContain('docker push --all-tags')
     for (const name of images) {
@@ -74,7 +75,7 @@ describe('.gitlab-ci.yml', () => {
     expect((deploy as Job & { needs?: string[] }).needs?.sort()).toEqual(images.map((n) => `build-${n}`).sort())
   })
 
-  describe('release-bundle (installer proposal §3.4, D1)', () => {
+  describe('release-bundle (installer proposal §3.4, D1: the internal mirror)', () => {
     const job = ci['release-bundle'] as Job & { artifacts?: { paths?: string[] } }
     const script = lines(job)
 
@@ -82,7 +83,8 @@ describe('.gitlab-ci.yml', () => {
       expect(job.stage).toBe('release')
       expect(job.rules).toEqual([{ if: '$CI_COMMIT_TAG' }])
       expect(script).toMatch(/case "\$CI_COMMIT_TAG" in/)
-      expect(script).toContain('sh ops/install/bundle.sh "$CI_COMMIT_TAG" "$CI_REGISTRY_IMAGE" dist')
+      expect(script).toContain('export YODA_RELEASE="${CI_COMMIT_TAG#v}"')
+      expect(script).toContain('sh ops/install/bundle.sh "$YODA_RELEASE" "$CI_REGISTRY_IMAGE" dist')
       // Reproducible: the commit's time, with GNU tar and git from apk.
       expect(script).toContain('export SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"')
       expect(script).toMatch(/apk add --no-cache [^\n]*\btar\b[^\n]*\bgit\b/)
@@ -91,7 +93,9 @@ describe('.gitlab-ci.yml', () => {
 
     it('signs SHA256SUMS with the protected file key, naming the release, and checks it against install.sh\'s key', () => {
       expect(script).toContain('test -s "$YODA_RELEASE_SIGNING_KEY"')
-      expect(script).toContain('minisign -S -s "$YODA_RELEASE_SIGNING_KEY" -m "dist/releases/$CI_COMMIT_TAG/SHA256SUMS" -t "yoda release $CI_COMMIT_TAG"')
+      expect(script).toContain('minisign -S -s "$YODA_RELEASE_SIGNING_KEY" -m "dist/releases/$YODA_RELEASE/SHA256SUMS" -t "yoda release $YODA_RELEASE"')
+      // The optional key password goes on stdin, never on the command line.
+      expect(script).toContain(`printf '%s\\n' "$YODA_RELEASE_SIGNING_PASSWORD" | minisign -S`)
       expect(script).toContain('RELEASE_PUBKEY_EMBEDDED')
       expect(script).toMatch(/minisign -V -P "\$pub"/)
       // The trusted comment install.sh expects.
@@ -116,7 +120,7 @@ describe('.gitlab-ci.yml', () => {
     expect(script).toContain('StrictHostKeyChecking=yes')
     expect(script).not.toMatch(/StrictHostKeyChecking=(no|accept-new)/)
     expect(script).not.toMatch(/ssh-keyscan/)
-    for (const v of ['$DEPLOY_HOST', '$DEPLOY_USER', '$DEPLOY_PATH', '$CI_COMMIT_TAG']) expect(script).toContain(v)
+    for (const v of ['$DEPLOY_HOST', '$DEPLOY_USER', '$DEPLOY_PATH', "YODA_VERSION='${CI_COMMIT_TAG#v}'"]) expect(script).toContain(v)
     expect(script).toContain('ops/deploy/deploy.sh')
   })
 
@@ -214,7 +218,8 @@ describe('ops/deploy/deploy.sh', () => {
     expect(code).toContain('yoda-admin setup-token')
   })
 
-  it('refuses to run without an image prefix (never Docker Hub), before changing anything', () => {
+  it('defaults to the public GHCR images without an image prefix (never Docker Hub), before changing anything', () => {
+    expect(code).toContain("DEFAULT_IMAGE_PREFIX='ghcr.io/tantee/yoda'")
     const refuse = order('YODA_IMAGE_PREFIX is not set')
     expect(refuse).toBeLessThan(order('(umask 077'))
     expect(refuse).toBeLessThan(order('release=release.env.next'))
@@ -246,8 +251,21 @@ describe('docker-compose.prod.yml images', () => {
   it.each(Object.entries(want))('%s uses the published %s image at a required version and still builds locally', (service, name) => {
     const s = prod.services[service]!
     // No default prefix: a missing one must stop compose, never pull `yoda/...` from Docker Hub.
-    expect(s.image).toBe(`\${YODA_IMAGE_PREFIX:?YODA_IMAGE_PREFIX is required (the registry path; see release.env)}/${name}:\${YODA_VERSION:?YODA_VERSION is required (see release.env)}`)
+    // With the image's digest pinned (deploy.sh, from the signed bundle.env): <prefix>/<name>:<version>@<digest>.
+    const D = `YODA_${name.toUpperCase()}_DIGEST`
+    expect(s.image).toBe(
+      `\${YODA_IMAGE_PREFIX:?YODA_IMAGE_PREFIX is required (the registry path; see release.env)}/${name}:\${YODA_VERSION:?YODA_VERSION is required (see release.env)}\${${D}:+@\${${D}}}`,
+    )
     expect(s.build).toBeTruthy()
+  })
+})
+
+describe('Dockerfiles pin their base images by digest', () => {
+  it.each(['apps/core/Dockerfile', 'apps/portal/Dockerfile', 'apps/runner/Dockerfile', 'ops/backup/Dockerfile'])('%s', (file) => {
+    const froms = read(file).split('\n').filter((l) => l.startsWith('FROM '))
+    expect(froms.length).toBeGreaterThan(0)
+    // <image>:<exact tag>@sha256:<digest>: the tag for reading, the digest for what is built.
+    for (const f of froms) expect(f).toMatch(/^FROM [a-z0-9./-]+:[0-9][\w.-]*@sha256:[0-9a-f]{64}( AS \w+)?$/)
   })
 })
 
@@ -374,5 +392,224 @@ describe('.github/workflows/ci.yml', () => {
     const runs = gh.jobs.build!.steps.map((s) => s.run ?? '').join('\n')
     for (const name of images) expect(runs).toMatch(new RegExp(`docker build( .*)? -t yoda/${name}( |$)`, 'm'))
     expect(runs).not.toMatch(/docker (push|login)/)
+  })
+})
+
+type Step = { id?: string; name?: string; uses?: string; if?: string; run?: string; with?: Record<string, unknown>; env?: Record<string, string> }
+type WfJob = {
+  if?: string
+  needs?: string | string[]
+  permissions?: Record<string, string>
+  env?: Record<string, string>
+  strategy?: { matrix?: { include?: { name: string; file: string; context: string }[] } }
+  steps: Step[]
+}
+
+describe('.github/workflows/release.yml (GitHub Releases + GHCR)', () => {
+  const text = read('.github/workflows/release.yml')
+  const wf = parse(text) as {
+    on: Record<string, any>
+    permissions: Record<string, string>
+    env: Record<string, string>
+    jobs: Record<string, WfJob & { environment?: string }>
+  }
+  const jobs = wf.jobs
+  const step = (job: string, pred: (s: Step) => boolean) => {
+    const s = jobs[job]!.steps.find(pred)
+    expect(s, job).toBeTruthy()
+    return s!
+  }
+  const REAL = "needs.meta.outputs.real == 'true'"
+  const DRY = "needs.meta.outputs.real != 'true'"
+  const meta = () => step('meta', (s) => s.id === 'meta').run!
+
+  it('releases only on a pushed v* tag; pull requests and manual runs (no inputs) are always dry runs', () => {
+    expect(Object.keys(wf.on).sort()).toEqual(['pull_request', 'push', 'workflow_dispatch'])
+    expect(wf.on.push).toEqual({ tags: ['v*'] })
+    const paths: string[] = wf.on.pull_request.paths
+    for (const p of ['.github/workflows/release.yml', 'ops/install/**', 'apps/*/Dockerfile', 'ops/backup/**', 'docker-compose.prod.yml', 'CHANGELOG.md']) expect(paths).toContain(p)
+    // No dry_run switch: a manual run can never publish.
+    expect(wf.on.workflow_dispatch ?? null).toBeNull()
+    expect(text).not.toMatch(/inputs\./)
+    expect(meta()).toContain('if [ "$EVENT" = push ]; then')
+    expect(meta()).toContain('refs/tags/v*) ;;')
+    expect(meta()).toContain('version=${REF#refs/tags/v}')
+    expect(meta()).toContain('version="0.0.0-dryrun.$RUN_NUMBER"')
+  })
+
+  it('checks a release before building: tag on main, notes dated, package versions equal to the tag', () => {
+    const checkout = step('meta', (s) => !!s.uses?.startsWith('actions/checkout@'))
+    expect(checkout.with).toMatchObject({ 'fetch-depth': 0, 'persist-credentials': false })
+    const run = meta()
+    expect(run).toContain('git merge-base --is-ancestor "$GITHUB_SHA" origin/main ||')
+    expect(run).toContain('sh ops/install/release-notes.sh "$version" > /dev/null ||')
+    expect(run).toMatch(/\*\[Uu\]nreleased\*\) echo "::error::CHANGELOG\.md still says/)
+    expect(run).toContain('for f in package.json apps/core/package.json; do')
+    expect(run).toMatch(/\[ "\$pkg" = "\$version" \] \|\|\n\s*\{ echo "::error::\$f says version \$pkg, the tag says \$version[^\n]*exit 1; \}/)
+    expect(run).not.toContain('::warning::')
+  })
+
+  it('orders the jobs: images by digest, then the bundle pinning them is signed and verified, then tags, then the release', () => {
+    expect(Object.keys(jobs).sort()).toEqual(['bundle', 'images', 'images-dry', 'meta', 'release', 'tag'])
+    expect(jobs['images-dry']!.needs).toBe('meta')
+    expect(jobs['images-dry']!.if).toBe(DRY)
+    expect(jobs.images!.needs).toBe('meta')
+    expect(jobs.images!.if).toBe(REAL)
+    expect(jobs.bundle!.needs).toEqual(['meta', 'images-dry', 'images'])
+    expect(jobs.bundle!.if).toBe('${{ !cancelled() && !failure() }}')
+    expect(jobs.tag!.needs).toEqual(['meta', 'bundle'])
+    expect(jobs.tag!.if).toBe(REAL)
+    expect(jobs.release!.needs).toEqual(['meta', 'bundle', 'tag'])
+    expect(jobs.release!.if).toBe(REAL)
+  })
+
+  it('grants minimal permissions: packages:write only to the real image and tag jobs, never to a dry run', () => {
+    expect(wf.permissions).toEqual({})
+    expect(jobs.meta!.permissions).toEqual({ contents: 'read' })
+    expect(jobs['images-dry']!.permissions).toEqual({ contents: 'read' })
+    expect(jobs.bundle!.permissions).toEqual({ contents: 'read' })
+    expect(jobs.images!.permissions).toEqual({ contents: 'read', packages: 'write' })
+    expect(jobs.tag!.permissions).toEqual({ contents: 'read', packages: 'write' })
+    expect(jobs.release!.permissions).toEqual({ contents: 'write' })
+  })
+
+  it('runs the signing and publishing jobs in the `release` environment (v* tags only); a dry run in none', () => {
+    for (const j of ['images', 'tag', 'release']) expect(jobs[j]!.environment, j).toBe('release')
+    expect(jobs.bundle!.environment).toBe("${{ needs.meta.outputs.real == 'true' && 'release' || '' }}")
+    for (const j of ['meta', 'images-dry']) expect(jobs[j]!.environment, j).toBeUndefined()
+  })
+
+  it('pins every action by full commit SHA, and BuildKit and binfmt by digest', () => {
+    const uses = Object.values(jobs).flatMap((j) => j.steps.map((s) => s.uses).filter(Boolean)) as string[]
+    expect(uses.length).toBeGreaterThan(6)
+    for (const u of uses) expect(u).toMatch(/^[\w-]+\/[\w-]+@[0-9a-f]{40}$/)
+    for (const line of text.split('\n').filter((l) => /uses: /.test(l))) expect(line).toMatch(/@[0-9a-f]{40} # v\d+\.\d+\.\d+$/)
+    for (const j of ['images-dry', 'images']) {
+      const buildx = step(j, (s) => !!s.uses?.startsWith('docker/setup-buildx-action@'))
+      expect(String(buildx.with!['driver-opts'])).toMatch(/^image=moby\/buildkit:v\d+\.\d+\.\d+@sha256:[0-9a-f]{64}$/)
+    }
+    const qemu = step('images', (s) => !!s.uses?.startsWith('docker/setup-qemu-action@'))
+    expect(String(qemu.with!.image)).toMatch(/^tonistiigi\/binfmt:qemu-v\d+\.\d+\.\d+@sha256:[0-9a-f]{64}$/)
+  })
+
+  it('keeps secrets out of the file and out of run scripts (they reach scripts as env only)', () => {
+    const refs = [...text.matchAll(/secrets\.([A-Z_]+)/g)].map((m) => m[1]!)
+    expect([...new Set(refs)].sort()).toEqual(['GITHUB_TOKEN', 'MINISIGN_PASSWORD', 'MINISIGN_SECRET_KEY'])
+    for (const job of Object.values(jobs)) for (const s of job.steps) expect(s.run ?? '', s.name).not.toMatch(/\$\{\{/)
+    expect(text).not.toMatch(/BEGIN [A-Z ]*PRIVATE KEY|untrusted comment|RW[A-Za-z0-9+/]{50,}/)
+    expect(text).not.toMatch(/\b\d{1,3}(\.\d{1,3}){3}\b/)
+  })
+
+  it('builds the four images: a release multi-arch, pushed by digest, without cache; a dry run amd64, never pushed', () => {
+    for (const j of ['images-dry', 'images']) {
+      const matrix = jobs[j]!.strategy!.matrix!.include!
+      expect(matrix.map((m) => m.name), j).toEqual(images)
+      expect(matrix.find((m) => m.name === 'backup')).toMatchObject({ file: 'ops/backup/Dockerfile', context: 'ops/backup' })
+      const build = step(j, (s) => !!s.uses?.startsWith('docker/build-push-action@'))
+      expect(build.with!.platforms).toBe('${{ needs.meta.outputs.platforms }}')
+      expect(build.with!.push, j).toBeUndefined()
+      expect(build.with!.tags, j).toBeUndefined()
+      expect(String(build.with!.labels)).toContain('org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}')
+      const push = j === 'images' ? 'true' : 'false'
+      expect(build.with!.outputs).toBe(`type=image,name=\${{ needs.meta.outputs.prefix }}/\${{ matrix.name }},push-by-digest=true,name-canonical=true,push=${push}`)
+      const keep = step(j, (s) => s.name === 'keep the digest')
+      expect(keep.env).toEqual({ NAME: '${{ matrix.name }}', DIGEST: '${{ steps.build.outputs.digest }}' })
+      expect(keep.run).toContain("grep -Eqx 'sha256:[0-9a-f]{64}'")
+      expect(step(j, (s) => !!s.uses?.startsWith('actions/upload-artifact@')).with!.name).toBe('digest-${{ matrix.name }}')
+    }
+    // A release never reads the cache pull requests write.
+    const real = step('images', (s) => !!s.uses?.startsWith('docker/build-push-action@'))
+    expect(real.with!['no-cache']).toBe(true)
+    expect(real.with!['cache-from']).toBeUndefined()
+    expect(real.with!['cache-to']).toBeUndefined()
+    expect(step('images-dry', (s) => !!s.uses?.startsWith('docker/build-push-action@')).with!['cache-from']).toBe('type=gha,scope=${{ matrix.name }}')
+    // The dry run has no registry login and no QEMU.
+    expect(jobs['images-dry']!.steps.some((s) => s.uses?.startsWith('docker/login-action@') || s.uses?.startsWith('docker/setup-qemu-action@'))).toBe(false)
+    const login = step('images', (s) => !!s.uses?.startsWith('docker/login-action@'))
+    expect(login.with).toMatchObject({ registry: 'ghcr.io', password: '${{ secrets.GITHUB_TOKEN }}' })
+    expect(wf.env).toEqual({ DOCKER_BUILD_RECORD_UPLOAD: 'false' })
+    expect(meta()).toContain('platforms=linux/amd64,linux/arm64')
+    expect(meta()).toMatch(/else\n[\s\S]*platforms=linux\/amd64\n/)
+    // The image prefix and tags match what install.sh and release.env use: ghcr.io/<owner>/yoda, version without v.
+    expect(meta()).toContain(`echo "prefix=ghcr.io/$(printf '%s' "$REPO" | tr '[:upper:]' '[:lower:]')"`)
+    expect(meta()).toContain('echo "tag=v$version"')
+    expect(read('ops/install/install.sh')).toContain("DEFAULT_IMAGE_PREFIX='ghcr.io/tantee/yoda'")
+  })
+
+  it('writes the pushed digests into the bundle before signing it', () => {
+    const order = jobs.bundle!.steps.map((s) => s.name ?? s.id ?? s.uses)
+    const download = step('bundle', (s) => !!s.uses?.startsWith('actions/download-artifact@'))
+    expect(download.with).toMatchObject({ pattern: 'digest-*', 'merge-multiple': true })
+    expect(step('bundle', (s) => s.name === 'build the bundle').run).toContain('sh ops/install/bundle.sh "$VERSION" "$IMAGE_PREFIX" dist "$RUNNER_TEMP/digests.txt"')
+    expect(order.indexOf('collect the image digests')).toBeLessThan(order.indexOf('build the bundle'))
+    expect(order.indexOf('build the bundle')).toBeLessThan(order.indexOf('sign SHA256SUMS with the release key'))
+  })
+
+  it('signs a real release with the MINISIGN_* secrets, failing clearly without either', () => {
+    const sign = step('bundle', (s) => s.name === 'sign SHA256SUMS with the release key')
+    expect(sign.if).toBe(REAL)
+    expect(sign.env).toEqual({ MINISIGN_SECRET_KEY: '${{ secrets.MINISIGN_SECRET_KEY }}', MINISIGN_PASSWORD: '${{ secrets.MINISIGN_PASSWORD }}' })
+    const run = sign.run!
+    const guard = run.indexOf('if [ -z "${MINISIGN_SECRET_KEY:-}" ]; then')
+    expect(guard).toBeGreaterThan(-1)
+    expect(run.slice(guard)).toMatch(/::error::The secret MINISIGN_SECRET_KEY is not set[^\n]*gh secret set --env release MINISIGN_SECRET_KEY < yoda\.key[^\n]*\n\s*exit 1/)
+    const pw = run.indexOf('if [ -z "${MINISIGN_PASSWORD:-}" ]; then')
+    expect(pw).toBeGreaterThan(guard)
+    expect(run.slice(pw)).toMatch(/::error::The secret MINISIGN_PASSWORD is not set or empty[^\n]*\n\s*exit 1/)
+    expect(run).toContain(`printf '%s\\n' "$MINISIGN_PASSWORD" | minisign -S -s "$key" -m "$DIST/SHA256SUMS" -t "yoda release $VERSION"`)
+    expect(run).toContain('(umask 077 &&')
+    expect(run).toContain(`trap 'rm -f "$key"' EXIT`)
+    // The build step reads no secret.
+    expect(step('bundle', (s) => s.name === 'build the bundle').env).toBeUndefined()
+  })
+
+  it('checks the key embedded in install.sh against the signature on a real release', () => {
+    const check = step('bundle', (s) => s.name === 'check the release key against install.sh')
+    expect(check.if).toBe(REAL)
+    expect(check.run).toContain(`pub=$(sed -n "s/^RELEASE_PUBKEY_EMBEDDED='\\(.*\\)'$/\\1/p" ops/install/install.sh)`)
+    expect(check.run).toMatch(/\*REPLACE-WITH\*\)\n\s*echo "::error::ops\/install\/install\.sh still embeds the placeholder/)
+    expect(check.run).toContain('minisign -V -q -P "$pub" -m "$DIST/SHA256SUMS" ||')
+  })
+
+  it('signs a dry run with a throwaway key made in the job, never stored, and verifies it with install.sh', () => {
+    const eph = step('bundle', (s) => s.id === 'ephemeral')
+    expect(eph.if).toBe(DRY)
+    expect(eph.env).toBeUndefined()
+    expect(eph.run).toContain('minisign -G -p "$eph/yoda.pub" -s "$eph/yoda.key"')
+    expect(eph.run).toContain('rm -f "$eph/yoda.key"')
+    expect(eph.run).not.toContain('REPLACE-WITH')
+    const verify = step('bundle', (s) => s.name === 'verify end to end with install.sh')
+    expect(verify.if).toBeUndefined()
+    expect(verify.env).toEqual({ YODA_RELEASE_PUBKEY: '${{ steps.ephemeral.outputs.pubkey }}' })
+    expect(verify.run).toContain('sh ops/install/check-release.sh "$VERSION" "$DIST" "$IMAGE_PREFIX" "$RUNNER_TEMP/digests.txt"')
+    // Only a real release keeps the bundle.
+    const upload = step('bundle', (s) => !!s.uses?.startsWith('actions/upload-artifact@'))
+    expect(upload.if).toBe(REAL)
+    const order = jobs.bundle!.steps.map((s) => s.name ?? s.id)
+    expect(order.indexOf('check the release key against install.sh')).toBeLessThan(order.indexOf('verify end to end with install.sh'))
+    expect(order.indexOf('verify end to end with install.sh')).toBeLessThan(order.indexOf('keep the signed bundle for the release job'))
+  })
+
+  it('tags exactly the digests of the signed bundle, after checking its signature again', () => {
+    const readBack = step('tag', (s) => s.name === 'read the digests from the signed bundle').run!
+    expect(readBack).toContain('minisign -V -P "$pub" -m assets/SHA256SUMS')
+    expect(readBack).toContain('grep -qFx "Trusted comment: yoda release $VERSION"')
+    expect(readBack).toContain('sha256sum --check SHA256SUMS')
+    expect(readBack).toContain('tar -xzOf "assets/yoda-$VERSION.tar.gz" bundle.env')
+    const tag = step('tag', (s) => s.name === 'tag the images').run!
+    expect(tag).toContain('docker buildx imagetools create -t "$PREFIX/$name:$VERSION" -t "$PREFIX/$name:$SHA_TAG" "$PREFIX/$name@$digest"')
+    expect(tag).toContain('[ "$got" = "$digest" ] ||')
+    expect(text).not.toMatch(/:latest\b/)
+  })
+
+  it('creates the GitHub Release with the CHANGELOG notes, the four assets, prerelease for x.y.z-<suffix>', () => {
+    const create = step('release', (s) => s.name === 'create the GitHub Release')
+    expect(create.env).toEqual({ GH_TOKEN: '${{ github.token }}' })
+    const run = create.run!
+    expect(run).toContain('sh ops/install/release-notes.sh "$VERSION" > "$RUNNER_TEMP/notes.md"')
+    expect(run).toContain('gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag')
+    expect(run).toContain('[ "$PRERELEASE" != true ] || pre=--prerelease')
+    expect(meta()).toMatch(/\*-\*\) prerelease=true ;;/)
+    expect(run).not.toMatch(/\bgit (tag|push)\b/)
   })
 })

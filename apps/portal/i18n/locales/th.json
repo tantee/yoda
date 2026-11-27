@@ -2091,6 +2091,18 @@
         "version": {
           "label": "เวอร์ชัน"
         },
+        "coreDigest": {
+          "label": "ไดเจสต์อิมเมจ core"
+        },
+        "portalDigest": {
+          "label": "ไดเจสต์อิมเมจ portal"
+        },
+        "runnerDigest": {
+          "label": "ไดเจสต์อิมเมจ runner"
+        },
+        "backupDigest": {
+          "label": "ไดเจสต์อิมเมจ backup"
+        },
         "corePort": {
           "label": "พอร์ต core บนเครื่อง"
         },

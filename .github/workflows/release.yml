@@ -1,0 +1,441 @@
+# Publishes a Yoda release on GitHub (docs/releasing.md): the images on ghcr.io/<owner>/yoda/<name> and the signed
+# release bundle as the GitHub Release's assets, the files install.sh downloads by default.
+#
+# - Only a pushed `v<version>` tag (e.g. v1.0.0, v1.1.0-rc.1) on a commit of main is a real release: images for
+#   linux/amd64 and linux/arm64 pushed by digest, untagged; the bundle pins those digests (bundle.env) and is
+#   signed with the MINISIGN_SECRET_KEY secret of the `release` environment (the job fails without it), then
+#   checked against the public key embedded in install.sh; only then the images get their tags, <version> (no
+#   `v`, the YODA_VERSION a host pins) and sha-<short sha>, and the GitHub Release is created with the
+#   CHANGELOG.md section of that version as its notes. The jobs that sign or publish run in the `release`
+#   environment, which only v* tags may use (docs/releasing.md, one-time setup).
+# - A pull request touching the release files, or a manual run (it has no inputs), is always a dry run: the same
+#   builds for linux/amd64 only, nothing pushed, no packages permission, the bundle signed with a throwaway key
+#   made in the job (never stored or uploaded), and install.sh verifying it end to end against a local HTTP server.
+#
+# A tag that cannot be signed publishes no tag and no release (the untagged image digests it pushed are unused).
+# A failed real run is recovered with "Re-run failed jobs", which reuses the signed bundle and the digests.
+# An internal mirror (the GitLab pipeline, .gitlab-ci.yml) stays possible: install.sh --base-url / --image-prefix.
+# Actions are pinned by full commit SHA (the comment names the release), BuildKit and binfmt images by digest
+# (the comment or tag names the version); bump them deliberately (docs/releasing.md, "Pinned build inputs").
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - ops/install/**
+      - ops/deploy/**
+      - ops/backup/**
+      - apps/*/Dockerfile
+      - .dockerignore
+      - docker-compose.yml
+      - docker-compose.prod.yml
+      - CHANGELOG.md
+  # Always a dry run: a release is a pushed tag only (a failed release is re-run from its own run).
+  workflow_dispatch:
+
+permissions: {}
+
+env:
+  # docker/build-push-action would upload a build record artifact per build; nothing but the files below is kept.
+  DOCKER_BUILD_RECORD_UPLOAD: 'false'
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  meta:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      real: ${{ steps.meta.outputs.real }}
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
+      prefix: ${{ steps.meta.outputs.prefix }}
+      sha_tag: ${{ steps.meta.outputs.sha_tag }}
+      platforms: ${{ steps.meta.outputs.platforms }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0 # origin/main, for the ancestry check
+      - id: meta
+        name: release or dry run
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          REPO: ${{ github.repository }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          set -eu
+          real=false
+          # A real release is a pushed v* tag and nothing else; pull requests and manual runs are dry runs.
+          if [ "$EVENT" = push ]; then
+            case "$REF" in
+              refs/tags/v*) ;;
+              *) echo "::error::A real release runs on a v<version> tag only (got $REF)."; exit 1 ;;
+            esac
+            real=true
+            version=${REF#refs/tags/v}
+          else
+            version="0.0.0-dryrun.$RUN_NUMBER"
+          fi
+          printf '%s\n' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$' ||
+            { echo "::error::Not a release version: $version (tags are v<x.y.z>, e.g. v1.0.0 or v1.1.0-rc.1)."; exit 1; }
+          case "$version" in
+            *-*) prerelease=true ;;
+            *) prerelease=false ;;
+          esac
+          if [ "$real" = true ]; then
+            git merge-base --is-ancestor "$GITHUB_SHA" origin/main ||
+              { echo "::error::The tagged commit $GITHUB_SHA is not on main: tag a commit of origin/main (docs/releasing.md, Cut a release)."; exit 1; }
+            sh ops/install/release-notes.sh "$version" > /dev/null ||
+              { echo "::error::CHANGELOG.md has no \"## $version\" section: add the release notes, commit, and tag again."; exit 1; }
+            heading=$(awk -v v="$version" '/^## / && $2 == v { print; exit }' CHANGELOG.md)
+            case "$heading" in
+              *[Uu]nreleased*) echo "::error::CHANGELOG.md still says \"$heading\": put the release date in the heading in the tagged commit."; exit 1 ;;
+            esac
+            for f in package.json apps/core/package.json; do
+              pkg=$(sed -n 's/^  "version": "\(.*\)",$/\1/p' "$f")
+              [ "$pkg" = "$version" ] ||
+                { echo "::error::$f says version $pkg, the tag says $version: bump it in the tagged commit (docs/releasing.md)."; exit 1; }
+            done
+            platforms=linux/amd64,linux/arm64
+          else
+            # Exercise the notes extraction on the newest released section.
+            latest=$(sed -n 's/^## \([0-9][0-9A-Za-z.-]*\).*$/\1/p' CHANGELOG.md | head -n 1)
+            sh ops/install/release-notes.sh "$latest" > /dev/null
+            platforms=linux/amd64
+          fi
+          {
+            echo "real=$real"
+            echo "version=$version"
+            echo "tag=v$version"
+            echo "prerelease=$prerelease"
+            echo "prefix=ghcr.io/$(printf '%s' "$REPO" | tr '[:upper:]' '[:lower:]')"
+            echo "sha_tag=sha-$(printf '%s' "$GITHUB_SHA" | cut -c1-7)"
+            echo "platforms=$platforms"
+          } | tee -a "$GITHUB_OUTPUT"
+
+  # Dry runs only: no packages permission, nothing pushed. The digests (from BuildKit, of the images it would push)
+  # exercise the same pinning path as a release.
+  images-dry:
+    if: needs.meta.outputs.real != 'true'
+    needs: meta
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: core, file: apps/core/Dockerfile, context: . }
+          - { name: portal, file: apps/portal/Dockerfile, context: . }
+          - { name: runner, file: apps/runner/Dockerfile, context: . }
+          - { name: backup, file: ops/backup/Dockerfile, context: ops/backup }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          driver-opts: image=moby/buildkit:v0.35.1@sha256:baf6138eb8c37644800c7c913fba051e840ebb9ba13eaf92d92ef9a1712d0b4c
+      - id: build
+        name: build ${{ matrix.name }}
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          platforms: ${{ needs.meta.outputs.platforms }}
+          outputs: type=image,name=${{ needs.meta.outputs.prefix }}/${{ matrix.name }},push-by-digest=true,name-canonical=true,push=false
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.title=yoda-${{ matrix.name }}
+            org.opencontainers.image.version=${{ needs.meta.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.licenses=Apache-2.0
+          # Pull requests share this cache; a real release never reads it.
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+      - name: keep the digest
+        env:
+          NAME: ${{ matrix.name }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -eu
+          printf '%s\n' "$DIGEST" | grep -Eqx 'sha256:[0-9a-f]{64}' || { echo "::error::No image digest for $NAME: $DIGEST"; exit 1; }
+          mkdir -p "$RUNNER_TEMP/digests"
+          printf '%s\n' "$DIGEST" > "$RUNNER_TEMP/digests/$NAME"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: digest-${{ matrix.name }}
+          path: ${{ runner.temp }}/digests/${{ matrix.name }}
+          if-no-files-found: error
+          retention-days: 1
+
+  # Real releases: pushed by digest only, untagged; the tags come after the bundle pinning these digests is signed.
+  # No build cache: a release never reads what pull requests wrote.
+  images:
+    if: needs.meta.outputs.real == 'true'
+    needs: meta
+    runs-on: ubuntu-24.04
+    environment: release
+    permissions:
+      contents: read
+      packages: write # push to ghcr.io
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: core, file: apps/core/Dockerfile, context: . }
+          - { name: portal, file: apps/portal/Dockerfile, context: . }
+          - { name: runner, file: apps/runner/Dockerfile, context: . }
+          - { name: backup, file: ops/backup/Dockerfile, context: ops/backup }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: QEMU (linux/arm64)
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        with:
+          image: tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+          platforms: arm64
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          driver-opts: image=moby/buildkit:v0.35.1@sha256:baf6138eb8c37644800c7c913fba051e840ebb9ba13eaf92d92ef9a1712d0b4c
+      - name: log in to ghcr.io
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: build
+        name: build and push ${{ matrix.name }} by digest
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          platforms: ${{ needs.meta.outputs.platforms }}
+          outputs: type=image,name=${{ needs.meta.outputs.prefix }}/${{ matrix.name }},push-by-digest=true,name-canonical=true,push=true
+          # The source label links the package to this repository on GitHub.
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.title=yoda-${{ matrix.name }}
+            org.opencontainers.image.version=${{ needs.meta.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.licenses=Apache-2.0
+          no-cache: true
+      - name: keep the digest
+        env:
+          NAME: ${{ matrix.name }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -eu
+          printf '%s\n' "$DIGEST" | grep -Eqx 'sha256:[0-9a-f]{64}' || { echo "::error::No image digest for $NAME: $DIGEST"; exit 1; }
+          mkdir -p "$RUNNER_TEMP/digests"
+          printf '%s\n' "$DIGEST" > "$RUNNER_TEMP/digests/$NAME"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: digest-${{ matrix.name }}
+          path: ${{ runner.temp }}/digests/${{ matrix.name }}
+          if-no-files-found: error
+          retention-days: 7
+
+  bundle:
+    # After whichever image job ran (the other one is skipped).
+    if: ${{ !cancelled() && !failure() }}
+    needs: [meta, images-dry, images]
+    runs-on: ubuntu-24.04
+    # The signing secrets live in the `release` environment, which only v* tags may use; a dry run uses none.
+    environment: ${{ needs.meta.outputs.real == 'true' && 'release' || '' }}
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.meta.outputs.version }}
+      IMAGE_PREFIX: ${{ needs.meta.outputs.prefix }}
+      DIST: dist/releases/${{ needs.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: tools
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends minisign
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: digest-*
+          path: ${{ runner.temp }}/digests
+          merge-multiple: true
+      - name: collect the image digests
+        run: |
+          set -eu
+          for name in core portal runner backup; do
+            printf '%s %s\n' "$name" "$(cat "$RUNNER_TEMP/digests/$name")"
+          done | tee "$RUNNER_TEMP/digests.txt"
+      - name: build the bundle
+        run: |
+          set -eu
+          # Reproducible: every mtime is the commit's time (GNU tar, gzip -n).
+          SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)
+          export SOURCE_DATE_EPOCH
+          sh ops/install/bundle.sh "$VERSION" "$IMAGE_PREFIX" dist "$RUNNER_TEMP/digests.txt"
+      - name: sign SHA256SUMS with the release key
+        if: needs.meta.outputs.real == 'true'
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
+        run: |
+          set -eu
+          if [ -z "${MINISIGN_SECRET_KEY:-}" ]; then
+            echo "::error::The secret MINISIGN_SECRET_KEY is not set (in the release environment, or the repository), and a release is never published unsigned. Set it with: gh secret set --env release MINISIGN_SECRET_KEY < yoda.key (docs/releasing.md)."
+            exit 1
+          fi
+          if [ -z "${MINISIGN_PASSWORD:-}" ]; then
+            echo "::error::The secret MINISIGN_PASSWORD is not set or empty: the release key is password protected, and an empty password cannot open it. Set it with: gh secret set --env release MINISIGN_PASSWORD (docs/releasing.md)."
+            exit 1
+          fi
+          key="$RUNNER_TEMP/yoda.key"
+          trap 'rm -f "$key"' EXIT
+          (umask 077 && printf '%s\n' "$MINISIGN_SECRET_KEY" > "$key")
+          printf '%s\n' "$MINISIGN_PASSWORD" | minisign -S -s "$key" -m "$DIST/SHA256SUMS" -t "yoda release $VERSION" ||
+            { echo "::error::minisign could not sign with MINISIGN_SECRET_KEY: check the key and MINISIGN_PASSWORD (docs/releasing.md)."; exit 1; }
+      - name: check the release key against install.sh
+        if: needs.meta.outputs.real == 'true'
+        run: |
+          set -eu
+          pub=$(sed -n "s/^RELEASE_PUBKEY_EMBEDDED='\(.*\)'$/\1/p" ops/install/install.sh)
+          case "$pub" in
+            '' | *REPLACE-WITH*)
+              echo "::error::ops/install/install.sh still embeds the placeholder public key. Put the second line of yoda.pub (it starts RW) into RELEASE_PUBKEY_EMBEDDED and the README verification snippet, commit, delete this tag and tag again (docs/releasing.md)."
+              exit 1
+              ;;
+          esac
+          minisign -V -q -P "$pub" -m "$DIST/SHA256SUMS" ||
+            { echo "::error::The public key embedded in ops/install/install.sh does not match MINISIGN_SECRET_KEY: install.sh would refuse this release. Embed the public half of the signing key (yoda.pub, second line), or set the secret to the matching yoda.key (docs/releasing.md)."; exit 1; }
+      - id: ephemeral
+        name: sign SHA256SUMS with a throwaway key (dry run)
+        if: needs.meta.outputs.real != 'true'
+        run: |
+          set -eu
+          # Made here, used once, never stored or uploaded: a dry run never touches the release key.
+          eph="$RUNNER_TEMP/ephemeral"
+          mkdir -m 700 "$eph"
+          pw=$(head -c 24 /dev/urandom | base64)
+          echo "::add-mask::$pw"
+          printf '%s\n%s\n' "$pw" "$pw" | minisign -G -p "$eph/yoda.pub" -s "$eph/yoda.key" > /dev/null
+          printf '%s\n' "$pw" | minisign -S -s "$eph/yoda.key" -m "$DIST/SHA256SUMS" -t "yoda release $VERSION"
+          rm -f "$eph/yoda.key"
+          echo "pubkey=$(sed -n 2p "$eph/yoda.pub")" >> "$GITHUB_OUTPUT"
+      - name: verify end to end with install.sh
+        env:
+          # Empty on a real release: install.sh then verifies with the key it embeds, as every host will.
+          YODA_RELEASE_PUBKEY: ${{ steps.ephemeral.outputs.pubkey }}
+        run: |
+          set -eu
+          [ -n "$YODA_RELEASE_PUBKEY" ] || unset YODA_RELEASE_PUBKEY
+          sh ops/install/check-release.sh "$VERSION" "$DIST" "$IMAGE_PREFIX" "$RUNNER_TEMP/digests.txt"
+          ls -l "$DIST"
+          cat "$DIST/SHA256SUMS"
+      - name: keep the signed bundle for the release job
+        if: needs.meta.outputs.real == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-bundle
+          path: |
+            ${{ env.DIST }}/install.sh
+            ${{ env.DIST }}/yoda-${{ env.VERSION }}.tar.gz
+            ${{ env.DIST }}/SHA256SUMS
+            ${{ env.DIST }}/SHA256SUMS.minisig
+          if-no-files-found: error
+          retention-days: 7
+
+  # The version and sha tags, on exactly the digests the signed bundle pins: read back from the signed bundle,
+  # after checking its signature again.
+  tag:
+    if: needs.meta.outputs.real == 'true'
+    needs: [meta, bundle]
+    runs-on: ubuntu-24.04
+    environment: release
+    permissions:
+      contents: read
+      packages: write # tag the pushed digests on ghcr.io
+    env:
+      VERSION: ${{ needs.meta.outputs.version }}
+      PREFIX: ${{ needs.meta.outputs.prefix }}
+      SHA_TAG: ${{ needs.meta.outputs.sha_tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: tools
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends minisign
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-bundle
+          path: assets
+      - name: read the digests from the signed bundle
+        run: |
+          set -eu
+          pub=$(sed -n "s/^RELEASE_PUBKEY_EMBEDDED='\(.*\)'$/\1/p" ops/install/install.sh)
+          out=$(minisign -V -P "$pub" -m assets/SHA256SUMS)
+          printf '%s\n' "$out" | grep -qFx "Trusted comment: yoda release $VERSION" ||
+            { echo "::error::assets/SHA256SUMS is not signed for $VERSION"; exit 1; }
+          (cd assets && sha256sum --check SHA256SUMS)
+          tar -xzOf "assets/yoda-$VERSION.tar.gz" bundle.env > "$RUNNER_TEMP/bundle.env"
+          cat "$RUNNER_TEMP/bundle.env"
+          grep -qxF "YODA_IMAGE_PREFIX=$PREFIX" "$RUNNER_TEMP/bundle.env" || { echo "::error::bundle.env does not name $PREFIX"; exit 1; }
+      - name: log in to ghcr.io
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: tag the images
+        run: |
+          set -eu
+          for name in core portal runner backup; do
+            upper=$(printf '%s' "$name" | tr '[:lower:]' '[:upper:]')
+            digest=$(sed -n "s/^YODA_${upper}_DIGEST=\(sha256:[0-9a-f]\{64\}\)$/\1/p" "$RUNNER_TEMP/bundle.env")
+            [ -n "$digest" ] || { echo "::error::bundle.env has no digest for $name"; exit 1; }
+            docker buildx imagetools create -t "$PREFIX/$name:$VERSION" -t "$PREFIX/$name:$SHA_TAG" "$PREFIX/$name@$digest"
+            got=$(docker buildx imagetools inspect "$PREFIX/$name:$VERSION" --format '{{json .Manifest}}' | jq -r .digest)
+            [ "$got" = "$digest" ] || { echo "::error::$PREFIX/$name:$VERSION is $got, not the signed $digest"; exit 1; }
+            echo "$PREFIX/$name:$VERSION = $digest"
+          done
+
+  release:
+    if: needs.meta.outputs.real == 'true'
+    needs: [meta, bundle, tag]
+    runs-on: ubuntu-24.04
+    environment: release
+    permissions:
+      contents: write # create the GitHub Release
+    env:
+      VERSION: ${{ needs.meta.outputs.version }}
+      TAG: ${{ needs.meta.outputs.tag }}
+      PRERELEASE: ${{ needs.meta.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-bundle
+          path: assets
+      - name: create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          sh ops/install/release-notes.sh "$VERSION" > "$RUNNER_TEMP/notes.md"
+          # The asset names install.sh downloads (bundle.sh writes them).
+          set -- assets/install.sh "assets/yoda-$VERSION.tar.gz" assets/SHA256SUMS assets/SHA256SUMS.minisig
+          for f in "$@"; do [ -s "$f" ] || { echo "::error::$f is missing"; exit 1; }; done
+          pre=''
+          [ "$PRERELEASE" != true ] || pre=--prerelease
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --title "Yoda $VERSION" \
+            --notes-file "$RUNNER_TEMP/notes.md" ${pre:+"$pre"} "$@"

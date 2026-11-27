@@ -7,8 +7,10 @@ portal, and [docs/README.md](README.md) lists every guide.
 How to install, configure, upgrade, back up and troubleshoot a production Yoda. Every hostname here is a
 placeholder (`portal.example.org`, `sso.example.org`, `gitlab.example.org`, `registry.example.org`,
 `files.example.org`, `smtp.example.org`); use your own. Secrets live only in the deploy host's `.env` (mode `600`),
-in System settings (encrypted with the master key, section 4a) and in GitLab CI/CD variables, never in the
-repository, tickets or chat.
+in System settings (encrypted with the master key, section 4a), in GitHub repository secrets and in GitLab CI/CD
+variables, never in the repository, tickets or chat. Releases are published on GitHub (GitHub Release assets and
+`ghcr.io/tantee/yoda` images, [docs/releasing.md](releasing.md)); `files.example.org` and `registry.example.org`
+stand for an optional internal mirror.
 
 Contents:
 
@@ -29,11 +31,14 @@ Contents:
 
 - **Host.** One Linux server (4 CPU, 8 GB RAM and enough disk for the database, the files bucket and 14 days of
   backups is a reasonable start) with Docker Engine 24+ and the Compose plugin v2.24+. A deploy user that may
-  run `docker` (member of the `docker` group), and an SSH key pair for the GitLab deploy job (section 5).
-- **Registry access.** The host pulls images from the GitLab project's container registry (internal only, D1).
-  Create a GitLab **deploy token** on the project with the `read_registry` scope only, and log in once on the host
-  as the deploy user: `docker login registry.example.org` (the user name and token are entered interactively, so
-  they stay out of shell history; `install.sh` runs this for you when there is no saved login).
+  run `docker` (member of the `docker` group), and, for an internal GitLab mirror's deploy job, an SSH key pair
+  (section 5).
+- **Registry access.** The host pulls the public images from `ghcr.io/tantee/yoda` (no login; outbound HTTPS to
+  `ghcr.io` and `github.com`). **From an internal mirror** instead (D1, [releasing](releasing.md#internal-mirror)):
+  create a GitLab **deploy token** on the mirror project with the `read_registry` scope only, and log in once on
+  the host as the deploy user: `docker login registry.example.org` (the user name and token are entered
+  interactively, so they stay out of shell history; `install.sh` runs this for you for a registry other than
+  ghcr.io when there is no saved login).
 - **Tools for `install.sh`:** `curl` (or `wget`), `sha256sum` (or `shasum`), `tar` and `minisign`
   (`apt install minisign` / `dnf install minisign`), to check the release signature.
 - **DNS and TLS.** A reverse proxy (nginx, Traefik, the organisation's load balancer) terminates HTTPS for
@@ -159,8 +164,12 @@ Bootstrap only: release and host (compose reads them before any container exists
 
 | Variable | Purpose | Required | Example |
 | --- | --- | --- | --- |
-| `YODA_IMAGE_PREFIX` | Registry path of the images; compose uses `<prefix>/<name>:<version>`. `install.sh` pins it in `release.env` (from the bundle); otherwise set it in `.env` | yes on a deploy host | `registry.example.org/group/yoda` |
+| `YODA_IMAGE_PREFIX` | Registry path of the images; compose uses `<prefix>/<name>:<version>`. `install.sh` pins it in `release.env` (from the bundle); `deploy.sh` uses `ghcr.io/tantee/yoda` when it is set nowhere (never Docker Hub) | optional (`ghcr.io/tantee/yoda`) | `registry.example.org/group/yoda` |
 | `YODA_VERSION` | Release tag to run; `deploy.sh` pins it in `release.env`, never in `.env` (compose refuses to start without it) | yes, in `release.env` | `1.0.0` |
+| `YODA_CORE_DIGEST` | Manifest digest of the core image; compose then runs `<prefix>/core:<version>@<digest>`. `deploy.sh` pins it in `release.env` from the signed `bundle.env` of the same release (any prefix: a digest names content), else empty (the tag); never set it by hand | no (`deploy.sh`) | `sha256:4f…` |
+| `YODA_PORTAL_DIGEST` | Manifest digest of the portal image; compose then runs `<prefix>/portal:<version>@<digest>`. `deploy.sh` pins it in `release.env` from the signed `bundle.env` of the same release (any prefix: a digest names content), else empty (the tag); never set it by hand | no (`deploy.sh`) | `sha256:4f…` |
+| `YODA_RUNNER_DIGEST` | Manifest digest of the runner image; compose then runs `<prefix>/runner:<version>@<digest>`. `deploy.sh` pins it in `release.env` from the signed `bundle.env` of the same release (any prefix: a digest names content), else empty (the tag); never set it by hand | no (`deploy.sh`) | `sha256:4f…` |
+| `YODA_BACKUP_DIGEST` | Manifest digest of the backup image; compose then runs `<prefix>/backup:<version>@<digest>`. `deploy.sh` pins it in `release.env` from the signed `bundle.env` of the same release (any prefix: a digest names content), else empty (the tag); never set it by hand | no (`deploy.sh`) | `sha256:4f…` |
 | `CORE_PORT` | Host port for core | optional (`4000`) | `4000` |
 | `CORE_BIND` | Host address core is published on | optional (`127.0.0.1`) | `127.0.0.1` |
 | `PORTAL_PORT` | Host port for the portal | optional (`3000`) | `3000` |
@@ -327,31 +336,42 @@ user's shell):
 alias dc='docker compose --env-file .env --env-file release.env -f docker-compose.yml -f docker-compose.prod.yml'
 ```
 
-`release.env` holds `YODA_VERSION=<tag>` (and `YODA_IMAGE_PREFIX` after `install.sh`), written by `deploy.sh`
+`release.env` holds `YODA_VERSION=<tag>`, `YODA_IMAGE_PREFIX` and the image digests (`YODA_<NAME>_DIGEST`, empty
+when the release was deployed by tag), written by `deploy.sh`
 once it has pulled that release, so every `dc` command runs the deployed images; without it compose stops with
 "YODA_VERSION is required". Never build on the host: `dc up` always gets `--no-build`. A `YODA_VERSION` exported
 in your shell overrides `release.env`, so leave it unset.
 
-1. **Install the release.** Download `install.sh` and its checksums for a pinned release from the internal file
-   server, check them, then run it (never pipe a download into `sh`):
+1. **Install the release.** Download `install.sh` and its checksums for a pinned release (the latest on
+   https://github.com/tantee/yoda/releases; `1.2.0` here is an example) from its GitHub Release, check them, then
+   run it (never pipe a download into `sh`):
 
    ```bash
-   curl -fsSLO https://files.example.org/yoda/releases/1.2.0/install.sh
-   curl -fsSLO https://files.example.org/yoda/releases/1.2.0/SHA256SUMS
-   curl -fsSLO https://files.example.org/yoda/releases/1.2.0/SHA256SUMS.minisig
-   minisign -Vm SHA256SUMS -P <release public key, section 5> && sha256sum --check --ignore-missing SHA256SUMS
-   sh install.sh --version 1.2.0 --dir /srv/yoda
+   curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.2.0/install.sh
+   curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.2.0/SHA256SUMS
+   curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.2.0/SHA256SUMS.minisig
+   out=$(minisign -Vm SHA256SUMS -P RWSErktAr/A+x5Gvgr0x29wiu41FmYEVlJYoXyB6oJk4kvwQLOZs9O9j) &&
+     printf '%s\n' "$out" | grep -Fx 'Trusted comment: yoda release 1.2.0' &&
+     sha256sum --check --ignore-missing SHA256SUMS &&
+     sh install.sh --version 1.2.0 --dir /srv/yoda
    ```
+
+   Each command runs only when the one before it passed: the signature, then that the signed trusted comment
+   names this release (`Trusted comment: yoda release 1.2.0`), then the checksum of `install.sh`. From an
+   internal mirror add `--base-url 'https://files.example.org/yoda/releases/{version}/'` and
+   `--image-prefix registry.example.org/group/yoda` (`{version}` becomes the version; section 5, "Internal
+   mirror").
 
    `install.sh` checks the prerequisites (Docker Engine 24+, Compose v2.24+, docker access, about 10 GB free),
    downloads the release bundle, verifies its signature (the release key is built into the script) and checksum
    and refuses on any mismatch, refuses `latest` or an existing install, unpacks the bundle (compose files,
-   `ops/deploy/deploy.sh`, `.env.example`, this runbook), creates an empty `.env` (`0600`), logs in to the
-   registry if needed, and runs `deploy.sh`. **Without the script:** copy `docker-compose.yml`,
+   `ops/deploy/deploy.sh`, `.env.example`, this runbook), creates an empty `.env` (`0600`), logs in to a mirror's
+   registry if needed (to ghcr.io only when a pull failed, because the packages are not public), and runs
+   `deploy.sh`. **Without the script:** copy `docker-compose.yml`,
    `docker-compose.prod.yml` and `ops/deploy/deploy.sh` (keep the paths) from the bundle or the release tag
-   into the deploy directory, put `YODA_IMAGE_PREFIX=<registry path>` in `.env`, log in to the registry
-   (section 1), and run `cd /srv/yoda && YODA_VERSION=1.2.0 sh ops/deploy/deploy.sh`.
-2. **Deploy** (what `install.sh` runs; later releases go through the deploy job, section 5): it creates an empty
+   into the deploy directory, for a mirror put its path in `.env` as `YODA_IMAGE_PREFIX` (without one `deploy.sh` uses
+   `ghcr.io/tantee/yoda`), log in to a mirror's registry (section 1), and run `cd /srv/yoda && YODA_VERSION=1.2.0 sh ops/deploy/deploy.sh`.
+2. **Deploy** (what `install.sh` runs; later releases: section 5): it creates an empty
    `.env` when there is none, pulls the images, writes `release.env`, fills the bootstrap volume (`init`),
    runs the migrations, starts everything and waits until `/api/ready` answers. While setup is not finished it
    ends by printing the setup address and the token command.
@@ -464,11 +484,19 @@ found but its password is unknown". Never let it generate a new one:
 
 ## 5. Upgrade and rollback
 
-Releases are git tags (`1.0.0`, `1.0.1`, …, see `CHANGELOG.md`). GitLab CI builds `core`, `portal`, `runner`
-and `backup` for every pipeline on the default branch and on tags, and pushes them to
-`$CI_REGISTRY_IMAGE/<name>` tagged with the commit SHA, plus the git tag on tags and `latest` on the default
-branch. On tags the `release-bundle` job also builds the release bundle `install.sh` downloads (below). GitHub
-Actions only builds (the GitHub repository is public; nothing is published from it).
+Releases are git tags `v<version>` (`v1.0.0`, `v1.0.1`, …, see `CHANGELOG.md`); the version without the `v` is
+what a host runs (`YODA_VERSION=1.0.0`). The GitHub release workflow (`.github/workflows/release.yml`) publishes
+each one: the images `core`, `portal`, `runner` and `backup` on `ghcr.io/tantee/yoda/<name>` (linux/amd64 and
+linux/arm64, tagged `<version>` and `sha-<short commit>`, their digests pinned in the bundle) and the signed release bundle as the GitHub Release's
+assets, which `install.sh` downloads. How to cut a release, the signing key and the repository secrets:
+[docs/releasing.md](releasing.md).
+
+**Internal mirror (optional, GitLab CI).** For hosts that cannot reach GitHub, `.gitlab-ci.yml` keeps a mirror
+inside the network: it builds the four images for every pipeline on the default branch and on tags, and pushes
+them to `$CI_REGISTRY_IMAGE/<name>` tagged with the commit SHA, plus the version on tags (a mirrored tag `v1.2.0`
+is `1.2.0`) and `latest` on the default branch. On tags the `release-bundle` job also builds and signs the release
+bundle for the internal file server (below), and the manual `deploy` job deploys a tag over SSH. The rest of this
+part covers that pipeline; a host that installs from GitHub needs none of it.
 
 **GitLab CI runner.** The build jobs use Docker-in-Docker (`docker:27.5.1` with the `docker:27.5.1-dind`
 service and `DOCKER_TLS_CERTDIR=/certs`). They need a runner with the **docker executor** in **privileged** mode
@@ -496,31 +524,29 @@ Settings → Repository → Protected tags so only maintainers can create them):
   fingerprint against the host itself (`ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`) before saving. The
   job checks the host key strictly and never accepts an unknown one.
 
-**Release bundle** (installer proposal §3.4; internal file server only, D1). On every tag the `release-bundle`
-job runs `ops/install/bundle.sh`, which writes `dist/releases/<tag>/`: `yoda-<tag>.tar.gz` (the compose files,
-`ops/deploy/deploy.sh`, `ops/install/install.sh`, `.env.example`, `CHANGELOG.md`, this runbook and `bundle.env`
-with the registry path), `install.sh` on its own, and `SHA256SUMS` of both. It signs `SHA256SUMS` with minisign
-(trusted comment `yoda release <tag>`, which `install.sh` checks, so an older signed file cannot be replayed for a
-newer version), checks the signature against the key embedded in `install.sh`, keeps the directory as a job
-artifact for 90 days and uploads it to the file server. A bundle that fails to sign or upload never blocks the
-deploy job. Owner setup, once:
+**Release bundle on the mirror** (installer proposal §3.4, D1). On every tag the `release-bundle` job runs
+`ops/install/bundle.sh`, which writes `dist/releases/<version>/` with the same files as a GitHub Release:
+`yoda-<version>.tar.gz` (the compose files, `ops/deploy/deploy.sh`, `ops/install/install.sh`, `.env.example`,
+`CHANGELOG.md`, this runbook and `bundle.env` with the mirror's registry path), `install.sh` on its own, and
+`SHA256SUMS` of both. It signs `SHA256SUMS` with minisign (trusted comment `yoda release <version>`, which
+`install.sh` checks, so an older signed file cannot be replayed for a newer version), checks the signature against
+the key embedded in `install.sh`, keeps the directory as a job artifact for 90 days and uploads it to the file
+server. A bundle that fails to sign or upload never blocks the deploy job. Hosts then install with
+`install.sh --base-url 'https://files.example.org/yoda/releases/{version}/' --image-prefix <$CI_REGISTRY_IMAGE>`.
+Simpler, when the mirror only needs to copy what GitHub publishes: put the GitHub Release's four assets under
+`releases/<version>/` on the file server and copy the images to the registry
+([releasing, internal mirror](releasing.md#internal-mirror)). Setup of the pipeline path, once:
 
-- [ ] **Release signing key.** On a trusted machine: `minisign -G -W -p yoda-release.pub -s yoda-release.key`
-      (`-W`: no password, since the CI job cannot type one; the CI variable's protection guards it). Store
-      `yoda-release.key` as the CI/CD variable YODA_RELEASE_SIGNING_KEY, type **File**, **protected**, and keep a
-      copy in the organisation's password vault; then delete the local file. Put the second line of
-      `yoda-release.pub` (starting `RW`) in `ops/install/install.sh` as `RELEASE_PUBKEY_EMBEDDED`, replacing the
-      placeholder, and commit it before the next tag: until then the `release-bundle` job fails its self-check
-      and `install.sh` refuses to run. Publish the public key next to the releases too, so people can check
-      `install.sh` itself (section 4, step 1). To rotate it, do the same with a new key; installs made from an
-      older `install.sh` are unaffected (it runs once).
-- [ ] **File server.** Set `DEFAULT_BASE_URL` in `ops/install/install.sh` to the internal file server's base
-      (placeholder `https://files.example.org/yoda/`; releases live under `<base>/releases/<tag>/`; `install.sh
-      --base-url` or `YODA_RELEASE_BASE_URL` overrides it). The server needs no special features: plain static
-      files over HTTPS.
+- [ ] **Release signing key.** The same minisign key pair as the GitHub releases ([releasing](releasing.md#one-time-setup)):
+      `install.sh` embeds one public key. Store `yoda.key` as the CI/CD variable YODA_RELEASE_SIGNING_KEY, type
+      **File**, **protected**, and its password as YODA_RELEASE_SIGNING_PASSWORD (**masked**, **protected**; the
+      job sends it to minisign on stdin). Until `ops/install/install.sh` embeds the matching public key
+      (`RELEASE_PUBKEY_EMBEDDED`), the `release-bundle` job fails its self-check and `install.sh` refuses to run.
+- [ ] **File server.** Any static HTTPS server; releases live under `<base>/releases/<version>/`, the layout
+      `install.sh --base-url '<base>/releases/{version}/'` (or `YODA_RELEASE_BASE_URL`) expects.
 - [ ] **Upload.** Set YODA_RELEASE_UPLOAD_URL (the same base, as the uploader sees it) and
       YODA_RELEASE_UPLOAD_TOKEN (**masked**, **protected**). The job's upload is a template: one HTTP `PUT` per
-      file to `<URL>/releases/<tag>/<file>`, with the token as a bearer header passed to curl on stdin. Change
+      file to `<URL>/releases/<version>/<file>`, with the token as a bearer header passed to curl on stdin. Change
       that step in `.gitlab-ci.yml` to what your file server takes (WebDAV, the GitLab generic package registry,
       `rsync` over SSH). With no URL set the upload is skipped and the bundle stays a job artifact, which you can
       copy to the server by hand.
@@ -534,26 +560,52 @@ deploy job. Owner setup, once:
    `release.env`, keeping a `YODA_IMAGE_PREFIX` pinned there.
 2. **Take a backup** on the host, every time: `cd /srv/yoda && dc run --rm backup --now`
    (wait for it to finish; it is the restore point if the upgrade or a later rollback goes wrong).
-3. Tag the release on the default branch (`git tag 1.1.0 && git push origin 1.1.0`) and wait for the tag
-   pipeline's build jobs.
-4. Run the manual **deploy** job in that tag pipeline. It copies the tag's compose files and
-   `ops/deploy/deploy.sh` to `DEPLOY_PATH` and runs it there with `YODA_VERSION=<tag>`:
+3. The release is published (a maintainer pushed the tag `v1.1.0`, [releasing](releasing.md#cut-a-release)).
+   **From GitHub:** on the host, in `/srv/yoda`, download the new bundle, check it and unpack it over the deploy
+   directory (it holds no `.env` or `release.env`), then deploy:
+
+   ```bash
+   curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.1.0/yoda-1.1.0.tar.gz
+   curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.1.0/SHA256SUMS
+   curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.1.0/SHA256SUMS.minisig
+   out=$(minisign -Vm SHA256SUMS -P RWSErktAr/A+x5Gvgr0x29wiu41FmYEVlJYoXyB6oJk4kvwQLOZs9O9j) &&
+     printf '%s\n' "$out" | grep -Fx 'Trusted comment: yoda release 1.1.0' &&
+     sha256sum --check --ignore-missing SHA256SUMS &&
+     tar -xzf yoda-1.1.0.tar.gz --no-same-owner &&
+     rm yoda-1.1.0.tar.gz SHA256SUMS SHA256SUMS.minisig &&
+     YODA_VERSION=1.1.0 sh ops/deploy/deploy.sh
+   ```
+
+   Each command runs only when the one before it passed (the `grep` checks the signature is for `1.1.0`).
+   `deploy.sh` does what step 4 describes, and pins the image digests of the unpacked `bundle.env` (signed with
+   the bundle) in `release.env`, so the host runs exactly the images built for the release. **From the internal GitLab mirror:** wait for the tag pipeline's build
+   jobs, then step 4.
+4. Run the manual **deploy** job in that tag pipeline (mirror only). It copies the tag's compose files and
+   `ops/deploy/deploy.sh` to `DEPLOY_PATH` and runs it there with `YODA_VERSION=<version>`:
    `docker compose pull`, then it pins the tag in `release.env` (only once every image is on the host), then
    `docker compose run --rm init` (the bootstrap volume) and `docker compose run --rm migrate` (a failed
    migration stops the deploy before any running container is replaced), then `docker compose up -d --no-build`, then it polls the portal's `/api/ready`
    for up to 2 minutes and fails the job if it never answers 200. Only one deploy runs at a time.
-5. Check the portal, and the job log's last line, `deploy: <tag> ready`.
+5. Check the portal, and the last line of the output (or the job log), `deploy: <version> ready`.
 
 **Upgrade notes.**
 
 - **Image prefix (the registry path).** The prod compose has no default prefix, so a host without one never
-  pulls `yoda/...` images from Docker Hub: compose stops with "YODA_IMAGE_PREFIX is required" and `deploy.sh`
-  refuses to start. `install.sh` pins the prefix in `release.env` (from the bundle, or `--image-prefix`), and
+  pulls `yoda/...` images from Docker Hub: compose stops with "YODA_IMAGE_PREFIX is required". `deploy.sh` uses
+  the public release images, `ghcr.io/tantee/yoda`, when no prefix is given or pinned anywhere, and pins it.
+  `install.sh` pins the prefix in `release.env` (from the bundle, or `--image-prefix`), and
   `deploy.sh` keeps it there on every deploy. Precedence: the `YODA_IMAGE_PREFIX` given to `deploy.sh`, then
   `release.env`, then `.env` (an install from before `install.sh` keeps it in `.env`; `release.env` wins when both
   hold one). **Change the registry** by logging in to the new one (`docker login`), then
   `cd /srv/yoda && YODA_IMAGE_PREFIX=<new path> YODA_VERSION=<current tag> sh ops/deploy/deploy.sh`, which pulls
   from there and pins the new prefix (editing `.env` alone has no effect while `release.env` holds one).
+- **Image digests.** A GitHub release's `bundle.env` names the digest of each image; `deploy.sh` pins them in
+  `release.env` (`YODA_<NAME>_DIGEST`) whenever that `bundle.env` is the release being deployed, whatever the
+  prefix, and compose then runs `<prefix>/<name>:<version>@<digest>`: Docker pulls that digest, whatever the tag
+  points to. A digest names content, not a registry, so a mirror that copied the images serves the same digests;
+  a registry that rebuilt them has others, and the pull fails (closed). For such a registry deploy with
+  `YODA_IGNORE_BUNDLE_DIGESTS=1` (it warns, and runs the tags). A deploy of another version than the unpacked
+  `bundle.env` (the GitLab deploy job) runs the tags too: the variables are pinned empty.
 
 - **From an env-based install** (a full `.env`, before the setup wizard existed): upgrade as usual with the same
   `deploy.sh`. `init` copies the Postgres password, the storage keys and `YODA_MASTER_KEY` from `.env` into the
@@ -584,9 +636,24 @@ deploy job. Owner setup, once:
   alerts, and the setup wizard detects the portal's own `Host` as the public URL. Core logs a warning once when it
   sees a proxy in front of the portal while the value is `1`.
 
-**Rollback.** Run the deploy job again in the **previous tag's** pipeline (CI/CD → Pipelines, filter by tag), or
-on the host: `cd /srv/yoda && YODA_VERSION=<previous tag> sh ops/deploy/deploy.sh` (it pins that tag in
-`release.env` again). Migrations only move
+**Rollback.** On the host, in `/srv/yoda`: always unpack the bundle of the release you go back to, so the compose
+files, `deploy.sh` and the image digests in `bundle.env` are that release's (`1.0.0` stands for it):
+
+```bash
+curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.0.0/yoda-1.0.0.tar.gz
+curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.0.0/SHA256SUMS
+curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.0.0/SHA256SUMS.minisig
+out=$(minisign -Vm SHA256SUMS -P RWSErktAr/A+x5Gvgr0x29wiu41FmYEVlJYoXyB6oJk4kvwQLOZs9O9j) &&
+  printf '%s\n' "$out" | grep -Fx 'Trusted comment: yoda release 1.0.0' &&
+  sha256sum --check --ignore-missing SHA256SUMS &&
+  tar -xzf yoda-1.0.0.tar.gz --no-same-owner &&
+  rm yoda-1.0.0.tar.gz SHA256SUMS SHA256SUMS.minisig &&
+  YODA_VERSION=1.0.0 sh ops/deploy/deploy.sh
+```
+
+Each command runs only when the one before it passed, as in step 3; `deploy.sh` then pins that release's
+digests in `release.env`. On a mirror, run the deploy job again in the **previous tag's** pipeline (CI/CD →
+Pipelines, filter by tag); it pins that version in `release.env` again. Migrations only move
 forward: an older release usually runs on a newer schema, but if the changelog says a release changed data in a
 way the older one cannot read, restore the backup taken in step 2 of the upgrade instead (section 6).
 
@@ -844,10 +911,13 @@ after it). For a value still in `.env`, the same holds with `dc up -d --no-build
 - **Deploy job failed.**
   - *SSH: host key verification failed:* `DEPLOY_KNOWN_HOSTS` does not match the host (re-check the
     fingerprint; never turn host key checking off).
-  - *image … is missing:* the host is not logged in to the registry, or the tag pipeline's build jobs did not
-    finish.
-  - *YODA_IMAGE_PREFIX is not set:* neither `release.env` nor `.env` names the registry path; run `deploy.sh` once
-    with `YODA_IMAGE_PREFIX=<path>` (section 5, upgrade notes).
+  - *image … is missing* or *pulling the images … failed* (exit 3): the host is not logged in to the registry,
+    or the tag pipeline's build jobs did not finish. For ghcr.io: the packages are not public yet; make them
+    public ([releasing](releasing.md#one-time-setup)) or `docker login ghcr.io` with a GitHub token that may read
+    packages.
+  - *YODA_IMAGE_PREFIX is not set: using the public release images:* neither `release.env` nor `.env` names the
+    registry path, so `deploy.sh` used and pinned `ghcr.io/tantee/yoda`. For a mirror, run `deploy.sh` once with
+    `YODA_IMAGE_PREFIX=<path>` (section 5, upgrade notes).
   - *migrate failed:* `dc logs migrate`. Nothing was replaced; the previous release is still running. Fix and
     deploy again, or restore (section 6).
   - *not ready after 120s:* `/ready` names the failing dependency; then `dc logs core`.

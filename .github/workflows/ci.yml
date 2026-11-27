@@ -50,7 +50,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # Build-only: the repo is public, so images are published from GitLab CI, never from here.
+      # Build-only: images are published by the release workflow (release.yml) on v* tags, never from here.
       - run: docker build -f apps/core/Dockerfile -t yoda/core .
       - run: docker build -f apps/portal/Dockerfile -t yoda/portal .
       - run: docker build -f apps/runner/Dockerfile -t yoda/runner .

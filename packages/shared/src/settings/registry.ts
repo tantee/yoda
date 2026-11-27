@@ -204,6 +204,10 @@ const DEFS = [
   // 9.3 Compose, backup and Keycloak theme
   def('compose.imagePrefix', text, { category: 'general', envName: 'YODA_IMAGE_PREFIX' }, { ...boot, scope: 'compose' }),
   def('compose.version', text, { category: 'general', envName: 'YODA_VERSION' }, { ...boot, scope: 'compose' }),
+  def('compose.coreDigest', text, { category: 'general', envName: 'YODA_CORE_DIGEST' }, { ...boot, scope: 'compose' }),
+  def('compose.portalDigest', text, { category: 'general', envName: 'YODA_PORTAL_DIGEST' }, { ...boot, scope: 'compose' }),
+  def('compose.runnerDigest', text, { category: 'general', envName: 'YODA_RUNNER_DIGEST' }, { ...boot, scope: 'compose' }),
+  def('compose.backupDigest', text, { category: 'general', envName: 'YODA_BACKUP_DIGEST' }, { ...boot, scope: 'compose' }),
   def('compose.corePort', int(1, 65535), { category: 'general', envName: 'CORE_PORT' }, { ...boot, scope: 'compose', default: 4000 }),
   def('compose.coreBind', text, { category: 'general', envName: 'CORE_BIND' }, { ...boot, scope: 'compose', default: '127.0.0.1' }),
   def('compose.portalPort', int(1, 65535), { category: 'general', envName: 'PORTAL_PORT' }, { ...boot, scope: 'compose', default: 3000 }),

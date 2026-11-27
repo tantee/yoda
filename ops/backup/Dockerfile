@@ -1,8 +1,9 @@
 # Build context: ops/backup (docker build -t yoda/backup ops/backup)
+# Base images pinned by digest, the tag kept beside it for reading; bump both: docs/releasing.md, "Pinned build inputs".
 # PostgreSQL 17 client tools (pg_dump/pg_restore must match the server major) and rclone for the S3 mirror.
-FROM rclone/rclone:1.71.2 AS rclone
+FROM rclone/rclone:1.71.2@sha256:3103526c506266a9ecdf064efe99bf3677d92ef6407af124d8c56b4f49cbaa51 AS rclone
 
-FROM postgres:17.12-bookworm
+FROM postgres:17.12-bookworm@sha256:1eff563f6c868b9b433566e9f3cf6e5c79fbd3b95bf70ec7277d376cdbfc50d7
 COPY --from=rclone /usr/local/bin/rclone /usr/local/bin/rclone
 COPY lib.sh backup.sh restore.sh healthcheck.sh /opt/backup/
 # CA certificates for an https S3 endpoint.

@@ -4,8 +4,8 @@
 
 How to install Yoda on a server, finish the setup wizard, keep a way back in, and upgrade. This guide walks the
 common path; every detail and edge case is in the [operations runbook](../operations.md). Hostnames here are
-placeholders (`portal.example.org`, `sso.example.org`, `files.example.org`); use your own. `files.example.org`
-stands for your organisation's own internal release server, where the signed release files are published.
+placeholders (`portal.example.org`, `sso.example.org`); use your own. Releases are published on
+[GitHub Releases](https://github.com/tantee/yoda/releases), with the images on `ghcr.io/tantee/yoda`.
 
 - [Before you start](#before-you-start)
 - [1. Install the release](#1-install-the-release)
@@ -14,6 +14,7 @@ stands for your organisation's own internal release server, where the signed rel
 - [Recovery](#recovery)
 - [yoda-admin commands](#yoda-admin-commands)
 - [Upgrading](#upgrading)
+- [For maintainers](#for-maintainers)
 
 ## Before you start
 
@@ -42,27 +43,45 @@ alias dc='docker compose --env-file .env --env-file release.env -f docker-compos
 
 ## 1. Install the release
 
-Download `install.sh` and the checksums for a pinned release from your organisation's internal release server
-(`files.example.org` below), check the signature,
-then run it. Never pipe a download into `sh`.
+Download `install.sh` and the checksums of a pinned release from GitHub Releases, check the signature, then run
+it. Never pipe a download into `sh`. Use the latest release from
+[the releases page](https://github.com/tantee/yoda/releases); `1.0.0` below is an example.
 
 ```bash
-curl -fsSLO https://files.example.org/yoda/releases/1.0.0/install.sh
-curl -fsSLO https://files.example.org/yoda/releases/1.0.0/SHA256SUMS
-curl -fsSLO https://files.example.org/yoda/releases/1.0.0/SHA256SUMS.minisig
-minisign -Vm SHA256SUMS -P <release public key> && sha256sum --check --ignore-missing SHA256SUMS
-sh install.sh --version 1.0.0 --dir /srv/yoda
+curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.0.0/install.sh
+curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.0.0/SHA256SUMS
+curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.0.0/SHA256SUMS.minisig
+out=$(minisign -Vm SHA256SUMS -P RWSErktAr/A+x5Gvgr0x29wiu41FmYEVlJYoXyB6oJk4kvwQLOZs9O9j) &&
+  printf '%s\n' "$out" | grep -Fx 'Trusted comment: yoda release 1.0.0' &&
+  sha256sum --check --ignore-missing SHA256SUMS &&
+  sh install.sh --version 1.0.0 --dir /srv/yoda
 ```
+
+Each command runs only when the one before it passed: `minisign` checks the signature (`out=$(…) &&` keeps its
+exit status), `grep` that the signed
+trusted comment names this release (`Trusted comment: yoda release 1.0.0`; a different version means you
+downloaded the wrong files), and `sha256sum` the checksum of `install.sh`. Nothing runs if any of them fails.
+For another release, change the version in the URLs, the `grep` and `--version`.
+
+The key after `-P` is the Yoda release key, minisign key id `C73EF0AF404BAE84`. It is also in
+[`keys/yoda-release.pub`](../../keys/yoda-release.pub) and built into `install.sh`
+([verifying releases](../releasing.md#verifying-releases)).
 
 `install.sh` checks the prerequisites, downloads the **signed release bundle**, verifies its signature and checksum
 (the release key is built into the script) and refuses on any mismatch. It refuses `latest` and an existing
 install. It then unpacks the bundle (compose files, `deploy.sh`, `.env.example`, the runbook), creates an empty
-`.env` (mode `600`), logs in to the image registry if needed and runs the first deploy. The deploy fills the
+`.env` (mode `600`) and runs the first deploy. The images come from `ghcr.io/tantee/yoda`, which is public: no
+`docker login` is needed (if a pull fails because the packages are not public yet, `install.sh` offers
+`docker login ghcr.io`). The deploy runs exactly the images the release was built with: their digests are in the
+signed bundle (`bundle.env`), and `deploy.sh` pins them in `release.env`. The deploy fills the
 **bootstrap volume** (generated database password, storage keys, master key and setup token), runs the database
 migrations, starts everything and prints the setup address.
 
-Options: `--base-url` (another file server), `--image-prefix` (another registry path), `--no-login`. Nothing is
-required in `.env` for a standard install. To use an external Postgres or S3, or to fix settings from outside the
+Options: `--base-url` (another file server), `--image-prefix` (another registry path), `--no-login`. **Internal
+mirror:** a host that cannot reach GitHub installs from a copy inside the network with
+`--base-url 'https://files.example.org/yoda/releases/{version}/' --image-prefix registry.example.org/group/yoda`
+(a registry mirror of the images; `install.sh` asks for a `docker login` to it), see
+[releasing, internal mirror](../releasing.md#internal-mirror). Nothing is required in `.env` for a standard install. To use an external Postgres or S3, or to fix settings from outside the
 UI, see the runbook ([section 4, "Advanced"](../operations.md#4-first-install)).
 
 ## 2. The setup wizard
@@ -179,11 +198,28 @@ Rotation and lost keys in detail: [runbook, section 10](../operations.md#10-rota
 1. Read `CHANGELOG.md` for the release. The deploy never changes `.env`; add any new variable yourself (most new
    options are System settings now).
 2. Take a backup: `dc run --rm backup --now`.
-3. Deploy the new tag: the GitLab **deploy** job on the release tag, or on the host
-   `YODA_VERSION=<tag> sh ops/deploy/deploy.sh`. It pulls the images, pins the tag in `release.env`, updates the
-   bootstrap volume, runs the migrations (a failed migration stops before anything is replaced), starts the new
-   containers and waits until the portal answers.
-4. Check the portal. To roll back, deploy the previous tag the same way.
+3. Get the new release's files and deploy it. On the host, in the install directory (`1.1.0` stands for the new
+   version):
+
+   ```bash
+   curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.1.0/yoda-1.1.0.tar.gz
+   curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.1.0/SHA256SUMS
+   curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.1.0/SHA256SUMS.minisig
+   out=$(minisign -Vm SHA256SUMS -P RWSErktAr/A+x5Gvgr0x29wiu41FmYEVlJYoXyB6oJk4kvwQLOZs9O9j) &&
+     printf '%s\n' "$out" | grep -Fx 'Trusted comment: yoda release 1.1.0' &&
+     sha256sum --check --ignore-missing SHA256SUMS &&
+     tar -xzf yoda-1.1.0.tar.gz --no-same-owner &&
+     rm yoda-1.1.0.tar.gz SHA256SUMS SHA256SUMS.minisig &&
+     YODA_VERSION=1.1.0 sh ops/deploy/deploy.sh
+   ```
+
+   As at install, each command runs only when the one before it passed, and the `grep` checks that the
+   signature is for `1.1.0`. The bundle never holds `.env` or `release.env`, so unpacking it only replaces the compose files, `deploy.sh`
+   and the runbook files. An internal GitLab mirror's **deploy** job does the same in one step. The deploy pulls
+   the images, pins the version and the bundle's image digests in `release.env`, updates the bootstrap volume, runs the migrations (a failed
+   migration stops before anything is replaced), starts the new containers and waits until the portal answers.
+4. Check the portal. To roll back, deploy the previous version the same way: download, check and unpack its
+   bundle, then deploy it ([runbook, rollback](../operations.md#5-upgrade-and-rollback)).
 
 **From an env-based install** (one with a full `.env`, from before the setup wizard): upgrade the same way.
 The `init` step copies the database password, storage keys and master key from `.env` into the bootstrap volume; core
@@ -197,3 +233,9 @@ dc exec core yoda-admin create-break-glass       # prints a temporary password o
 ```
 
 Full upgrade and rollback notes: [runbook, section 5](../operations.md#5-upgrade-and-rollback).
+
+## For maintainers
+
+Releases are cut by pushing a `v<version>` tag; `.github/workflows/release.yml` builds the images, signs the
+bundle and publishes the GitHub Release. The signing key, the repository secrets, the package visibility and the
+release checklist are in [Releasing Yoda](../releasing.md).

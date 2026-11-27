@@ -31,16 +31,32 @@ Requesters outside IT get a simpler portal: their own requests, questions to ans
 
 ## Quick start
 
-**Production** (Docker Engine 24+ and Compose v2.24+). Download a pinned release, check its signature, then run it
-(never pipe a download into `sh`). `files.example.org` stands for your organisation's own internal release server:
+**Production** (Docker Engine 24+ and Compose v2.24+). Download a pinned release from
+[GitHub Releases](https://github.com/tantee/yoda/releases), check its signature, then run it (never pipe a
+download into `sh`). Use the latest release; `1.0.0` here is an example:
 
 ```bash
-curl -fsSLO https://files.example.org/yoda/releases/1.0.0/install.sh
-curl -fsSLO https://files.example.org/yoda/releases/1.0.0/SHA256SUMS
-curl -fsSLO https://files.example.org/yoda/releases/1.0.0/SHA256SUMS.minisig
-minisign -Vm SHA256SUMS -P <release public key> && sha256sum --check --ignore-missing SHA256SUMS
-sh install.sh --version 1.0.0 --dir /srv/yoda
+curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.0.0/install.sh
+curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.0.0/SHA256SUMS
+curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.0.0/SHA256SUMS.minisig
+out=$(minisign -Vm SHA256SUMS -P RWSErktAr/A+x5Gvgr0x29wiu41FmYEVlJYoXyB6oJk4kvwQLOZs9O9j) &&
+  printf '%s\n' "$out" | grep -Fx 'Trusted comment: yoda release 1.0.0' &&
+  sha256sum --check --ignore-missing SHA256SUMS &&
+  sh install.sh --version 1.0.0 --dir /srv/yoda
 ```
+
+Each command runs only when the one before it passed: `minisign` checks the signature (`out=$(…) &&` keeps its
+exit status), `grep` that the signed
+trusted comment names this release (`Trusted comment: yoda release 1.0.0`; a different version means you
+downloaded the wrong files), and `sha256sum` the checksum of `install.sh`. Nothing runs if any of them fails.
+For another release, change the version in the URLs, the `grep` and `--version`.
+
+**Verifying releases.** The `-P` key above is the Yoda release key, minisign key id `C73EF0AF404BAE84`, also in
+[`keys/yoda-release.pub`](keys/yoda-release.pub) and built into `install.sh`, which checks every download with it
+([details](docs/releasing.md#verifying-releases)). The images come from `ghcr.io/tantee/yoda` (public, no login), pinned by the digests
+in the signed bundle.
+To install from an internal mirror, pass `--base-url` and `--image-prefix`
+([releasing, internal mirror](docs/releasing.md#internal-mirror)).
 
 Then open `https://<your portal>/setup` and follow the setup wizard. Details: [install guide](docs/guides/install.md).
 
@@ -67,6 +83,7 @@ Details: [development guide](docs/development.md).
 | [Architecture](docs/architecture.md) | How the parts fit together |
 | [Operations runbook](docs/operations.md) | Every setting, backups, rotation, troubleshooting |
 | [Development](docs/development.md) | Running from source, tests, CI, runner reference |
+| [Releasing](docs/releasing.md) | Maintainers: signing key, cutting a release, dry runs, internal mirror |
 
 ## Runners
 

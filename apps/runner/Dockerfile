@@ -1,5 +1,6 @@
 # Build context: repository root (docker build -f apps/runner/Dockerfile .)
-FROM node:22-slim AS build
+# Base images pinned by digest, the tag kept beside it for reading; bump both: docs/releasing.md, "Pinned build inputs".
+FROM node:22.23.5-slim@sha256:be979e5523c76fa4d5ca4ebd3099078f220aa47ec39c48ad5b5df9314debd6eb AS build
 RUN corepack enable
 WORKDIR /repo
 COPY . .
@@ -8,7 +9,7 @@ RUN pnpm --filter @yoda/runner build
 RUN pnpm --filter @yoda/runner --prod --ignore-scripts deploy --legacy /out \
  && cp -r apps/runner/dist /out/
 
-FROM node:22-slim
+FROM node:22.23.5-slim@sha256:be979e5523c76fa4d5ca4ebd3099078f220aa47ec39c48ad5b5df9314debd6eb
 # Pinned Claude Code (the version the runner's flags were checked against). Bump deliberately.
 ARG CLAUDE_CODE_VERSION=2.1.332
 RUN apt-get update \
