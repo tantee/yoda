@@ -20,8 +20,10 @@ placeholders (`portal.example.org`, `sso.example.org`, `files.example.org`); use
   `docker` and owns the install directory (for example `/srv/yoda`).
 - A Keycloak realm with a client for the portal and a staff group
   ([runbook, section 2](../operations.md#2-keycloak)).
-- A reverse proxy with HTTPS in front of the portal (recommended; set `YODA_TRUSTED_PROXY_HOPS=2` in `.env`), or
-  an SSH tunnel for the first steps.
+- HTTPS in front of the portal: a reverse proxy with a certificate (set `YODA_TRUSTED_PROXY_HOPS=2` in `.env`).
+  The setup wizard refuses a plain-HTTP public URL unless it is `localhost`, `127.0.0.1` or `::1`, because browsers
+  block Keycloak sign-in on plain HTTP. Until HTTPS is ready, run the wizard through an SSH tunnel
+  (`ssh -L 3000:127.0.0.1:3000 <host>`, then open `http://127.0.0.1:3000/setup`).
 - Optional: SMTP, a LINE Official Account, a Telegram bot, a GitLab bot account, AI provider keys. Each can be
   added later in System settings.
 

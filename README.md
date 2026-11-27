@@ -9,6 +9,7 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/tantee/yoda/ci.yml?branch=main&label=CI)](https://github.com/tantee/yoda/actions/workflows/ci.yml)
 [![Version](https://img.shields.io/badge/version-1.0.0-1F5FBF)](CHANGELOG.md)
 [![UI: ไทย | English](https://img.shields.io/badge/UI-%E0%B9%84%E0%B8%97%E0%B8%A2%20%7C%20English-1F5FBF)](docs/README.md)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-1F5FBF)](LICENSE)
 
 <img src="docs/images/staff-todo-en.webp" width="860" alt="The Yoda to-do page: decisions waiting for you and tasks to confirm, by priority">
 
@@ -80,4 +81,4 @@ MCP server for runners · GitLab issues, merge requests and webhooks · Docker C
 
 ## License
 
-License: to be decided — currently all rights reserved.
+Yoda is licensed under the [Apache License, Version 2.0](LICENSE). See [NOTICE](NOTICE) for attributions.
