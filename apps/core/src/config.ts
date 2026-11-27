@@ -145,10 +145,11 @@ export const envSchema = z.object({
   YODA_TRUSTED_PROXY_HOPS: z.preprocess((v) => (v === '' ? undefined : v), z.coerce.number().int().min(1).max(5).default(1)),
   // The built-in HTTPS proxy (deploy.sh pins YODA_PROXY_ENABLED=true when its profile is on): the wizard's status card.
   // Read leniently (proxyConfig below): a status card never stops core from starting; anything but `true` is off.
-  YODA_PROXY_ENABLED: z.string().optional(),
+  // The defaults are the settings registry's (proxy.*); an empty value counts as unset there too.
+  YODA_PROXY_ENABLED: z.string().default('false'),
   YODA_PROXY_DOMAIN: z.string().optional(),
-  YODA_PROXY_CERT_MODE: z.string().optional(),
-  YODA_PROXY_HTTPS_PORT: z.string().optional(),
+  YODA_PROXY_CERT_MODE: z.string().default('internal'),
+  YODA_PROXY_HTTPS_PORT: z.string().default('443'),
   YODA_SETTINGS_IMPORT: z.preprocess((v) => (v === '' ? undefined : v), z.enum(['true', 'false']).default('true')),
   // Dev and tests only: the settings tests may reach loopback (the fakes). Read by server.ts, not mapped into Config.
   YODA_OUTBOUND_ALLOW_LOOPBACK: z.preprocess((v) => (v === '' ? undefined : v), z.enum(['true', 'false']).default('false')),
