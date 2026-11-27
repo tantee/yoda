@@ -1746,7 +1746,8 @@
         "groups_missing": "โทเคนไม่มี claim groups (เพิ่ม groups mapper)",
         "not_admin": "ผู้ที่เข้าสู่ระบบไม่ใช่ผู้ดูแลระบบพอร์ทัล",
         "no_pgvector": "ฐานข้อมูลไม่มีส่วนขยาย pgvector ใช้ image ของ Postgres ที่มากับ Yoda",
-        "not_staff": "คุณไม่ได้อยู่ในกลุ่มเจ้าหน้าที่ IT (Staff group) ตรวจกลุ่มใน Keycloak หรือค่า Staff group ในขั้นตอนที่ 4"
+        "not_staff": "คุณไม่ได้อยู่ในกลุ่มเจ้าหน้าที่ IT (Staff group) ตรวจกลุ่มใน Keycloak หรือค่า Staff group ในขั้นตอนที่ 4",
+        "not_staff_no_groups": "โทเคนไม่มี groups: คุณไม่ได้อยู่ในกลุ่มใดใน Keycloak (เข้าสู่ระบบด้วยบัญชีที่อยู่ในกลุ่มเจ้าหน้าที่ IT) หรือ client ไม่มี groups mapper (หัวข้อ 2 ในคู่มือ)"
       },
       "check": {
         "discovery": "ค้นหา issuer",

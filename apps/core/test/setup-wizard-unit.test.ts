@@ -164,8 +164,10 @@ describe('claim sign-in (fake provider)', () => {
     const outside = await claim({ username: 'nurse1', groups: ['/ward'] })
     expect(outside.checks.find((c) => !c.ok)).toMatchObject({ id: 'staff', code: 'not_staff' })
     expect(outside).toMatchObject({ ok: false, claims: null })
+    // Keycloak leaves the claim out for a person in no group: a staff failure, not a token failure.
     const none = await claim({ username: 'nurse1', groups: null })
-    expect(none.checks.find((c) => !c.ok)?.code).toBe('groups_missing')
+    expect(none.checks.find((c) => !c.ok)).toMatchObject({ id: 'staff', code: 'not_staff_no_groups' })
+    expect(none.checks.find((c) => c.id === 'access_token')?.ok).toBe(true)
     expect(none.claims).toBeNull()
   })
 })

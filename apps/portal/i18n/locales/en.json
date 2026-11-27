@@ -1746,7 +1746,8 @@
         "groups_missing": "The token has no groups claim (add the groups mapper)",
         "not_admin": "The person who signed in is not a portal admin",
         "no_pgvector": "The database has no pgvector extension. Use the Postgres image that comes with Yoda.",
-        "not_staff": "You are not in the IT staff group. Check your groups in Keycloak, or the staff group in step 4."
+        "not_staff": "You are not in the IT staff group. Check your groups in Keycloak, or the staff group in step 4.",
+        "not_staff_no_groups": "Your token has no groups: you are in no Keycloak group (sign in as a member of the IT staff group), or the client has no groups mapper (section 2 of the runbook)."
       },
       "check": {
         "discovery": "Issuer discovery",

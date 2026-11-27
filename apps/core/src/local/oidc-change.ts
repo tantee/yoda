@@ -242,7 +242,10 @@ export async function finishTestSignIn(
       if (payload.typ !== undefined && payload.typ !== 'Bearer') throw new Failed('typ_mismatch')
       const parsed = TokenClaims.safeParse(payload)
       if (!parsed.success) throw new Failed('claims_missing')
-      if (!parsed.data.groups) throw new Failed('groups_missing')
+      // Keycloak leaves the claim out for a person in no group, as well as when the client has no groups mapper. With
+      // a staff check (the setup claim) that is the staff check's failure, as the portal treats it (no groups: not
+      // staff); without one (the /recovery test sign-in) it still means the mapper is missing.
+      if (!parsed.data.groups && opts.staffGroup === undefined) throw new Failed('groups_missing')
       claims = parsed.data
     }),
   )
@@ -252,7 +255,8 @@ export async function finishTestSignIn(
     const group = opts.staffGroup
     checks.push(
       await check('staff', async () => {
-        if (!(verified.groups ?? []).includes(group)) throw new Failed('not_staff')
+        if (!verified.groups) throw new Failed('not_staff_no_groups')
+        if (!verified.groups.includes(group)) throw new Failed('not_staff')
       }),
     )
   }
