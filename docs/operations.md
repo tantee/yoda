@@ -166,10 +166,10 @@ Bootstrap only: release and host (compose reads them before any container exists
 | --- | --- | --- | --- |
 | `YODA_IMAGE_PREFIX` | Registry path of the images; compose uses `<prefix>/<name>:<version>`. `install.sh` pins it in `release.env` (from the bundle); `deploy.sh` uses `ghcr.io/tantee/yoda` when it is set nowhere (never Docker Hub) | optional (`ghcr.io/tantee/yoda`) | `registry.example.org/group/yoda` |
 | `YODA_VERSION` | Release tag to run; `deploy.sh` pins it in `release.env`, never in `.env` (compose refuses to start without it) | yes, in `release.env` | `1.0.0` |
-| `YODA_CORE_DIGEST` | Manifest digest of the core image; compose then runs `<prefix>/core:<version>@<digest>`. `deploy.sh` pins it in `release.env` from the signed `bundle.env` of the same release and prefix, else empty (the tag); never set it by hand | no (`deploy.sh`) | `sha256:4f…` |
-| `YODA_PORTAL_DIGEST` | Manifest digest of the portal image; compose then runs `<prefix>/portal:<version>@<digest>`. `deploy.sh` pins it in `release.env` from the signed `bundle.env` of the same release and prefix, else empty (the tag); never set it by hand | no (`deploy.sh`) | `sha256:4f…` |
-| `YODA_RUNNER_DIGEST` | Manifest digest of the runner image; compose then runs `<prefix>/runner:<version>@<digest>`. `deploy.sh` pins it in `release.env` from the signed `bundle.env` of the same release and prefix, else empty (the tag); never set it by hand | no (`deploy.sh`) | `sha256:4f…` |
-| `YODA_BACKUP_DIGEST` | Manifest digest of the backup image; compose then runs `<prefix>/backup:<version>@<digest>`. `deploy.sh` pins it in `release.env` from the signed `bundle.env` of the same release and prefix, else empty (the tag); never set it by hand | no (`deploy.sh`) | `sha256:4f…` |
+| `YODA_CORE_DIGEST` | Manifest digest of the core image; compose then runs `<prefix>/core:<version>@<digest>`. `deploy.sh` pins it in `release.env` from the signed `bundle.env` of the same release (any prefix: a digest names content), else empty (the tag); never set it by hand | no (`deploy.sh`) | `sha256:4f…` |
+| `YODA_PORTAL_DIGEST` | Manifest digest of the portal image; compose then runs `<prefix>/portal:<version>@<digest>`. `deploy.sh` pins it in `release.env` from the signed `bundle.env` of the same release (any prefix: a digest names content), else empty (the tag); never set it by hand | no (`deploy.sh`) | `sha256:4f…` |
+| `YODA_RUNNER_DIGEST` | Manifest digest of the runner image; compose then runs `<prefix>/runner:<version>@<digest>`. `deploy.sh` pins it in `release.env` from the signed `bundle.env` of the same release (any prefix: a digest names content), else empty (the tag); never set it by hand | no (`deploy.sh`) | `sha256:4f…` |
+| `YODA_BACKUP_DIGEST` | Manifest digest of the backup image; compose then runs `<prefix>/backup:<version>@<digest>`. `deploy.sh` pins it in `release.env` from the signed `bundle.env` of the same release (any prefix: a digest names content), else empty (the tag); never set it by hand | no (`deploy.sh`) | `sha256:4f…` |
 | `CORE_PORT` | Host port for core | optional (`4000`) | `4000` |
 | `CORE_BIND` | Host address core is published on | optional (`127.0.0.1`) | `127.0.0.1` |
 | `PORTAL_PORT` | Host port for the portal | optional (`3000`) | `3000` |
@@ -350,7 +350,8 @@ in your shell overrides `release.env`, so leave it unset.
    curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.2.0/install.sh
    curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.2.0/SHA256SUMS
    curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.2.0/SHA256SUMS.minisig
-   minisign -Vm SHA256SUMS -P RWSErktAr/A+x5Gvgr0x29wiu41FmYEVlJYoXyB6oJk4kvwQLOZs9O9j | grep -Fx 'Trusted comment: yoda release 1.2.0' &&
+   out=$(minisign -Vm SHA256SUMS -P RWSErktAr/A+x5Gvgr0x29wiu41FmYEVlJYoXyB6oJk4kvwQLOZs9O9j) &&
+     printf '%s\n' "$out" | grep -Fx 'Trusted comment: yoda release 1.2.0' &&
      sha256sum --check --ignore-missing SHA256SUMS &&
      sh install.sh --version 1.2.0 --dir /srv/yoda
    ```
@@ -567,7 +568,8 @@ Simpler, when the mirror only needs to copy what GitHub publishes: put the GitHu
    curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.1.0/yoda-1.1.0.tar.gz
    curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.1.0/SHA256SUMS
    curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.1.0/SHA256SUMS.minisig
-   minisign -Vm SHA256SUMS -P RWSErktAr/A+x5Gvgr0x29wiu41FmYEVlJYoXyB6oJk4kvwQLOZs9O9j | grep -Fx 'Trusted comment: yoda release 1.1.0' &&
+   out=$(minisign -Vm SHA256SUMS -P RWSErktAr/A+x5Gvgr0x29wiu41FmYEVlJYoXyB6oJk4kvwQLOZs9O9j) &&
+     printf '%s\n' "$out" | grep -Fx 'Trusted comment: yoda release 1.1.0' &&
      sha256sum --check --ignore-missing SHA256SUMS &&
      tar -xzf yoda-1.1.0.tar.gz --no-same-owner &&
      rm yoda-1.1.0.tar.gz SHA256SUMS SHA256SUMS.minisig &&
@@ -598,10 +600,12 @@ Simpler, when the mirror only needs to copy what GitHub publishes: put the GitHu
   `cd /srv/yoda && YODA_IMAGE_PREFIX=<new path> YODA_VERSION=<current tag> sh ops/deploy/deploy.sh`, which pulls
   from there and pins the new prefix (editing `.env` alone has no effect while `release.env` holds one).
 - **Image digests.** A GitHub release's `bundle.env` names the digest of each image; `deploy.sh` pins them in
-  `release.env` (`YODA_<NAME>_DIGEST`) when that `bundle.env` is the release being deployed and names the same
+  `release.env` (`YODA_<NAME>_DIGEST`) whenever that `bundle.env` is the release being deployed, whatever the
   prefix, and compose then runs `<prefix>/<name>:<version>@<digest>`: Docker pulls that digest, whatever the tag
-  points to. Otherwise (the GitLab deploy job, a registry that builds its own images, another prefix) they are
-  pinned empty and the tags run.
+  points to. A digest names content, not a registry, so a mirror that copied the images serves the same digests;
+  a registry that rebuilt them has others, and the pull fails (closed). For such a registry deploy with
+  `YODA_IGNORE_BUNDLE_DIGESTS=1` (it warns, and runs the tags). A deploy of another version than the unpacked
+  `bundle.env` (the GitLab deploy job) runs the tags too: the variables are pinned empty.
 
 - **From an env-based install** (a full `.env`, before the setup wizard existed): upgrade as usual with the same
   `deploy.sh`. `init` copies the Postgres password, the storage keys and `YODA_MASTER_KEY` from `.env` into the
@@ -632,10 +636,24 @@ Simpler, when the mirror only needs to copy what GitHub publishes: put the GitHu
   alerts, and the setup wizard detects the portal's own `Host` as the public URL. Core logs a warning once when it
   sees a proxy in front of the portal while the value is `1`.
 
-**Rollback.** On the host: `cd /srv/yoda && YODA_VERSION=<previous version> sh ops/deploy/deploy.sh` (unpack
-that release's bundle first, as in step 3, when its compose files differ), or on a mirror run the deploy job again
-in the **previous tag's** pipeline (CI/CD → Pipelines, filter by tag). It pins that version in
-`release.env` again). Migrations only move
+**Rollback.** On the host, in `/srv/yoda`: always unpack the bundle of the release you go back to, so the compose
+files, `deploy.sh` and the image digests in `bundle.env` are that release's (`1.0.0` stands for it):
+
+```bash
+curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.0.0/yoda-1.0.0.tar.gz
+curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.0.0/SHA256SUMS
+curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.0.0/SHA256SUMS.minisig
+out=$(minisign -Vm SHA256SUMS -P RWSErktAr/A+x5Gvgr0x29wiu41FmYEVlJYoXyB6oJk4kvwQLOZs9O9j) &&
+  printf '%s\n' "$out" | grep -Fx 'Trusted comment: yoda release 1.0.0' &&
+  sha256sum --check --ignore-missing SHA256SUMS &&
+  tar -xzf yoda-1.0.0.tar.gz --no-same-owner &&
+  rm yoda-1.0.0.tar.gz SHA256SUMS SHA256SUMS.minisig &&
+  YODA_VERSION=1.0.0 sh ops/deploy/deploy.sh
+```
+
+Each command runs only when the one before it passed, as in step 3; `deploy.sh` then pins that release's
+digests in `release.env`. On a mirror, run the deploy job again in the **previous tag's** pipeline (CI/CD →
+Pipelines, filter by tag); it pins that version in `release.env` again. Migrations only move
 forward: an older release usually runs on a newer schema, but if the changelog says a release changed data in a
 way the older one cannot read, restore the backup taken in step 2 of the upgrade instead (section 6).
 

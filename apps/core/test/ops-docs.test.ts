@@ -203,30 +203,42 @@ describe('release docs (GitHub Releases + GHCR, D1)', () => {
     expect(embedded).toBeTruthy()
     expect(read('keys/yoda-release.pub').split('\n')[1]).toBe(embedded)
     for (const [name, text] of [['README', readme], ['install guide', guide], ['runbook', runbook], ['releasing', releasing]] as const) {
-      const keys = [...text.matchAll(/minisign -Vm SHA256SUMS -P (\S+)/g)].map((m) => m[1])
+      const keys = [...text.matchAll(/minisign -Vm SHA256SUMS -P ([A-Za-z0-9+/=]+)/g)].map((m) => m[1])
       expect(keys.length, name).toBeGreaterThan(0)
       expect(new Set(keys), name).toEqual(new Set([embedded]))
     }
   })
 
-  it('verifies before running anything: every snippet chains minisign, the trusted comment, the checksum and the next step', () => {
+  it('verifies before running anything: every snippet keeps the minisign status, checks the trusted comment and the checksum, then chains on', () => {
     for (const [name, text] of [['README', readme], ['install guide', guide], ['runbook', runbook], ['releasing', releasing]] as const) {
       const lines = text.split('\n')
       const at = lines.flatMap((l, i) => (/minisign -Vm SHA256SUMS -P /.test(l) ? [i] : []))
       expect(at.length, name).toBeGreaterThan(0)
       for (const i of at) {
-        const m = /minisign -Vm SHA256SUMS -P \S+ \| grep -Fx 'Trusted comment: yoda release (\d+\.\d+\.\d+)' &&$/.exec(lines[i]!)
-        expect(m, `${name}: ${lines[i]}`).toBeTruthy()
+        // out=$(minisign ...) && keeps minisign's exit status (a pipe into grep would drop it).
+        expect(lines[i], name).toMatch(/^\s*out=\$\(minisign -Vm SHA256SUMS -P [A-Za-z0-9+/=]+\) &&$/)
+        const m = /^\s*printf '%s\\n' "\$out" \| grep -Fx 'Trusted comment: yoda release (\d+\.\d+\.\d+)' &&$/.exec(lines[i + 1]!)
+        expect(m, `${name}: ${lines[i + 1]}`).toBeTruthy()
         // The rest of the block: the checksum, then every command chained with && (the last one ends it).
         const rest: string[] = []
-        for (let j = i + 1; j < lines.length && !/^\s*```/.test(lines[j]!); j++) rest.push(lines[j]!.replace(/\s+#.*$/, ''))
+        for (let j = i + 2; j < lines.length && !/^\s*```/.test(lines[j]!); j++) rest.push(lines[j]!.replace(/\s+#.*$/, ''))
         expect(rest[0]!.trim(), name).toMatch(/^sha256sum --check --ignore-missing SHA256SUMS( &&)?$/)
         for (const r of rest.slice(0, -1)) expect(r, `${name}: ${r}`).toMatch(/ &&$/)
         expect(rest.at(-1)!, name).not.toMatch(/&&$/)
         // The same version in the grep as in the command it guards.
         for (const r of rest) for (const v of r.matchAll(/(?:--version |YODA_VERSION=|yoda-)(\d+\.\d+\.\d+)/g)) expect(v[1], `${name}: ${r}`).toBe(m![1])
       }
+      expect(text, name).not.toMatch(/minisign -Vm SHA256SUMS -P \S+ \|/)
     }
+    // The rollback unpacks the target release's bundle (its compose files and digest pins) before deploying it.
+    const rollback = runbook.slice(runbook.indexOf('**Rollback.**'))
+    expect(rollback.slice(0, 1200)).toMatch(/tar -xzf yoda-1\.0\.0\.tar\.gz --no-same-owner &&\n[\s\S]*YODA_VERSION=1\.0\.0 sh ops\/deploy\/deploy\.sh/)
+  })
+
+  it('documents the digest pins: mirrors keep them, the opt-out, and never deleting untagged versions', () => {
+    for (const text of [runbook, releasing]) expect(text).toContain('YODA_IGNORE_BUNDLE_DIGESTS=1')
+    expect(releasing).toContain('**Never delete untagged versions of the ghcr.io packages**')
+    expect(releasing).not.toMatch(/delete them in the package settings/)
   })
 
   it('documents the owner steps for the signing key, secrets, packages and the tag', () => {

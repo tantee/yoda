@@ -20,7 +20,8 @@
 #    address and the setup-token command while setup is not finished. When pulling from ghcr.io fails (packages
 #    not public yet), it offers `docker login ghcr.io` on a terminal and deploys once more.
 #
-# Env (the options win): YODA_VERSION, YODA_DIR, YODA_RELEASE_BASE_URL, YODA_IMAGE_PREFIX, and
+# Env (the options win): YODA_VERSION, YODA_DIR, YODA_RELEASE_BASE_URL, YODA_IMAGE_PREFIX,
+# YODA_IGNORE_BUNDLE_DIGESTS=1 (passed to deploy.sh: run the tags of a mirror that rebuilt the images), and
 # YODA_RELEASE_PUBKEY (a minisign public key replacing the embedded one; tests and key rotation only).
 # POSIX sh, no sudo inside: run it as a user who may run docker and write --dir.
 set -eu
@@ -214,9 +215,12 @@ fi
 # over .env; deploy.sh keeps the prefix there on every later deploy.
 printf 'YODA_IMAGE_PREFIX=%s\n' "$prefix" > "$dir/release.env"
 pinned=''
-if grep -q '^YODA_[A-Z]*_DIGEST=' "$dir/bundle.env" 2>/dev/null &&
-  grep -qxF "YODA_IMAGE_PREFIX=$prefix" "$dir/bundle.env"; then
-  pinned=', pinned by the digests in the signed bundle.env'
+if grep -q '^YODA_[A-Z]*_DIGEST=' "$dir/bundle.env" 2>/dev/null; then
+  if [ "${YODA_IGNORE_BUNDLE_DIGESTS:-}" = 1 ]; then
+    pinned=', by tag (YODA_IGNORE_BUNDLE_DIGESTS=1)'
+  else
+    pinned=', pinned by the digests in the signed bundle.env'
+  fi
 fi
 say "images: $prefix/<core|portal|runner|backup>:$version$pinned"
 

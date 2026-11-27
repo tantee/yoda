@@ -48,7 +48,11 @@ The tag starts [`.github/workflows/release.yml`](../.github/workflows/release.ym
    `SHA256SUMS.minisig`. A version with a suffix (`-rc.1`, `-beta.2`) is marked as a pre-release.
 
 A tag that cannot be signed therefore publishes no image tag and no release; the untagged digests it pushed are
-never referenced (delete them in the package settings if you like). The jobs that sign or publish (**images**,
+never referenced.
+
+**Never delete untagged versions of the ghcr.io packages** (no "delete untagged" cleanup, by hand, by a retention
+policy or by an action). Hosts pull by digest: a version whose tag later moved, or a re-run's earlier digest, can
+still be pinned in some host's `release.env`, and deleting it breaks that host's next pull, restart or restore. The jobs that sign or publish (**images**,
 **bundle** on a release, **tag**, **release**) run in the `release` environment.
 
 A host runs exactly the signed images: `deploy.sh` pins the bundle's digests in `release.env`
@@ -138,7 +142,8 @@ move them into the `release` environment. Steps 4 and 5 remain as well.
    curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.0.0/install.sh
    curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.0.0/SHA256SUMS
    curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.0.0/SHA256SUMS.minisig
-   minisign -Vm SHA256SUMS -P RWSErktAr/A+x5Gvgr0x29wiu41FmYEVlJYoXyB6oJk4kvwQLOZs9O9j | grep -Fx 'Trusted comment: yoda release 1.0.0' &&
+   out=$(minisign -Vm SHA256SUMS -P RWSErktAr/A+x5Gvgr0x29wiu41FmYEVlJYoXyB6oJk4kvwQLOZs9O9j) &&
+     printf '%s\n' "$out" | grep -Fx 'Trusted comment: yoda release 1.0.0' &&
      sha256sum --check --ignore-missing SHA256SUMS &&
      sh install.sh --version 1.0.0 --dir /tmp/yoda-check     # on a test host with Docker
    ```
@@ -156,7 +161,8 @@ move them into the `release` environment. Steps 4 and 5 remain as well.
   start a new run by hand for this: a manual run is always a dry run.
 - **The cause is in the repository** (the changelog, a version, the code): fix it on `main` through a pull
   request, delete the tag (`git push --delete origin v1.0.0 && git tag -d v1.0.0`) and tag the fixed commit. A
-  failed run tagged no image and created no release, so nothing is left to clean up except untagged digests.
+  failed run tagged no image and created no release, so nothing is left to clean up (leave its untagged
+  digests: see above).
 - **Only the release job failed after the images were tagged**: re-run failed jobs. If you must re-tag instead,
   the next run tags its own new digests, and installs pin whatever their bundle signed.
 
@@ -189,7 +195,8 @@ Every release's `SHA256SUMS` is signed with the Yoda release key:
 Check a release by hand (in the directory holding the downloaded assets; `1.0.0` is the version you downloaded):
 
 ```bash
-minisign -Vm SHA256SUMS -P RWSErktAr/A+x5Gvgr0x29wiu41FmYEVlJYoXyB6oJk4kvwQLOZs9O9j | grep -Fx 'Trusted comment: yoda release 1.0.0' &&
+out=$(minisign -Vm SHA256SUMS -P RWSErktAr/A+x5Gvgr0x29wiu41FmYEVlJYoXyB6oJk4kvwQLOZs9O9j) &&
+  printf '%s\n' "$out" | grep -Fx 'Trusted comment: yoda release 1.0.0' &&
   sha256sum --check --ignore-missing SHA256SUMS
 ```
 
@@ -242,8 +249,10 @@ Two ways to fill the mirror:
   HTTPS server, and copy the images with their manifests, for example
   `docker buildx imagetools create -t registry.example.org/group/yoda/core:1.0.0 ghcr.io/tantee/yoda/core:1.0.0`
   for each of the four images, or set the registry up as a pull-through cache of ghcr.io. The signature stays
-  valid, because the files are unchanged. The bundle's digests name `ghcr.io/tantee/yoda`, so a host given
-  another `--image-prefix` runs the mirror's tags (`deploy.sh` says so).
+  valid, because the files are unchanged. Copied images keep their digests (a digest names content, not a
+  registry), so a host given the mirror's `--image-prefix` still runs the digests the signed bundle pins. A mirror
+  whose registry rebuilt the images has other digests: the pull fails, closed; install or deploy there with
+  `YODA_IGNORE_BUNDLE_DIGESTS=1` to run its tags (it warns).
 - **Build it in GitLab CI.** `.gitlab-ci.yml` builds the images into the project's registry and, on tags, the
   signed bundle (`release-bundle` job), without digests. It uploads the bundle to the file server under
   `releases/<version>/`. A mirrored GitHub tag `v1.0.0` becomes release `1.0.0` there. Its CI/CD variables are

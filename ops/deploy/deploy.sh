@@ -8,8 +8,8 @@
 # 1. pull the release's images (nothing is built on the host), then pin the release in release.env
 #    (YODA_VERSION=<tag>, plus YODA_IMAGE_PREFIX when given or already pinned there; with no prefix in the
 #    environment, release.env or .env it uses the public release images, ghcr.io/tantee/yoda, never Docker Hub;
-#    plus the image digests, YODA_<NAME>_DIGEST, when the bundle.env next to it is the same release's and names
-#    the same prefix: the signed bundle's pins), so every later
+#    plus the image digests, YODA_<NAME>_DIGEST, when the bundle.env next to it is the same release's: the signed
+#    bundle's pins, whatever the prefix; YODA_IGNORE_BUNDLE_DIGESTS=1 runs the tags instead), so every later
 #    `docker compose --env-file .env --env-file release.env ...` on the host (backups, restores, restarts) runs
 #    the same images; exit 3 when the images cannot be pulled (registry login?);
 # 2. fill the bootstrap volume (one-shot `init`: generated Postgres password, RustFS keys and master key, or the
@@ -61,9 +61,10 @@ if [ -z "$prefix" ] && [ -z "$legacy" ]; then
   echo "deploy: YODA_IMAGE_PREFIX is not set: using the public release images, $prefix (pinned in release.env)"
 fi
 
-# The signed bundle's image digests (bundle.env, unpacked with the compose files): used for its own release and
-# prefix only. A deploy of another version, or from a registry that built its own images, runs the tags: the
-# variables are then pinned empty (compose before v2.25 warns about unset ones).
+# The signed bundle's image digests (bundle.env, unpacked with the compose files), for its own release only.
+# Digests name content, not a registry: a mirror that copied the images serves the same ones, and a registry that
+# rebuilt them fails the pull (closed) unless YODA_IGNORE_BUNDLE_DIGESTS=1 says to run its tags. A deploy of
+# another version runs the tags: the variables are then pinned empty (compose before v2.25 warns about unset ones).
 pins='YODA_CORE_DIGEST=
 YODA_PORTAL_DIGEST=
 YODA_RUNNER_DIGEST=
@@ -71,9 +72,10 @@ YODA_BACKUP_DIGEST=
 '
 if [ -f bundle.env ]; then
   bversion=$(sed -n 's/^YODA_VERSION=\([A-Za-z0-9._-]*\)$/\1/p' bundle.env | tail -n 1)
-  bprefix=$(sed -n 's/^YODA_IMAGE_PREFIX=\([A-Za-z0-9._:/-]*\)$/\1/p' bundle.env | tail -n 1)
   if [ "$bversion" = "$YODA_VERSION" ] && grep -q '^YODA_[A-Z]*_DIGEST=' bundle.env; then
-    if [ "$bprefix" = "${prefix:-$legacy}" ]; then
+    if [ "${YODA_IGNORE_BUNDLE_DIGESTS:-}" = 1 ]; then
+      echo "deploy: warning: YODA_IGNORE_BUNDLE_DIGESTS=1: running the $YODA_VERSION tags, not the digests the signed bundle pins" >&2
+    else
       pins=''
       for name in CORE PORTAL RUNNER BACKUP; do
         d=$(sed -n "s/^YODA_${name}_DIGEST=//p" bundle.env | tail -n 1)
@@ -85,8 +87,6 @@ if [ -f bundle.env ]; then
 "
       done
       echo "deploy: images pinned by digest (bundle.env of $YODA_VERSION)"
-    else
-      echo "deploy: bundle.env pins the digests of $bprefix, not ${prefix:-$legacy}: running the $YODA_VERSION tags"
     fi
   fi
 fi
@@ -109,7 +109,7 @@ dc() {
 
 echo "deploy: $YODA_VERSION"
 pull_failed() {
-  echo "deploy: $1 (registry login on this host? the release $YODA_VERSION published? for ghcr.io packages that are not public: docker login ghcr.io with a GitHub token that may read packages)" >&2
+  echo "deploy: $1 (registry login on this host? the release $YODA_VERSION published? for ghcr.io packages that are not public: docker login ghcr.io with a GitHub token that may read packages; a mirror that rebuilt the images has other digests than the signed bundle: YODA_IGNORE_BUNDLE_DIGESTS=1 runs its tags)" >&2
   exit 3
 }
 dc pull --quiet || pull_failed "pulling the images of $YODA_VERSION failed"

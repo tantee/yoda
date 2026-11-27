@@ -142,16 +142,25 @@ describe.skipIf(!posix)('ops/deploy/deploy.sh (stub docker)', () => {
     rmSync(s.dir, { recursive: true, force: true })
   })
 
-  it('runs the tags when bundle.env is another release, or names another prefix', async () => {
-    for (const [version, prefix, note] of [
-      ['1.1.0', 'registry.example.org/group/yoda', ''],
-      ['1.2.0', 'ghcr.io/tantee/yoda', 'bundle.env pins the digests of ghcr.io/tantee/yoda, not registry.example.org/group/yoda'],
+  it('pins the digests of the same release under another prefix too (a mirror that copied the images)', async () => {
+    const s = sandbox()
+    bundleEnv(s.dir, '1.2.0', 'ghcr.io/tantee/yoda')
+    const r = await run('sh', [deploy], { cwd: s.dir, env: { ...s.env, ...PREFIX, YODA_VERSION: '1.2.0', FAKE_SETUP: 'done' } })
+    expect(r.code, r.out).toBe(0)
+    expect(readFileSync(join(s.dir, 'release.env'), 'utf8')).toBe(`YODA_VERSION=1.2.0\nYODA_IMAGE_PREFIX=registry.example.org/group/yoda\n${PINS}`)
+    rmSync(s.dir, { recursive: true, force: true })
+  })
+
+  it('runs the tags for another release, or with YODA_IGNORE_BUNDLE_DIGESTS=1 (with a warning)', async () => {
+    for (const [version, env] of [
+      ['1.1.0', {}],
+      ['1.2.0', { YODA_IGNORE_BUNDLE_DIGESTS: '1' }],
     ] as const) {
       const s = sandbox()
-      bundleEnv(s.dir, version, prefix)
-      const r = await run('sh', [deploy], { cwd: s.dir, env: { ...s.env, ...PREFIX, YODA_VERSION: '1.2.0', FAKE_SETUP: 'done' } })
+      bundleEnv(s.dir, version, 'registry.example.org/group/yoda')
+      const r = await run('sh', [deploy], { cwd: s.dir, env: { ...s.env, ...PREFIX, ...env, YODA_VERSION: '1.2.0', FAKE_SETUP: 'done' } })
       expect(r.code, r.out).toBe(0)
-      if (note) expect(r.out).toContain(note)
+      if (version === '1.2.0') expect(r.out).toContain('warning: YODA_IGNORE_BUNDLE_DIGESTS=1: running the 1.2.0 tags')
       expect(readFileSync(join(s.dir, 'release.env'), 'utf8')).toBe(`YODA_VERSION=1.2.0\nYODA_IMAGE_PREFIX=registry.example.org/group/yoda\n${NO_PINS}`)
       rmSync(s.dir, { recursive: true, force: true })
     }

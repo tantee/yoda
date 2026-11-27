@@ -3,7 +3,8 @@
 # from a local HTTP server and runs the directory's own install.sh against it with --base-url
 # http://127.0.0.1:<port>/releases/{version}/, with a stub `docker` first on PATH (nothing is pulled or started).
 # It checks that install.sh verified the signature and the checksum, unpacked the bundle and pinned the release
-# in release.env: the version, the image prefix and, given a digests file, exactly those image digests. With a
+# in release.env: the version, the image prefix and, given a digests file, exactly those image digests (also when
+# installed with a mirror's prefix: digests name content, not a registry). With a
 # real `docker compose` on the machine it also resolves the prod compose files with that release.env and checks
 # every image is <prefix>/<name>:<version>@<digest>. Then it checks that a signature from another key is refused.
 # The release workflow (.github/workflows/release.yml) runs it on every dry run and on a real release, before the
@@ -133,6 +134,16 @@ if [ -n "$real_docker" ] && "$real_docker" compose version > /dev/null 2>&1; the
   echo "check-release: compose runs the pinned images"
 else
   echo 'check-release: no docker compose here: skipped the compose image check'
+fi
+
+# Digests name content, not a registry: installed with a mirror's prefix, the same digests stay pinned.
+if [ -n "$digests" ]; then
+  install --dir "$work/srv/mirror" --image-prefix registry.example.org/mirror/yoda > "$work/mirror.log" 2>&1 ||
+    { cat "$work/mirror.log" >&2; fail 'install.sh refused the release with a mirror prefix'; }
+  for name in CORE PORTAL RUNNER BACKUP; do
+    grep -qx "YODA_${name}_DIGEST=sha256:[0-9a-f]\{64\}" "$work/srv/mirror/release.env" ||
+      fail "with a mirror prefix, release.env does not pin YODA_${name}_DIGEST"
+  done
 fi
 
 # A signature from any other key must be refused.

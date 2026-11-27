@@ -51,12 +51,14 @@ it. Never pipe a download into `sh`. Use the latest release from
 curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.0.0/install.sh
 curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.0.0/SHA256SUMS
 curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.0.0/SHA256SUMS.minisig
-minisign -Vm SHA256SUMS -P RWSErktAr/A+x5Gvgr0x29wiu41FmYEVlJYoXyB6oJk4kvwQLOZs9O9j | grep -Fx 'Trusted comment: yoda release 1.0.0' &&
+out=$(minisign -Vm SHA256SUMS -P RWSErktAr/A+x5Gvgr0x29wiu41FmYEVlJYoXyB6oJk4kvwQLOZs9O9j) &&
+  printf '%s\n' "$out" | grep -Fx 'Trusted comment: yoda release 1.0.0' &&
   sha256sum --check --ignore-missing SHA256SUMS &&
   sh install.sh --version 1.0.0 --dir /srv/yoda
 ```
 
-Each command runs only when the one before it passed: `minisign` checks the signature, `grep` that the signed
+Each command runs only when the one before it passed: `minisign` checks the signature (`out=$(…) &&` keeps its
+exit status), `grep` that the signed
 trusted comment names this release (`Trusted comment: yoda release 1.0.0`; a different version means you
 downloaded the wrong files), and `sha256sum` the checksum of `install.sh`. Nothing runs if any of them fails.
 For another release, change the version in the URLs, the `grep` and `--version`.
@@ -203,7 +205,8 @@ Rotation and lost keys in detail: [runbook, section 10](../operations.md#10-rota
    curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.1.0/yoda-1.1.0.tar.gz
    curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.1.0/SHA256SUMS
    curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.1.0/SHA256SUMS.minisig
-   minisign -Vm SHA256SUMS -P RWSErktAr/A+x5Gvgr0x29wiu41FmYEVlJYoXyB6oJk4kvwQLOZs9O9j | grep -Fx 'Trusted comment: yoda release 1.1.0' &&
+   out=$(minisign -Vm SHA256SUMS -P RWSErktAr/A+x5Gvgr0x29wiu41FmYEVlJYoXyB6oJk4kvwQLOZs9O9j) &&
+     printf '%s\n' "$out" | grep -Fx 'Trusted comment: yoda release 1.1.0' &&
      sha256sum --check --ignore-missing SHA256SUMS &&
      tar -xzf yoda-1.1.0.tar.gz --no-same-owner &&
      rm yoda-1.1.0.tar.gz SHA256SUMS SHA256SUMS.minisig &&
@@ -215,7 +218,8 @@ Rotation and lost keys in detail: [runbook, section 10](../operations.md#10-rota
    and the runbook files. An internal GitLab mirror's **deploy** job does the same in one step. The deploy pulls
    the images, pins the version and the bundle's image digests in `release.env`, updates the bootstrap volume, runs the migrations (a failed
    migration stops before anything is replaced), starts the new containers and waits until the portal answers.
-4. Check the portal. To roll back, deploy the previous version the same way.
+4. Check the portal. To roll back, deploy the previous version the same way: download, check and unpack its
+   bundle, then deploy it ([runbook, rollback](../operations.md#5-upgrade-and-rollback)).
 
 **From an env-based install** (one with a full `.env`, from before the setup wizard): upgrade the same way.
 The `init` step copies the database password, storage keys and master key from `.env` into the bootstrap volume; core
