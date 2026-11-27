@@ -22,12 +22,18 @@
 # 5. when core's /public-config says setup is still required, print where the setup wizard is and how to get
 #    the setup token.
 # The optional built-in HTTPS proxy (docs/operations.md, section 4b) is on when the compose profiles in effect
-# (COMPOSE_PROFILES in .env, as `install.sh --with-proxy` writes it) run the `proxy` service. Then it also pins
-# YODA_PROXY_ENABLED=true in release.env (compose gives core and the portal YODA_TRUSTED_PROXY_HOPS=2 unless .env
-# sets it), refuses a portal or core published on another address than loopback (anyone reaching the portal
-# directly could then choose their own client address), checks the proxy's Caddyfile and certificate settings with
-# `caddy validate` before anything is replaced (exit 2), and after the start copies the public root certificate
-# of Caddy's internal CA to proxy/root.crt (internal mode; never a private key).
+# (COMPOSE_PROFILES in .env, as `install.sh --with-proxy` writes it) run the `proxy` service; a profile `proxy` the
+# release's compose files do not have (a release before the proxy) stops it (exit 2). It pins YODA_PROXY_ENABLED in
+# release.env every time, `true` with the proxy and empty without (compose gives core and the portal
+# YODA_TRUSTED_PROXY_HOPS=2 only for `true`, unless .env sets the hops), and refuses another value in .env or its
+# environment (exit 2). With the proxy it also, before pulling, refuses a portal or core published on another
+# address than loopback (anyone reaching the portal directly could then choose their own client address) and
+# settings the proxy cannot run with (the domain, the mode, the ports, ACME's email and ports; exit 2), warns about
+# hops other than 2 and an organisation certificate (files mode) that does not name the domain or expires within 30
+# days; checks the Caddyfile and certificates with `caddy validate` before release.env or any running container is
+# replaced (exit 2); after the start reloads the proxy's configuration (`caddy reload --force`: a changed
+# Caddyfile, proxy/sites file or certificate file applies even when compose kept the container); and copies the
+# public root certificate of Caddy's internal CA to proxy/root.crt (internal mode; never a private key).
 # It never removes or recreates a volume (the bootstrap volume holds the master key).
 set -eu
 
@@ -114,26 +120,107 @@ dc() {
   docker compose --env-file .env --env-file "$release" -f docker-compose.yml -f docker-compose.prod.yml "$@"
 }
 
+# A setting as compose sees it: the environment wins over .env (set but empty included).
+setting() {
+  if eval "[ -n \"\${$1+x}\" ]"; then
+    eval "printf '%s\n' \"\${$1}\""
+  else
+    env_value "$1"
+  fi
+}
+# Whether a PEM certificate names a host as a browser checks it: its subject alternative names only (DNS, with a
+# wildcard for one label, or IP), never the subject's CN; LibreSSL has no `openssl x509 -checkhost`.
+cert_names_host() {
+  h=$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')
+  w=$h
+  case "$h" in *.*) w="*.${h#*.}" ;; esac
+  openssl x509 -in "$1" -noout -text 2>/dev/null | grep -Eo '(DNS|IP Address):[^, ]+' |
+    sed -e 's/^DNS://' -e 's/^IP Address://' | tr '[:upper:]' '[:lower:]' | grep -Fxq -e "$h" -e "$w"
+}
+refuse() {
+  echo "deploy: $1" >&2
+  rm -f "$release"
+  exit 2
+}
+
 # The built-in proxy: on when the profiles in effect run its service (compose reads COMPOSE_PROFILES from .env).
 proxy=no
 if dc config --services 2>/dev/null | grep -qx proxy; then
   proxy=yes
-  printf 'YODA_PROXY_ENABLED=true\n' >> "$release"
+else
+  profiles=$(setting COMPOSE_PROFILES | tr -d '[:space:]')
+  case ",$profiles," in
+    *,proxy,*)
+      refuse "COMPOSE_PROFILES names the built-in HTTPS proxy (proxy), but the compose files of $YODA_VERSION have no proxy service: it came with release 1.1.0. Deploy 1.1.0 or later (unpack its bundle first), or remove proxy from COMPOSE_PROFILES in .env (docs/operations.md, section 4b)"
+      ;;
+  esac
+fi
+# Pinned every time, so release.env (read after .env) decides; only the environment could still override it.
+enabled=''
+[ "$proxy" = no ] || enabled=true
+for where in environment .env; do
+  if [ "$where" = environment ]; then
+    [ -n "${YODA_PROXY_ENABLED+x}" ] || continue
+    value=$YODA_PROXY_ENABLED
+  else
+    value=$(env_value YODA_PROXY_ENABLED)
+    [ -n "$value" ] || continue
+  fi
+  [ "$value" = "$enabled" ] ||
+    refuse "YODA_PROXY_ENABLED=$value in the $where, but the built-in HTTPS proxy is $([ "$proxy" = yes ] && echo on || echo off): deploy.sh sets it in release.env itself; remove it (the proxy is on or off with COMPOSE_PROFILES; docs/operations.md, section 4b)"
+done
+printf 'YODA_PROXY_ENABLED=%s\n' "$enabled" >> "$release"
+
+if [ "$proxy" = yes ]; then
   # With it, core and the portal believe one more X-Forwarded-For entry: the portal must be reachable only through
   # the proxy (and core only from this host), or a client could choose its own address and host.
   for name in PORTAL_BIND CORE_BIND; do
-    eval "bind=\${$name:-}"
-    [ -n "$bind" ] || bind=$(env_value "$name")
+    bind=$(setting "$name")
     case "$bind" in
       '' | 127.* | localhost | ::1 | '[::1]') ;;
-      *)
-        echo "deploy: $name=$bind publishes it beyond this host while the built-in HTTPS proxy is on: remove it from .env (the proxy reaches the portal inside compose; docs/operations.md, section 4b)" >&2
-        rm -f "$release"
-        exit 2
-        ;;
+      *) refuse "$name=$bind publishes it beyond this host while the built-in HTTPS proxy is on: remove it from .env (the proxy reaches the portal inside compose; docs/operations.md, section 4b)" ;;
     esac
   done
+  hops=$(setting YODA_TRUSTED_PROXY_HOPS)
+  [ -z "$hops" ] || [ "$hops" = 2 ] ||
+    echo "deploy: warning: YODA_TRUSTED_PROXY_HOPS=$hops while the built-in HTTPS proxy is on (it needs 2, which it sets when the line is not there): remove it from .env unless another proxy stands in front of this one (docs/operations.md, section 4b)" >&2
+  # The settings the proxy runs with, as install.sh checks them: before pulling, with a message naming the line.
+  pdomain=$(setting YODA_PROXY_DOMAIN)
+  [ -n "$pdomain" ] || refuse 'the built-in HTTPS proxy is on but YODA_PROXY_DOMAIN is not set in .env (the name staff open, e.g. portal.example.org; docs/operations.md, section 4b)'
+  printf '%s\n' "$pdomain" | grep -Eqx '([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)*[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?' ||
+    refuse "YODA_PROXY_DOMAIN must be one host name such as portal.example.org (no scheme, port, path or wildcard): $pdomain"
+  pmode=$(setting YODA_PROXY_CERT_MODE)
+  pmode=${pmode:-internal}
+  case "$pmode" in
+    internal | files | acme) ;;
+    *) refuse "YODA_PROXY_CERT_MODE must be internal, files or acme: $pmode" ;;
+  esac
+  for name in YODA_PROXY_HTTP_PORT YODA_PROXY_HTTPS_PORT; do
+    port=$(setting "$name")
+    case "$port" in
+      '') ;;
+      *[!0-9]* | 0*) refuse "$name is not a port number: $port" ;;
+      *) [ "$port" -le 65535 ] || refuse "$name is not a port number: $port" ;;
+    esac
+  done
+  if [ "$pmode" = acme ]; then
+    case "$(setting YODA_PROXY_HTTP_PORT):$(setting YODA_PROXY_HTTPS_PORT)" in
+      :443 | 80:443 | : | 80:) ;;
+      *) refuse 'YODA_PROXY_CERT_MODE=acme needs the proxy on ports 80 and 443 (Let'"'"'s Encrypt checks the name there): remove YODA_PROXY_HTTP_PORT and YODA_PROXY_HTTPS_PORT from .env, or use internal or files' ;;
+    esac
+    [ -n "$(setting YODA_PROXY_ACME_EMAIL)" ] || refuse 'YODA_PROXY_CERT_MODE=acme needs YODA_PROXY_ACME_EMAIL in .env (the address Let'"'"'s Encrypt writes to)'
+  fi
   mkdir -p proxy/certs proxy/sites
+  # The organisation's certificate, when openssl is here: the name and the time left (caddy validate checks the key).
+  if [ "$pmode" = files ] && [ -f proxy/certs/cert.pem ] && openssl version >/dev/null 2>&1; then
+    if ! openssl x509 -in proxy/certs/cert.pem -noout -checkend 0 >/dev/null 2>&1; then
+      echo "deploy: warning: proxy/certs/cert.pem has expired: browsers refuse the portal until you put the renewed certificate in place (docs/operations.md, section 4b)" >&2
+    elif ! openssl x509 -in proxy/certs/cert.pem -noout -checkend 2592000 >/dev/null 2>&1; then
+      echo "deploy: warning: proxy/certs/cert.pem expires within 30 days ($(openssl x509 -in proxy/certs/cert.pem -noout -enddate 2>/dev/null | sed 's/^notAfter=//')): put the renewed certificate in place before then" >&2
+    fi
+    cert_names_host proxy/certs/cert.pem "$pdomain" ||
+      echo "deploy: warning: proxy/certs/cert.pem does not name $pdomain in its subject alternative names: browsers will refuse it for that name" >&2
+  fi
 fi
 
 echo "deploy: $YODA_VERSION"
@@ -146,18 +233,19 @@ dc pull --quiet || pull_failed "pulling the images of $YODA_VERSION failed"
 for image in $(dc config --images); do
   docker image inspect "$image" >/dev/null 2>&1 || pull_failed "image $image is missing"
 done
-mv "$release" release.env
-release=release.env
-
-# The proxy's settings, before any running container is replaced: a wrong domain, mode or certificate fails here.
+# The proxy's settings, before release.env or any running container is replaced: a wrong domain, mode or
+# certificate fails here (with the new release's files and images).
 if [ "$proxy" = yes ]; then
   out=$(dc run --rm --no-deps -T proxy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile 2>&1) || {
     printf '%s\n' "$out" | tail -n 3 >&2
-    echo "deploy: the built-in HTTPS proxy's settings are invalid: check YODA_PROXY_DOMAIN, YODA_PROXY_CERT_MODE (internal, files or acme), YODA_PROXY_ACME_EMAIL (acme) or proxy/certs/cert.pem and key.pem (files) in .env and $(pwd)/proxy (docs/operations.md, section 4b); nothing was replaced" >&2
+    rm -f "$release"
+    echo "deploy: the built-in HTTPS proxy's settings are invalid: check YODA_PROXY_DOMAIN, YODA_PROXY_CERT_MODE (internal, files or acme), YODA_PROXY_ACME_EMAIL (acme) or proxy/certs/cert.pem and key.pem (files) in .env and $(pwd)/proxy, and the *.caddy files in proxy/sites (docs/operations.md, section 4b); release.env and the running containers are unchanged" >&2
     exit 2
   }
   echo "deploy: built-in HTTPS proxy settings checked (caddy validate)"
 fi
+mv "$release" release.env
+release=release.env
 
 dc run --rm init
 dc run --rm migrate
@@ -178,6 +266,19 @@ echo "deploy: $YODA_VERSION ready"
 # The proxy's public address, and in internal mode the public root certificate of its CA for the staff PCs.
 public=''
 if [ "$proxy" = yes ]; then
+  # Compose recreates the proxy only when its own settings change, not when the Caddyfile, a proxy/sites file or a
+  # certificate file does: reload them now (validated above; Caddy keeps the running configuration on an error).
+  tries=0
+  until out=$(dc exec -T proxy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile --force 2>&1); do
+    tries=$((tries + 1))
+    if [ "$tries" -ge 6 ]; then
+      printf '%s\n' "$out" | tail -n 3 >&2
+      echo "deploy: the built-in HTTPS proxy did not reload its configuration (it may still run the previous one): dc logs proxy, then dc restart proxy (docs/operations.md, section 4b)" >&2
+      exit 1
+    fi
+    sleep 5
+  done
+  echo "deploy: built-in HTTPS proxy configuration reloaded"
   # shellcheck disable=SC2016 # expanded inside the proxy container
   info=$(dc exec -T proxy sh -c 'printf "%s %s %s\n" "${YODA_PROXY_CERT_MODE:-}" "${YODA_PROXY_DOMAIN:-}" "${YODA_PROXY_HTTPS_PORT:-443}"' 2>/dev/null || true)
   # shellcheck disable=SC2086 # three plain words

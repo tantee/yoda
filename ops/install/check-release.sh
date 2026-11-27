@@ -114,6 +114,8 @@ elif grep -q '_DIGEST=' "$work/srv/yoda/bundle.env"; then
 else
   want=$(printf '%s\nYODA_CORE_DIGEST=\nYODA_PORTAL_DIGEST=\nYODA_RUNNER_DIGEST=\nYODA_BACKUP_DIGEST=' "$want")
 fi
+# deploy.sh pins the built-in proxy off (an empty YODA_PROXY_ENABLED) on an install without --with-proxy.
+want=$(printf '%s\nYODA_PROXY_ENABLED=' "$want")
 [ "$(cat "$work/srv/yoda/release.env")" = "$want" ] || fail "release.env is not: $want"
 for f in docker-compose.yml docker-compose.prod.yml ops/deploy/deploy.sh ops/proxy/Caddyfile .env.example bundle.env; do
   [ -f "$work/srv/yoda/$f" ] || fail "the bundle has no $f"

@@ -8,20 +8,42 @@
 #                           organisation's certificate in proxy/certs/cert.pem and key.pem) or acme (Let's Encrypt,
 #                           only for a host reachable from the internet on ports 80 and 443)
 #   YODA_PROXY_ACME_EMAIL   acme only: the address Let's Encrypt writes to about the certificate
+#   YODA_PROXY_ACME_CA      acme only: the ACME directory, Let's Encrypt's production one unless set
+#                           (install.sh --acme-staging writes its staging one, for a trial run)
 #   YODA_PROXY_HTTP_PORT / YODA_PROXY_HTTPS_PORT   the ports, 80 and 443 unless set (the same inside the container)
 # Like an external proxy (section 5, upgrade notes) it keeps the browser's Host and sets X-Forwarded-For (the
 # client address it saw, replacing any a client sent), X-Forwarded-Proto and X-Forwarded-Host: Caddy's defaults.
 # With the profile on, deploy.sh pins YODA_PROXY_ENABLED=true in release.env, and compose then gives core and the
 # portal YODA_TRUSTED_PROXY_HOPS=2 unless .env sets it.
-# Checked before every deploy replaces a container: caddy validate --config /etc/caddy/Caddyfile.
+# Checked before every deploy replaces a container: caddy validate --config /etc/caddy/Caddyfile; after the start,
+# deploy.sh reloads it (caddy reload --force), so a changed Caddyfile, proxy/sites file or certificate applies.
 {
 	http_port {$YODA_PROXY_HTTP_PORT:80}
 	https_port {$YODA_PROXY_HTTPS_PORT:443}
+	# Inside the container only (never published): the healthcheck and deploy.sh's `caddy reload` use it.
+	admin localhost:2019
 	# The internal CA's root goes to the staff PCs, not into this container's trust store.
 	skip_install_trust
 	servers {
 		# Only TCP is published: no HTTP/3 (UDP) advertised.
 		protocols h1 h2
+		timeouts {
+			# A client gets 30 s for its request headers (slow-header clients cannot hold connections open), and
+			# 10 minutes for an upload body (an attachment of 25 MiB over a slow link). Never a write timeout: the
+			# portal's live events (server-sent events) stay open for as long as a page is.
+			read_header 30s
+			read_body 10m
+			idle 5m
+		}
+	}
+	# The internal CA (internal mode) under a name staff recognise in their trust store. The names apply when the
+	# root is made (the first start); an existing proxy-data volume keeps its root (docs/operations.md, section 4b).
+	pki {
+		ca local {
+			name "Yoda {$YODA_PROXY_DOMAIN} internal CA"
+			root_cn "Yoda {$YODA_PROXY_DOMAIN} internal CA root"
+			intermediate_cn "Yoda {$YODA_PROXY_DOMAIN} internal CA intermediate"
+		}
 	}
 }
 
@@ -33,8 +55,14 @@
 	tls /etc/caddy/certs/cert.pem /etc/caddy/certs/key.pem
 }
 
+# Let's Encrypt only (no fallback to another CA): the issuer is named, so Caddy uses none other.
 (tls-acme) {
-	tls {$YODA_PROXY_ACME_EMAIL}
+	tls {
+		issuer acme {
+			dir {$YODA_PROXY_ACME_CA:https://acme-v02.api.letsencrypt.org/directory}
+			email {$YODA_PROXY_ACME_EMAIL}
+		}
+	}
 }
 
 # http:// on the same name goes to https://, keeping a port other than 443 (Caddy's own redirect would drop it,
@@ -49,6 +77,10 @@ http://{$YODA_PROXY_DOMAIN}:{$YODA_PROXY_HTTP_PORT:80} {
 	# Readiness names the failing dependency: never outside the host (section 1). deploy.sh checks it inside.
 	@ready path /api/ready /api/ready/*
 	respond @ready 404
+	# A little above the portal's largest upload (MAX_UPLOAD_BYTES, 25 MiB): a larger body gets 413 here.
+	request_body {
+		max_size 32MiB
+	}
 	reverse_proxy portal:3000
 }
 

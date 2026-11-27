@@ -88,7 +88,8 @@ services:
       YODA_BOOTSTRAP_FILE: /var/lib/yoda/bootstrap.env
       YODA_MASTER_KEY_FILE: /var/lib/yoda/core/master-key
       YODA_SETTINGS_IMPORT: ${YODA_SETTINGS_IMPORT:-}
-      # 2 when the built-in proxy is on (deploy.sh pins YODA_PROXY_ENABLED=true in release.env), unless .env sets it.
+      # 2 when the built-in proxy is on, unless .env sets it: deploy.sh pins YODA_PROXY_ENABLED in release.env, `true`
+      # with the proxy profile and empty without, and refuses any other value in .env or its environment.
       YODA_TRUSTED_PROXY_HOPS: ${YODA_TRUSTED_PROXY_HOPS:-${YODA_PROXY_ENABLED:+2}}
       # The built-in proxy, for the setup wizard's read-only status card (core reads only the certificate the proxy
       # presents to anyone, never its files).
@@ -254,6 +255,8 @@ services:
       YODA_PROXY_DOMAIN: ${YODA_PROXY_DOMAIN:-}
       YODA_PROXY_CERT_MODE: ${YODA_PROXY_CERT_MODE:-internal}
       YODA_PROXY_ACME_EMAIL: ${YODA_PROXY_ACME_EMAIL:-}
+      # acme only: the ACME directory; empty is Let's Encrypt's production one (install.sh --acme-staging: staging).
+      YODA_PROXY_ACME_CA: ${YODA_PROXY_ACME_CA:-}
       YODA_PROXY_HTTP_PORT: ${YODA_PROXY_HTTP_PORT:-80}
       YODA_PROXY_HTTPS_PORT: ${YODA_PROXY_HTTPS_PORT:-443}
     volumes:
@@ -272,6 +275,14 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+    # It faces the network: no capabilities but binding 80 and 443 and reading proxy/certs/key.pem (0600, owned by
+    # the deploy user, read as root here), no privilege gain, and a read-only root file system (it writes only its
+    # two volumes and /tmp).
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE, DAC_READ_SEARCH]
+    security_opt: ['no-new-privileges:true']
+    read_only: true
+    tmpfs: [/tmp]
     restart: unless-stopped
 
   # Daily backups (ops/backup): at the backup time in TZ a pg_dump -Fc of the database and a mirror of the bucket

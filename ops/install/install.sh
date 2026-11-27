@@ -2,7 +2,8 @@
 # Installs one pinned Yoda release on a fresh host (docs/operations.md, section 4; installer proposal §3.4).
 #
 #   sh install.sh --version 1.2.0 [--dir /srv/yoda] [--base-url URL] [--image-prefix PREFIX] [--no-login]
-#     [--with-proxy --domain portal.example.org [--cert-mode internal|files|acme] [--cert FILE --key FILE] [--acme-email ADDRESS]]
+#     [--with-proxy --domain portal.example.org [--cert-mode internal|files|acme] [--cert FILE --key FILE]
+#      [--acme-email ADDRESS [--acme-staging]] [--http-port N] [--https-port N]]   (the proxy: release 1.1.0 or later)
 #
 # 1. preflight: Docker Engine 24+, Compose v2.24+, the user can run docker, curl or wget, sha256sum or shasum,
 #    minisign, tar; warns below 10 GB free;
@@ -20,9 +21,11 @@
 #    writes COMPOSE_PROFILES=proxy, YODA_PROXY_DOMAIN and YODA_PROXY_CERT_MODE (plus YODA_PROXY_ACME_EMAIL, and
 #    --http-port / --https-port when not 80 and 443) into the new .env, and for --cert-mode files copies --cert and
 #    --key into proxy/certs/ (the key 0600). Modes: internal (default; Caddy's own CA, whose public root deploy.sh
-#    copies to proxy/root.crt for the staff PCs), files (the organisation's certificate) or acme (Let's Encrypt,
-#    only when the host is reachable from the internet on 80 and 443; needs --acme-email). Without it, HTTPS comes
-#    from your own reverse proxy (section 1), as before;
+#    copies to proxy/root.crt for the staff PCs), files (the organisation's certificate: with openssl here it must
+#    name --domain, match --key and not have expired; a warning under 30 days left) or acme (Let's Encrypt, only
+#    when the host is reachable from the internet on 80 and 443, never other ports; needs --acme-email;
+#    --acme-staging uses Let's Encrypt's staging CA for a trial). The releases before 1.1.0 have no proxy: refused.
+#    Without it, HTTPS comes from your own reverse proxy (section 1), as before;
 # 5. pins the image prefix in release.env (never Docker Hub), then runs ops/deploy/deploy.sh (pull, pin release.env
 #    with the bundle's image digests, init, migrate, up, wait for /api/ready), which prints the setup wizard's
 #    address and the setup-token command while setup is not finished. When pulling from ghcr.io fails (packages
@@ -51,8 +54,17 @@ die() {
   printf 'install: %s\n' "$*" >&2
   exit 1
 }
+# Whether a PEM certificate names a host as a browser checks it: its subject alternative names only (DNS, with a
+# wildcard for one label, or IP), never the subject's CN; LibreSSL has no `openssl x509 -checkhost`.
+cert_names_host() {
+  h=$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')
+  w=$h
+  case "$h" in *.*) w="*.${h#*.}" ;; esac
+  openssl x509 -in "$1" -noout -text 2>/dev/null | grep -Eo '(DNS|IP Address):[^, ]+' |
+    sed -e 's/^DNS://' -e 's/^IP Address://' | tr '[:upper:]' '[:lower:]' | grep -Fxq -e "$h" -e "$w"
+}
 usage() {
-  sed -n '3,5p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'
+  sed -n '3,6p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'
   exit "${1:-0}"
 }
 
@@ -67,6 +79,7 @@ cert_mode=''
 cert=''
 key=''
 acme_email=''
+acme_staging=no
 http_port=''
 https_port=''
 while [ $# -gt 0 ]; do
@@ -91,6 +104,7 @@ while [ $# -gt 0 ]; do
     --key=*) key=${1#*=}; shift ;;
     --acme-email) [ $# -ge 2 ] || usage 2; acme_email=$2; shift 2 ;;
     --acme-email=*) acme_email=${1#*=}; shift ;;
+    --acme-staging) acme_staging=yes; shift ;;
     --http-port) [ $# -ge 2 ] || usage 2; http_port=$2; shift 2 ;;
     --http-port=*) http_port=${1#*=}; shift ;;
     --https-port) [ $# -ge 2 ] || usage 2; https_port=$2; shift 2 ;;
@@ -134,6 +148,10 @@ if [ "$pubkey" != "$RELEASE_PUBKEY_EMBEDDED" ]; then
 fi
 # The built-in HTTPS proxy (optional; docs/operations.md, section 4b). Every value goes into .env: plain words only.
 if [ "$with_proxy" = yes ]; then
+  # The proxy came with 1.1.0: an older bundle has no proxy service, so the flag would do nothing.
+  case "$version" in
+    0.* | 1.0.*) die "the built-in HTTPS proxy (--with-proxy) needs release 1.1.0 or later; this is $version: install a newer release, or put your own reverse proxy in front (docs/operations.md, section 1)" ;;
+  esac
   [ -n "$domain" ] || die '--with-proxy needs --domain <the name staff open, e.g. portal.example.org>'
   printf '%s\n' "$domain" | grep -Eqx '([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)*[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?' ||
     die "--domain must be a host name such as portal.example.org (no scheme, port or path): $domain"
@@ -148,6 +166,21 @@ if [ "$with_proxy" = yes ]; then
     { [ -f "$key" ] && [ -r "$key" ]; } || die "cannot read the private key $key"
     grep -q -- '-----BEGIN CERTIFICATE-----' "$cert" || die "$cert is not a PEM certificate (-----BEGIN CERTIFICATE-----)"
     grep -Eq -- '-----BEGIN ([A-Z]+ )?PRIVATE KEY-----' "$key" || die "$key is not a PEM private key"
+    # With openssl, what Caddy would refuse or browsers reject, before anything is written (caddy validate checks
+    # the pair again on every deploy).
+    if command -v openssl >/dev/null 2>&1; then
+      openssl x509 -in "$cert" -noout >/dev/null 2>&1 || die "openssl cannot read the certificate $cert"
+      cert_names_host "$cert" "$domain" ||
+        die "$cert does not name $domain in its subject alternative names (browsers ignore the subject's CN): get a certificate for that name"
+      cpub=$(openssl x509 -in "$cert" -noout -pubkey 2>/dev/null) || cpub=''
+      kpub=$(openssl pkey -in "$key" -pubout 2>/dev/null) || die "openssl cannot read the private key $key (an encrypted key? Caddy needs it unencrypted)"
+      [ -n "$cpub" ] && [ "$cpub" = "$kpub" ] || die "$key is not the private key of $cert"
+      openssl x509 -in "$cert" -noout -checkend 0 >/dev/null 2>&1 || die "$cert has expired"
+      openssl x509 -in "$cert" -noout -checkend 2592000 >/dev/null 2>&1 ||
+        say "warning: $cert expires within 30 days ($(openssl x509 -in "$cert" -noout -enddate | sed 's/^notAfter=//')): renew it soon (docs/operations.md, section 4b)"
+    else
+      say 'warning: no openssl here: the certificate is not checked against --domain and --key until the deploy'"'"'s caddy validate'
+    fi
   elif [ -n "$cert$key" ]; then
     die "--cert and --key are for --cert-mode files only (this is $cert_mode)"
   fi
@@ -157,6 +190,7 @@ if [ "$with_proxy" = yes ]; then
   elif [ -n "$acme_email" ]; then
     die "--acme-email is for --cert-mode acme only (this is $cert_mode)"
   fi
+  [ "$acme_staging" = no ] || [ "$cert_mode" = acme ] || die "--acme-staging is for --cert-mode acme only (this is $cert_mode)"
   for p in "$http_port" "$https_port"; do
     case "$p" in
       '') ;;
@@ -164,13 +198,19 @@ if [ "$with_proxy" = yes ]; then
       *) [ "$p" -le 65535 ] || die "not a port number: $p" ;;
     esac
   done
+  if [ "$cert_mode" = acme ]; then
+    case "$http_port:$https_port" in
+      :443 | 80:443 | : | 80:) ;;
+      *) die '--cert-mode acme needs ports 80 and 443 (Let'"'"'s Encrypt checks the name there): drop --http-port and --https-port, or use internal or files' ;;
+    esac
+  fi
   if [ -f "$dir/.env" ] && grep -Eq '^[[:space:]]*(COMPOSE_PROFILES|YODA_PROXY_[A-Z_]*|YODA_TRUSTED_PROXY_HOPS)[[:space:]]*=' "$dir/.env"; then
     die "$dir/.env already sets COMPOSE_PROFILES, YODA_TRUSTED_PROXY_HOPS or a YODA_PROXY_ value: set the built-in proxy there by hand (docs/operations.md, section 4b), or remove those lines"
   fi
   [ "$cert_mode" != acme ] ||
     say "warning: --cert-mode acme works only when $domain points at this host and it is reachable from the internet on ports 80 and 443"
-elif [ -n "$domain$cert_mode$cert$key$acme_email$http_port$https_port" ]; then
-  die '--domain, --cert-mode, --cert, --key, --acme-email, --http-port and --https-port go with --with-proxy'
+elif [ -n "$domain$cert_mode$cert$key$acme_email$http_port$https_port" ] || [ "$acme_staging" = yes ]; then
+  die '--domain, --cert-mode, --cert, --key, --acme-email, --acme-staging, --http-port and --https-port go with --with-proxy'
 fi
 
 case "$pubkey" in
@@ -268,7 +308,10 @@ if tar -tvzf "$tmp/$bundle" | grep -Eqv '^[-d]'; then die "$bundle holds a link 
 need_files='docker-compose.yml docker-compose.prod.yml ops/deploy/deploy.sh'
 [ "$with_proxy" = no ] || need_files="$need_files ops/proxy/Caddyfile"
 for f in $need_files; do
-  grep -qx "\(\./\)\{0,1\}$f" "$tmp/list" || die "$bundle has no $f"
+  grep -qx "\(\./\)\{0,1\}$f" "$tmp/list" || {
+    [ "$f" != ops/proxy/Caddyfile ] || die "$bundle has no built-in HTTPS proxy (ops/proxy/Caddyfile): --with-proxy needs release 1.1.0 or later"
+    die "$bundle has no $f"
+  }
 done
 
 # --- unpack ---------------------------------------------------------------------------------------------------
@@ -293,6 +336,7 @@ if [ "$with_proxy" = yes ]; then
     printf '# The built-in HTTPS proxy (install.sh --with-proxy; docs/operations.md, section 4b).\n'
     printf 'COMPOSE_PROFILES=proxy\nYODA_PROXY_DOMAIN=%s\nYODA_PROXY_CERT_MODE=%s\n' "$domain" "$cert_mode"
     [ -z "$acme_email" ] || printf 'YODA_PROXY_ACME_EMAIL=%s\n' "$acme_email"
+    [ "$acme_staging" = no ] || printf '# Let'"'"'s Encrypt staging (a trial: browsers do not trust it); remove for a real certificate.\nYODA_PROXY_ACME_CA=https://acme-staging-v02.api.letsencrypt.org/directory\n'
     [ -z "$http_port" ] || printf 'YODA_PROXY_HTTP_PORT=%s\n' "$http_port"
     [ -z "$https_port" ] || printf 'YODA_PROXY_HTTPS_PORT=%s\n' "$https_port"
   } >> "$dir/.env"
