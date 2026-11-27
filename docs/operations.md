@@ -189,7 +189,7 @@ with `COMPOSE_PROFILES=proxy`):
 | `YODA_PROXY_DOMAIN` | The name staff open; the public URL is `https://<domain>` (with `:<port>` when `YODA_PROXY_HTTPS_PORT` is not 443). It must lead to this host on the staff PCs (DNS) | with the proxy | `portal.example.org` |
 | `YODA_PROXY_CERT_MODE` | Where the certificate comes from: `internal` (Caddy's own CA; its public root is copied to `proxy/root.crt` for the staff PCs), `files` (the organisation's certificate in `proxy/certs/cert.pem` and `key.pem`) or `acme` (Let's Encrypt; only for a host reachable from the internet on 80 and 443) | optional (`internal`) | `files` |
 | `YODA_PROXY_ACME_EMAIL` | `acme` only: the address Let's Encrypt writes to about the certificate | with `acme` | `it@example.org` |
-| `YODA_PROXY_ACME_CA` | `acme` only: the ACME directory. Empty is Let's Encrypt's production CA (the only issuer: no fallback to another CA); `install.sh --acme-staging` writes Let's Encrypt's staging directory for a trial (browsers do not trust its certificates; remove the line for a real one) | optional | `https://acme-staging-v02.api.letsencrypt.org/directory` |
+| `YODA_PROXY_ACME_CA` | `acme` only: the ACME directory. Unset or empty, compose passes Let's Encrypt's production directory (the only issuer: no fallback to another CA); `deploy.sh` refuses a value that is not an `https://` URL; `install.sh --acme-staging` writes Let's Encrypt's staging directory for a trial (browsers do not trust its certificates; remove the line for a real one) | optional | `https://acme-staging-v02.api.letsencrypt.org/directory` |
 | `YODA_PROXY_HTTPS_PORT` | HTTPS port of the proxy, on the host and inside its container | optional (`443`) | `443` |
 | `YODA_PROXY_HTTP_PORT` | HTTP port of the proxy (redirects to HTTPS; ACME's challenge) | optional (`80`) | `80` |
 | `YODA_PROXY_BIND` | Host address the proxy's ports are published on | optional (`0.0.0.0`, all) | `10.0.0.5` |
@@ -545,13 +545,22 @@ the one it pins. With the profile on, it also:
   domain, an unknown mode, a missing or mismatched certificate file, ACME without an email);
 - after the start reloads the proxy's configuration (`caddy reload --force`): compose recreates the container only
   when its own settings change, so this is what applies a new Caddyfile, a changed `proxy/sites` file or a
-  replaced certificate file (exit 1 when the proxy does not take it; Caddy then keeps its previous configuration);
+  replaced certificate file (exit 1 when the proxy does not take it; Caddy then keeps its previous configuration).
+  The proxy reads the Caddyfile from the mounted `ops/proxy` directory (`/etc/caddy/yoda/Caddyfile`), not a mount
+  of the file itself: unpacking a bundle writes a new file, which a single-file mount would keep hidden from the
+  running container (the reload would then succeed on the old one). Unpack bundles over the deploy directory as
+  section 5 shows; never delete and recreate `ops/proxy` while the proxy runs (then `dc up -d --no-build --force-recreate
+  --no-deps proxy`);
 - in internal mode copies the public root certificate of Caddy's CA to `proxy/root.crt` in the deploy directory
   (never a key), and prints the address and, while setup is not finished, `https://<domain>/setup`.
 
-The proxy container runs with no Linux capabilities but binding ports 80 and 443 and reading the `0600` key of
-files mode, with `no-new-privileges` and a read-only root file system (it writes only its two volumes and
-`/tmp`). Its admin endpoint (`localhost:2019`) exists only inside the container, for the healthcheck and the
+The proxy container runs with no Linux capabilities but binding ports 80 and 443 (`NET_BIND_SERVICE`) and reading
+the `0600` key of files mode, which the deploy user owns and Caddy reads as root (`DAC_OVERRIDE`, part of Docker's
+default set and limited to the container's own mounts; never `DAC_READ_SEARCH`, which re-enables
+`open_by_handle_at`, the "shocker" escape to host files), with `no-new-privileges` and a read-only root file
+system (it writes only its two volumes and `/tmp`). Slow clients get 30 seconds for their request headers and a
+request body is capped at 32 MiB; there is no body or write timeout, which would cut the portal's server-sent
+events (on HTTP/1.1 Go's read timeout covers the whole request). Its admin endpoint (`localhost:2019`) exists only inside the container, for the healthcheck and the
 reload. It sends no `Strict-Transport-Security` (HSTS) header: in internal mode a lost root would otherwise lock
 browsers out until the new one is trusted. HSTS may come later as an option for files and acme mode only.
 
@@ -644,8 +653,8 @@ Caddy cannot make one today (a follow-up: a constrained root made outside Caddy 
 - **files.** The organisation's certificate for the domain: `proxy/certs/cert.pem` (the chain, leaf first) and
   `proxy/certs/key.pem` (unencrypted). It is renewed by you: put the new files in place before the old ones
   expire (the wizard card and `deploy.sh` warn 30 days before), then
-  `dc exec proxy caddy reload --config /etc/caddy/Caddyfile --force` (or deploy again, which reloads; or
-  `dc restart proxy`). Check them first with `dc run --rm --no-deps proxy caddy validate --config /etc/caddy/Caddyfile`.
+  `dc exec proxy caddy reload --config /etc/caddy/yoda/Caddyfile --force` (or deploy again, which reloads; or
+  `dc restart proxy`). Check them first with `dc run --rm --no-deps proxy caddy validate --config /etc/caddy/yoda/Caddyfile`.
 - **acme.** Let's Encrypt (and only Let's Encrypt: the issuer is named, so Caddy never falls back to another CA such
   as ZeroSSL) issues and renews the certificate (every 60 to 90 days, by itself) when the domain's
   public DNS points at this host and ports 80 and 443 are reachable from the internet. Not for a host inside the
@@ -669,8 +678,8 @@ dc run --rm --no-deps -T --entrypoint tar proxy -xzf - -C /data < yoda-proxy-dat
 **More sites on the proxy.** Files named `*.caddy` in `proxy/sites/` are added to the configuration (checked by
 the same `caddy validate`). Nothing but the portal is routed by default: core's `/mcp` for the staff runners is
 not reachable until you add it. A changed file applies on the next deploy (which reloads the proxy) or at once
-with `dc run --rm --no-deps proxy caddy validate --config /etc/caddy/Caddyfile && dc exec proxy caddy reload
---config /etc/caddy/Caddyfile --force`; compose never restarts the proxy for it by itself. For example core's
+with `dc run --rm --no-deps proxy caddy validate --config /etc/caddy/yoda/Caddyfile && dc exec proxy caddy reload
+--config /etc/caddy/yoda/Caddyfile --force`; compose never restarts the proxy for it by itself. For example core's
 runner endpoint for the staff machines (section 8), on its own name, limited to the networks the runners use:
 
 ```caddy

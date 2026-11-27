@@ -25,17 +25,19 @@ as a GitHub Release, and the version without the `v` is the image tag a host run
   otherwise; compose gives core and the portal `YODA_TRUSTED_PROXY_HOPS=2` only for `true`, unless `.env` sets
   it) and refuses another value in `.env`. With the profile on it refuses a portal or core published beyond
   loopback and settings the proxy cannot run with, runs `caddy validate` before `release.env` or any container is
-  replaced, reloads the proxy after the start (a changed Caddyfile, `proxy/sites` file or certificate applies), and
+  replaced, reloads the proxy after the start (it reads the Caddyfile from the mounted `ops/proxy` directory, so a
+  new bundle's Caddyfile, a changed `proxy/sites` file or certificate applies), and
   warns about an organisation certificate that expires within 30 days. `COMPOSE_PROFILES=proxy` with compose files
   that have no proxy service stops the deploy.
-- The proxy container runs without capabilities but binding 80/443 and reading the key, with `no-new-privileges`
-  and a read-only root; request bodies are capped at 32 MiB, slow request headers time out after 30 s, uploads
-  after 10 minutes (server-sent events are not affected). No HSTS header.
+- The proxy container runs without capabilities but binding 80/443 and reading the key (`NET_BIND_SERVICE`,
+  `DAC_OVERRIDE`; not `DAC_READ_SEARCH`), with `no-new-privileges` and a read-only root; request bodies are capped
+  at 32 MiB and slow request headers time out after 30 s (no body or write timeout: server-sent events stay open).
+  ACME uses Let's Encrypt's directory from compose unless `YODA_PROXY_ACME_CA` names another. No HSTS header.
 - The setup wizard's system check shows a read-only card: proxy on or off, address, certificate mode, trusted hops
   and the presented certificate's issuer, names, expiry and fingerprint (core reads it with a TLS handshake, never
   the proxy's files).
 - The release bundle carries `ops/proxy/Caddyfile`; `check-release.sh` checks the Caddy image is digest-pinned and
-  that the Caddyfile validates in it for every mode. The GitLab deploy job copies the Caddyfile too.
+  that the Caddyfile validates in it for every mode, with the environment compose gives the proxy. The GitLab deploy job copies the Caddyfile too.
 - **Upgrade notes:** nothing changes unless you turn the profile on (`release.env` gains an empty
   `YODA_PROXY_ENABLED=`; delete any `YODA_PROXY_ENABLED` line from `.env`). The new `proxy-data` volume holds the
   certificates and the internal CA's keys: keep one encrypted copy off the host (runbook 4b). Rolling back below

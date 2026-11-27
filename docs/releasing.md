@@ -243,8 +243,8 @@ docker buildx imagetools inspect caddy:2.11.4 --format '{{json .Manifest}}' | jq
 
 Replace both the tag and the digest of the `proxy` service's `image`. In the pull request,
 `apps/core/test/ops-proxy.test.ts` runs `caddy validate` on `ops/proxy/Caddyfile` in the new image for every
-certificate mode (CI, with docker), and the release dry run's `check-release.sh` does it again on the bundle. Read
-Caddy's release notes for changes to the Caddyfile, `tls internal`, or the `X-Forwarded-*` defaults
+certificate mode (CI, with docker), and the release dry run's `check-release.sh` does it again on the bundle,
+with the environment compose gives the proxy service (empty values included). Read Caddy's release notes for changes to the Caddyfile, `tls internal`, or the `X-Forwarded-*` defaults
 (section 4b of the runbook relies on them), and do one container run with the proxy (internal mode) before
 merging a minor or major bump.
 
