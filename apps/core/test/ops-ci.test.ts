@@ -334,7 +334,12 @@ describe('ops/proxy/Caddyfile', () => {
     expect(caddy).toMatch(/^\(tls-internal\) \{\n\ttls internal\n\}$/m)
     expect(caddy).toMatch(/^\(tls-files\) \{\n\ttls \/etc\/caddy\/certs\/cert\.pem \/etc\/caddy\/certs\/key\.pem\n\}$/m)
     expect(caddy).toMatch(/^\(tls-acme\) \{\n\ttls \{\$YODA_PROXY_ACME_EMAIL\}\n\}$/m)
+    // No port in the address: an empty YODA_PROXY_DOMAIN must fail validation, not become a catch-all site.
     expect(caddy).toMatch(/^\{\$YODA_PROXY_DOMAIN\} \{\n\timport tls-\{\$YODA_PROXY_CERT_MODE\}$/m)
+  })
+
+  it('redirects http to https keeping a port other than 443 (Caddy\'s own redirect drops it: same port inside)', () => {
+    expect(caddy).toMatch(/^http:\/\/\{\$YODA_PROXY_DOMAIN\}:\{\$YODA_PROXY_HTTP_PORT:80\} \{\n\tredir https:\/\/\{host\}:\{\$YODA_PROXY_HTTPS_PORT:443\}\{uri\} 308\n\}$/m)
   })
 
   it('keeps readiness inside the host and leaves the forwarded headers to Caddy (it replaces a client\'s X-Forwarded-For)', () => {

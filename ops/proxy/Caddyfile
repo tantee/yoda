@@ -37,7 +37,13 @@
 	tls {$YODA_PROXY_ACME_EMAIL}
 }
 
-# http:// on the same name is redirected to https:// (Caddy's automatic HTTPS).
+# http:// on the same name goes to https://, keeping a port other than 443 (Caddy's own redirect would drop it,
+# since the port inside the container is the host's; a browser shows ":443" as no port). ACME's HTTP challenge is
+# still answered on this port first.
+http://{$YODA_PROXY_DOMAIN}:{$YODA_PROXY_HTTP_PORT:80} {
+	redir https://{host}:{$YODA_PROXY_HTTPS_PORT:443}{uri} 308
+}
+
 {$YODA_PROXY_DOMAIN} {
 	import tls-{$YODA_PROXY_CERT_MODE}
 	# Readiness names the failing dependency: never outside the host (section 1). deploy.sh checks it inside.
