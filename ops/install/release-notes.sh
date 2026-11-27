@@ -15,7 +15,8 @@ printf '%s\n' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$' 
   { echo "release-notes: not a release version: $version" >&2; exit 2; }
 [ -f "$changelog" ] || { echo "release-notes: $changelog is missing" >&2; exit 1; }
 
-# The heading is "## <version>" alone or followed by a space (e.g. "## 1.0.0 — 2026-11-25").
+# The heading is "## <version>" alone or followed by a space and anything (e.g. "## 1.0.0 — 2026-11-25", or
+# "## 1.0.0 — unreleased" while it is being written; the release workflow refuses to publish that one).
 notes=$(awk -v v="$version" '
   /^## / { if (found) exit; if ($2 == v) { found = 1; next } }
   found { print }

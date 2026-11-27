@@ -7,9 +7,11 @@
 #    bootstrap values, the setup wizard sets the rest); an existing .env is never changed;
 # 1. pull the release's images (nothing is built on the host), then pin the release in release.env
 #    (YODA_VERSION=<tag>, plus YODA_IMAGE_PREFIX when given or already pinned there; with no prefix in the
-#    environment, release.env or .env it refuses rather than pull from Docker Hub), so every later
+#    environment, release.env or .env it uses the public release images, ghcr.io/tantee/yoda, never Docker Hub;
+#    plus the image digests, YODA_<NAME>_DIGEST, when the bundle.env next to it is the same release's and names
+#    the same prefix: the signed bundle's pins), so every later
 #    `docker compose --env-file .env --env-file release.env ...` on the host (backups, restores, restarts) runs
-#    the same images;
+#    the same images; exit 3 when the images cannot be pulled (registry login?);
 # 2. fill the bootstrap volume (one-shot `init`: generated Postgres password, RustFS keys and master key, or the
 #    .env values when set; it refuses an existing database whose password is unknown), then run the database
 #    migrations once, in the one-shot `migrate` container; a failure stops here, before any running container is
@@ -52,13 +54,41 @@ legacy=$(env_prefix)
 case "$legacy" in
   '' | -* | *[!A-Za-z0-9._:/-]*) legacy='' ;;
 esac
+# The public release images (docs/releasing.md); a mirror passes or pins its own prefix.
+DEFAULT_IMAGE_PREFIX='ghcr.io/tantee/yoda'
 if [ -z "$prefix" ] && [ -z "$legacy" ]; then
-  cat >&2 <<'EOF'
-deploy: YODA_IMAGE_PREFIX is not set: the registry path of the images (e.g. registry.example.org/group/yoda).
-  Pass it once, and it is pinned in release.env:  YODA_IMAGE_PREFIX=<path> YODA_VERSION=<tag> sh ops/deploy/deploy.sh
-  (or set it in .env). Refusing to fall back to Docker Hub images.
-EOF
-  exit 2
+  prefix=$DEFAULT_IMAGE_PREFIX
+  echo "deploy: YODA_IMAGE_PREFIX is not set: using the public release images, $prefix (pinned in release.env)"
+fi
+
+# The signed bundle's image digests (bundle.env, unpacked with the compose files): used for its own release and
+# prefix only. A deploy of another version, or from a registry that built its own images, runs the tags: the
+# variables are then pinned empty (compose before v2.25 warns about unset ones).
+pins='YODA_CORE_DIGEST=
+YODA_PORTAL_DIGEST=
+YODA_RUNNER_DIGEST=
+YODA_BACKUP_DIGEST=
+'
+if [ -f bundle.env ]; then
+  bversion=$(sed -n 's/^YODA_VERSION=\([A-Za-z0-9._-]*\)$/\1/p' bundle.env | tail -n 1)
+  bprefix=$(sed -n 's/^YODA_IMAGE_PREFIX=\([A-Za-z0-9._:/-]*\)$/\1/p' bundle.env | tail -n 1)
+  if [ "$bversion" = "$YODA_VERSION" ] && grep -q '^YODA_[A-Z]*_DIGEST=' bundle.env; then
+    if [ "$bprefix" = "${prefix:-$legacy}" ]; then
+      pins=''
+      for name in CORE PORTAL RUNNER BACKUP; do
+        d=$(sed -n "s/^YODA_${name}_DIGEST=//p" bundle.env | tail -n 1)
+        printf '%s\n' "$d" | grep -Eqx 'sha256:[0-9a-f]{64}' || {
+          echo "deploy: bundle.env has no valid YODA_${name}_DIGEST" >&2
+          exit 2
+        }
+        pins="${pins}YODA_${name}_DIGEST=$d
+"
+      done
+      echo "deploy: images pinned by digest (bundle.env of $YODA_VERSION)"
+    else
+      echo "deploy: bundle.env pins the digests of $bprefix, not ${prefix:-$legacy}: running the $YODA_VERSION tags"
+    fi
+  fi
 fi
 READY_TIMEOUT="${READY_TIMEOUT:-120}"
 
@@ -71,19 +101,21 @@ fi
 release=release.env.next
 printf 'YODA_VERSION=%s\n' "$YODA_VERSION" > "$release"
 [ -z "$prefix" ] || printf 'YODA_IMAGE_PREFIX=%s\n' "$prefix" >> "$release"
+printf '%s' "$pins" >> "$release"
 
 dc() {
   docker compose --env-file .env --env-file "$release" -f docker-compose.yml -f docker-compose.prod.yml "$@"
 }
 
 echo "deploy: $YODA_VERSION"
-dc pull --quiet
+pull_failed() {
+  echo "deploy: $1 (registry login on this host? the release $YODA_VERSION published? for ghcr.io packages that are not public: docker login ghcr.io with a GitHub token that may read packages)" >&2
+  exit 3
+}
+dc pull --quiet || pull_failed "pulling the images of $YODA_VERSION failed"
 # `pull` only warns when an image that could be built is missing; never fall back to building on the host.
 for image in $(dc config --images); do
-  if ! docker image inspect "$image" >/dev/null 2>&1; then
-    echo "deploy: image $image is missing (registry login on this host? pipeline for $YODA_VERSION finished?)" >&2
-    exit 1
-  fi
+  docker image inspect "$image" >/dev/null 2>&1 || pull_failed "image $image is missing"
 done
 mv "$release" release.env
 release=release.env

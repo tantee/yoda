@@ -15,8 +15,10 @@
 #    and creates an empty .env (0600): nothing has to go in it;
 # 4. `docker login <registry>` when the images' registry is not ghcr.io (public images) and has no saved login
 #    (interactive: the token is typed, never an argument);
-# 5. pins the image prefix in release.env (never Docker Hub), then runs ops/deploy/deploy.sh (pull, pin release.env, init, migrate, up, wait for /api/ready), which prints the
-#    setup wizard's address and the setup-token command while setup is not finished.
+# 5. pins the image prefix in release.env (never Docker Hub), then runs ops/deploy/deploy.sh (pull, pin release.env
+#    with the bundle's image digests, init, migrate, up, wait for /api/ready), which prints the setup wizard's
+#    address and the setup-token command while setup is not finished. When pulling from ghcr.io fails (packages
+#    not public yet), it offers `docker login ghcr.io` on a terminal and deploys once more.
 #
 # Env (the options win): YODA_VERSION, YODA_DIR, YODA_RELEASE_BASE_URL, YODA_IMAGE_PREFIX, and
 # YODA_RELEASE_PUBKEY (a minisign public key replacing the embedded one; tests and key rotation only).
@@ -94,6 +96,10 @@ if [ -n "$prefix" ]; then
   esac
 fi
 pubkey="${YODA_RELEASE_PUBKEY:-$RELEASE_PUBKEY_EMBEDDED}"
+if [ "$pubkey" != "$RELEASE_PUBKEY_EMBEDDED" ]; then
+  say 'warning: YODA_RELEASE_PUBKEY replaces the release key built into this script (key id C73EF0AF404BAE84):'
+  say "  releases are checked with $pubkey instead. Use it only for tests or a key the release owner announced."
+fi
 case "$pubkey" in
   *REPLACE-WITH*) die 'this install.sh has no release public key yet (placeholder); get the published install.sh, or set YODA_RELEASE_PUBKEY to the key the release owner gave you' ;;
   *[!A-Za-z0-9+/=]*) die 'the release public key is not a minisign key' ;;
@@ -207,7 +213,12 @@ fi
 # Pinned before the first deploy, so no compose command on this host can fall back to Docker Hub. release.env wins
 # over .env; deploy.sh keeps the prefix there on every later deploy.
 printf 'YODA_IMAGE_PREFIX=%s\n' "$prefix" > "$dir/release.env"
-say "images: $prefix/<core|portal|runner|backup>:$version"
+pinned=''
+if grep -q '^YODA_[A-Z]*_DIGEST=' "$dir/bundle.env" 2>/dev/null &&
+  grep -qxF "YODA_IMAGE_PREFIX=$prefix" "$dir/bundle.env"; then
+  pinned=', pinned by the digests in the signed bundle.env'
+fi
+say "images: $prefix/<core|portal|runner|backup>:$version$pinned"
 
 # --- registry login -------------------------------------------------------------------------------------------
 # The GHCR images are public: no login. A mirror's registry usually needs one.
@@ -232,7 +243,19 @@ fi
 # --- deploy ---------------------------------------------------------------------------------------------------
 say "deploying $version in $dir"
 cd "$dir"
-YODA_VERSION="$version" YODA_IMAGE_PREFIX="$prefix" sh ops/deploy/deploy.sh ||
+deploy() { YODA_VERSION="$version" YODA_IMAGE_PREFIX="$prefix" sh ops/deploy/deploy.sh; }
+rc=0
+deploy || rc=$?
+# deploy.sh exits 3 when it cannot pull. The ghcr.io images are public once the release owner made them so; until
+# then (or for a private fork) a GitHub token that may read packages logs in, asked for only now.
+if [ "$rc" -eq 3 ] && [ "${prefix%%/*}" = ghcr.io ] && [ "$login" = yes ] && [ -t 0 ]; then
+  say 'pulling from ghcr.io failed. If the packages are not public, log in with a GitHub token that may read'
+  say 'packages (read:packages; typed, not shown), or press Ctrl-C:'
+  docker login ghcr.io || die 'docker login ghcr.io failed'
+  rc=0
+  deploy || rc=$?
+fi
+[ "$rc" -eq 0 ] ||
   die "deploy of $version failed (images $prefix/<name>:$version; registry login: docker login ${prefix%%/*}? see docs/operations.md, Troubleshooting). Fix it, then: cd $dir && YODA_VERSION=$version sh ops/deploy/deploy.sh"
 
 cat <<EOF

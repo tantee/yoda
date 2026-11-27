@@ -4,15 +4,25 @@ Releases follow [semantic versioning](https://semver.org); each is a git tag `v<
 as a GitHub Release, and the version without the `v` is the image tag a host runs. Upgrade steps:
 [docs/operations.md](docs/operations.md#5-upgrade-and-rollback).
 
-## Unreleased
+## 1.0.0 — unreleased
+
+The first release: an AI work portal for the IT department, in Thai (default) and English.
 
 ### Releases on GitHub
 
-- Releases are published on GitHub (owner decision D1, 2026-11-27): a `v<version>` tag runs
-  `.github/workflows/release.yml`, which pushes the images to `ghcr.io/tantee/yoda/<name>` (linux/amd64 and
-  linux/arm64, tagged `<version>` and `sha-<short>`), signs the release bundle with minisign and attaches it to the
-  GitHub Release with the changelog section as notes. Pull requests that touch the release files run it as a dry
-  run (amd64, nothing pushed, a throwaway key, an end-to-end `install.sh` check). See `docs/releasing.md`.
+- Releases are published on GitHub (owner decision D1, 2026-11-27): a `v<version>` tag on `main` runs
+  `.github/workflows/release.yml`, which pushes the images to `ghcr.io/tantee/yoda/<name>` by digest (linux/amd64
+  and linux/arm64), writes those digests into the release bundle, signs it with minisign in the `release`
+  environment, and only then tags the images `<version>` and `sha-<short>` and attaches the bundle to the GitHub
+  Release with the changelog section as notes. Pull requests and manual runs are always dry runs (amd64, nothing
+  pushed, no packages permission, a throwaway key, an end-to-end `install.sh` check). Actions, BuildKit, binfmt
+  and the Dockerfiles' base images are pinned by digest. See `docs/releasing.md`.
+- Hosts run exactly the signed images: `deploy.sh` pins the bundle's image digests in `release.env`
+  (`YODA_<NAME>_DIGEST`), and the prod compose runs `<prefix>/<name>:<version>@<digest>`.
+- `deploy.sh` uses the public `ghcr.io/tantee/yoda` images when no image prefix is set anywhere (never Docker
+  Hub), and exits 3 when it cannot pull; `install.sh` then offers `docker login ghcr.io` on a terminal.
+- The verification snippets in the docs fail closed: each step runs only when the one before it passed, and they
+  check that the signature's trusted comment names the release.
 - `install.sh` downloads from `https://github.com/tantee/yoda/releases/download/v<version>/` and uses the public
   `ghcr.io/tantee/yoda` images by default, without `docker login`. `--base-url` now names the release's own
   directory (`{version}` in it becomes the version), for an internal mirror together with `--image-prefix`.
@@ -77,8 +87,8 @@ as a GitHub Release, and the version without the `v` is the image tag a host run
 
 ### Upgrade notes
 
-- **`YODA_IMAGE_PREFIX` is required** (no Docker Hub fallback): `install.sh` and `deploy.sh` pin it in
-  `release.env`; an older install keeps it in `.env`.
+- **`YODA_IMAGE_PREFIX`** is pinned in `release.env` by `install.sh` and `deploy.sh` (an older install keeps it
+  in `.env`); with none anywhere `deploy.sh` uses `ghcr.io/tantee/yoda`, never Docker Hub.
 - **`YODA_TRUSTED_PROXY_HOPS`**: set `2` when a reverse proxy is in front of the portal (and pass `Host` and the
   `X-Forwarded-*` headers), so client addresses and the detected public URL are right.
 - **An env-based install upgrades unchanged**: values are imported, setup is marked done, the env values stay
@@ -86,10 +96,6 @@ as a GitHub Release, and the version without the `v` is the image tag a host run
   (`yoda-admin create-break-glass`, then `yoda-admin recovery-kit`).
 - The prod compose passes every UI-editable setting with an empty default, so only a variable in `.env` locks a
   setting; it no longer sets `BACKUP_AT` / `BACKUP_KEEP_DAYS` defaults.
-
-## 1.0.0 — 2026-11-25
-
-The first release: an AI work portal for the IT department, in Thai (default) and English.
 
 ### Foundation (plan 1)
 

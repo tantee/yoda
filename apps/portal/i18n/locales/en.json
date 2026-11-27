@@ -2091,6 +2091,18 @@
         "version": {
           "label": "Version"
         },
+        "coreDigest": {
+          "label": "Core image digest"
+        },
+        "portalDigest": {
+          "label": "Portal image digest"
+        },
+        "runnerDigest": {
+          "label": "Runner image digest"
+        },
+        "backupDigest": {
+          "label": "Backup image digest"
+        },
         "corePort": {
           "label": "Core host port"
         },

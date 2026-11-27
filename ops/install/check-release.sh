@@ -1,22 +1,30 @@
 #!/bin/sh
-# End-to-end check of a built and signed release directory, the way a host installs it: serves the directory from
-# a local HTTP server in the internal-mirror layout (<base>/releases/<version>/), runs the directory's own
-# install.sh against it with a stub `docker` (nothing is pulled or started), and checks that it verified the
-# signature and the checksum, unpacked the bundle and pinned the release. Then it checks that a signature from
-# another key is refused. The release workflow (.github/workflows/release.yml) runs it on every dry run and before
-# publishing a release:
+# End-to-end check of a built and signed release directory, the way a host installs it. It serves the directory
+# from a local HTTP server and runs the directory's own install.sh against it with --base-url
+# http://127.0.0.1:<port>/releases/{version}/, with a stub `docker` first on PATH (nothing is pulled or started).
+# It checks that install.sh verified the signature and the checksum, unpacked the bundle and pinned the release
+# in release.env: the version, the image prefix and, given a digests file, exactly those image digests. With a
+# real `docker compose` on the machine it also resolves the prod compose files with that release.env and checks
+# every image is <prefix>/<name>:<version>@<digest>. Then it checks that a signature from another key is refused.
+# The release workflow (.github/workflows/release.yml) runs it on every dry run and on a real release, before the
+# bundle is kept for the release and before any image is tagged:
 #
-#   sh ops/install/check-release.sh <version> <release dir> <image prefix>
+#   sh ops/install/check-release.sh <version> <release dir> <image prefix> [<digests file>]
 #
-# <release dir> holds install.sh, yoda-<version>.tar.gz, SHA256SUMS and SHA256SUMS.minisig. The signature is
-# checked with YODA_RELEASE_PUBKEY when set (a dry run's throwaway key), else with the key embedded in install.sh.
+# <release dir> holds install.sh, yoda-<version>.tar.gz, SHA256SUMS and SHA256SUMS.minisig. The digests file is
+# bundle.sh's ("<name> sha256:<hex>" per image). The signature is checked with YODA_RELEASE_PUBKEY when set (a dry
+# run's throwaway key), else with the key embedded in install.sh.
 # Needs python3 (the HTTP server), curl or wget, minisign, tar.
 set -eu
 
-[ $# -eq 3 ] || { echo 'usage: check-release.sh <version> <release dir> <image prefix>' >&2; exit 2; }
+[ $# -eq 3 ] || [ $# -eq 4 ] || { echo 'usage: check-release.sh <version> <release dir> <image prefix> [<digests file>]' >&2; exit 2; }
 version=$1
 rel=$2
 prefix=$3
+digests=${4:-}
+[ -z "$digests" ] || [ -f "$digests" ] || { echo "check-release: $digests is missing" >&2; exit 1; }
+# The machine's own docker, if any, for the compose check (the install below runs with a stub first on PATH).
+real_docker=$(command -v docker || true)
 for f in install.sh "yoda-$version.tar.gz" SHA256SUMS SHA256SUMS.minisig; do
   [ -f "$rel/$f" ] || { echo "check-release: $rel/$f is missing" >&2; exit 1; }
 done
@@ -90,6 +98,18 @@ fail() {
 }
 grep -qF 'signature and checksum verified' "$work/install.log" || fail 'install.sh did not verify the release'
 want=$(printf 'YODA_VERSION=%s\nYODA_IMAGE_PREFIX=%s' "$version" "$prefix")
+if [ -n "$digests" ]; then
+  for name in core portal runner backup; do
+    d=$(awk -v n="$name" '$1 == n { print $2 }' "$digests")
+    upper=$(printf '%s' "$name" | tr '[:lower:]' '[:upper:]')
+    grep -qx "YODA_${upper}_DIGEST=$d" "$work/srv/yoda/bundle.env" || fail "bundle.env does not pin $name at $d"
+    want=$(printf '%s\nYODA_%s_DIGEST=%s' "$want" "$upper" "$d")
+  done
+elif grep -q '_DIGEST=' "$work/srv/yoda/bundle.env"; then
+  fail 'bundle.env pins digests that were not given to check'
+else
+  want=$(printf '%s\nYODA_CORE_DIGEST=\nYODA_PORTAL_DIGEST=\nYODA_RUNNER_DIGEST=\nYODA_BACKUP_DIGEST=' "$want")
+fi
 [ "$(cat "$work/srv/yoda/release.env")" = "$want" ] || fail "release.env is not: $want"
 for f in docker-compose.yml docker-compose.prod.yml ops/deploy/deploy.sh .env.example bundle.env; do
   [ -f "$work/srv/yoda/$f" ] || fail "the bundle has no $f"
@@ -99,6 +119,21 @@ grep -q '^compose .* run --rm migrate$' "$work/docker.log" || fail 'deploy.sh di
 case "$prefix" in
   ghcr.io/*) ! grep -q '^login' "$work/docker.log" || fail 'install.sh logged in to ghcr.io (its images are public)' ;;
 esac
+
+# The compose files resolve to the pinned images (a real docker compose only; the stub cannot interpolate).
+if [ -n "$real_docker" ] && "$real_docker" compose version > /dev/null 2>&1; then
+  images=$(cd "$work/srv/yoda" && env -u YODA_VERSION -u YODA_IMAGE_PREFIX "$real_docker" compose --env-file .env --env-file release.env \
+    -f docker-compose.yml -f docker-compose.prod.yml --profile runner config --images 2>&1) ||
+    { printf '%s\n' "$images" >&2; fail 'docker compose config failed with this release.env'; }
+  for name in core portal runner backup; do
+    ref="$prefix/$name:$version"
+    if [ -n "$digests" ]; then ref="$ref@$(awk -v n="$name" '$1 == n { print $2 }' "$digests")"; fi
+    printf '%s\n' "$images" | grep -qxF "$ref" || { printf '%s\n' "$images" >&2; fail "the compose files do not run $ref"; }
+  done
+  echo "check-release: compose runs the pinned images"
+else
+  echo 'check-release: no docker compose here: skipped the compose image check'
+fi
 
 # A signature from any other key must be refused.
 minisign -G -W -p "$work/other.pub" -s "$work/other.key" > /dev/null

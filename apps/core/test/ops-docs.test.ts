@@ -209,12 +209,41 @@ describe('release docs (GitHub Releases + GHCR, D1)', () => {
     }
   })
 
+  it('verifies before running anything: every snippet chains minisign, the trusted comment, the checksum and the next step', () => {
+    for (const [name, text] of [['README', readme], ['install guide', guide], ['runbook', runbook], ['releasing', releasing]] as const) {
+      const lines = text.split('\n')
+      const at = lines.flatMap((l, i) => (/minisign -Vm SHA256SUMS -P /.test(l) ? [i] : []))
+      expect(at.length, name).toBeGreaterThan(0)
+      for (const i of at) {
+        const m = /minisign -Vm SHA256SUMS -P \S+ \| grep -Fx 'Trusted comment: yoda release (\d+\.\d+\.\d+)' &&$/.exec(lines[i]!)
+        expect(m, `${name}: ${lines[i]}`).toBeTruthy()
+        // The rest of the block: the checksum, then every command chained with && (the last one ends it).
+        const rest: string[] = []
+        for (let j = i + 1; j < lines.length && !/^\s*```/.test(lines[j]!); j++) rest.push(lines[j]!.replace(/\s+#.*$/, ''))
+        expect(rest[0]!.trim(), name).toMatch(/^sha256sum --check --ignore-missing SHA256SUMS( &&)?$/)
+        for (const r of rest.slice(0, -1)) expect(r, `${name}: ${r}`).toMatch(/ &&$/)
+        expect(rest.at(-1)!, name).not.toMatch(/&&$/)
+        // The same version in the grep as in the command it guards.
+        for (const r of rest) for (const v of r.matchAll(/(?:--version |YODA_VERSION=|yoda-)(\d+\.\d+\.\d+)/g)) expect(v[1], `${name}: ${r}`).toBe(m![1])
+      }
+    }
+  })
+
   it('documents the owner steps for the signing key, secrets, packages and the tag', () => {
     for (const s of [
       'minisign -G -p yoda.pub -s yoda.key',
       'RELEASE_PUBKEY_EMBEDDED',
-      'gh secret set MINISIGN_SECRET_KEY < yoda.key',
-      'gh secret set MINISIGN_PASSWORD',
+      // The secrets live in the `release` environment, which only v* tags may use.
+      'gh secret set --env release MINISIGN_SECRET_KEY < yoda.key',
+      'gh secret set --env release MINISIGN_PASSWORD',
+      'gh secret delete MINISIGN_SECRET_KEY',
+      'gh secret delete MINISIGN_PASSWORD',
+      'type **Tag**, pattern `v*`',
+      '**Restrict creations**',
+      'Re-run failed jobs',
+      '## Pinned build inputs',
+      'docker buildx imagetools inspect',
+      '## <version> — unreleased',
       'Change visibility → Public',
       'git tag -s v1.0.0',
       'git push origin v1.0.0',
@@ -224,6 +253,9 @@ describe('release docs (GitHub Releases + GHCR, D1)', () => {
       "--base-url 'https://files.example.org/yoda/releases/{version}/'",
     ]) expect(releasing, s).toContain(s)
     for (const text of [readme, guide]) expect(text).toContain('C73EF0AF404BAE84')
+    // 1.0.0 is not tagged yet: its section waits for the date set in the tagging commit.
+    expect(read('CHANGELOG.md')).toMatch(/^## 1\.0\.0 — unreleased$/m)
+    expect(read('CHANGELOG.md')).not.toMatch(/^## Unreleased$/m)
     expect(read('docs/design/installer-proposal.md')).toMatch(/^\| D1 \|.*Decided 2026-11-27 \(owner\): \(b\) GitHub Releases \+ GHCR/m)
   })
 })
