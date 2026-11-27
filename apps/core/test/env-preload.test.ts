@@ -34,3 +34,15 @@ describe('env-preload', () => {
     expect(run.stderr).not.toContain('baseURL')
   }, 60_000)
 })
+
+describe('yoda-admin entry', () => {
+  // The entry block runs the command with a top-level await; a module-level const declared after it is still
+  // undefined then (the bundle) or in its TDZ (tsx). `rotate-master-key --finish` crashed this way on a refusal.
+  it('is the last thing in the file: no module-level const or let after it', () => {
+    const src = readFileSync(`${core}src/yoda-admin.ts`, 'utf8')
+    const entry = src.indexOf('// Entry: `node dist/yoda-admin.js')
+    expect(entry).toBeGreaterThan(0)
+    const after = src.slice(entry).split('\n').filter((l) => /^(export )?(const|let|var) /.test(l) && !l.startsWith('const COMMANDS'))
+    expect(after).toEqual([])
+  })
+})

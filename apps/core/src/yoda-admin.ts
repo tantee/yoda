@@ -142,7 +142,10 @@ export async function runAdmin(argv: string[], deps: AdminCliDeps): Promise<numb
       const oidc = currentOidc(deps.config, s)
       deps.out(`setup: ${state}`)
       deps.out(`master key: ${s.keyStatus}${s.keyId ? ` (id ${s.keyId})` : ''}${s.recovery ? ', recovery state' : ''}`)
-      if (s.previousKeyId) deps.out(`previous master key: ${s.previousKeyId} (finish with: yoda-admin rotate-master-key --finish)`)
+      if (s.runsOnPreviousKey) {
+        // The key file holds a stale key (usually an old YODA_MASTER_KEY in .env): `--finish` refuses here.
+        deps.out(`key file: holds ${s.previousKeyId ?? 'another key'}, which does not open the canary; fix .env (or the key file), then dc up -d --no-build`)
+      } else if (s.previousKeyId) deps.out(`previous master key: ${s.previousKeyId} (finish with: yoda-admin rotate-master-key --finish)`)
       if (s.recoveryForced) deps.out('recovery mode: forced on (yoda-admin recovery off ends it)')
       if (state === 'required') {
         const live = st?.setupTokenHash && st.setupTokenExpires && st.setupTokenExpires > now
@@ -183,60 +186,6 @@ export async function runAdmin(argv: string[], deps: AdminCliDeps): Promise<numb
       deps.err(USAGE)
       return command ? 1 : 0
   }
-}
-
-// Entry: `node dist/yoda-admin.js <command>` (the image's /usr/local/bin/yoda-admin wraps it).
-const COMMANDS = new Set(['setup-token', 'create-break-glass', 'reset-break-glass', 'status', 'rotate-master-key', 'recovery-kit', 'reset-master-key', 'recovery'])
-
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1] && !COMMANDS.has(process.argv[2] ?? '')) {
-  // No database needed to say how to use it.
-  console.error(USAGE)
-  process.exit(process.argv[2] ? 1 : 0)
-}
-
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  const { applyBootstrapFile, loadConfig } = await import('./config.js')
-  const { createDb, pgClient } = await import('./db/client.js')
-  const { takeMasterKeySetup } = await import('./settings/crypto.js')
-  const { SettingsStore } = await import('./settings/store.js')
-  const { resolveConfig } = await import('./settings/live.js')
-  const { createPgBossQueue } = await import('./jobs/queue.js')
-  const { setupTokenFile } = await import('./local/setup-token.js')
-  applyBootstrapFile(process.env)
-  const key = takeMasterKeySetup(process.env)
-  const base = loadConfig(process.env)
-  const db = createDb(base.databaseUrl)
-  const quiet = { warn: (_o: object, m: string) => console.error(`settings: ${m}`), info: () => {} }
-  const settings = await SettingsStore.open({ db, env: process.env, masterKey: key.masterKey, previousKey: key.previousKey, log: quiet })
-  const config = resolveConfig(base, settings)
-  // Only to queue notification deliveries (no workers here); without it the feed entries are still stored.
-  let jobs: Pick<JobQueue, 'send'> & { stop?: () => Promise<void> } = { send: async () => {} }
-  if (['create-break-glass', 'reset-break-glass', 'rotate-master-key', 'recovery-kit', 'reset-master-key', 'recovery'].includes(process.argv[2] ?? '')) {
-    try {
-      jobs = await createPgBossQueue(base.databaseUrl, 1)
-    } catch {
-      console.error('warning: job queue unavailable; email notifications are not sent')
-    }
-  }
-  let code = 1
-  try {
-    code = await runAdmin(process.argv.slice(2), {
-      db,
-      settings,
-      config,
-      tokenFile: setupTokenFile(process.env),
-      jobs,
-      keyFile: key.file,
-      keySource: key.source,
-      masterKey: key.masterKey,
-      out: (l) => console.log(l),
-      err: (l) => console.error(l),
-    })
-  } finally {
-    await jobs.stop?.()
-    await pgClient(db).end()
-  }
-  process.exit(code)
 }
 
 const refusal: Record<RotationRefused['code'], string> = {
@@ -444,4 +393,59 @@ async function resetKeyCommand(deps: AdminCliDeps, yes: boolean): Promise<number
   deps.out('then run yoda-admin recovery-kit and store the new kit. Running core instances leave recovery on their own.')
   await notifyCli(deps, 'รีเซ็ตกุญแจหลัก (master key) หลังกุญแจเดิมสูญหาย ต้องใส่ความลับใหม่', 'master_key.reset', deps.now?.() ?? new Date())
   return 0
+}
+
+// Entry: `node dist/yoda-admin.js <command>` (the image's /usr/local/bin/yoda-admin wraps it). Last in the file: the
+// top-level await below runs the command, so every module-level value above (the refusal texts) must exist by then.
+const COMMANDS = new Set(['setup-token', 'create-break-glass', 'reset-break-glass', 'status', 'rotate-master-key', 'recovery-kit', 'reset-master-key', 'recovery'])
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1] && !COMMANDS.has(process.argv[2] ?? '')) {
+  // No database needed to say how to use it.
+  console.error(USAGE)
+  process.exit(process.argv[2] ? 1 : 0)
+}
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  const { applyBootstrapFile, loadConfig } = await import('./config.js')
+  const { createDb, pgClient } = await import('./db/client.js')
+  const { takeMasterKeySetup } = await import('./settings/crypto.js')
+  const { SettingsStore } = await import('./settings/store.js')
+  const { resolveConfig } = await import('./settings/live.js')
+  const { createPgBossQueue } = await import('./jobs/queue.js')
+  const { setupTokenFile } = await import('./local/setup-token.js')
+  applyBootstrapFile(process.env)
+  const key = takeMasterKeySetup(process.env)
+  const base = loadConfig(process.env)
+  const db = createDb(base.databaseUrl)
+  const quiet = { warn: (_o: object, m: string) => console.error(`settings: ${m}`), info: () => {} }
+  const settings = await SettingsStore.open({ db, env: process.env, masterKey: key.masterKey, previousKey: key.previousKey, log: quiet })
+  const config = resolveConfig(base, settings)
+  // Only to queue notification deliveries (no workers here); without it the feed entries are still stored.
+  let jobs: Pick<JobQueue, 'send'> & { stop?: () => Promise<void> } = { send: async () => {} }
+  if (['create-break-glass', 'reset-break-glass', 'rotate-master-key', 'recovery-kit', 'reset-master-key', 'recovery'].includes(process.argv[2] ?? '')) {
+    try {
+      jobs = await createPgBossQueue(base.databaseUrl, 1)
+    } catch {
+      console.error('warning: job queue unavailable; email notifications are not sent')
+    }
+  }
+  let code = 1
+  try {
+    code = await runAdmin(process.argv.slice(2), {
+      db,
+      settings,
+      config,
+      tokenFile: setupTokenFile(process.env),
+      jobs,
+      keyFile: key.file,
+      keySource: key.source,
+      masterKey: key.masterKey,
+      out: (l) => console.log(l),
+      err: (l) => console.error(l),
+    })
+  } finally {
+    await jobs.stop?.()
+    await pgClient(db).end()
+  }
+  process.exit(code)
 }

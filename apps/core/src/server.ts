@@ -38,7 +38,8 @@ await seedTemplates(db)
 const settings = await SettingsStore.open({ db, env: process.env, masterKey: key.masterKey, previousKey: key.previousKey, keyLoader: key.keyLoader })
 // §12 T14: which values env forces (names only), so nobody wonders why the UI shows them locked.
 if (settings.envLockedNames.length) console.log(`settings: set by environment (locked in System settings): ${settings.envLockedNames.join(', ')}`)
-if (settings.previousKeyId) console.warn(`settings: the previous master key ${settings.previousKeyId} is still loaded; finish the rotation with yoda-admin rotate-master-key --finish`)
+// On a stale key file (runsOnPreviousKey) the store has already said to fix .env; --finish would refuse then.
+if (settings.previousKeyId && !settings.runsOnPreviousKey) console.warn(`settings: the previous master key ${settings.previousKeyId} is still loaded; finish the rotation with yoda-admin rotate-master-key --finish`)
 if (settings.recovery) console.warn(`settings: recovery state (master key ${settings.keyStatus}); stored secrets unavailable`)
 // Live apply (§5.3): `deps.config` and the clients built from settings (JWKS, AI models, GitLab, SMTP) follow
 // every change, here or on another instance (NOTIFY), without a restart. Bootstrap-only values stay from env.

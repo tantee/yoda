@@ -237,6 +237,10 @@ describe('yoda-admin rotate-master-key', () => {
     expect(stale.get('smtp.password')).toBe('placeholder-smtp-password')
     expect(log.warn.mock.calls.map((c) => c[1]).join('\n')).toContain('the previous key does')
     expect(stale.runsOnPreviousKey).toBe(true)
+    // status says to fix the key file, not to run --finish (which refuses here).
+    const st = (await cli(stale, ['status'])).out
+    expect(st).toContain('key file: holds')
+    expect(st).not.toContain('--finish')
     // .prev holds the only working key: neither --finish nor another rotation may touch it.
     writeFileSync(`${keyFile}.prev`, `${encodeMasterKey(NEW)}\n`, { mode: 0o600 })
     const fin = await cli(stale, ['rotate-master-key', '--finish'])
