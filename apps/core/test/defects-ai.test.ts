@@ -67,6 +67,8 @@ beforeEach(async () => {
   ])
 })
 afterEach(async () => {
+  // Jobs a test queued (embedding, the secretary) finish before the next test truncates the tables.
+  await jobs.drain()
   await app.close()
 })
 
