@@ -47,21 +47,21 @@ alias dc='docker compose --env-file .env --env-file release.env -f docker-compos
 
 Download `install.sh` and the checksums of a pinned release from GitHub Releases, check the signature, then run
 it. Never pipe a download into `sh`. Use the latest release from
-[the releases page](https://github.com/tantee/yoda/releases); `1.0.0` below is an example.
+[the releases page](https://github.com/tantee/yoda/releases); `1.1.0` below is an example.
 
 ```bash
-curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.0.0/install.sh
-curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.0.0/SHA256SUMS
-curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.0.0/SHA256SUMS.minisig
+curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.1.0/install.sh
+curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.1.0/SHA256SUMS
+curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.1.0/SHA256SUMS.minisig
 out=$(minisign -Vm SHA256SUMS -P RWSErktAr/A+x5Gvgr0x29wiu41FmYEVlJYoXyB6oJk4kvwQLOZs9O9j) &&
-  printf '%s\n' "$out" | grep -Fx 'Trusted comment: yoda release 1.0.0' &&
+  printf '%s\n' "$out" | grep -Fx 'Trusted comment: yoda release 1.1.0' &&
   sha256sum --check --ignore-missing SHA256SUMS &&
-  sh install.sh --version 1.0.0 --dir /srv/yoda
+  sh install.sh --version 1.1.0 --dir /srv/yoda
 ```
 
 Each command runs only when the one before it passed: `minisign` checks the signature (`out=$(…) &&` keeps its
 exit status), `grep` that the signed
-trusted comment names this release (`Trusted comment: yoda release 1.0.0`; a different version means you
+trusted comment names this release (`Trusted comment: yoda release 1.1.0`; a different version means you
 downloaded the wrong files), and `sha256sum` the checksum of `install.sh`. Nothing runs if any of them fails.
 For another release, change the version in the URLs, the `grep` and `--version`.
 

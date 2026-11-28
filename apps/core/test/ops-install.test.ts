@@ -916,8 +916,8 @@ describe.skipIf(!posix)('ops/install/release-notes.sh', () => {
     expect(notes('1.0', log).status).toBe(2)
   })
 
-  it('finds the notes of the released 1.0.0 in the real CHANGELOG.md', () => {
-    const r = spawnSync('sh', ['ops/install/release-notes.sh', '1.0.0'], { cwd: root, encoding: 'utf8' })
+  it('finds the notes of the released 1.1.0 in the real CHANGELOG.md', () => {
+    const r = spawnSync('sh', ['ops/install/release-notes.sh', '1.1.0'], { cwd: root, encoding: 'utf8' })
     expect(r.status, r.stderr).toBe(0)
     expect(r.stdout.length).toBeGreaterThan(200)
   })

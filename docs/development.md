@@ -320,6 +320,6 @@ on a `v*` tag it pushes the images to `ghcr.io/tantee/yoda/<name>` and creates t
 bundle; on a pull request that touches the release files it runs as a dry run ([docs/releasing.md](releasing.md)).
 
 **Versioning.** Releases follow [semantic versioning](https://semver.org) and are git tags `v<version>`
-(`v1.0.0`); the version without the `v` is the image tag and the `YODA_VERSION` a host runs. Bump `version` in the root and `apps/core` `package.json` with the
+(`v1.1.0`); the version without the `v` is the image tag and the `YODA_VERSION` a host runs. Bump `version` in the root and `apps/core` `package.json` with the
 release (core reports it on `/health`) and add a `CHANGELOG.md` entry. Upgrade and rollback steps are in the
 [runbook](operations.md#5-upgrade-and-rollback).
