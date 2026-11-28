@@ -28,48 +28,48 @@ describe('acceptReencode', () => {
 })
 
 describe('applyVideoMosaic', () => {
-  it('keeps the recorder result when it is good enough', async () => {
-    const webcodecs = vi.fn<Reencode>()
-    const r = await applyVideoMosaic(src, [region('a', 0, 1000)], opts(), { recorder: async () => out(30, 29), webcodecs })
-    expect(r).toMatchObject({ ok: true, path: 'recorder', framesIn: 30, framesOut: 29 })
-    expect(webcodecs).not.toHaveBeenCalled()
+  it('WebCodecs first (frame-exact, faster, works in a hidden tab): its result is kept when good enough', async () => {
+    const recorder = vi.fn<Reencode>()
+    const r = await applyVideoMosaic(src, [region('a', 0, 1000)], opts(), { webcodecs: async () => out(30, 30), recorder })
+    expect(r).toMatchObject({ ok: true, path: 'webcodecs', framesIn: 30, framesOut: 30 })
+    expect(recorder).not.toHaveBeenCalled()
   })
 
-  it('tries WebCodecs after a lossy recorder result, and reports failure when both fail', async () => {
-    const good = await applyVideoMosaic(src, [region('a', 0, 1000)], opts(), { recorder: async () => out(30, 20), webcodecs: async () => out(30, 30) })
-    expect(good).toMatchObject({ ok: true, path: 'webcodecs', framesIn: 30, framesOut: 30 })
-    if (good.ok) expect(good.blob.size).toBe(30)
-
-    const thrown = await applyVideoMosaic(src, [region('a', 0, 1000)], opts(), {
-      recorder: async () => {
-        throw new Error('unsupported')
-      },
-      webcodecs: async () => out(30, 30),
-    })
-    expect(thrown).toMatchObject({ ok: true, path: 'webcodecs' })
-
-    const bad = await applyVideoMosaic(src, [region('a', 0, 1000)], opts(), {
-      recorder: async () => out(30, 10),
+  it('tries the recorder when WebCodecs fails or keeps too few frames, and reports failure when both fail', async () => {
+    const unsupported = await applyVideoMosaic(src, [region('a', 0, 1000)], opts(), {
       webcodecs: async () => {
         throw new Error('no decoder')
       },
+      recorder: async () => out(30, 29),
+    })
+    expect(unsupported).toMatchObject({ ok: true, path: 'recorder', framesIn: 30, framesOut: 29 })
+    if (unsupported.ok) expect(unsupported.blob.size).toBe(29)
+
+    const lossyFirst = await applyVideoMosaic(src, [region('a', 0, 1000)], opts(), { webcodecs: async () => out(30, 20), recorder: async () => out(30, 30) })
+    expect(lossyFirst).toMatchObject({ ok: true, path: 'recorder' })
+
+    const bad = await applyVideoMosaic(src, [region('a', 0, 1000)], opts(), {
+      webcodecs: async () => out(30, 10),
+      recorder: async () => {
+        throw new Error('unsupported')
+      },
     })
     expect(bad).toEqual({ ok: false })
-    const lossy = await applyVideoMosaic(src, [region('a', 0, 1000)], opts(), { recorder: async () => out(30, 10), webcodecs: async () => out(30, 20) })
+    const lossy = await applyVideoMosaic(src, [region('a', 0, 1000)], opts(), { webcodecs: async () => out(30, 10), recorder: async () => out(30, 20) })
     expect(lossy).toEqual({ ok: false })
   })
 
   it('stops at Cancel instead of trying the next path', async () => {
     const ac = new AbortController()
-    const webcodecs = vi.fn<Reencode>()
+    const recorder = vi.fn<Reencode>()
     const r = await applyVideoMosaic(src, [region('a', 0, 1000)], { ...opts(), signal: ac.signal }, {
-      recorder: async () => {
+      webcodecs: async () => {
         ac.abort()
         throw new DOMException('cancelled', 'AbortError')
       },
-      webcodecs,
+      recorder,
     })
     expect(r).toEqual({ ok: false, cancelled: true })
-    expect(webcodecs).not.toHaveBeenCalled()
+    expect(recorder).not.toHaveBeenCalled()
   })
 })

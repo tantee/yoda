@@ -22,6 +22,7 @@
 ## Decisions made in this plan
 
 1. **Mosaic on video is feasible. It runs in the editor tab, with the preview visible.**
+   - **Changed in PR C after the measurement** (docs/design/extension-spike.md, "Video re-encode measurement"): path 2 (WebCodecs) runs first and path 1 is the fallback; path 2 was frame-exact and about 7 times faster on a 30 s clip, while path 1 kept 0.90–0.92 of the frames.
    - **Path 1:** MediaRecorder re-encode.
      - A hidden `<video>` plays the recorded WebM at 1×.
      - `requestVideoFrameCallback` draws each frame onto a visible preview canvas.

@@ -46,9 +46,10 @@ export function mosaicFrame(ctx: CanvasRenderingContext2D | OffscreenCanvasRende
 const isAbort = (e: unknown) => e instanceof DOMException && e.name === 'AbortError'
 
 /**
- * Burns the regions into the clip: path 1 (MediaRecorder on the visible preview), then path 2 (WebCodecs) when
- * path 1 throws, is unsupported, or keeps too few frames. `{ ok: false }` when neither is good enough; the caller
- * then offers only "send without video" or "use a still frame".
+ * Burns the regions into the clip: WebCodecs first (frame-exact, about 7x faster, and it does not need the tab
+ * visible: see "Video re-encode measurement" in docs/design/extension-spike.md), then MediaRecorder on the visible
+ * preview when WebCodecs throws, is unsupported, or keeps too few frames. `{ ok: false }` when neither is good
+ * enough; the caller then offers only "send without video" or "use a still frame".
  */
 export async function applyVideoMosaic(
   src: Blob,
@@ -56,7 +57,7 @@ export async function applyVideoMosaic(
   opts: ReencodeOpts,
   paths: { recorder: Reencode; webcodecs: Reencode } = { recorder: defaultRecorder, webcodecs: defaultWebCodecs },
 ): Promise<MosaicResult> {
-  for (const path of ['recorder', 'webcodecs'] as const) {
+  for (const path of ['webcodecs', 'recorder'] as const) {
     if (opts.signal.aborted) return { ok: false, cancelled: true }
     try {
       const r = await paths[path](src, regions, opts)

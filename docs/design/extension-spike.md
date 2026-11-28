@@ -51,7 +51,6 @@ stripes. One 10 s region covered the stripes. The table shows three runs.
   and stop the encoder leaving stripe fragments in the region:
   - path 1 repaints the visible frame at about 30 fps while it plays;
   - path 2 adds a frame at each region start and end, and makes it a key frame whenever the set of regions changes.
-- **Default: path 1**, as decision 1 says. Path 2 catches every path 1 result under 0.9.
-- **Recommendation.** Make path 2 the default and keep path 1 as the fallback, a one-line change to the order in
-  `applyVideoMosaic`. On these numbers, path 2 is frame-exact, about 7 times faster, and does not need the tab to
-  stay visible.
+- **Default: path 2 (WebCodecs), with path 1 as the fallback.** This reverses decision 1's order on these numbers:
+  path 2 is frame-exact, about 7 times faster, and does not need the tab to stay visible, while path 1 sits at the
+  0.9 bar. Path 1 runs when WebCodecs is unsupported, throws, or keeps under 0.9 of the frames.
