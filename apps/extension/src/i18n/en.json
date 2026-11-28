@@ -32,7 +32,55 @@
   },
   "options": {
     "profiles": "Connected Yodas",
-    "needsReconnect": "Reconnect needed"
+    "needsReconnect": "Reconnect needed",
+    "subtitle": "Each profile is one Yoda you connected. A report goes to the profile and project that match the page you are on.",
+    "nav": {
+      "profiles": "Yoda profiles",
+      "rules": "URL mapping",
+      "privacy": "Privacy",
+      "about": "About"
+    },
+    "default": "Default",
+    "makeDefault": "Make default",
+    "managed": "Policy",
+    "colour": "Colour",
+    "sessionOnly": "Sign out when the browser closes",
+    "connected": "Connected",
+    "user": "User",
+    "rules": "URL mapping",
+    "rulesHint": "The most specific rule wins.",
+    "addRule": "Add rule",
+    "editRule": "Edit rule",
+    "pattern": "Site pattern",
+    "patternHint": "e.g. http://localhost:3000/* or https://*.uat.example.org/*",
+    "yoda": "Yoda",
+    "project": "Project",
+    "environment": "Environment",
+    "source": "Source",
+    "fromBuild": "(from the page's yoda-build)",
+    "production": "Production: no video, stricter checks",
+    "sourceName": {
+      "yoda": "From Yoda",
+      "policy": "Policy",
+      "mine": "Added by me"
+    },
+    "locked": "Set by {s}; change it there",
+    "noRules": "No rules yet. Yoda sends the URLs of its projects; add your own for local or test sites.",
+    "ruleError": {
+      "pattern_invalid": "Not a site pattern (scheme://host/path)",
+      "too_broad": "Too broad: name a host",
+      "profile_unknown": "Pick a connected Yoda",
+      "locked": "This rule is locked"
+    },
+    "tester": "Test a URL",
+    "testerNone": "No rule matches: you pick the project in the popup",
+    "testerMatch": "{yoda} · {project} (rule {n})",
+    "rulesInfo": "\"From Yoda\" rules come from each project's application URLs and GitLab environments, refreshed when you open the popup. \"Policy\" rules come from IT through Chrome or Edge policy and cannot be changed here.",
+    "privacy": "Sites this extension may read",
+    "privacyHint": "Granted when you connected a Yoda or started capture on a site. Remove any you no longer need.",
+    "noOrigins": "No sites granted.",
+    "about": "About",
+    "version": "Version {v}"
   },
   "editor": {
     "draftMissing": "This draft is gone: it was sent, or it is older than 24 hours.",

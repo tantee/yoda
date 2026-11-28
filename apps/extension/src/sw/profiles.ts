@@ -1,6 +1,6 @@
 import { ExtensionTokenResponse, PublicConfig } from '@yoda/shared'
 import type { Msg } from './messages'
-import { setAccess, setRefresh } from './secrets'
+import { getRefresh, setAccess, setRefresh } from './secrets'
 import { deleteProfile, getProfile, profiles, saveProfile, updateProfile, type Profile } from './store'
 import { normaliseYodaUrl } from '../connect/connect'
 import { yodaFetch } from './api'
@@ -66,6 +66,27 @@ export async function removeProfile(id: string): Promise<void> {
   await forgetYodaRules(id)
   // No other profile uses this origin (one per origin): its host permission goes too.
   await chrome.permissions.remove({ origins: [`${p.url}/*`] }).catch(() => false)
+}
+
+/**
+ * The options page's per-profile settings. "Sign out when the browser closes" moves the refresh token between
+ * storage.local and storage.session; a managed (policy) profile keeps the policy's settings.
+ */
+export async function updateProfileSettings(id: string, patch: { colour?: string; isDefault?: boolean; sessionOnly?: boolean }): Promise<{ ok: true } | { ok: false; error: 'unknown' | 'managed' | 'invalid' }> {
+  const p = await getProfile(id)
+  if (!p) return { ok: false, error: 'unknown' }
+  if (patch.colour !== undefined && !/^#[0-9a-f]{6}$/i.test(patch.colour)) return { ok: false, error: 'invalid' }
+  if (patch.sessionOnly !== undefined && p.managed) return { ok: false, error: 'managed' }
+  if (patch.sessionOnly !== undefined && patch.sessionOnly !== p.sessionOnly) {
+    const token = await getRefresh(p)
+    const next = await updateProfile(id, { sessionOnly: patch.sessionOnly })
+    if (next) await setRefresh(next, token)
+  }
+  const rest: Partial<Profile> = {}
+  if (patch.colour !== undefined) rest.colour = patch.colour.toLowerCase()
+  if (patch.isDefault) rest.isDefault = true
+  if (Object.keys(rest).length) await updateProfile(id, rest)
+  return { ok: true }
 }
 
 export async function setDefault(id: string): Promise<void> {

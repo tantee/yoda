@@ -70,6 +70,41 @@ export async function allRules(opts: { refresh?: boolean } = {}): Promise<Rule[]
   return [...own, ...yoda]
 }
 
+export type MineRuleInput = { id?: string; pattern: string; profileId: string; projectId: string | null; environment: string | null }
+
+/** Rules from a Yoda or from policy: shown with a lock, never written by the options page. */
+const isLocked = (id: string) => id.startsWith('yoda:') || id.startsWith('policy:')
+
+/** Adds or edits one of my rules (validated, the pattern normalised). Mine are never production (decision 3). */
+export async function saveMineRule(input: MineRuleInput): Promise<{ ok: true; rule: Rule } | { ok: false; errors: string[] }> {
+  if (input.id && isLocked(input.id)) return { ok: false, errors: ['locked'] }
+  const errors = validateRuleInput(input, (await profiles()).map((p) => p.id))
+  if (errors.length) return { ok: false, errors }
+  const list = await mineRules()
+  const at = input.id ? list.findIndex((r) => r.id === input.id) : -1
+  const rule: Rule = {
+    id: at >= 0 ? list[at]!.id : `mine:${crypto.randomUUID()}`,
+    pattern: normalizeMatchPattern(input.pattern),
+    profileId: input.profileId,
+    projectId: input.projectId,
+    environment: input.environment?.trim() || null,
+    production: false,
+    source: 'mine',
+    order: at >= 0 ? list[at]!.order : list.length,
+  }
+  if (at >= 0) list[at] = rule
+  else list.push(rule)
+  await chrome.storage.local.set({ [MINE_KEY]: list })
+  return { ok: true, rule }
+}
+
+export async function deleteMineRule(id: string): Promise<{ ok: true } | { ok: false; error: 'locked' }> {
+  if (isLocked(id)) return { ok: false, error: 'locked' }
+  const list = (await mineRules()).filter((r) => r.id !== id).map((r, i) => ({ ...r, order: i }))
+  await chrome.storage.local.set({ [MINE_KEY]: list })
+  return { ok: true }
+}
+
 /** Errors for a rule the tester types in the options page (empty when it can be saved). */
 export function validateRuleInput(r: { pattern: string; profileId: string; projectId: string | null }, profileIds: string[]): string[] {
   const errors: string[] = []

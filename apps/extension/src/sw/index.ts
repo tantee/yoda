@@ -7,10 +7,10 @@ import { purgeClips, takeClip } from '../drafts/clips'
 import { endClip, jobs, startClip, stopClip } from './offscreen'
 import { injectCapture } from './inject'
 import { pageMetadata, startReport } from './report-start'
-import { allRules, repoOf, resolveUrl } from './rules'
+import { allRules, deleteMineRule, repoOf, resolveUrl, saveMineRule } from './rules'
 import { pickRule } from '../rules/match'
 import { onMessage } from './messages'
-import { exchangeProfile, removeProfile } from './profiles'
+import { exchangeProfile, removeProfile, updateProfileSettings } from './profiles'
 import { initSecrets } from './secrets'
 import { getProfile } from './store'
 
@@ -102,6 +102,16 @@ onMessage(async (m, { sender }) => {
       const resolved = await resolveUrl(url, { refresh: m.refresh, readBuild: async () => repoOf(await pageMetadata(m.tabId)) })
       return { ok: true, resolved }
     }
+    case 'rules.list':
+      return { ok: true, rules: await allRules({ refresh: m.refresh }) }
+    case 'rules.saveMine': {
+      const r = await saveMineRule(m.rule)
+      return r.ok ? r : { ok: false, error: 'invalid', errors: r.errors }
+    }
+    case 'rules.deleteMine':
+      return deleteMineRule(m.id)
+    case 'profile.update':
+      return updateProfileSettings(m.profileId, m)
     case 'mapping.test': {
       // The options page's URL tester: the rules as they stand (no refresh), the winner and why.
       const picked = pickRule(m.url, await allRules())

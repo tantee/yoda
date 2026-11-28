@@ -7,7 +7,8 @@ import { chromiumappRedirect, DefectReportCreate, ExtensionAuthorize, ExtensionT
 export type ReceivedFile = { part: string; name: string; type: string; bytes: Buffer }
 export type Received = { report: DefectReportCreate; files: ReceivedFile[]; idempotencyKey: string | null }
 
-const PROJECT = '00000000-0000-4000-8000-000000000001'
+export const PROJECT = '00000000-0000-4000-8000-000000000001'
+export const LAB = '00000000-0000-4000-8000-000000000002'
 const PERSON = { id: '00000000-0000-4000-8000-000000000002', displayName: 'คุณทดสอบ', isStaff: true }
 const token = (p: string) => `${p}${randomBytes(32).toString('base64url')}`
 
@@ -120,7 +121,10 @@ export class StubYoda {
         instance: { name: { th: 'Yoda ทดสอบ', en: 'Test Yoda' }, publicUrl: this.url, version: '1.2.0' },
         latestExtension: null,
         person: PERSON,
-        projects: [{ id: PROJECT, name: 'ระบบนัดหมาย OPD', noAi: false, kinds: ['defect', 'bug_fix_request'], repos: ['demo/app'] }],
+        projects: [
+          { id: PROJECT, name: 'ระบบนัดหมาย OPD', noAi: false, kinds: ['defect', 'bug_fix_request'], repos: ['demo/app'] },
+          { id: LAB, name: 'ระบบแล็บ', noAi: false, kinds: ['defect'], repos: ['demo/lab'] },
+        ],
         limits: { maxFileBytes: 26214400, maxReportBytes: 52428800, maxFiles: 8, maxVideoSeconds: 30, perRole, allowedTypes: { screenshot: ['image/png'], screenshot_full: ['image/png'], video: ['video/webm'], buffer: ['video/webm'], console: ['application/json'], network: ['application/json'] } },
         policy: { videoOnProduction: false, logsOnProductionDefault: false, requireConfirm: true },
       })

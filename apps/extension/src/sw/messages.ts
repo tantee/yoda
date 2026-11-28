@@ -34,6 +34,13 @@ export const Msg = z.discriminatedUnion('type', [
   z.object({ type: z.literal('video.done'), clipId: id, tabId: z.number().int(), durationMs: z.number(), reason: z.enum(['max', 'stopped', 'ended']) }),
   z.object({ type: z.literal('mapping.resolve'), tabId: z.number().int(), refresh: z.boolean().optional() }),
   z.object({ type: z.literal('mapping.test'), url: z.string().max(2048) }),
+  z.object({ type: z.literal('rules.list'), refresh: z.boolean().optional() }),
+  z.object({
+    type: z.literal('rules.saveMine'),
+    rule: z.object({ id: id.optional(), pattern: z.string().max(500), profileId: id, projectId: id.nullable(), environment: z.string().max(100).nullable() }),
+  }),
+  z.object({ type: z.literal('rules.deleteMine'), id }),
+  z.object({ type: z.literal('profile.update'), profileId: id, colour: z.string().max(7).optional(), isDefault: z.boolean().optional(), sessionOnly: z.boolean().optional() }),
   z.object({ type: z.literal('draft.get'), id }),
   z.object({ type: z.literal('draft.delete'), id }),
 ])
