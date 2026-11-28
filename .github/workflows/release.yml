@@ -412,6 +412,9 @@ jobs:
     environment: ${{ needs.meta.outputs.real == 'true' && 'release' || '' }}
     permissions:
       contents: read
+    outputs:
+      # A dry run's throwaway public key (empty on a real release), for one-line-install.
+      pubkey: ${{ steps.ephemeral.outputs.pubkey }}
     env:
       VERSION: ${{ needs.meta.outputs.version }}
       IMAGE_PREFIX: ${{ needs.meta.outputs.prefix }}
@@ -509,6 +512,47 @@ jobs:
             ${{ env.DIST }}/SHA256SUMS.minisig
           if-no-files-found: error
           retention-days: 7
+      - name: keep the dry-run bundle for one-line-install
+        if: needs.meta.outputs.real != 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dry-run-bundle
+          path: |
+            ${{ env.DIST }}/install.sh
+            ${{ env.DIST }}/yoda-${{ env.VERSION }}.tar.gz
+            ${{ env.DIST }}/SHA256SUMS
+            ${{ env.DIST }}/SHA256SUMS.minisig
+          if-no-files-found: error
+          retention-days: 1
+
+  # Dry runs only: the README's one-line install (curl ... | sh -s -- --yes) on a fresh ubuntu:24.04 that has only
+  # curl, ca-certificates and sudo, as a user with sudo, against the dry run's bundle served on the runner
+  # (.github/scripts/one-line-install-e2e.sh). install.sh installs minisign and Docker itself (Docker's apt
+  # repository), creates /srv/yoda with sudo, verifies and unpacks the release; the run stops at the image pull,
+  # because a dry run's images are never pushed. A real release never runs it (its bundle is checked by bundle).
+  one-line-install:
+    if: ${{ !cancelled() && !failure() && needs.meta.outputs.real != 'true' && needs.bundle.result == 'success' }}
+    needs: [meta, bundle]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.meta.outputs.version }}
+      IMAGE_PREFIX: ${{ needs.meta.outputs.prefix }}
+      YODA_RELEASE_PUBKEY: ${{ needs.bundle.outputs.pubkey }}
+      # ubuntu:24.04, the multi-platform index (bump deliberately: docs/releasing.md, "Pinned build inputs").
+      UBUNTU_IMAGE: ubuntu:24.04@sha256:562111b88caa79c71391c0c4d3c2114a7d5c35915c20561fd893cb1e07929e6b
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: dry-run-bundle
+          path: ${{ runner.temp }}/release
+      - name: the one-line install on a fresh Ubuntu
+        run: sh .github/scripts/one-line-install-e2e.sh "$VERSION" "$RUNNER_TEMP/release" "$IMAGE_PREFIX"
 
   # The version and sha tags, on exactly the digests the signed bundle pins: read back from the signed bundle,
   # after checking its signature again.

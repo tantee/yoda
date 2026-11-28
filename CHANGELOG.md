@@ -4,6 +4,47 @@ Releases follow [semantic versioning](https://semver.org); each is a git tag `v<
 as a GitHub Release, and the version without the `v` is the image tag a host runs. Upgrade steps:
 [docs/operations.md](docs/operations.md#5-upgrade-and-rollback).
 
+## 1.2.0 — 2026-11-28
+
+A one-line installer, which checks and installs its own dependencies and handles sudo and the docker group.
+
+### One-line install
+
+- `curl -fsSL https://github.com/tantee/yoda/releases/latest/download/install.sh | sh` installs the latest
+  release into `/srv/yoda`; `… | sh -s -- --version 1.2.0 --dir /srv/yoda --with-proxy --domain …` takes the usual
+  options. Piping trusts GitHub's TLS for `install.sh` itself; everything it downloads is signature-checked. The
+  long form (download `install.sh`, `SHA256SUMS` and the signature, check them, then run it) still works, and
+  `install.sh` then uses the `SHA256SUMS` next to it and checks its own checksum against it.
+- Without `--version`, the published `install.sh` installs its own release (`RELEASE_VERSION`, set when the bundle
+  is built), so the one-liner of release N never installs N+1. Only the repository's copy, or `--version latest`,
+  looks up the latest release, from the `releases/latest` redirect (then the GitHub API; no `jq`); a mirror
+  (`--base-url`) has no "latest", so that lookup needs `--version`. An existing Docker apt source or
+  `docker-ce.repo` is used as it is, and a failed Docker setup removes only the files the run added.
+- When piped, it downloads `SHA256SUMS` and `SHA256SUMS.minisig` for the release, checks the signature with the
+  key built into the script, checks that the trusted comment is exactly `yoda release <version>`, then the
+  bundle's checksum, and only then unpacks anything. Any verification error stops it.
+- The whole script is functions, called from its last line: a download cut short runs nothing at all.
+
+### Dependencies, sudo and the docker group
+
+- `install.sh` checks its dependencies first (curl, tar, sha256sum or shasum, minisign, Docker Engine 24+,
+  Docker Compose v2.24+, and openssl for `--cert-mode files`) and names each one that is missing or too old, with
+  the version found and the version needed.
+- On Debian and Ubuntu it offers to install them: minisign with apt (enabling universe on Ubuntu when needed), and
+  Docker from Docker's own apt repository (its key in `/etc/apt/keyrings`; `docker-ce`, `docker-ce-cli`,
+  `containerd.io`, `docker-buildx-plugin`, `docker-compose-plugin`). The RHEL family gets the same with dnf
+  (minisign from EPEL). Ubuntu's or Debian's own `docker.io` / `docker-compose-v2` that is too old is explained,
+  never replaced. Any other system gets the manual steps, and `install.sh` exits non-zero.
+- Questions are read from the terminal (`/dev/tty`), so they work when piped. `--yes` answers yes; with no
+  terminal and no `--yes`, `install.sh` stops and names the flag instead of assuming yes. Package installs use
+  sudo when not root, and it stops clearly when sudo is missing.
+- A user who may not run docker is added to the docker group (when asked). The rest of the same run uses the group
+  through `sg docker`; new logins get it after logging out and back in.
+- When `--dir` (default `/srv/yoda`) cannot be created, it offers to create it with sudo and give it to the user.
+- The low-disk warning names the free space and the path it checked.
+- The release workflow's dry run (`ops/install/check-release.sh`) also runs the piped install against its local
+  server, resolving the latest release from a `releases/latest` redirect.
+
 ## 1.1.0 — 2026-11-28
 
 The first public release: an AI work portal for the IT department, in Thai (default) and English. Version 1.0.0

@@ -39,7 +39,8 @@ The tag starts [`.github/workflows/release.yml`](../.github/workflows/release.ym
 3. **bundle** runs `ops/install/bundle.sh`, which builds `yoda-<version>.tar.gz` (compose files, `deploy.sh`,
    `install.sh`, the built-in proxy's `ops/proxy/Caddyfile`, `.env.example`, `CHANGELOG.md`, the runbook and `bundle.env` with
    `YODA_IMAGE_PREFIX=ghcr.io/tantee/yoda`, `YODA_VERSION` and the four image digests), `install.sh` and
-   `SHA256SUMS`. It signs `SHA256SUMS` with minisign, using the `MINISIGN_SECRET_KEY` and `MINISIGN_PASSWORD`
+   `SHA256SUMS`. Both copies of `install.sh` get `RELEASE_VERSION='<version>'` (empty in the repository): the
+   published one-liner installs the release it came with, never a newer one it would have to look up. It signs `SHA256SUMS` with minisign, using the `MINISIGN_SECRET_KEY` and `MINISIGN_PASSWORD`
    secrets and the trusted comment `yoda release <version>`. The job fails if either secret is missing or empty,
    if `install.sh` still has the placeholder key, or if the key in `install.sh` does not match the secret. It then
    serves the files from a local HTTP server and runs that `install.sh` against them with the key it embeds, as a
@@ -137,8 +138,8 @@ move them into the `release` environment. Steps 4 and 5 remain as well.
 
    ```bash
    git switch main && git pull
-   git tag -s v1.1.0 -m "Yoda 1.1.0"      # -s: a signed tag (needs a GPG or SSH signing key in git)
-   git push origin v1.1.0
+   git tag -s v1.2.0 -m "Yoda 1.2.0"      # -s: a signed tag (needs a GPG or SSH signing key in git)
+   git push origin v1.2.0
    ```
 
 3. **Watch the workflow**: `gh run watch` (or Actions → Release). The multi-arch image builds take the longest.
@@ -146,17 +147,18 @@ move them into the `release` environment. Steps 4 and 5 remain as well.
 4. **Check the release** from a clean machine with the published files:
 
    ```bash
-   curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.1.0/install.sh
-   curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.1.0/SHA256SUMS
-   curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.1.0/SHA256SUMS.minisig
+   curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.2.0/install.sh
+   curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.2.0/SHA256SUMS
+   curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.2.0/SHA256SUMS.minisig
    out=$(minisign -Vm SHA256SUMS -P RWSErktAr/A+x5Gvgr0x29wiu41FmYEVlJYoXyB6oJk4kvwQLOZs9O9j) &&
-     printf '%s\n' "$out" | grep -Fx 'Trusted comment: yoda release 1.1.0' &&
+     printf '%s\n' "$out" | grep -Fx 'Trusted comment: yoda release 1.2.0' &&
      sha256sum --check --ignore-missing SHA256SUMS &&
-     sh install.sh --version 1.1.0 --dir /tmp/yoda-check     # on a test host with Docker
+     sh install.sh --version 1.2.0 --dir /tmp/yoda-check     # on a test host with Docker
    ```
 
    Each command runs only when the one before it passed; the `grep` checks that the signature is for this
-   version. `release.env` in the install directory then lists the four digests, and
+   version. Then try the one-line install the README gives on a test host, once the release is the latest:
+   `curl -fsSL https://github.com/tantee/yoda/releases/latest/download/install.sh | sh -s -- --dir /tmp/yoda-one-line`. `release.env` in the install directory then lists the four digests, and
    `docker image ls --digests ghcr.io/tantee/yoda/core` shows the same one. The first release only: make the
    packages public first (one-time setup, step 5).
 
@@ -167,7 +169,7 @@ move them into the `release` environment. Steps 4 and 5 remain as well.
   kept: the image digests and the signed bundle (artifacts, 7 days). Nothing is rebuilt or signed twice. Never
   start a new run by hand for this: a manual run is always a dry run.
 - **The cause is in the repository** (the changelog, a version, the code): fix it on `main` through a pull
-  request, delete the tag (`git push --delete origin v1.1.0 && git tag -d v1.1.0`) and tag the fixed commit. A
+  request, delete the tag (`git push --delete origin v1.2.0 && git tag -d v1.2.0`) and tag the fixed commit. A
   failed run tagged no image and created no release, so nothing is left to clean up (leave its untagged
   digests: see above).
 - **An image job ran out of time** (45 minutes, `timeout-minutes`): a build that slow is stuck, not busy; the
@@ -192,7 +194,16 @@ Dockerfiles, the compose files or `CHANGELOG.md`) runs the same workflow as a dr
   throwaway key made inside the job (never stored or uploaded), so it needs no secret, no environment, and
   works from forks;
 - verifies the bundle end to end with `install.sh` against a local HTTP server, using that throwaway key, checks
-  the digest pins in `release.env` and the compose files, and that a signature from any other key is refused;
+  the digest pins in `release.env` and the compose files, and that a signature from any other key is refused. It
+  runs `install.sh` twice: as a file next to the signed `SHA256SUMS`, and piped as the one-line install does
+  (`cat install.sh | sh -s -- …`, no `--version`: the latest release from a `releases/latest` redirect the local
+  server answers like GitHub's, then `SHA256SUMS` and its signature downloaded);
+- runs the README's one-line install on a fresh `ubuntu:24.04` (job **one-line-install**, a privileged container
+  with only curl, ca-certificates and sudo, as a user with sudo): `curl … | sh -s -- --yes` against the dry run's
+  bundle served on the runner. It checks that `install.sh` reports minisign, Docker and Compose missing, installs
+  minisign from apt and Docker from Docker's apt repository (Compose 2.24 or later), stops at the daemon (no
+  systemd); then, with `dockerd` started by hand, that it verifies the release, creates `/srv/yoda` with sudo for
+  that user and unpacks it, and stops at the image pull, because a dry run's images are never pushed;
 - checks that the newest `CHANGELOG.md` section extracts as notes;
 - creates no release and no image tag. Its only artifacts are the four one-line digest files, kept for a day;
   no build record is uploaded (`DOCKER_BUILD_RECORD_UPLOAD=false`).
@@ -206,18 +217,18 @@ Every release's `SHA256SUMS` is signed with the Yoda release key:
 - where it lives: [`keys/yoda-release.pub`](../keys/yoda-release.pub) in this repository, and built into
   `ops/install/install.sh` (`RELEASE_PUBKEY_EMBEDDED`), which checks every download with it.
 
-Check a release by hand (in the directory holding the downloaded assets; `1.1.0` is the version you downloaded):
+Check a release by hand (in the directory holding the downloaded assets; `1.2.0` is the version you downloaded):
 
 ```bash
 out=$(minisign -Vm SHA256SUMS -P RWSErktAr/A+x5Gvgr0x29wiu41FmYEVlJYoXyB6oJk4kvwQLOZs9O9j) &&
-  printf '%s\n' "$out" | grep -Fx 'Trusted comment: yoda release 1.1.0' &&
+  printf '%s\n' "$out" | grep -Fx 'Trusted comment: yoda release 1.2.0' &&
   sha256sum --check --ignore-missing SHA256SUMS
 ```
 
 `minisign` prints `Trusted comment: yoda release <version>` only for a valid signature, and the `grep` fails
 unless it names the version you downloaded (an older signed `SHA256SUMS` cannot pass for a newer release). With
 the repository checked out, `minisign -Vm SHA256SUMS -p keys/yoda-release.pub` does the same check of the
-signature. The image digests a release runs are in its bundle: `tar -xzOf yoda-1.1.0.tar.gz bundle.env`.
+signature. The image digests a release runs are in its bundle: `tar -xzOf yoda-1.2.0.tar.gz bundle.env`.
 
 ## Pinned build inputs
 
@@ -229,6 +240,7 @@ Everything a release build pulls is pinned, so a moved upstream tag cannot chang
 | BuildKit | `release.yml`, `setup-buildx-action` `driver-opts` | `moby/buildkit:<tag>@sha256:…` |
 | Registry (dry run only, the throwaway registry of **manifest-dry**) | `release.yml`, `services.registry.image` | `registry:<exact tag>@sha256:…` |
 | Base images | `apps/core/Dockerfile`, `apps/portal/Dockerfile`, `apps/runner/Dockerfile`, `ops/backup/Dockerfile` | `FROM <image>:<exact tag>@sha256:…` |
+| Ubuntu (dry run only, the fresh host of **one-line-install**) | `release.yml`, job `one-line-install`, `UBUNTU_IMAGE` | `ubuntu:24.04@sha256:…` (the multi-platform index; look it up with `curl -fsSL https://hub.docker.com/v2/repositories/library/ubuntu/tags/24.04` and read `.digest`) |
 | Caddy (the optional built-in HTTPS proxy, [runbook 4b](operations.md#4b-built-in-https-proxy-optional)) | `docker-compose.prod.yml`, service `proxy`, `image` | `caddy:<exact tag>@sha256:…` (the multi-platform index) |
 
 The tag stays next to each digest for reading; the digest is what is pulled. To bump one, pick the new exact tag,
@@ -264,7 +276,7 @@ Hosts that cannot reach GitHub or ghcr.io install from a mirror inside the netwo
 release's directory and the image registry path:
 
 ```bash
-sh install.sh --version 1.1.0 --dir /srv/yoda \
+sh install.sh --version 1.2.0 --dir /srv/yoda \
   --base-url 'https://files.example.org/yoda/releases/{version}/' \
   --image-prefix registry.example.org/group/yoda
 ```
@@ -277,7 +289,7 @@ Two ways to fill the mirror:
 
 - **Copy the published release.** Put the four GitHub Release assets in one directory per version on any static
   HTTPS server, and copy the images with their manifests, for example
-  `docker buildx imagetools create -t registry.example.org/group/yoda/core:1.1.0 ghcr.io/tantee/yoda/core:1.1.0`
+  `docker buildx imagetools create -t registry.example.org/group/yoda/core:1.2.0 ghcr.io/tantee/yoda/core:1.2.0`
   for each of the four images, or set the registry up as a pull-through cache of ghcr.io. The signature stays
   valid, because the files are unchanged. Copied images keep their digests (a digest names content, not a
   registry), so a host given the mirror's `--image-prefix` still runs the digests the signed bundle pins. A mirror
@@ -285,7 +297,7 @@ Two ways to fill the mirror:
   `YODA_IGNORE_BUNDLE_DIGESTS=1` to run its tags (it warns).
 - **Build it in GitLab CI.** `.gitlab-ci.yml` builds the images into the project's registry and, on tags, the
   signed bundle (`release-bundle` job), without digests. It uploads the bundle to the file server under
-  `releases/<version>/`. A mirrored GitHub tag `v1.1.0` becomes release `1.1.0` there. Its CI/CD variables are
+  `releases/<version>/`. A mirrored GitHub tag `v1.2.0` becomes release `1.2.0` there. Its CI/CD variables are
   YODA_RELEASE_SIGNING_KEY (type File: the same `yoda.key`), YODA_RELEASE_SIGNING_PASSWORD (masked) and
   YODA_RELEASE_UPLOAD_URL and YODA_RELEASE_UPLOAD_TOKEN; see the [runbook, section 5](operations.md#5-upgrade-and-rollback).
   The GitLab pipeline also has the manual `deploy` job.

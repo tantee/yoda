@@ -13,6 +13,12 @@ const read = (path: string) => readFileSync(`${root}${path}`, 'utf8')
 const runbook = read('docs/operations.md')
 const envExample = read('.env.example')
 
+/** The one-line install: the only download ever piped into a shell, always the latest release's install.sh. */
+const ONE_LINER = 'curl -fsSL https://github.com/tantee/yoda/releases/latest/download/install.sh | sh'
+/** Every `curl ... | sh` in a text that is not the one-liner (with or without `-s -- <options>` after it). */
+const otherPipes = (text: string) =>
+  text.split('\n').filter((l) => /curl[^\n`]*\|\s*(ba)?sh\b/.test(l) && !l.trim().startsWith(ONE_LINER)).filter((l) => !/^\s*curl -fsSL https:\/\/github\.com\/tantee\/yoda\/releases\/latest\/download\/install\.sh \|$/.test(l))
+
 /** The names in the first column of the runbook's environment tables (`| \`NAME\` | ...`). */
 const tableNames = new Set([...runbook.matchAll(/^\|\s*`([A-Z][A-Z0-9_]*)`\s*\|/gm)].map((m) => m[1]!))
 
@@ -183,11 +189,15 @@ describe('docs/operations.md commands', () => {
 })
 
 describe('docs/operations.md installer (installer proposal §3.4, §13.2)', () => {
-  it('downloads install.sh pinned, checks it, then runs it (never curl | sh)', () => {
+  it('gives the one-line install, and the pinned download that checks install.sh before running it', () => {
+    expect(runbook).toContain(`   ${ONE_LINER}\n`)
+    expect(runbook).toContain(`${ONE_LINER} -s -- --version 1.2.0 --dir /srv/yoda`)
+    expect(runbook).toContain("Piping trusts GitHub's TLS for `install.sh` itself; everything it downloads is signature-checked")
     expect(runbook).toContain('curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.2.0/install.sh')
     expect(runbook).toContain('sh install.sh --version 1.2.0 --dir /srv/yoda')
     expect(runbook).toMatch(/minisign -Vm SHA256SUMS/)
-    expect(runbook).not.toMatch(/curl[^\n`]*\|\s*(ba)?sh\b/)
+    // No other download is ever piped into a shell.
+    expect(otherPipes(runbook)).toEqual([])
   })
 
   it('covers the setup token, the recovery kit, the master key and the troubleshooting entries', () => {
@@ -213,15 +223,30 @@ describe('release docs (GitHub Releases + GHCR, D1)', () => {
   const installSh = read('ops/install/install.sh')
   const embedded = /^RELEASE_PUBKEY_EMBEDDED='([^']+)'$/m.exec(installSh)?.[1]
 
-  it('installs from the GitHub Release assets, pinned and verified, in the README and the install guide', () => {
+  it('installs with the one-liner first, the verified long form in a <details> block, in the README and the install guide', () => {
     for (const [name, text] of [['README', readme], ['install guide', guide]] as const) {
+      // The one-liner (the latest release), then options after `sh -s --` with a pinned version.
+      const one = text.indexOf(`\n${ONE_LINER}\n`)
+      expect(one, name).toBeGreaterThan(-1)
+      expect(text, name).toContain(`${ONE_LINER.replace(/ sh$/, '')}\n  sh -s -- --version 1.2.0 --dir /srv/yoda --with-proxy --domain portal.example.org\n`)
+      // The long form, collapsed, after it.
+      const details = text.indexOf('<details>\n<summary>Prefer to verify install.sh itself?</summary>')
+      expect(details, name).toBeGreaterThan(one)
+      const block = text.slice(details, text.indexOf('</details>', details))
       for (const f of ['install.sh', 'SHA256SUMS', 'SHA256SUMS.minisig']) {
-        expect(text, `${name} ${f}`).toContain(`curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.1.0/${f}\n`)
+        expect(block, `${name} ${f}`).toContain(`curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.2.0/${f}\n`)
       }
-      expect(text, name).toContain('sh install.sh --version 1.1.0 --dir /srv/yoda')
+      expect(block, name).toContain('sh install.sh --version 1.2.0 --dir /srv/yoda')
       expect(text, name).toMatch(/latest release/)
       expect(text, name).toContain('--image-prefix')
-      expect(text, name).not.toMatch(/curl[^\n`]*\|\s*(ba)?sh\b/)
+      // The requirements, which install.sh checks and offers to install.
+      expect(text, name).toContain('**Requirements.**')
+      for (const r of ['Docker Engine 24+', 'v2.24+', '`curl`', '`tar`', '`sha256sum`', '`minisign`', '`openssl`', '10 GB']) expect(text, `${name}: ${r}`).toContain(r)
+      expect(text, name).toMatch(/checks them[^.]*offers to install/)
+      // What piping trusts.
+      expect(text, name).toContain("Piping trusts GitHub's TLS for `install.sh` itself")
+      expect(text, name).toMatch(/Everything it downloads after that is\s+signature-checked/)
+      expect(otherPipes(text), name).toEqual([])
     }
     // The mirror is the only place for the placeholder file server.
     expect(readme).not.toContain('files.example.org')
@@ -285,8 +310,8 @@ describe('release docs (GitHub Releases + GHCR, D1)', () => {
       'docker buildx imagetools inspect',
       '## <version> — unreleased',
       'Change visibility → Public',
-      'git tag -s v1.1.0',
-      'git push origin v1.1.0',
+      'git tag -s v1.2.0',
+      'git push origin v1.2.0',
       '## Verifying releases',
       'C73EF0AF404BAE84',
       'keys/yoda-release.pub',
@@ -296,10 +321,13 @@ describe('release docs (GitHub Releases + GHCR, D1)', () => {
     // 1.1.0, the first public release, is dated; the release workflow refuses an undated heading. 1.0.0 was never
     // published: it has no section of its own, only a line in 1.1.0's.
     expect(read('CHANGELOG.md')).toMatch(/^## 1\.1\.0 — 2026-11-28$/m)
+    // 1.2.0, the one-line installer, is the newest section (not "Unreleased").
+    expect(read('CHANGELOG.md')).toMatch(/^## 1\.2\.0 — 2026-11-28$/m)
     expect(read('CHANGELOG.md')).not.toMatch(/^## 1\.0\.0\b/m)
     expect(read('CHANGELOG.md')).toContain('Version 1.0.0\nwas tagged but never published')
     for (const f of ['package.json', 'apps/core/package.json', 'apps/portal/package.json', 'apps/runner/package.json', 'packages/shared/package.json'])
-      expect(JSON.parse(read(f)).version, f).toBe('1.1.0')
+      expect(JSON.parse(read(f)).version, f).toBe('1.2.0')
+    expect(read('apps/core/src/mcp/server.ts')).toContain("{ name: 'yoda-core', version: '1.2.0' }")
     // Work in progress sits under "## Unreleased", above the released sections; it is never a release's notes.
     const changelog = read('CHANGELOG.md')
     const headings = [...changelog.matchAll(/^## (.+)$/gm)].map((m) => m[1]!)
@@ -347,7 +375,7 @@ describe('the built-in HTTPS proxy docs (docs/operations.md, section 4b)', () =>
     // 1.0.0 has no proxy service: never an example that installs it with the proxy.
     expect(guide).not.toMatch(/--version 1\.0\.\d+[^\n]*--with-proxy/)
     expect(runbook).not.toMatch(/--version 1\.0\.\d+[^\n]*--with-proxy/)
-    expect(guide).toContain('sh install.sh --version 1.1.0 --dir /srv/yoda --with-proxy --domain portal.example.org')
+    expect(guide).toContain('sh install.sh --version 1.2.0 --dir /srv/yoda --with-proxy --domain portal.example.org')
     expect(guide).toContain('release 1.1.0 or later')
     expect(runbook).toContain('It needs **release 1.1.0 or later**')
     expect(runbook).toContain('The host must run release 1.1.0 or later: on an older one, upgrade first')
@@ -392,14 +420,26 @@ describe('the built-in HTTPS proxy docs (docs/operations.md, section 4b)', () =>
     expect(spawnSync('sh', ['ops/install/release-notes.sh', 'Unreleased'], { cwd: root }).status).not.toBe(0)
     // The dry run's "newest released section" skips it too (the same sed as release.yml).
     const latest = spawnSync('sh', ['-c', "sed -n 's/^## \\([0-9][0-9A-Za-z.-]*\\).*$/\\1/p' CHANGELOG.md | head -n 1"], { cwd: root, encoding: 'utf8' })
-    expect(latest.stdout.trim()).toBe('1.1.0')
+    expect(latest.stdout.trim()).toBe('1.2.0')
     expect(read('.github/workflows/release.yml')).toContain("latest=$(sed -n 's/^## \\([0-9][0-9A-Za-z.-]*\\).*$/\\1/p' CHANGELOG.md | head -n 1)")
+  })
+
+  it.skipIf(process.platform === 'win32')('gives 1.2.0 its notes: the one-line installer with its dependency and sudo handling', () => {
+    const notes = spawnSync('sh', ['ops/install/release-notes.sh', '1.2.0'], { cwd: root, encoding: 'utf8' })
+    expect(notes.status, notes.stderr).toBe(0)
+    expect(notes.stdout).toMatch(/^A one-line installer/)
+    expect(notes.stdout).toContain('### One-line install')
+    expect(notes.stdout).toContain('### Dependencies, sudo and the docker group')
+    expect(notes.stdout).toContain('curl -fsSL https://github.com/tantee/yoda/releases/latest/download/install.sh | sh')
+    // The proxy stays a 1.1.0 entry.
+    expect(notes.stdout).not.toContain('### Built-in HTTPS proxy (optional)')
   })
 
   it('names only example.org hosts in the proxy files', () => {
     for (const f of ['ops/proxy/Caddyfile', 'docs/operations.md', 'ops/install/install.sh', 'ops/deploy/deploy.sh']) {
       const hosts = [...read(f).matchAll(/\b([a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:org|com|net|io|local|internal|lan))\b/gi)].map((m) => m[1]!.toLowerCase())
-      const odd = hosts.filter((h) => !/(^|\.)example\.(org|com)$|^(github\.com|ghcr\.io|caddyserver\.com|jedisct1\.github\.io|acme-v02\.api\.letsencrypt\.org|acme-staging-v02\.api\.letsencrypt\.org|api\.line\.me|api\.telegram\.org|semver\.org|t\.me)$/.test(h))
+      // containerd.io and docker.io are package names (Docker's and the distribution's), not hosts.
+      const odd = hosts.filter((h) => !/(^|\.)example\.(org|com)$|^(github\.com|ghcr\.io|caddyserver\.com|jedisct1\.github\.io|acme-v02\.api\.letsencrypt\.org|acme-staging-v02\.api\.letsencrypt\.org|api\.line\.me|api\.telegram\.org|semver\.org|t\.me|api\.github\.com|download\.docker\.com|docs\.docker\.com)$/.test(h) && !/^(containerd|docker)\.io$/.test(h))
       expect(odd, f).toEqual([])
     }
   })

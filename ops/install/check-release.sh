@@ -9,7 +9,11 @@
 # every image is <prefix>/<name>:<version>@<digest>, that the optional built-in HTTPS proxy runs a Caddy image
 # pinned by version and digest, and that the bundle's ops/proxy/Caddyfile passes `caddy validate` in that image for
 # each certificate mode (internal, acme, and files with a throwaway certificate made here; docs/operations.md,
-# section 4b), run with the environment compose gives the proxy service, empty values included. Then it checks that a signature from another key is refused.
+# section 4b), run with the environment compose gives the proxy service, empty values included. It also runs the
+# one-line install the way the README gives it, piped (`cat install.sh | sh -s -- ...`: no SHA256SUMS next to the
+# script, so it downloads SHA256SUMS and its signature): without --version (the release install.sh names,
+# RELEASE_VERSION, which bundle.sh set), and with --version latest (from a releases/latest redirect the local
+# server answers like GitHub's). Then it checks that a signature from another key is refused.
 # The release workflow (.github/workflows/release.yml) runs it on every dry run and on a real release, before the
 # bundle is kept for the release and before any image is tagged:
 #
@@ -32,6 +36,8 @@ real_docker=$(command -v docker || true)
 for f in install.sh "yoda-$version.tar.gz" SHA256SUMS SHA256SUMS.minisig; do
   [ -f "$rel/$f" ] || { echo "check-release: $rel/$f is missing" >&2; exit 1; }
 done
+grep -qx "RELEASE_VERSION='$version'" "$rel/install.sh" ||
+  { echo "check-release: $rel/install.sh does not name its release (RELEASE_VERSION='$version')" >&2; exit 1; }
 
 work=$(mktemp -d)
 pid=''
@@ -64,13 +70,26 @@ chmod 755 "$work/bin/docker"
 
 python3 -c '
 import functools, http.server, sys
-handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=sys.argv[1])
+class Handler(http.server.SimpleHTTPRequestHandler):
+    # GitHub answers releases/latest with a redirect to releases/tag/v<version>.
+    def latest(self):
+        if self.path != "/releases/latest":
+            return False
+        self.send_response(302)
+        self.send_header("Location", "/releases/tag/v" + sys.argv[3])
+        self.end_headers()
+        return True
+    def do_HEAD(self):
+        self.latest() or super().do_HEAD()
+    def do_GET(self):
+        self.latest() or super().do_GET()
+handler = functools.partial(Handler, directory=sys.argv[1])
 server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
 with open(sys.argv[2] + ".tmp", "w") as f:
     f.write(str(server.server_address[1]))
 __import__("os").rename(sys.argv[2] + ".tmp", sys.argv[2])
 server.serve_forever()
-' "$work/www" "$work/port" 2> "$work/http.log" &
+' "$work/www" "$work/port" "$version" 2> "$work/http.log" &
 pid=$!
 i=0
 until [ -s "$work/port" ]; do
@@ -78,13 +97,24 @@ until [ -s "$work/port" ]; do
   [ "$i" -le 50 ] || { cat "$work/http.log" >&2; echo 'check-release: the HTTP server did not start' >&2; exit 1; }
   sleep 0.2
 done
-base="http://127.0.0.1:$(cat "$work/port")/releases/{version}/"
+origin="http://127.0.0.1:$(cat "$work/port")"
+base="$origin/releases/{version}/"
 
 # install.sh in a clean environment: the stub docker first on PATH, a fresh HOME (no saved registry logins).
+# No terminal (YODA_TTY empty): a question would stop it, never be answered yes.
 install() {
-  env -i PATH="$work/bin:$PATH" HOME="$work/home" STUB_DOCKER_LOG="$work/docker.log" \
+  env -i PATH="$work/bin:$PATH" HOME="$work/home" STUB_DOCKER_LOG="$work/docker.log" YODA_TTY= \
     ${YODA_RELEASE_PUBKEY:+YODA_RELEASE_PUBKEY="$YODA_RELEASE_PUBKEY"} \
     sh "$work/www/releases/$version/install.sh" --version "$version" --base-url "$base" "$@"
+}
+# The one-liner: the script on stdin, the latest release looked up, everything downloaded.
+install_piped() {
+  # shellcheck disable=SC2002 # the pipe is the point: install.sh as curl ... | sh gets it
+  cat "$work/www/releases/$version/install.sh" |
+    env -i PATH="$work/bin:$PATH" HOME="$work/home" STUB_DOCKER_LOG="$work/docker.log" YODA_TTY= \
+      YODA_LATEST_URL="$origin/releases/latest" \
+      ${YODA_RELEASE_PUBKEY:+YODA_RELEASE_PUBKEY="$YODA_RELEASE_PUBKEY"} \
+      sh -s -- --base-url "$base" "$@"
 }
 mkdir -p "$work/home"
 : > "$work/docker.log"
@@ -179,6 +209,24 @@ else
   echo 'check-release: no docker compose here: skipped the compose image check'
 fi
 
+# Piped, as the one-line install runs it: SHA256SUMS and its signature downloaded; the release install.sh names,
+# then the latest one looked up.
+for how in named latest; do
+  if [ "$how" = named ]; then
+    install_piped --dir "$work/srv/piped-$how" > "$work/piped.log" 2>&1 || { cat "$work/piped.log" >&2; fail 'the piped install (cat install.sh | sh -s -- ...) refused the release'; }
+    grep -qFx "install: release $version (the one this install.sh belongs to; --version picks another)" "$work/piped.log" ||
+      { cat "$work/piped.log" >&2; fail 'the piped install did not take the release install.sh names'; }
+    ! grep -qF 'finding the latest release' "$work/piped.log" || fail 'the piped install looked up the latest release although install.sh names its own'
+  else
+    install_piped --version latest --dir "$work/srv/piped-$how" > "$work/piped.log" 2>&1 || { cat "$work/piped.log" >&2; fail 'the piped install --version latest refused the release'; }
+    grep -qFx "install: latest release: $version" "$work/piped.log" || { cat "$work/piped.log" >&2; fail 'the piped install did not resolve the latest release'; }
+  fi
+  grep -qF "install: downloading Yoda $version from $origin/releases/$version/" "$work/piped.log" || fail 'the piped install did not download SHA256SUMS'
+  grep -qF 'signature and checksum verified' "$work/piped.log" || fail 'the piped install did not verify the release'
+  grep -qx "YODA_VERSION=$version" "$work/srv/piped-$how/release.env" || fail 'the piped install did not pin the release'
+done
+echo "check-release: the piped install ($version, named by install.sh, and as the latest) verified, unpacked and deployed"
+
 # Digests name content, not a registry: installed with a mirror's prefix, the same digests stay pinned.
 if [ -n "$digests" ]; then
   install --dir "$work/srv/mirror" --image-prefix registry.example.org/mirror/yoda > "$work/mirror.log" 2>&1 ||
@@ -198,4 +246,4 @@ fi
 grep -qF 'signature check FAILED' "$work/other.log" || { cat "$work/other.log" >&2; fail 'install.sh failed for another reason than the signature'; }
 [ ! -e "$work/srv/other/docker-compose.yml" ] || fail 'install.sh unpacked a release it refused'
 
-echo "check-release: $version verified end to end (signature, checksum, unpack, release.env, deploy)"
+echo "check-release: $version verified end to end (signature, checksum, unpack, release.env, deploy; as a file and piped)"

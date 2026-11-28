@@ -112,7 +112,7 @@ describe('app', () => {
     const res = await app.inject({ url: '/health' })
     expect(res.statusCode).toBe(200)
     expect(res.json()).toEqual({ status: 'ok', version: VERSION })
-    expect(VERSION).toBe('1.1.0')
+    expect(VERSION).toBe('1.2.0')
     await app.close()
   })
   it('GET /health shows the master key state when the settings store is open', async () => {

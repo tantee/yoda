@@ -122,7 +122,7 @@ describe('buildPublicConfig', () => {
       setup: 'done',
       recovery: true,
       recoveryForced: false,
-      version: '1.1.0',
+      version: '1.2.0',
     })
   })
 
