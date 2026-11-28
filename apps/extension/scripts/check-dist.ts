@@ -1,10 +1,12 @@
 // Checks a release output (dist/ or the zip) before it ships (plan B13): the proposal §5 manifest rules, no e2e-only
 // code, no eval or remote code, no private key, and the version. `tsx scripts/check-dist.ts [dir|zip ...]`; with no
 // argument it checks dist/ and every zip in release/. Exits 1 with one line per problem.
+import { createHash } from 'node:crypto'
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { unzipSync } from 'fflate'
+import { OFFICIAL_EXTENSION_ID } from '@yoda/shared'
 import {
   FORBIDDEN_MANIFEST_KEYS,
   FORBIDDEN_PERMISSIONS,
@@ -34,8 +36,10 @@ function read(path: string): Files {
 }
 
 const PRIVATE_KEY = /-----BEGIN ((RSA|EC|DSA|OPENSSH|ENCRYPTED) )?PRIVATE KEY-----/
-const EVAL = /(?<![\w$.])eval\s*\(/
-const NEW_FUNCTION = /\bnew\s+Function\s*\(/
+const EVAL = /(?<![\w$])eval\s*\)?\s*\(|\[\s*["'`]eval["'`]\s*\]/
+const NEW_FUNCTION = /(?<![\w$.])(new\s+)?Function\s*\(/
+/** A string handed to a timer is eval. */
+const STRING_TIMER = /\bset(Timeout|Interval)\s*\(\s*["'`]/
 const REMOTE = [
   /\bimportScripts\s*\(\s*["'`](https?:)?\/\//,
   /\bimport\s*\(\s*["'`](https?:)?\/\//,
@@ -45,8 +49,19 @@ const REMOTE = [
 
 const subset = (got: unknown, allowed: readonly string[]) => (Array.isArray(got) ? got.filter((p) => !allowed.includes(String(p))) : [])
 
-function checkManifest(m: Record<string, unknown>, version: string): string[] {
+/** Chrome's ID for a manifest `key`: the first 128 bits of SHA-256 over the SPKI, as hex mapped to a–p. */
+function idOfKey(b64: string): string {
+  const hex = createHash('sha256').update(Buffer.from(b64, 'base64')).digest('hex').slice(0, 32)
+  return [...hex].map((c) => String.fromCharCode(97 + parseInt(c, 16))).join('')
+}
+
+function checkManifest(m: Record<string, unknown>, version: string, officialId: string | null): string[] {
   const issues: string[] = []
+  // A release without the key gets a path-derived ID: not allowlisted, and the auth redirect breaks.
+  if (officialId) {
+    if (typeof m.key !== 'string' || !m.key) issues.push(`manifest has no key (keys/yoda-reporter.pub missing from the build?)`)
+    else if (idOfKey(m.key) !== officialId) issues.push(`manifest key gives ID ${idOfKey(m.key)}, not the official ${officialId}`)
+  }
   if (m.manifest_version !== 3) issues.push(`manifest_version is ${String(m.manifest_version)}, not 3`)
   for (const key of FORBIDDEN_MANIFEST_KEYS) if (key in m) issues.push(`manifest has ${key}`)
   for (const p of subset(m.permissions, REQUIRED_PERMISSIONS)) issues.push(`permissions has ${p}`)
@@ -61,7 +76,7 @@ function checkManifest(m: Record<string, unknown>, version: string): string[] {
 }
 
 /** Every problem in a release output (a directory or a zip); empty when it may ship. */
-export function checkDist(path: string, version: string): string[] {
+export function checkDist(path: string, version: string, officialId: string | null = OFFICIAL_EXTENSION_ID): string[] {
   if (!existsSync(path)) return [`${path} does not exist`]
   const files = read(path)
   const issues: string[] = []
@@ -69,7 +84,7 @@ export function checkDist(path: string, version: string): string[] {
   if (!manifest) issues.push('no manifest.json')
   else {
     try {
-      issues.push(...checkManifest(JSON.parse(manifest.toString('utf8')) as Record<string, unknown>, version))
+      issues.push(...checkManifest(JSON.parse(manifest.toString('utf8')) as Record<string, unknown>, version, officialId))
     } catch {
       issues.push('manifest.json is not JSON')
     }
@@ -83,6 +98,7 @@ export function checkDist(path: string, version: string): string[] {
     if (/\.(js|mjs)$/.test(name)) {
       if (EVAL.test(text)) issues.push(`eval( in ${name}`)
       if (NEW_FUNCTION.test(text)) issues.push(`new Function( in ${name}`)
+      if (STRING_TIMER.test(text)) issues.push(`a string timer (eval) in ${name}`)
     }
     if (/\.(js|mjs|html)$/.test(name) && REMOTE.some((r) => r.test(text))) issues.push(`remote script loaded in ${name}`)
   }

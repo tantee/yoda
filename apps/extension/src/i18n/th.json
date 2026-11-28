@@ -108,7 +108,7 @@
       "gitlab": "GitLab",
       "manual": "ผู้ทดสอบ"
     },
-    "includeQuery": "ส่ง query string ของ URL ด้วย",
+    "includeQuery": "ส่ง query string ของ URL ด้วย (ทั้งหน้าและใน log)",
     "send": "ส่งเข้า Yoda",
     "sent": "ส่งแล้ว:",
     "noProfile": "ไม่พบ Yoda ที่เชื่อมต่อไว้สำหรับร่างนี้",
@@ -149,7 +149,8 @@
     "settings": "ตั้งค่า",
     "error": {
       "arm": "เริ่มเก็บ log ในหน้านี้ไม่ได้",
-      "capture": "ถ่ายภาพหน้าจอไม่ได้"
+      "capture": "ถ่ายภาพหน้าจอไม่ได้",
+      "tabChanged": "แท็บเปลี่ยนระหว่างถ่ายภาพ อยู่ที่หน้านั้นแล้วลองใหม่"
     }
   }
 }

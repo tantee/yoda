@@ -71,6 +71,22 @@ describe('buildReport', () => {
     expect(report.page.url).toBe('https://app.example.org/opd#/q')
   })
 
+  it('includeQuery=false also strips queries from the network and console logs', async () => {
+    const d = draft({
+      console: [{ t: 1, level: 'error', message: 'GET https://api.example.org/p?hn=123456 failed; see https://app.example.org/x?id=9#top', source: 'https://app.example.org/a.js?v=1:10' }],
+      network: [{ t: 2, method: 'GET', url: 'https://api.example.org/p?hn=123456', status: 500, durationMs: 3, failed: true, kind: 'fetch' }],
+    })
+    const read = async (files: { name: string; data: Blob }[], name: string) => JSON.parse(await files.find((f) => f.name === name)!.data.text())
+    const off = buildReport(d, form({ includeQuery: false }), ctx()).files
+    expect((await read(off, 'network.json'))[0].url).toBe('https://api.example.org/p')
+    const c = (await read(off, 'console.json'))[0]
+    expect(c.message).toBe('GET https://api.example.org/p failed; see https://app.example.org/x#top')
+    expect(c.message).not.toContain('123456')
+    expect(c.source).toBe('https://app.example.org/a.js:10')
+    const on = buildReport(d, form({ includeQuery: true }), ctx()).files
+    expect((await read(on, 'network.json'))[0].url).toContain('hn=123456')
+  })
+
   it('unticked files are omitted', () => {
     const { report } = buildReport(draft(), form({ attach: { screenshot: false, video: false, buffer: false, console: true, network: false } }), ctx())
     expect(report.attachments.map((a) => a.role)).toEqual(['console'])

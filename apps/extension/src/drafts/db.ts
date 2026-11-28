@@ -77,6 +77,13 @@ export async function deleteDraft(id: string): Promise<void> {
   await tx('readwrite', (s) => s.delete(id))
 }
 
+/** Removes every draft of a profile (when the profile is removed). */
+export async function deleteDraftsOf(profileId: string): Promise<number> {
+  const mine = (await listDrafts()).filter((d) => d.profileId === profileId)
+  for (const d of mine) await deleteDraft(d.id)
+  return mine.length
+}
+
 /** Removes drafts older than 24 hours (called when the worker starts and whenever it opens the editor). */
 export async function purgeOldDrafts(now: number): Promise<number> {
   const old = (await listDrafts()).filter((d) => now - d.createdAt > DRAFT_TTL_MS)

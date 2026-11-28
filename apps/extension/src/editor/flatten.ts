@@ -26,6 +26,15 @@ export function cropRect(ops: Op[]): Rect | null {
   return null
 }
 
+/** A crop dragged past the image edge keeps only the part on the image (no transparent band); null when none. */
+export function clampCrop(r: Rect, width: number, height: number): { x: number; y: number; w: number; h: number } | null {
+  const x0 = Math.max(0, Math.round(Math.min(r.x, r.x + r.w)))
+  const y0 = Math.max(0, Math.round(Math.min(r.y, r.y + r.h)))
+  const x1 = Math.min(width, Math.round(Math.max(r.x, r.x + r.w)))
+  const y1 = Math.min(height, Math.round(Math.max(r.y, r.y + r.h)))
+  return x1 - x0 >= 1 && y1 - y0 >= 1 ? { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } : null
+}
+
 /**
  * The image that is uploaded (the original never is): the base bitmap with blur, redact and mosaic burned into
  * its pixels, the vector annotations drawn on top (`drawVector`, the Konva stage), then the last crop, as PNG.
@@ -38,10 +47,9 @@ export async function flatten(base: ImageBitmap, doc: EditorDoc, drawVector: (ct
   const { vector, crop } = applyDestructive({ data: data.data, width: data.width, height: data.height }, doc.ops)
   ctx.putImageData(data, 0, 0)
   await drawVector(ctx, vector)
-  if (!crop) return canvas.convertToBlob({ type: 'image/png' })
-  const w = Math.max(1, Math.round(Math.min(crop.w, base.width - crop.x)))
-  const h = Math.max(1, Math.round(Math.min(crop.h, base.height - crop.y)))
-  const out = new OffscreenCanvas(w, h)
-  out.getContext('2d')!.drawImage(canvas, Math.round(crop.x), Math.round(crop.y), w, h, 0, 0, w, h)
+  const c = crop && clampCrop(crop, base.width, base.height)
+  if (!c) return canvas.convertToBlob({ type: 'image/png' })
+  const out = new OffscreenCanvas(c.w, c.h)
+  out.getContext('2d')!.drawImage(canvas, c.x, c.y, c.w, c.h, 0, 0, c.w, c.h)
   return out.convertToBlob({ type: 'image/png' })
 }

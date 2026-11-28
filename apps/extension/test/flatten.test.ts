@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyDestructive, cropRect } from '../src/editor/flatten'
+import { applyDestructive, clampCrop, cropRect } from '../src/editor/flatten'
 import type { EditorDoc } from '../src/editor/doc'
 import type { Img } from '../src/editor/pixels'
 
@@ -48,4 +48,11 @@ describe('flatten (pixel stage)', () => {
     expect(r.vector).toEqual([])
     expect(cropRect([{ kind: 'crop', rect: { x: 0, y: 0, w: 10, h: 10 } }, { kind: 'crop', rect: { x: 4, y: 4, w: 32, h: 20 } }])).toEqual({ x: 4, y: 4, w: 32, h: 20 })
   })
+})
+
+describe('clampCrop', () => {
+  it('keeps a crop on the image', () => expect(clampCrop({ x: 10, y: 20, w: 30, h: 40 }, 100, 100)).toEqual({ x: 10, y: 20, w: 30, h: 40 }))
+  it('cuts a crop dragged past the edges', () => expect(clampCrop({ x: -15, y: 90, w: 50, h: 30 }, 100, 100)).toEqual({ x: 0, y: 90, w: 35, h: 10 }))
+  it('normalises a crop dragged up and left', () => expect(clampCrop({ x: 50, y: 50, w: -20, h: -10 }, 100, 100)).toEqual({ x: 30, y: 40, w: 20, h: 10 }))
+  it('a crop wholly off the image is none', () => expect(clampCrop({ x: 120, y: 0, w: 10, h: 10 }, 100, 100)).toBeNull())
 })

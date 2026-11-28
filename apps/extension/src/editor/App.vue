@@ -58,6 +58,7 @@ function addText() {
 
 const SHORTCUTS: Record<string, Tool> = { v: 'select', a: 'arrow', b: 'box', h: 'highlight', t: 'text', n: 'step', u: 'blur', m: 'mosaic', r: 'redact', c: 'crop' }
 function onKey(ev: KeyboardEvent) {
+  if (sent.value) return
   const target = ev.target as HTMLElement | null
   if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return
   const k = ev.key.toLowerCase()
@@ -78,14 +79,34 @@ function onKey(ev: KeyboardEvent) {
 
 const doc = computed(() => state.value?.doc ?? null)
 
+/** Set once the report is sent: the draft is deleted then, and nothing may write it back. */
+const sent = ref(false)
+
+function save() {
+  saveTimer = null
+  const d = draft.value
+  if (!d || sent.value) return
+  // IndexedDB cannot clone Vue's proxies: the raw draft (its blobs as they are) with plain copies of the rest.
+  void putDraft({ ...toRaw(d), editorDoc: plain(doc.value), form: plain(d.form) })
+}
+
 function scheduleSave() {
+  if (sent.value) return
   if (saveTimer) clearTimeout(saveTimer)
-  saveTimer = setTimeout(() => {
-    const d = draft.value
-    if (!d) return
-    // IndexedDB cannot clone Vue's proxies: the raw draft (its blobs as they are) with plain copies of the rest.
-    void putDraft({ ...toRaw(d), editorDoc: plain(doc.value), form: plain(d.form) })
-  }, 400)
+  saveTimer = setTimeout(save, 400)
+}
+
+/** Closing the tab inside the debounce would lose the last edits: write them now. */
+function flushSave() {
+  if (!saveTimer) return
+  clearTimeout(saveTimer)
+  save()
+}
+
+function onSent() {
+  if (saveTimer) clearTimeout(saveTimer)
+  saveTimer = null
+  sent.value = true
 }
 
 watch(doc, scheduleSave, { deep: true })
@@ -93,8 +114,14 @@ watch(() => draft.value?.form, scheduleSave, { deep: true })
 onMounted(() => {
   void load()
   window.addEventListener('keydown', onKey)
+  window.addEventListener('pagehide', flushSave)
 })
-onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
+onBeforeUnmount(() => {
+  flushSave()
+  window.removeEventListener('keydown', onKey)
+  window.removeEventListener('pagehide', flushSave)
+  base.value?.close()
+})
 /** The image that is uploaded: blur, mosaic and redact burned in, annotations drawn, the crop applied. */
 async function exportImage(): Promise<Blob | null> {
   if (!base.value || !doc.value) return null
@@ -110,7 +137,7 @@ defineExpose({ doc, base, draft })
       <div class="editor" data-testid="editor">
         <v-alert v-if="missing" type="warning" class="ma-4" data-testid="draft-missing">{{ t('editor.draftMissing') }}</v-alert>
         <template v-else-if="draft">
-          <section class="editor__stage">
+          <section class="editor__stage" :class="{ 'editor__stage--sent': sent }" :inert="sent || undefined">
             <Toolbar
               v-model:tool="tool"
               v-model:colour="colour"
@@ -127,7 +154,7 @@ defineExpose({ doc, base, draft })
             </div>
           </section>
           <aside class="editor__side" data-testid="editor-side">
-            <ReportForm :draft="draft" :flatten="exportImage" />
+            <ReportForm :draft="draft" :flatten="exportImage" @sent="onSent" />
           </aside>
         </template>
       </div>
@@ -149,6 +176,7 @@ defineExpose({ doc, base, draft })
 <style scoped>
 .editor { display: grid; grid-template-columns: minmax(0, 1fr) 400px; min-height: 100vh; }
 .editor__stage { display: flex; flex-direction: column; min-width: 0; }
+.editor__stage--sent { opacity: 0.6; }
 .editor__hint { padding: 4px 12px; }
 .editor__canvas { flex: 1; overflow: auto; padding: 12px; background: rgb(var(--v-theme-surface-light)); }
 .editor__side { border-left: 1px solid rgba(var(--v-border-color), var(--v-border-opacity)); background: rgb(var(--v-theme-surface)); overflow: auto; max-height: 100vh; }

@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { deleteDraft, getDraft, listDrafts, newDraft, purgeOldDrafts, putDraft } from '../src/drafts/db'
+import { deleteDraft, deleteDraftsOf, getDraft, listDrafts, newDraft, purgeOldDrafts, putDraft } from '../src/drafts/db'
 
 const png = () => new Blob([new Uint8Array([137, 80, 78, 71, 1, 2, 3])], { type: 'image/png' })
 
@@ -30,6 +30,15 @@ describe('drafts', () => {
     await putDraft(fresh)
     expect(await purgeOldDrafts(Date.now())).toBe(1)
     expect((await listDrafts()).map((d) => d.id)).toEqual([fresh.id])
+  })
+
+  it("deleteDraftsOf removes one profile's drafts only", async () => {
+    const mine = newDraft({ profileId: 'p1', tabId: 1, tabUrl: 'https://a.example.org/' })
+    const other = newDraft({ profileId: 'p2', tabId: 2, tabUrl: 'https://a.example.org/' })
+    await putDraft(mine)
+    await putDraft(other)
+    expect(await deleteDraftsOf('p1')).toBe(1)
+    expect((await listDrafts()).map((d) => d.id)).toEqual([other.id])
   })
 
   it('deleteDraft removes the images', async () => {

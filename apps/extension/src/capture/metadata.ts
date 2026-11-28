@@ -8,6 +8,14 @@ export type PageMetadata = {
 }
 
 /** The "include query string" switch off: the query goes, the hash stays (SPA routes live there). */
+/**
+ * Drops the query of every http(s) URL inside free text (console messages, stack sources), keeping the hash and a
+ * trailing `:line:col`. Used when the tester leaves the query out of the report.
+ */
+export function stripQueriesInText(text: string): string {
+  return text.replace(/(\bhttps?:\/\/[^\s?#"'<>]*)\?[^\s#"'<>]*?(?=(?::\d+)*(?:[\s#"'<>)\],;]|$))/g, '$1')
+}
+
 export function stripQuery(url: string): string {
   try {
     const u = new URL(url)

@@ -1,6 +1,8 @@
 import { ExtensionSession } from '@yoda/shared'
 import { accessToken, yodaFetch } from './api'
 import { appendEntries, armTab, captureState, entries, nonceFor, onTabRemoved, onTabUpdated } from './capture-session'
+import { purgeOldDrafts } from '../drafts/db'
+import { TabChangedError } from '../capture/screenshot'
 import { injectCapture } from './inject'
 import { startReport } from './report-start'
 import { onMessage } from './messages'
@@ -11,8 +13,17 @@ import { getProfile } from './store'
 // The service worker keeps no state beyond in-flight promises (plan B3): everything lives in storage.
 // Content scripts never read storage (TRUSTED_CONTEXTS), set before anything is written.
 const ready = initSecrets()
-chrome.runtime.onStartup?.addListener(() => void initSecrets())
-chrome.runtime.onInstalled?.addListener(() => void initSecrets())
+// Drafts hold the unredacted capture: anything past its 24 hours goes whenever the worker starts.
+const purge = () => void purgeOldDrafts(Date.now()).catch(() => 0)
+purge()
+chrome.runtime.onStartup?.addListener(() => {
+  void initSecrets()
+  purge()
+})
+chrome.runtime.onInstalled?.addListener(() => {
+  void initSecrets()
+  purge()
+})
 
 onMessage(async (m, { sender }) => {
   await ready
@@ -54,8 +65,13 @@ onMessage(async (m, { sender }) => {
     case 'capture.textOnly': {
       if (!m.profileId) return { ok: false, error: 'no_profile' }
       const kind = m.type === 'capture.fullPage' ? 'fullPage' : m.type === 'capture.textOnly' ? 'textOnly' : 'screenshot'
-      const r = await startReport({ tabId: m.tabId, profileId: m.profileId, kind, projectId: m.projectId, attach: m.attach })
-      return { ok: true, ...r }
+      try {
+        const r = await startReport({ tabId: m.tabId, profileId: m.profileId, kind, projectId: m.projectId, attach: m.attach })
+        return { ok: true, ...r }
+      } catch (e) {
+        if (e instanceof TabChangedError) return { ok: false, error: 'tab_changed' }
+        throw e
+      }
     }
     case 'capture.state':
       return { ok: true, state: await captureState(m.tabId), counts: countsOf(await entries(m.tabId)) }

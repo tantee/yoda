@@ -108,7 +108,7 @@
       "gitlab": "GitLab",
       "manual": "the tester"
     },
-    "includeQuery": "Include the URL query string",
+    "includeQuery": "Include URL query strings (the page and the logs)",
     "send": "Send to Yoda",
     "sent": "Sent:",
     "noProfile": "The Yoda this draft belongs to is not connected",
@@ -149,7 +149,8 @@
     "settings": "Settings",
     "error": {
       "arm": "Cannot capture logs on this page",
-      "capture": "Cannot take the screenshot"
+      "capture": "Cannot take the screenshot",
+      "tabChanged": "The tab changed during the capture; stay on the page and try again"
     }
   }
 }

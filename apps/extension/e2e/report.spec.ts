@@ -69,6 +69,22 @@ test('connect, arm, reproduce, screenshot, mosaic, send', async ({ context, exte
   await expect(editor.getByTestId('report-sent')).toBeVisible()
   await expect(editor.getByTestId('report-link')).toHaveAttribute('href', /\/work-items\//)
 
+  // The sent draft (it holds the unredacted capture) is gone, and the debounced save does not bring it back.
+  await editor.waitForTimeout(800)
+  const drafts = await editor.evaluate(
+    () =>
+      new Promise<number>((res, rej) => {
+        const open = indexedDB.open('yoda-drafts')
+        open.onerror = () => rej(open.error)
+        open.onsuccess = () => {
+          const db = open.result
+          const req = db.transaction(db.objectStoreNames[0]!).objectStore(db.objectStoreNames[0]!).count()
+          req.onsuccess = () => res(req.result)
+        }
+      }),
+  )
+  expect(drafts).toBe(0)
+
   // What Yoda received.
   expect(yoda.reports).toHaveLength(1)
   const [got] = yoda.reports

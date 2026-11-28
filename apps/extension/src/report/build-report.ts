@@ -1,7 +1,7 @@
 import { DefectReportCreate, type DefectAttachmentDecl, type DefectBuild, type DefectKind, type DefectSeverity } from '@yoda/shared'
 import { detectBuild } from '../capture/build'
 import { backendBuilds } from '../capture/logs'
-import { stripQuery } from '../capture/metadata'
+import { stripQueriesInText, stripQuery } from '../capture/metadata'
 import type { Draft } from '../drafts/db'
 
 /** The editor's form, as the tester filled it in. */
@@ -47,8 +47,13 @@ export function buildReport(
     if (form.attach.video && draft.video) add('video', 'video.webm', 'video/webm', draft.video)
     if (form.attach.buffer) draft.buffer?.forEach((b, i) => add('buffer', `buffer-${i + 1}.webm`, 'video/webm', b))
   }
-  if (form.attach.console && draft.console.length) add('console', 'console.json', 'application/json', json(draft.console))
-  if (form.attach.network && draft.network.length) add('network', 'network.json', 'application/json', json(draft.network))
+  // Without the query, it goes from the logs too: request URLs and URLs in console text often carry the same ids.
+  const consoleLog = form.includeQuery
+    ? draft.console
+    : draft.console.map((e) => ({ ...e, message: stripQueriesInText(e.message), ...(e.source ? { source: stripQueriesInText(e.source) } : {}) }))
+  const networkLog = form.includeQuery ? draft.network : draft.network.map((e) => ({ ...e, url: stripQuery(e.url) }))
+  if (form.attach.console && consoleLog.length) add('console', 'console.json', 'application/json', json(consoleLog))
+  if (form.attach.network && networkLog.length) add('network', 'network.json', 'application/json', json(networkLog))
 
   const detected = draft.build !== undefined ? draft.build : meta ? detectBuild({ ...meta.buildSources, gitlab: null }) : null
   const edited = form.build && Object.values(form.build).some((v) => typeof v === 'string' && v.trim())

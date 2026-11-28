@@ -4,6 +4,7 @@ import { setAccess, setRefresh } from './secrets'
 import { deleteProfile, getProfile, profiles, saveProfile, updateProfile, type Profile } from './store'
 import { normaliseYodaUrl } from '../connect/connect'
 import { yodaFetch } from './api'
+import { deleteDraftsOf } from '../drafts/db'
 
 const COLOURS = ['#1F5FBF', '#1D6B3A', '#7A4F00', '#4A3FA0', '#B3261E']
 
@@ -59,6 +60,8 @@ export async function removeProfile(id: string): Promise<void> {
   await setRefresh(p, null)
   await setAccess(id, null)
   await deleteProfile(id)
+  // Its drafts (captures not yet sent) go with it.
+  await deleteDraftsOf(id).catch(() => 0)
   // No other profile uses this origin (one per origin): its host permission goes too.
   await chrome.permissions.remove({ origins: [`${p.url}/*`] }).catch(() => false)
 }

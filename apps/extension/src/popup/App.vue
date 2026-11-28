@@ -88,7 +88,7 @@ async function start(type: 'capture.screenshot' | 'capture.fullPage' | 'capture.
   const r = (await chrome.runtime.sendMessage({ type, tabId: tabId.value, profileId: profile.value.id, projectId: projectId.value ?? undefined, attach: attach.value })) as { ok: boolean; error?: string }
   busy.value = ''
   if (r?.ok) window.close()
-  else error.value = t('popup.error.capture')
+  else error.value = t(r?.error === 'tab_changed' ? 'popup.error.tabChanged' : 'popup.error.capture')
 }
 
 function reconnect() {
