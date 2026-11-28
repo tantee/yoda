@@ -53,6 +53,12 @@ import {
   type TaskResult,
   type WorkingHours,
   GrantRevokeReason,
+  AttachmentRole,
+  DefectKind,
+  DefectSeverity,
+  type DefectBackendBuild,
+  type DefectBuild,
+  type DefectClient,
 } from '@yoda/shared'
 
 const list = (values: readonly string[]) => sql.raw(values.map((v) => `'${v}'`).join(', '))
@@ -363,8 +369,15 @@ export const attachments = pgTable(
       .notNull()
       .references(() => people.id),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    /** Set on defect files only (Yoda Reporter): always noAi, removable, purged by retention. */
+    role: text('role'),
+    /** When a defect file's object was removed (by a person or retention); the row stays. */
+    purgedAt: timestamp('purged_at', { withTimezone: true }),
   },
-  (t) => [check('attachments_owner_check', sql`${t.projectId} is not null or ${t.conversationId} is not null`)],
+  (t) => [
+    check('attachments_owner_check', sql`${t.projectId} is not null or ${t.conversationId} is not null`),
+    check('attachments_role_check', sql`${t.role} in (${list(AttachmentRole.options)})`),
+  ],
 )
 
 export const knowledgeEntries = pgTable(
@@ -1011,4 +1024,48 @@ export const extensionRefreshTokens = pgTable(
     usedAt: timestamp('used_at', { withTimezone: true }),
   },
   (t) => [index('extension_refresh_tokens_grant').on(t.grantId)],
+)
+
+/**
+ * The structured report behind a `defect` (or extension `bug-fix`) work item. For a sensitive report the text
+ * lives only here: the work item description holds `DEFECT_WITHHELD_DESCRIPTION`.
+ */
+export const defectReports = pgTable(
+  'defect_reports',
+  {
+    workItemId: uuid('work_item_id')
+      .primaryKey()
+      .references(() => workItems.id, { onDelete: 'cascade' }),
+    kind: text('kind').notNull(),
+    severity: text('severity').notNull(),
+    description: text('description').notNull().default(''),
+    steps: jsonb('steps').$type<string[]>().notNull(),
+    expected: text('expected').notNull().default(''),
+    actual: text('actual').notNull().default(''),
+    pageUrl: text('page_url').notNull(),
+    pageTitle: text('page_title').notNull().default(''),
+    route: text('route'),
+    build: jsonb('build').$type<DefectBuild>(),
+    backendBuilds: jsonb('backend_builds').$type<DefectBackendBuild[]>().notNull(),
+    client: jsonb('client').$type<DefectClient>().notNull(),
+    capturedAt: timestamp('captured_at', { withTimezone: true }).notNull(),
+    reportedBy: uuid('reported_by')
+      .notNull()
+      .references(() => people.id),
+    source: text('source').notNull().default('extension'),
+    extensionVersion: text('extension_version'),
+    grantId: uuid('grant_id').references(() => extensionGrants.id, { onDelete: 'set null' }),
+    productionSite: boolean('production_site').notNull().default(false),
+    textMayContainPatientData: boolean('text_may_contain_patient_data').notNull().default(false),
+    /** The tester's flag or the project's noAi at report time: the text is kept from AI. */
+    sensitive: boolean('sensitive').notNull(),
+    idempotencyKey: uuid('idempotency_key'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    check('defect_reports_kind_check', sql`${t.kind} in (${list(DefectKind.options)})`),
+    check('defect_reports_severity_check', sql`${t.severity} in (${list(DefectSeverity.options)})`),
+    check('defect_reports_source_check', sql`${t.source} in ('extension', 'portal')`),
+    unique('defect_reports_idempotency').on(t.reportedBy, t.idempotencyKey),
+  ],
 )

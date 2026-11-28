@@ -8,6 +8,7 @@ import type { JobRun } from '../jobs/queue.js'
 import { createEntry, notGitLabDraft } from '../knowledge/service.js'
 import { personAsMe } from '../proposals/service.js'
 import { runWork } from '../work/context.js'
+import { aiTitle, sensitiveDefectIds } from '../defects/ai-view.js'
 
 export type EventDeps = Pick<AppDeps, 'db' | 'ai' | 'bus' | 'jobs' | 'config'>
 
@@ -143,6 +144,8 @@ export async function secretaryEvent(deps: EventDeps, run: JobRun): Promise<void
   // (transient failure before the write) regenerates once and a persisted summary is never billed again.
   if (item.noAi || (await summaryExists(db))) return
   const material = await summaryMaterial(db, item.id)
+  // A sensitive defect: AI sees the neutral title (its description is already the withheld marker).
+  const sensitive = await sensitiveDefectIds(db, [item.id])
   const summary = await aiText(
     run,
     () =>
@@ -150,7 +153,7 @@ export async function secretaryEvent(deps: EventDeps, run: JobRun): Promise<void
         job: 'fast',
         projectId: item.projectId,
         system: SUMMARY_SYSTEM,
-        prompt: `Work item: ${item.title}\n${item.description}\n\n${material || '(no documents or progress notes)'}`,
+        prompt: `Work item: ${aiTitle(item, sensitive, 'en')}\n${item.description}\n\n${material || '(no documents or progress notes)'}`,
         maxOutputTokens: SUMMARY_MAX_OUTPUT_TOKENS,
         signal: run.signal,
       }),
@@ -165,7 +168,7 @@ export async function secretaryEvent(deps: EventDeps, run: JobRun): Promise<void
       projectId: item.projectId,
       workItemId: item.id,
       type: 'document',
-      title: `สรุปงาน: ${clip(item.title, 150)}`,
+      title: `สรุปงาน: ${clip(aiTitle(item, sensitive, 'th'), 150)}`,
       body: summary,
       noAi: false,
       status: 'draft',

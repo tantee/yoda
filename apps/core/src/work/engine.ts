@@ -6,6 +6,7 @@ import {
   type WorkflowTemplateDef,
   type WorkItemCreate,
   type WorkItemPatch,
+  isExtensionOnlyTemplate,
 } from '@yoda/shared'
 import { and, asc, desc, eq, inArray, isNull, like, or, sql } from 'drizzle-orm'
 import {
@@ -116,9 +117,16 @@ export async function createWorkItem(
   projectId: string,
   input: WorkItemCreate,
   /** Repos to link instead of all of the project's (an imported issue links its own repo, issue known). */
-  opts: { repos?: { repoId: string; issueIid: number; issueUrl: string }[] } = {},
+  opts: {
+    repos?: { repoId: string; issueIid: number; issueUrl: string }[]
+    /** Only the defect service (Yoda Reporter) may use an extension-only template (plan decision 12). */
+    allowExtensionOnly?: boolean
+  } = {},
 ): Promise<string> {
   const { tx } = ctx
+  if (!opts.allowExtensionOnly && isExtensionOnlyTemplate(input.templateKey)) {
+    throw new HttpError(422, { error: 'invalid_state', reason: 'extension_only_template' })
+  }
   // Waits for any in-flight member removal, so the new item's tasks never go to a departing member.
   await lockProject(tx, projectId, 'share')
   if (!me.isAdmin && !(await memberRoles(tx, projectId, me.id))) throw notFound()

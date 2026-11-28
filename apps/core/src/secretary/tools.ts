@@ -1,4 +1,4 @@
-import { DiscussionCreate, DiscussionOption, KnowledgeCreate, Priority, WorkItemCreate, type ActionCard, type Me } from '@yoda/shared'
+import { DiscussionCreate, DiscussionOption, isExtensionOnlyTemplate, KnowledgeCreate, Priority, WorkItemCreate, type ActionCard, type Me } from '@yoda/shared'
 import { tool, type ToolSet } from 'ai'
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm'
 import { z } from 'zod'
@@ -6,6 +6,7 @@ import { errorSummary, type AiGateway } from '../ai/gateway.js'
 import { HttpError, notFound } from '../auth/plugin.js'
 import type { Db, Tx } from '../db/client.js'
 import { attachments, conversations, knowledgeEntries, people, projects, workItems } from '../db/schema.js'
+import { redactToolOutput } from '../defects/ai-view.js'
 import { codeSummary, withoutGitLabLinks } from '../gitlab/repos.js'
 import { createEntry, notGitLabDraft } from '../knowledge/service.js'
 import { searchKnowledge } from '../knowledge/search.js'
@@ -87,16 +88,22 @@ function safeMessage(err: unknown): string {
   return 'Something went wrong while doing that.'
 }
 
-/** Runs a tool body; any failure becomes a tool error with a user-safe message. */
-const guarded =
+/**
+ * Runs a tool body; any failure becomes a tool error with a user-safe message. Every result passes
+ * `redactToolOutput`, so a sensitive defect's title never reaches the model (plan decision 11).
+ */
+const guardedWith =
+  (db: Db, me: Me) =>
   <I, O>(fn: (input: I) => Promise<O>) =>
   async (input: I): Promise<O> => {
     try {
-      return await fn(input)
+      return (await redactToolOutput(db, me, await fn(input))) as O
     } catch (err) {
       throw new ToolRefusal(safeMessage(err))
     }
   }
+
+const EXTENSION_ONLY = 'Defect reports are filed with Yoda Reporter only; choose another workflow template.'
 
 export type ToolDeps = { db: Db; ai: Pick<AiGateway, 'embed'> }
 
@@ -135,6 +142,7 @@ const uuid = z.string().uuid()
 /** Tools for staff: read what they can see (never noAi content) and prepare confirm-first changes. */
 function staffTools(deps: ToolDeps, me: Me, pending: PendingAction[], scope: ToolScope): ToolSet {
   const { db } = deps
+  const guarded = guardedWith(db, me)
   const tools: ToolSet = {
     search_knowledge: tool({
       description:
@@ -229,6 +237,7 @@ function staffTools(deps: ToolDeps, me: Me, pending: PendingAction[], scope: Too
         const readable = scope.hideStaffNames || scope.requesterVisible
         const code = readable ? null : await codeSummary(db, workItemId)
         return {
+          workItemId,
           title: d.title,
           description: clip(readable ? await withoutGitLabLinks(db, d.projectId, d.description) : d.description, 2000),
           priority: d.priority,
@@ -267,6 +276,7 @@ function staffTools(deps: ToolDeps, me: Me, pending: PendingAction[], scope: Too
           throw new ToolRefusal('I cannot set a requester from this thread. Ask me in your personal chat.')
         }
         await aiVisibleProject(db, me, input.projectId)
+        if (isExtensionOnlyTemplate(input.templateKey)) throw new ToolRefusal(EXTENSION_ONLY)
         if (!(await latestTemplate(db, input.templateKey))) {
           const keys = (await listTemplates(db)).map((t) => t.key)
           throw new ToolRefusal(`Unknown workflow template. Use one of: ${keys.join(', ')}.`)
@@ -420,6 +430,7 @@ function staffTools(deps: ToolDeps, me: Me, pending: PendingAction[], scope: Too
 /** Tools for requesters: only their own requests, never staff names or internal content. */
 function requesterTools(deps: ToolDeps, me: Me, pending: PendingAction[]): ToolSet {
   const { db } = deps
+  const guarded = guardedWith(db, me)
   const ownRequests = async () => {
     const list = await getMyRequests(db, me)
     const rows = list.length
@@ -454,6 +465,7 @@ function requesterTools(deps: ToolDeps, me: Me, pending: PendingAction[]): ToolS
         if (r.hidden) throw new ToolRefusal(NOT_AVAILABLE)
         const answers = (await getMyAnswers(db, me)).filter((t) => t.workItemId === workItemId)
         return {
+          workItemId,
           title: r.title,
           status: r.status,
           currentStep: r.currentStepName?.th ?? null,

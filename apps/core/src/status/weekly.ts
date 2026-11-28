@@ -10,6 +10,7 @@ import { fence } from '../knowledge/context-pack.js'
 import { createEntry, notGitLabDraft, redraftEntry } from '../knowledge/service.js'
 import { recordEvent, runWork } from '../work/context.js'
 import { bangkokDate } from './health.js'
+import { aiTitle, sensitiveDefectIds } from '../defects/ai-view.js'
 
 export type WeeklyDeps = Pick<AppDeps, 'db' | 'ai' | 'bus' | 'jobs' | 'config'> & { now?: () => Date }
 
@@ -152,21 +153,21 @@ export async function weeklyMaterial(db: Db, projectId: string, since: Date, unt
   ]
   const [eventRows, results, decided, confirmed, progress, names] = await Promise.all([
     db
-      .select({ type: events.type, createdAt: events.createdAt, title: workItems.title })
+      .select({ type: events.type, createdAt: events.createdAt, title: workItems.title, workItemId: workItems.id })
       .from(events)
       .leftJoin(workItems, eq(workItems.id, events.workItemId))
       .where(and(eq(events.projectId, projectId), gte(events.createdAt, since), before(events.createdAt), notSummaryEvent))
       .orderBy(desc(events.seq))
       .limit(EVENT_LIMIT),
     db
-      .select({ title: workItems.title, key: tasks.templateTaskKey, result: tasks.result })
+      .select({ title: workItems.title, workItemId: workItems.id, key: tasks.templateTaskKey, result: tasks.result })
       .from(tasks)
       .innerJoin(workItems, eq(workItems.id, tasks.workItemId))
       .where(and(eq(tasks.projectId, projectId), eq(tasks.state, 'accepted'), ne(tasks.role, 'REQUESTER'), gte(tasks.updatedAt, since), before(tasks.updatedAt)))
       .orderBy(asc(tasks.updatedAt), asc(tasks.id))
       .limit(ROW_LIMIT),
     db
-      .select({ question: discussions.question, decision: discussions.decision, title: workItems.title })
+      .select({ question: discussions.question, decision: discussions.decision, title: workItems.title, workItemId: workItems.id })
       .from(discussions)
       .leftJoin(workItems, eq(workItems.id, discussions.workItemId))
       .where(and(eq(discussions.projectId, projectId), eq(discussions.state, 'decided'), gte(discussions.decidedAt, since), before(discussions.decidedAt)))
@@ -188,12 +189,16 @@ export async function weeklyMaterial(db: Db, projectId: string, since: Date, unt
   ])
   const redact = redactor(names)
   const label = (s: string) => oneLine(redact(s))
+  // A sensitive defect's title never reaches AI (plan decision 11).
+  const hidden = await sensitiveDefectIds(db, [...eventRows, ...results, ...decided].flatMap((r) => (r.workItemId ? [r.workItemId] : [])))
+  const titled = <R extends { title: string | null; workItemId: string | null }>(r: R): R =>
+    r.workItemId && r.title !== null ? { ...r, title: aiTitle({ id: r.workItemId, title: r.title }, hidden, 'en') } : r
   const text = (s: string) => redact(clip(s.trimEnd(), CLIP))
 
   const sections: Section[] = [
     {
       heading: 'Decided discussions',
-      blocks: decided.map((d) => ({
+      blocks: decided.map(titled).map((d) => ({
         label: label(d.title ? `${d.question} (${d.title})` : d.question),
         text: text(d.decision ?? ''),
       })),
@@ -202,6 +207,7 @@ export async function weeklyMaterial(db: Db, projectId: string, since: Date, unt
       heading: 'Accepted task results',
       blocks: results
         .filter((r) => r.result?.text?.trim())
+        .map(titled)
         .map((r) => ({ label: label(`${r.title} / ${r.key}`), text: text(r.result!.text) })),
     },
     {
@@ -218,7 +224,7 @@ export async function weeklyMaterial(db: Db, projectId: string, since: Date, unt
     {
       heading: 'Events (date, type, work item), newest first',
       blocks: eventRows.length
-        ? [{ label: 'Events', text: eventRows.map((e) => `${bangkokDate(e.createdAt)} ${e.type}${e.title ? ` — ${redact(oneLine(e.title))}` : ''}`).join('\n') }]
+        ? [{ label: 'Events', text: eventRows.map(titled).map((e) => `${bangkokDate(e.createdAt)} ${e.type}${e.title ? ` — ${redact(oneLine(e.title))}` : ''}`).join('\n') }]
         : [],
     },
   ]

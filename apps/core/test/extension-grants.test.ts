@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { chromiumappRedirect, type ExtensionAuthorize, type Me } from '@yoda/shared'
+import { chromiumappRedirect, OFFICIAL_EXTENSION_ID, type ExtensionAuthorize, type Me } from '@yoda/shared'
 import { eq, sql } from 'drizzle-orm'
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { Db } from '../src/db/client.js'
@@ -94,8 +94,10 @@ describe('extension tokens', () => {
   })
 
   it('the effective allowlist adds the official ID to the setting', () => {
-    expect(effectiveAllowedIds({ get: () => [OTHER] })).toContain(OTHER)
-    expect(effectiveAllowedIds(undefined)).toEqual([])
+    expect(effectiveAllowedIds({ get: () => [OTHER] })).toEqual([OTHER, OFFICIAL_EXTENSION_ID])
+    // The owner's key is committed (keys/yoda-reporter.pub), so the official ID is always allowed.
+    expect(OFFICIAL_EXTENSION_ID).toBe('hcnhkfonaflhcknbhcphbfgpdfmgmibm')
+    expect(effectiveAllowedIds(undefined)).toEqual([OFFICIAL_EXTENSION_ID])
   })
 })
 

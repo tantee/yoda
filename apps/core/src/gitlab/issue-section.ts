@@ -26,6 +26,7 @@ export const HEADINGS = {
   testCases: 'กรณีทดสอบ / Test cases',
   related: 'งานที่เกี่ยวข้อง / Related issues',
   originalRequest: 'คำขอเดิม (ยังไม่ผ่านการทบทวน) / Original request (not reviewed)',
+  defect: 'รายงานข้อบกพร่อง / Defect report',
 } as const
 const SUMMARY = 'สรุป / Summary'
 
@@ -43,6 +44,14 @@ export type IssueSectionInput = {
   feedback: string | null
   /** This issue's own number, once known (for the `Closes #<iid>` note). */
   iid?: number | null
+  /** A Yoda Reporter report: severity, build and browser only. Its text is the description (or the withheld marker); no media. */
+  defect?: IssueDefect | null
+}
+
+export type IssueDefect = {
+  severity: string
+  build: { repo?: string; branch?: string; commit?: string; env?: string } | null
+  client: { browser: string; browserVersion: string; os: string; osVersion: string }
 }
 
 /** Content never carries HTML comments, so it cannot fake or break the markers. */
@@ -63,6 +72,7 @@ export function renderIssueSection(input: IssueSectionInput): string {
   const doc = (t: string | null) => (t && t.trim() ? clip(t, link) : NONE)
   const lines: string[] = [ISSUE_BEGIN, workItemMarker(input.workItem.id), `## ${oneLine(input.workItem.title)}`, '']
   lines.push(`โครงการ / Project: ${oneLine(input.projectName)} · [เปิดในพอร์ทัล / Open in the portal](${link})`, '')
+  if (input.defect) lines.push(...defectLines(input.defect, link), '')
   if (input.feedback && input.feedback.trim()) {
     lines.push(`**ขอให้แก้ไข / Changes requested:** ${clip(input.feedback, link)}`, '')
   }
@@ -87,6 +97,20 @@ export function renderIssueSection(input: IssueSectionInput): string {
   lines.push(`MR ของงานนี้ต้องมี \`${ref}\` ในคำอธิบาย / Merge requests for this work must include \`${ref}\` in their description.`)
   lines.push(ISSUE_END)
   return lines.join('\n')
+}
+
+function defectLines(d: IssueDefect, link: string): string[] {
+  const b = d.build
+  const build = b ? [b.repo, b.branch && `branch ${b.branch}`, b.commit && `commit ${b.commit}`, b.env && `env ${b.env}`].filter(Boolean).join(' · ') : ''
+  const c = d.client
+  return [
+    `### ${HEADINGS.defect}`,
+    '',
+    `- ความรุนแรง / Severity: ${oneLine(d.severity)}`,
+    `- บิลด์ / Build: ${build ? oneLine(build) : 'ไม่ทราบ / unknown'}`,
+    `- เบราว์เซอร์ / Browser: ${oneLine(`${c.browser} ${c.browserVersion} · ${c.os} ${c.osVersion}`)}`,
+    `- ภาพ วิดีโอ และ log อยู่ในพอร์ทัลเท่านั้น / Screenshots, video and logs stay in the portal: [เปิด / Open](${link})`,
+  ]
 }
 
 /** Removes HTML comment markers until none remain (a single pass could reassemble one, e.g. `<!<!---->--`). */

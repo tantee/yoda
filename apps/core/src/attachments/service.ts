@@ -37,6 +37,8 @@ const columns = {
   uploadedById: attachments.uploadedBy,
   uploadedByName: people.displayName,
   createdAt: attachments.createdAt,
+  role: attachments.role,
+  purgedAt: attachments.purgedAt,
 }
 
 function toAttachment(r: {
@@ -53,9 +55,16 @@ function toAttachment(r: {
   uploadedById: string
   uploadedByName: string
   createdAt: Date
+  role: string | null
+  purgedAt: Date | null
 }): Attachment {
-  // The defect columns (role, purged_at) arrive with the defect tasks of the Yoda Reporter plan (A5, A9).
-  return { ...r, hasText: r.hasText != null, createdAt: r.createdAt.toISOString(), role: null, purgedAt: null }
+  return {
+    ...r,
+    hasText: r.hasText != null,
+    createdAt: r.createdAt.toISOString(),
+    role: r.role as Attachment['role'],
+    purgedAt: r.purgedAt?.toISOString() ?? null,
+  }
 }
 
 export async function getAttachment(db: Db, id: string): Promise<Attachment | null> {

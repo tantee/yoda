@@ -176,6 +176,13 @@
       "when": 1795837709968,
       "tag": "0024_extension_grants",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1795845584767,
+      "tag": "0025_defect_reports",
+      "breakpoints": true
     }
   ]
 }

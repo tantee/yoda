@@ -44,6 +44,10 @@ export function manifestVersion(yodaVersion: string): { version: string; version
 /** Templates only the extension creates: hidden in the portal create dialog, refused by the create routes. */
 export const EXTENSION_ONLY_TEMPLATES = ['defect'] as const
 
+export function isExtensionOnlyTemplate(key: string): boolean {
+  return (EXTENSION_ONLY_TEMPLATES as readonly string[]).includes(key)
+}
+
 /** What AI sees instead of a sensitive defect's title. */
 export const DEFECT_SENSITIVE_TITLE = { th: 'รายงานข้อบกพร่อง (ข้อมูลอ่อนไหว)', en: 'Defect report (sensitive)' } as const
 
