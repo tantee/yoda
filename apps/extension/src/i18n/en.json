@@ -1,0 +1,4 @@
+{
+  "app": { "name": "Yoda Reporter", "language": "Language", "loading": "Loading…" },
+  "common": { "cancel": "Cancel", "close": "Close", "retry": "Retry", "save": "Save", "remove": "Remove" }
+}

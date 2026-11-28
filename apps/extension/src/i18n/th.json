@@ -1,0 +1,4 @@
+{
+  "app": { "name": "Yoda แจ้งปัญหา", "language": "ภาษา", "loading": "กำลังโหลด…" },
+  "common": { "cancel": "ยกเลิก", "close": "ปิด", "retry": "ลองใหม่", "save": "บันทึก", "remove": "ลบ" }
+}

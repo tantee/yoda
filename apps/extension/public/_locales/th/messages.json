@@ -1,0 +1,5 @@
+{
+  "extName": { "message": "Yoda แจ้งปัญหา" },
+  "extShortName": { "message": "Yoda" },
+  "extDescription": { "message": "แจ้งข้อบกพร่องของระบบที่กำลังทดสอบไปยัง Yoda พร้อมภาพหน้าจอ วิดีโอสั้น และ log" }
+}
