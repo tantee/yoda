@@ -513,7 +513,9 @@ jobs:
   # The version and sha tags, on exactly the digests the signed bundle pins: read back from the signed bundle,
   # after checking its signature again.
   tag:
-    if: needs.meta.outputs.real == 'true'
+    # bundle's needs include a job a real run skips (manifest-dry): without a status check function GitHub would skip
+    # this job too (v1.1.0's first run), so the condition says what it needs outright.
+    if: ${{ !cancelled() && !failure() && needs.meta.outputs.real == 'true' && needs.bundle.result == 'success' }}
     needs: [meta, bundle]
     runs-on: ubuntu-24.04
     environment: release
@@ -565,7 +567,8 @@ jobs:
           done
 
   release:
-    if: needs.meta.outputs.real == 'true'
+    # As tag: an explicit status check, so the skipped dry-run jobs upstream never skip it.
+    if: ${{ !cancelled() && !failure() && needs.meta.outputs.real == 'true' && needs.bundle.result == 'success' && needs.tag.result == 'success' }}
     needs: [meta, bundle, tag]
     runs-on: ubuntu-24.04
     environment: release
