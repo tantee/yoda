@@ -2,6 +2,7 @@ import { ExtensionSession } from '@yoda/shared'
 import { accessToken, yodaFetch } from './api'
 import { appendEntries, armTab, captureState, entries, nonceFor, onTabRemoved, onTabUpdated } from './capture-session'
 import { injectCapture } from './inject'
+import { startReport } from './report-start'
 import { onMessage } from './messages'
 import { exchangeProfile, removeProfile } from './profiles'
 import { initSecrets } from './secrets'
@@ -48,6 +49,12 @@ onMessage(async (m, { sender }) => {
       // Only from the tab's current injection: onMessage checked the sender and the nonce.
       if (sender.tab?.id !== undefined) await appendEntries(sender.tab.id, m.entries)
       return { ok: true }
+    case 'capture.screenshot':
+    case 'capture.fullPage': {
+      if (!m.profileId) return { ok: false, error: 'no_profile' }
+      const r = await startReport({ tabId: m.tabId, profileId: m.profileId, kind: m.type === 'capture.fullPage' ? 'fullPage' : 'screenshot' })
+      return { ok: true, ...r }
+    }
     case 'capture.state':
       return { ok: true, state: await captureState(m.tabId), counts: countsOf(await entries(m.tabId)) }
     default:

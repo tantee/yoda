@@ -33,5 +33,8 @@
   "options": {
     "profiles": "Connected Yodas",
     "needsReconnect": "Reconnect needed"
+  },
+  "editor": {
+    "draftMissing": "This draft is gone: it was sent, or it is older than 24 hours."
   }
 }

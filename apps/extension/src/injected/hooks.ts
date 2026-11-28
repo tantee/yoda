@@ -25,6 +25,13 @@ export function installHooks(w: Window & typeof globalThis, post: (entries: Entr
   if (existing) return existing
   const queue: Entry[] = []
   const now = () => Math.round(w.performance?.now?.() ?? Date.now())
+  const absolute = (u: string) => {
+    try {
+      return new URL(u, w.location.href).href
+    } catch {
+      return u
+    }
+  }
   let timer: ReturnType<typeof setTimeout> | null = null
   const flush = () => {
     if (timer) clearTimeout(timer)
@@ -61,7 +68,7 @@ export function installHooks(w: Window & typeof globalThis, post: (entries: Entr
     w.fetch = function (this: unknown, input: RequestInfo | URL, init?: RequestInit) {
       const t0 = now()
       const method = (init?.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase()
-      const url = input instanceof Request ? input.url : String(input)
+      const url = absolute(input instanceof Request ? input.url : String(input))
       const result = origFetch.call(this, input, init)
       result.then(
         (res) => push({ kind: 'network', t: t0, method, url, status: res.status, durationMs: now() - t0, failed: !res.ok, type: 'fetch', ...(res.headers.get('x-yoda-build') ? { yodaBuild: res.headers.get('x-yoda-build') } : {}) }),
@@ -77,7 +84,7 @@ export function installHooks(w: Window & typeof globalThis, post: (entries: Entr
     const open = XHR.prototype.open
     const send = XHR.prototype.send
     XHR.prototype.open = function (this: XMLHttpRequest & { __yoda?: { method: string; url: string } }, method: string, url: string | URL, ...rest: unknown[]) {
-      this.__yoda = { method: String(method).toUpperCase(), url: String(url) }
+      this.__yoda = { method: String(method).toUpperCase(), url: absolute(String(url)) }
       return (open as (...a: unknown[]) => void).call(this, method, url, ...rest)
     } as typeof XHR.prototype.open
     XHR.prototype.send = function (this: XMLHttpRequest & { __yoda?: { method: string; url: string } }, body?: Document | XMLHttpRequestBodyInit | null) {
