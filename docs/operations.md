@@ -171,7 +171,7 @@ Bootstrap only: release and host (compose reads them before any container exists
 | Variable | Purpose | Required | Example |
 | --- | --- | --- | --- |
 | `YODA_IMAGE_PREFIX` | Registry path of the images; compose uses `<prefix>/<name>:<version>`. `install.sh` pins it in `release.env` (from the bundle); `deploy.sh` uses `ghcr.io/tantee/yoda` when it is set nowhere (never Docker Hub) | optional (`ghcr.io/tantee/yoda`) | `registry.example.org/group/yoda` |
-| `YODA_VERSION` | Release tag to run; `deploy.sh` pins it in `release.env`, never in `.env` (compose refuses to start without it) | yes, in `release.env` | `1.1.0` |
+| `YODA_VERSION` | Release tag to run; `deploy.sh` pins it in `release.env`, never in `.env` (compose refuses to start without it) | yes, in `release.env` | `1.2.0` |
 | `YODA_CORE_DIGEST` | Manifest digest of the core image; compose then runs `<prefix>/core:<version>@<digest>`. `deploy.sh` pins it in `release.env` from the signed `bundle.env` of the same release (any prefix: a digest names content), else empty (the tag); never set it by hand | no (`deploy.sh`) | `sha256:4f…` |
 | `YODA_PORTAL_DIGEST` | Manifest digest of the portal image; compose then runs `<prefix>/portal:<version>@<digest>`. `deploy.sh` pins it in `release.env` from the signed `bundle.env` of the same release (any prefix: a digest names content), else empty (the tag); never set it by hand | no (`deploy.sh`) | `sha256:4f…` |
 | `YODA_RUNNER_DIGEST` | Manifest digest of the runner image; compose then runs `<prefix>/runner:<version>@<digest>`. `deploy.sh` pins it in `release.env` from the signed `bundle.env` of the same release (any prefix: a digest names content), else empty (the tag); never set it by hand | no (`deploy.sh`) | `sha256:4f…` |
@@ -397,16 +397,28 @@ in your shell overrides `release.env`, so leave it unset.
    files mode) and names what is missing or too old, with the version found and needed. On Debian and Ubuntu it
    offers to install them: minisign with apt (enabling `universe` on Ubuntu when needed), Docker from Docker's
    own apt repository (key in `/etc/apt/keyrings`; `docker-ce docker-ce-cli containerd.io docker-buildx-plugin
-   docker-compose-plugin`); the RHEL family with dnf (minisign from EPEL, Docker's dnf repository). It uses sudo
-   when not root and stops clearly without it; an old `docker.io` / `docker-compose-v2` from the distribution is
-   explained, never replaced; any other system gets the manual steps and exit 1. A user who may not run docker
+   docker-compose-plugin`); the RHEL family (exactly RHEL, CentOS, Rocky, AlmaLinux, Fedora and Oracle Linux) with
+   dnf (minisign from EPEL, Docker's dnf repository). It prints every command behind its one question first
+   (universe, EPEL, dnf-plugins-core, Docker's key and repository file, `systemctl enable --now docker`,
+   `usermod -aG docker`: that group is root-equivalent), also with `--yes`. Before writing anything for Docker
+   it checks that Docker's repository has this release (`DEBIAN_CODENAME`, `UBUNTU_CODENAME`, then
+   `VERSION_CODENAME`; none for kali-rolling, for example: manual steps), that no other Docker source is
+   configured (a second one breaks apt: it explains and stops), and that the key is a PGP key with Docker's
+   fingerprint (when `gpg` is there). A failed `apt-get update` or install removes `docker.list` and
+   `docker.asc` again (dnf: the repository file). It uses sudo when not root, stops clearly without it, and
+   stops when sudo needs a password and there is no terminal; an old `docker.io` / `docker-compose-v2` (or a snap
+   Docker, or the RHEL family's moby-engine) is explained, never replaced; any other system gets the manual
+   steps and exit 1. A user who may not run docker
    is offered the `docker` group; the rest of the run uses it through `sg docker` (a `docker` wrapper first on
    `PATH`, for `deploy.sh` too), and new logins get it after logging out and back in. When `--dir` cannot be
    created it offers `sudo mkdir` and `chown` to the user. Every question is asked on the terminal (`/dev/tty`,
    also when piped); `--yes` answers yes, and with no terminal and no `--yes` it stops and names the flag.
-   It warns below 10 GB free (naming the free space and the path), resolves the release (`--version`, the
-   release a signed `SHA256SUMS` next to it names, or the latest from the `releases/latest` redirect, then the
-   GitHub API), downloads `SHA256SUMS` and `SHA256SUMS.minisig`, verifies the signature (the release key is built
+   It refuses an existing install before anything else is done, warns below 10 GB free (naming the free space
+   and the path), resolves the release (`--version`; else the one the published `install.sh` names, its
+   `RELEASE_VERSION`, so the one-liner of release N never installs N+1; else the release a signed `SHA256SUMS`
+   next to it names; else, for the repository's copy or `--version latest`, the latest from the
+   `releases/latest` redirect, then the GitHub API), downloads (https only, also after redirects, unless you
+   pass an `http://` `--base-url`) `SHA256SUMS` and `SHA256SUMS.minisig`, verifies the signature (the release key is built
    into the script) and that its trusted comment is exactly `yoda release <version>`, then the bundle's checksum,
    and refuses on any mismatch or an existing install. It unpacks the bundle (compose files,
    `ops/deploy/deploy.sh`, `.env.example`, this runbook), creates an empty `.env` (`0600`), logs in to a mirror's

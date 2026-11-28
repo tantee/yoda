@@ -49,7 +49,8 @@ On the host, as the deploy user:
 curl -fsSL https://github.com/tantee/yoda/releases/latest/download/install.sh | sh
 ```
 
-That installs the latest release into `/srv/yoda`. Options go after `sh -s --`: a pinned release, another
+That installs the latest release into `/srv/yoda` (the published `install.sh` names its own release, so the
+one-liner never installs a newer one than the script it downloaded). Options go after `sh -s --`: a pinned release, another
 directory, the built-in HTTPS proxy (below), `--yes` to answer every question with yes:
 
 ```bash
@@ -73,13 +74,20 @@ sudo is missing. Ubuntu's or Debian's own `docker.io` and `docker-compose-v2` ca
 `install.sh` explains that and how to switch to Docker's packages, but never replaces them itself. On any other
 system it prints the manual steps and exits.
 
-It asks before each such change, on the terminal (also when piped: it reads `/dev/tty`). `--yes` answers yes.
-With no terminal and no `--yes` it stops and names the flag; it never assumes yes. The same goes for two more
-questions:
+It asks **once** for all of that, after printing every command the yes stands for: the package installs,
+`software-properties-common` and `add-apt-repository universe` (Ubuntu, only if apt does not know minisign),
+`epel-release` and `dnf-plugins-core` (RHEL family), downloading and installing Docker's GPG key (its
+fingerprint checked when `gpg` is there) and repository file, `systemctl enable --now docker`, and
+`usermod -aG docker` (the `docker` group is root-equivalent: whoever is in it controls the host). Before writing
+anything Docker-related it checks that Docker's repository has a release for your system and that no other
+Docker source is configured; if the Docker setup fails, it removes its repository file and key again. The
+question is asked on the terminal (also when piped: it reads and writes `/dev/tty`). `--yes` answers yes (the
+plan is still printed). With no terminal and no `--yes` it stops and names the flag; it never assumes yes. sudo
+that needs a password with no terminal to type it stops it too. The same goes for two more questions:
 
-- **The docker group.** If you may not run `docker`, it offers to add you to the `docker` group. The rest of the
-  same run uses the group through `sg docker`; log out and back in before you run `docker` or `dc` yourself (or
-  run `install.sh` with sudo instead).
+- **The docker group.** If you may not run `docker`, it offers to add you to the `docker` group (root-equivalent,
+  as above). The rest of the same run uses the group through `sg docker`; log out and back in before you run
+  `docker` or `dc` yourself (or run `install.sh` with sudo instead).
 - **The install directory.** If `/srv/yoda` (or your `--dir`) cannot be created, it offers to create it with sudo
   and give it to you.
 

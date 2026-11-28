@@ -46,7 +46,8 @@ curl -fsSL https://github.com/tantee/yoda/releases/latest/download/install.sh |
 ```
 
 **Requirements.** The installer checks them first, names whatever is missing or too old, and on Debian, Ubuntu
-and the RHEL family offers to install it (with sudo; it asks on the terminal, or `--yes` answers yes):
+and the RHEL family offers to install it (with sudo; it prints every command first, then asks once on the
+terminal, or `--yes` answers yes):
 
 - Docker Engine 24+ with the Compose plugin v2.24+ (from Docker's own repository), and a user who may run
   `docker` (the installer offers to add you to the `docker` group);
