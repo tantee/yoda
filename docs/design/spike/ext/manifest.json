@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "spike",
+  "version": "0.0.1",
+  "permissions": ["activeTab", "scripting", "storage", "identity", "offscreen", "tabCapture"],
+  "optional_host_permissions": ["https://*/*", "http://*/*"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "sw.js" },
+  "action": { "default_popup": "popup.html" }
+}
