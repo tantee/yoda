@@ -29,25 +29,42 @@ export async function getProfile(id: string): Promise<Profile | null> {
   return (await profiles()).find((p) => p.id === id) ?? null
 }
 
+/** Profile writes run one at a time (read-modify-write of one storage key). */
+let queue: Promise<unknown> = Promise.resolve()
+function serial<T>(fn: () => Promise<T>): Promise<T> {
+  const next = queue.then(fn, fn)
+  queue = next.catch(() => {})
+  return next
+}
+
 /** Adds or replaces a profile; when it is the default, every other one stops being the default. */
-export async function saveProfile(p: Profile): Promise<void> {
+export function saveProfile(p: Profile): Promise<void> {
+  return serial(() => writeProfile(p))
+}
+
+async function writeProfile(p: Profile): Promise<void> {
   const list = (await profiles()).filter((x) => x.id !== p.id).map((x) => (p.isDefault ? { ...x, isDefault: false } : x))
   list.push(p)
   if (!list.some((x) => x.isDefault)) list[0]!.isDefault = true
   await chrome.storage.local.set({ [KEY]: list })
 }
 
-export async function updateProfile(id: string, patch: Partial<Profile>): Promise<Profile | null> {
-  const p = await getProfile(id)
-  if (!p) return null
-  const next = { ...p, ...patch }
-  await saveProfile(next)
-  return next
+/** Patches a profile that still exists (a removed one is never brought back). */
+export function updateProfile(id: string, patch: Partial<Profile>): Promise<Profile | null> {
+  return serial(async () => {
+    const p = await getProfile(id)
+    if (!p) return null
+    const next = { ...p, ...patch }
+    await writeProfile(next)
+    return next
+  })
 }
 
 /** Removes a profile; exactly one default remains while any profile is left. */
-export async function deleteProfile(id: string): Promise<void> {
-  const list = (await profiles()).filter((x) => x.id !== id)
-  if (list.length && !list.some((x) => x.isDefault)) list[0] = { ...list[0]!, isDefault: true }
-  await chrome.storage.local.set({ [KEY]: list })
+export function deleteProfile(id: string): Promise<void> {
+  return serial(async () => {
+    const list = (await profiles()).filter((x) => x.id !== id)
+    if (list.length && !list.some((x) => x.isDefault)) list[0] = { ...list[0]!, isDefault: true }
+    await chrome.storage.local.set({ [KEY]: list })
+  })
 }

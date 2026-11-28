@@ -23,6 +23,14 @@ describe('secrets', () => {
     expect(await getRefresh({ id: 'p1', sessionOnly: false })).toBeNull()
   })
 
+  it('where storage.local cannot be limited to extension pages, refresh tokens go to storage.session', async () => {
+    ;(c.storage.local as { setAccessLevel?: unknown }).setAccessLevel = undefined
+    expect(await initSecrets()).toBe(false)
+    await setRefresh({ id: 'p1', sessionOnly: false }, 'yoda_xr_one')
+    expect(JSON.stringify([...c.storage.local.data])).not.toContain('yoda_xr_one')
+    expect(await getRefresh({ id: 'p1', sessionOnly: false })).toBe('yoda_xr_one')
+  })
+
   it('access tokens live in storage.session only, with their expiry', async () => {
     await setAccess('p1', { token: 'yoda_xt_a', expiresAt: 1000 })
     expect(await getAccess('p1')).toEqual({ token: 'yoda_xt_a', expiresAt: 1000 })

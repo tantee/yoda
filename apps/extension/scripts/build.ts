@@ -1,6 +1,8 @@
 // Builds the extension: `release` into dist/ (with --zip, release/yoda-reporter-<version>.zip), or `e2e` into
 // dist-e2e/ (the e2e-only host permission and ?tab= target). The manifest `key` comes from keys/yoda-reporter.pub,
 // or YODA_EXTENSION_PUBLIC_KEY_FILE (tests); never a private key.
+// fflate stamps zip entries in local time: build in UTC so every machine writes the same bytes.
+process.env.TZ = 'UTC'
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'

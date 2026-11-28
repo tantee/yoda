@@ -5,7 +5,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite build --watch --mode development",
+    "dev": "tsx scripts/build.ts e2e",
     "build": "tsx scripts/build.ts release",
     "build:e2e": "tsx scripts/build.ts e2e",
     "build:zip": "tsx scripts/build.ts release --zip",

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { checkVersion, refreshOnce, yodaFetch } from '../src/sw/api'
-import { getAccess, getRefresh, setAccess, setRefresh } from '../src/sw/secrets'
-import { getProfile, saveProfile, type Profile } from '../src/sw/store'
+import { getAccess, getRefresh, initSecrets, setAccess, setRefresh } from '../src/sw/secrets'
+import { deleteProfile, getProfile, saveProfile, type Profile } from '../src/sw/store'
 import { installChrome } from './support/chrome'
 
 const profile: Profile = {
@@ -21,6 +21,7 @@ const tokens = (n: number) => ({ accessToken: `yoda_xt_${n}`, expiresIn: 3600, r
 beforeEach(async () => {
   installChrome()
   vi.restoreAllMocks()
+  await initSecrets()
   await saveProfile(profile)
   await setRefresh(profile, 'yoda_xr_0')
   await setAccess('p1', { token: 'yoda_xt_0', expiresAt: Date.now() + 3600_000 })
@@ -71,6 +72,27 @@ describe('yodaFetch and refresh', () => {
     expect(f).toHaveBeenCalledTimes(2)
   })
 
+  it('a profile removed while its refresh runs is not brought back, and its new tokens are not stored', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      if (String(input).endsWith('/api/extension/token')) {
+        await deleteProfile('p1')
+        return new Response(JSON.stringify(tokens(1)), { status: 200 })
+      }
+      return new Response('{}', { status: 401 })
+    })
+    expect(await refreshOnce('p1')).toBe(false)
+    expect(await getProfile('p1')).toBeNull()
+    expect(await getRefresh(profile)).toBe('yoda_xr_0')
+  })
+
+  it('with no token to be had, yodaFetch answers 401 without an unauthenticated request', async () => {
+    await setAccess('p1', null)
+    await setRefresh(profile, null)
+    const f = vi.spyOn(globalThis, 'fetch')
+    expect((await yodaFetch('p1', '/api/extension/session')).status).toBe(401)
+    expect(f).not.toHaveBeenCalled()
+  })
+
   it('a network failure during refresh keeps the tokens (the next call tries again)', async () => {
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
       if (String(input).endsWith('/api/extension/token')) throw new TypeError('offline')
@@ -90,6 +112,9 @@ describe('checkVersion', () => {
     expect(checkVersion(s(1, '1.2.0'), '1.2.0-rc.3')).toBe('update_available')
     expect(checkVersion(s(1, '1.2.0-rc.2'), '1.2.0')).toBe('ok')
     expect(checkVersion(s(1, null), '1.2.0')).toBe('ok')
+  })
+  it('refuses a four-part version (it wants version_name)', () => {
+    expect(() => checkVersion(s(1, '1.2.0'), '1.2.0.1000')).toThrow()
   })
   it('apiVersion 2 gives api_too_new', () => {
     expect(checkVersion(s(2, '1.2.0'), '1.2.0')).toBe('api_too_new')
