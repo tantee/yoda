@@ -12,9 +12,10 @@ import { secretaryEvent } from '../secretary/events.js'
 import { secretarySweep } from '../secretary/sweep.js'
 import { fanOutWeeklySummaries, weeklySummaryJob } from '../status/weekly.js'
 import { syncEnvironmentsJob } from '../gitlab/environments.js'
+import { purgeExpired, sweepOrphans } from '../defects/retention.js'
 
 /** Registers every job handler on `deps.jobs` (server.ts with pg-boss, tests with InlineJobQueue). */
-export async function registerJobHandlers(deps: Pick<AppDeps, 'db' | 'ai' | 'bus' | 'jobs' | 'config' | 'gitlab' | 'mailTransport'>): Promise<void> {
+export async function registerJobHandlers(deps: Pick<AppDeps, 'db' | 'ai' | 'bus' | 'jobs' | 'config' | 'gitlab' | 'mailTransport' | 'storage' | 'settings'>): Promise<void> {
   await deps.jobs.work('embed-entry', (run) => embedEntry(deps, run))
   await deps.jobs.work('draft-task', (run) => runDraft(deps, run.id, run))
   await deps.jobs.work('secretary-chat', (run) => secretaryChat(deps, run))
@@ -29,4 +30,12 @@ export async function registerJobHandlers(deps: Pick<AppDeps, 'db' | 'ai' | 'bus
   await deps.jobs.work('weekly-summary-project', (run) => weeklySummaryJob(deps, run))
   await deps.jobs.work('notify-deliver', (run) => deliver(deps, run.id, run))
   await deps.jobs.work('gitlab-env-sync', (run) => syncEnvironmentsJob(deps, run.id))
+  await deps.jobs.work('defect-retention', async () => {
+    const r = await purgeExpired(deps, new Date())
+    if (r.media || r.logs) console.info(`defect-retention: purged ${r.media} media and ${r.logs} log files`)
+  })
+  await deps.jobs.work('defect-orphan-sweep', async () => {
+    const n = await sweepOrphans(deps, new Date())
+    if (n) console.info(`defect-orphan-sweep: removed ${n} orphaned objects`)
+  })
 }

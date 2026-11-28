@@ -99,6 +99,7 @@ describe('attachments API', () => {
         return real.put(k, b, t)
       },
       get: (k) => real.get(k),
+      list: (p) => real.list(p),
       remove: async (k) => {
         removed.push(k)
         return real.remove(k)

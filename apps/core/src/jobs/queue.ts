@@ -1,6 +1,6 @@
 import { PgBoss } from 'pg-boss'
 
-export type JobName = 'embed-entry' | 'draft-task' | 'secretary-chat' | 'secretary-event' | 'secretary-sweep' | 'discussion-brief' | 'gitlab-issue-sync' | 'gitlab-mr-effect' | 'gitlab-mr-reconcile' | 'runner-lease-sweep' | 'weekly-summary' | 'weekly-summary-project' | 'notify-deliver' | 'gitlab-env-sync'
+export type JobName = 'embed-entry' | 'draft-task' | 'secretary-chat' | 'secretary-event' | 'secretary-sweep' | 'discussion-brief' | 'gitlab-issue-sync' | 'gitlab-mr-effect' | 'gitlab-mr-reconcile' | 'runner-lease-sweep' | 'weekly-summary' | 'weekly-summary-project' | 'notify-deliver' | 'gitlab-env-sync' | 'defect-retention' | 'defect-orphan-sweep'
 export const JOB_NAMES: readonly JobName[] = [
   'embed-entry',
   'draft-task',
@@ -16,6 +16,8 @@ export const JOB_NAMES: readonly JobName[] = [
   'weekly-summary-project',
   'notify-deliver',
   'gitlab-env-sync',
+  'defect-retention',
+  'defect-orphan-sweep',
 ]
 
 /** Recurring jobs (cron, Asia/Bangkok): pg-boss sends them; tests run them with `InlineJobQueue.runScheduled`. */
@@ -25,6 +27,9 @@ export const SCHEDULES: Partial<Record<JobName, string>> = {
   'weekly-summary': '0 8 * * 1',
   // GitLab environments for Yoda Reporter URL mapping (webhooks keep them current between runs).
   'gitlab-env-sync': '30 3 * * *',
+  // Yoda Reporter files: retention after the item closes, then objects a crashed upload left behind.
+  'defect-retention': '0 3 * * *',
+  'defect-orphan-sweep': '15 3 * * *',
 }
 
 /** `attempt` starts at 1; with RETRY_LIMIT 2 the 3rd attempt is final (`retryLimit(name)` per queue). */
