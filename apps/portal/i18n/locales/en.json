@@ -506,6 +506,13 @@
       "decided": "Discussion decided",
       "withdrawn": "Discussion withdrawn",
       "responded": "New response in a discussion"
+    },
+    "defect": {
+      "reported": "Defect reported from the extension"
+    },
+    "attachment": {
+      "removed": "Defect file removed",
+      "purged": "File removed by retention"
     }
   },
   "knowledge": {
@@ -1598,6 +1605,7 @@
       "gitlab": "GitLab",
       "channels": "Notification channels",
       "runners": "Runners",
+      "extension": "Browser extension",
       "backups": "Backups",
       "storage": "Storage and database",
       "security": "Security",
@@ -1614,7 +1622,8 @@
       "runners": "Runners",
       "backups": "Backups",
       "storage": "Storage and database",
-      "security": "Security"
+      "security": "Security",
+      "extension": "Yoda Reporter (browser extension)"
     },
     "apply": {
       "live": "Applies at once",
@@ -2166,6 +2175,48 @@
         },
         "acmeCa": {
           "label": "Built-in proxy ACME directory"
+        }
+      },
+      "extension": {
+        "enabled": {
+          "label": "Yoda Reporter enabled",
+          "help": "When off, the extension cannot connect or send reports; connected browsers are kept"
+        },
+        "allowedIds": {
+          "label": "Allowed extension IDs",
+          "help": "32-letter IDs (a-p) of locally built extensions. The official extension is always allowed."
+        },
+        "accessTtlMinutes": {
+          "label": "Access token lifetime (minutes)",
+          "help": "5 to 240 minutes, default 60"
+        },
+        "refreshIdleDays": {
+          "label": "Sign out after idle (days)",
+          "help": "An extension unused this long must connect again"
+        },
+        "refreshAbsoluteDays": {
+          "label": "Longest connection (days)",
+          "help": "After this the extension must connect again, even when used every day"
+        },
+        "reauthDays": {
+          "label": "Portal sign-in needed within (days)",
+          "help": "Without a Keycloak sign-in this long, the extension asks to connect again"
+        },
+        "maxVideoSeconds": {
+          "label": "Longest video (seconds)",
+          "help": "5 to 60 seconds, default 30"
+        },
+        "mediaRetentionDays": {
+          "label": "Keep screenshots and videos (days)",
+          "help": "Counted from when the item is closed. 0 keeps them."
+        },
+        "logRetentionDays": {
+          "label": "Keep console and network logs (days)",
+          "help": "Counted from when the item is closed. 0 keeps them."
+        },
+        "dirs": {
+          "label": "Extension file folders",
+          "help": "Where core finds the zip and CRX it serves for download. Set in the environment only."
         }
       }
     }

@@ -4,6 +4,7 @@ import { Attachment } from './knowledge.js'
 import { ActorKind } from './actors.js'
 import { Proposal } from './proposals.js'
 import { TaskRunSummary } from './runners.js'
+import { DefectReportView } from './extension.js'
 
 export { ActorKind }
 
@@ -290,6 +291,8 @@ export const EventType = z.enum([
   'message.created',
   /** Live-only (never stored in `events`): a notification was created for `personId`. */
   'notification.created',
+  /** Yoda Reporter: a defect report was filed; a defect file was removed by a person or purged by retention. */
+  'defect.reported', 'attachment.removed', 'attachment.purged',
 ])
 export type EventType = z.infer<typeof EventType>
 
@@ -345,6 +348,8 @@ export type WorkItemEventsPage = z.infer<typeof WorkItemEventsPage>
 export const WorkItemDetail = WorkItem.extend({
   steps: z.array(WorkItemStep),
   tasks: z.array(Task),
+  /** The defect report of a `defect` (or extension-filed) item; null otherwise. */
+  defect: DefectReportView.nullable().default(null),
 })
 export type WorkItemDetail = z.infer<typeof WorkItemDetail>
 

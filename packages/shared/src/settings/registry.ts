@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { isExtensionId } from '../extension-id.js'
 
 /**
  * The settings registry (installer proposal §5.1, inventory §9): one declaration per setting, shared by core and
@@ -18,6 +19,7 @@ export const SettingCategory = z.enum([
   'backups',
   'storage',
   'security',
+  'extension',
 ])
 export type SettingCategory = z.infer<typeof SettingCategory>
 
@@ -64,6 +66,10 @@ const modelId = z.string().regex(/^(anthropic|openai):.+$/, 'must be provider:mo
 const list = z.preprocess(
   (v) => (typeof v === 'string' ? v.split(',').map((s) => s.trim()).filter(Boolean) : v),
   z.array(z.string().min(1)),
+)
+const extensionIds = z.preprocess(
+  (v) => (typeof v === 'string' ? v.split(',').map((s) => s.trim()).filter(Boolean) : v),
+  z.array(z.string().refine(isExtensionId, 'must be a 32-letter extension ID (a-p)')),
 )
 const time = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'must be HH:MM')
 
@@ -228,6 +234,19 @@ const DEFS = [
   def('proxy.acmeCa', text, { category: 'general', envName: 'YODA_PROXY_ACME_CA' }, { ...boot, scope: 'compose' }),
   def('backup.at', time, { category: 'backups', envName: 'BACKUP_AT', test: 'backup' }, { scope: 'backup', default: '02:00' }),
   def('backup.keepDays', int(1, 3650), { category: 'backups', envName: 'BACKUP_KEEP_DAYS' }, { scope: 'backup', default: 14 }),
+  // Yoda Reporter (docs/design/extension-proposal.md; plan 2026-11-28-yoda-reporter). The effective allowlist adds
+  // OFFICIAL_EXTENSION_ID to extension.allowedIds; 0 retention days keeps the files.
+  def('extension.enabled', bool, { category: 'extension' }, { default: true }),
+  def('extension.allowedIds', extensionIds, { category: 'extension' }, { default: [] }),
+  def('extension.accessTtlMinutes', int(5, 240), { category: 'extension' }, { default: 60 }),
+  def('extension.refreshIdleDays', int(1, 365), { category: 'extension' }, { default: 30 }),
+  def('extension.refreshAbsoluteDays', int(1, 365), { category: 'extension' }, { default: 90 }),
+  def('extension.reauthDays', int(1, 365), { category: 'extension' }, { default: 14 }),
+  def('extension.maxVideoSeconds', int(5, 60), { category: 'extension' }, { default: 30 }),
+  def('extension.mediaRetentionDays', int(0, 3650), { category: 'extension' }, { default: 180 }),
+  def('extension.logRetentionDays', int(0, 3650), { category: 'extension' }, { default: 90 }),
+  // Where core finds the release zip and CRX it serves (the first directory holding a file wins).
+  def('extension.dirs', list, { category: 'extension', envName: 'YODA_EXTENSION_DIRS' }, { ...boot, default: ['/srv/yoda-extension', '/app/extension'] }),
   // Lives on the Keycloak server; the UI only explains it.
   def('signin.loginFunMode', bool, { category: 'signin', envName: 'YODA_LOGIN_FUN_MODE' }, { ...boot, scope: 'keycloak-theme', apply: 'live' }),
 ] as const

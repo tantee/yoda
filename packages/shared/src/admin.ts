@@ -48,5 +48,7 @@ export const PublicConfig = z.object({
   /** `yoda-admin recovery on` (7.4): the portal shows only /recovery and the portal API answers 503 `recovery_mode`. */
   recoveryForced: z.boolean().default(false),
   version: z.string(),
+  /** Yoda Reporter: whether `/extension/*` answers, and the API version it speaks. */
+  extension: z.object({ enabled: z.boolean(), apiVersion: z.number().int() }).optional(),
 })
 export type PublicConfig = z.infer<typeof PublicConfig>

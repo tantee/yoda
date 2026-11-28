@@ -54,7 +54,8 @@ function toAttachment(r: {
   uploadedByName: string
   createdAt: Date
 }): Attachment {
-  return { ...r, hasText: r.hasText != null, createdAt: r.createdAt.toISOString() }
+  // The defect columns (role, purged_at) arrive with the defect tasks of the Yoda Reporter plan (A5, A9).
+  return { ...r, hasText: r.hasText != null, createdAt: r.createdAt.toISOString(), role: null, purgedAt: null }
 }
 
 export async function getAttachment(db: Db, id: string): Promise<Attachment | null> {
