@@ -220,9 +220,9 @@ describe('contents', () => {
   })
 
   it('public-config reports extension.enabled', async () => {
-    expect((await get('/public-config')).json().extension).toEqual({ enabled: true, apiVersion: 1 })
+    expect((await get('/public-config')).json().extension).toEqual({ enabled: true, apiVersion: 1, mediaRetentionDays: 180, logRetentionDays: 90 })
     store.values['extension.enabled'] = false
-    expect((await get('/public-config')).json().extension).toEqual({ enabled: false, apiVersion: 1 })
+    expect((await get('/public-config')).json().extension).toEqual({ enabled: false, apiVersion: 1, mediaRetentionDays: 180, logRetentionDays: 90 })
   })
 
   it('a grant whose extension ID is no longer allowed is refused at once', async () => {

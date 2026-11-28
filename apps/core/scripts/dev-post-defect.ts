@@ -2,7 +2,9 @@
 // extension does (docs/development.md, "Yoda Reporter by hand"). Never point it at a production install.
 //
 //   YODA_URL=http://localhost:3000 YODA_XT=yoda_xt_… PROJECT_ID=<uuid> pnpm --filter @yoda/core dev-post-defect
+//   (SCREENSHOT=<a .png file> sends that image instead of a 1×1 pixel)
 import { randomUUID } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { DefectReportCreate, encodeDefectForm, type DefectReportCreated } from '@yoda/shared'
 
 const base = (process.env.YODA_URL ?? 'http://localhost:3000').replace(/\/+$/, '')
@@ -14,7 +16,11 @@ if (!token || !projectId) {
 }
 
 // A 1×1 PNG and a short console log stand in for the capture.
-const png = Uint8Array.from(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64'))
+const png = Uint8Array.from(
+  process.env.SCREENSHOT
+    ? readFileSync(process.env.SCREENSHOT)
+    : Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64'),
+)
 const log = new TextEncoder().encode(JSON.stringify([{ t: Date.now(), level: 'error', message: 'TypeError: cannot read properties of undefined (reading "save")' }]))
 
 const report = DefectReportCreate.parse({
