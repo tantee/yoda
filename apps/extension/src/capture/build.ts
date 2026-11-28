@@ -15,7 +15,8 @@ export function parseYodaBuild(content: string): Fields {
   for (const pair of content.split(';')) {
     const at = pair.indexOf('=')
     if (at <= 0) continue
-    const key = KEYS[pair.slice(0, at).trim()]
+    const name = pair.slice(0, at).trim()
+    const key = Object.hasOwn(KEYS, name) ? KEYS[name] : undefined
     if (!key) continue
     let value: string
     try {
@@ -33,7 +34,7 @@ function fromJson(v: unknown): Fields {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return {}
   const out: Fields = {}
   for (const [k, raw] of Object.entries(v as Record<string, unknown>)) {
-    const key = KEYS[k] ?? (k === 'builtAt' ? 'builtAt' : undefined)
+    const key = Object.hasOwn(KEYS, k) ? KEYS[k] : k === 'builtAt' ? 'builtAt' : undefined
     if (key && typeof raw === 'string' && raw.trim()) out[key] = raw.trim().slice(0, MAX)
   }
   return out

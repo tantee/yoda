@@ -1,4 +1,4 @@
-import { ExtensionTokenResponse, type PublicConfig } from '@yoda/shared'
+import { ExtensionTokenResponse, PublicConfig } from '@yoda/shared'
 import type { Msg } from './messages'
 import { setAccess, setRefresh } from './secrets'
 import { deleteProfile, getProfile, profiles, saveProfile, updateProfile, type Profile } from './store'
@@ -15,6 +15,7 @@ export async function exchangeProfile(m: Extract<Msg, { type: 'profile.exchange'
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ grantType: 'authorization_code', code: m.code, codeVerifier: m.verifier, extensionId: chrome.runtime.id }),
+    signal: AbortSignal.timeout(15_000),
   })
   if (!res.ok) return { ok: false, error: 'exchange_failed' }
   const t = ExtensionTokenResponse.parse(await res.json())
@@ -22,8 +23,9 @@ export async function exchangeProfile(m: Extract<Msg, { type: 'profile.exchange'
   const existing = list.find((p) => p.url === m.origin)
   let name = new URL(m.origin).host
   try {
-    const cfg = (await (await fetch(`${m.origin}/api/public-config`)).json()) as PublicConfig
-    name = cfg.org?.name ?? cfg.org?.nameEn ?? name
+    const cfg = PublicConfig.safeParse(await (await fetch(`${m.origin}/api/public-config`, { signal: AbortSignal.timeout(10_000) })).json())
+    const org = cfg.success ? (cfg.data.org.name ?? cfg.data.org.nameEn) : null
+    if (org) name = org.slice(0, 120)
   } catch {
     // the host is a fine name
   }
@@ -57,6 +59,8 @@ export async function removeProfile(id: string): Promise<void> {
   await setRefresh(p, null)
   await setAccess(id, null)
   await deleteProfile(id)
+  // No other profile uses this origin (one per origin): its host permission goes too.
+  await chrome.permissions.remove({ origins: [`${p.url}/*`] }).catch(() => false)
 }
 
 export async function setDefault(id: string): Promise<void> {

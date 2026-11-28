@@ -48,9 +48,9 @@ describe('onConnectClick', () => {
     c.identity.launchWebAuthFlow = async () => undefined
     const p = onConnectClick('https://yoda.example.org')
     // Synchronously, before the handler awaited anything: the request is already made, nothing else is.
-    expect(c.calls).toEqual(['permissions.request:https://yoda.example.org/*'])
+    expect(c.calls).toEqual(['permissions.contains', 'permissions.request:https://yoda.example.org/*'])
     await p
-    expect(c.calls[1]).toBe('fetch:https://yoda.example.org/api/public-config')
+    expect(c.calls[2]).toBe('fetch:https://yoda.example.org/api/public-config')
   })
 
   it('a refused permission ends the flow', async () => {
@@ -65,6 +65,13 @@ describe('onConnectClick', () => {
     expect(c.calls).toContain('permissions.remove:https://other.example.org/*')
     stubFetch(publicConfig(false))
     expect(await onConnectClick('https://yoda.example.org')).toEqual({ ok: false, reason: 'extension_disabled' })
+  })
+
+  it('a failed Reconnect keeps the permission a working profile already had', async () => {
+    c.granted.add('https://yoda.example.org/*')
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('offline'))
+    expect(await onConnectClick('https://yoda.example.org')).toEqual({ ok: false, reason: 'unreachable' })
+    expect(c.granted.has('https://yoda.example.org/*')).toBe(true)
   })
 
   it('a state mismatch aborts without exchanging', async () => {

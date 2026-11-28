@@ -12,6 +12,8 @@ describe('parseYodaBuild', () => {
     expect(parseYodaBuild('commit=%E0%A4%A')).toEqual({})
     expect(parseYodaBuild(`repo=${'x'.repeat(300)}`).repo).toHaveLength(200)
     expect(parseYodaBuild('')).toEqual({})
+    // Inherited names are not keys.
+    expect(parseYodaBuild('constructor=x;toString=y;__proto__=z')).toEqual({})
   })
 })
 

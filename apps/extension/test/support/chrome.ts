@@ -70,7 +70,11 @@ export function makeChrome(opts: { id?: string } = {}) {
         for (const o of p.origins ?? []) granted.delete(o)
         return true
       },
-      contains: async (p: { origins?: string[] }) => (p.origins ?? []).every((o) => granted.has(o)),
+      contains: (p: { origins?: string[] }) => {
+        calls.push('permissions.contains')
+        const has = (p.origins ?? []).every((o) => granted.has(o))
+        return Promise.resolve(has)
+      },
     },
     identity: {
       getRedirectURL: () => `https://${id}.chromiumapp.org/`,

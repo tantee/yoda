@@ -64,5 +64,5 @@ onMessage(async (m, { sender }) => {
 
 const countsOf = (e: Awaited<ReturnType<typeof entries>>) => ({ console: e.console.length, errors: e.console.filter((c) => c.level === 'error' || c.level === 'exception' || c.level === 'rejection').length, failedRequests: e.network.filter((n) => n.failed).length })
 
-chrome.tabs.onUpdated.addListener((tabId, change, tab) => void onTabUpdated(tabId, change, tab, injectCapture))
-chrome.tabs.onRemoved.addListener((tabId) => void onTabRemoved(tabId))
+chrome.tabs.onUpdated.addListener((tabId, change, tab) => void onTabUpdated(tabId, change, tab, injectCapture).catch(() => {}))
+chrome.tabs.onRemoved.addListener((tabId) => void onTabRemoved(tabId).catch(() => {}))

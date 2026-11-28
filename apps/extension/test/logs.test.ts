@@ -60,6 +60,9 @@ describe('resourceFailures and backendBuilds', () => {
     ]
     const b = backendBuilds(list)
     expect(b).toHaveLength(10)
-    expect(b[0]).toEqual({ origin: 'https://api.example.org', repo: 'his/api', commit: 'bbb' })
+    // The 10 seen most recently; api.example.org was seen first, so it is not among them.
+    expect(b.map((x) => x.origin)).not.toContain('https://api.example.org')
+    expect(b.at(-1)).toEqual({ origin: 'https://s11.example.org', commit: 'c11' })
+    expect(backendBuilds(list.slice(0, 2))).toEqual([{ origin: 'https://api.example.org', repo: 'his/api', commit: 'bbb' }])
   })
 })

@@ -55,17 +55,21 @@ export function browserLabel(ua: UaData | undefined): string {
 export function onConnectClick(input: string): Promise<ConnectResult> {
   const n = normaliseYodaUrl(input)
   if (!n.ok) return Promise.resolve({ ok: false, reason: n.reason })
+  // Both calls are made before any await; whether the origin was held already decides what a failure undoes.
+  const hadIt = chrome.permissions.contains({ origins: [`${n.origin}/*`] })
   const granted = chrome.permissions.request({ origins: [`${n.origin}/*`] })
-  return finishConnect(n.origin, granted)
+  return finishConnect(n.origin, granted, hadIt)
 }
 
-async function finishConnect(origin: string, granted: Promise<boolean>): Promise<ConnectResult> {
+async function finishConnect(origin: string, granted: Promise<boolean>, hadIt: Promise<boolean>): Promise<ConnectResult> {
   if (!(await granted)) return { ok: false, reason: 'permission_needed' }
-  const forget = () => chrome.permissions.remove({ origins: [`${origin}/*`] }).catch(() => false)
+  // A failed Reconnect must not take away a working profile's access: only a new grant is undone.
+  const held = await hadIt.catch(() => false)
+  const forget = () => (held ? Promise.resolve(false) : chrome.permissions.remove({ origins: [`${origin}/*`] }).catch(() => false))
 
   let config: PublicConfig
   try {
-    const res = await fetch(`${origin}/api/public-config`, { headers: { accept: 'application/json' } })
+    const res = await fetch(`${origin}/api/public-config`, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(15_000) })
     const parsed = PublicConfig.safeParse(await res.json())
     if (!res.ok || !parsed.success || !parsed.data.extension) {
       await forget()
@@ -76,7 +80,10 @@ async function finishConnect(origin: string, granted: Promise<boolean>): Promise
     await forget()
     return { ok: false, reason: 'unreachable' }
   }
-  if (!config.extension!.enabled) return { ok: false, reason: 'extension_disabled' }
+  if (!config.extension!.enabled) {
+    await forget()
+    return { ok: false, reason: 'extension_disabled' }
+  }
 
   const { verifier, challenge } = await pkcePair()
   const state = b64url(crypto.getRandomValues(new Uint8Array(16)))

@@ -82,5 +82,6 @@ export function backendBuilds(network: NetworkEntry[]): DefectBackendBuild[] {
     byOrigin.delete(origin)
     byOrigin.set(origin, { origin, ...(f.repo ? { repo: f.repo } : {}), ...(f.branch ? { branch: f.branch } : {}), ...(f.commit ? { commit: f.commit } : {}) })
   }
-  return [...byOrigin.values()].slice(0, CAPTURE_CAPS.backendBuilds)
+  // The origins seen most recently (Map order is oldest first).
+  return [...byOrigin.values()].slice(-CAPTURE_CAPS.backendBuilds)
 }
