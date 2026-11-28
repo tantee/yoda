@@ -28,13 +28,34 @@ export function acceptReencode(r: { framesIn: number; framesOut: number }): 'ok'
   return r.framesIn > 0 && r.framesOut / r.framesIn >= 0.9 ? 'ok' : 'too_lossy'
 }
 
+/**
+ * The regions to burn into a still frame shown at `seekMs`: every region active anywhere in the second before it
+ * (the frame shown is the last one at or before the seek, at an unknown earlier time) or at the requested time.
+ * Hiding a little too much is fine; missing a region is not.
+ */
+export function regionsForStill(regions: VideoRegion[], seekMs: number, requestedMs: number): VideoRegion[] {
+  const from = Math.min(seekMs, requestedMs) - 1000
+  const to = Math.max(seekMs, requestedMs)
+  return regions.filter((r) => r.fromMs <= to && r.toMs > from)
+}
+
+/** Scales a region rect from the video size it was drawn on to a frame of another size (a tab resized mid-clip). */
+export function scaleRect(rect: { x: number; y: number; w: number; h: number }, from: { w: number; h: number }, to: { w: number; h: number }) {
+  const sx = from.w ? to.w / from.w : 1
+  const sy = from.h ? to.h / from.h : 1
+  const x = Math.floor(rect.x * sx)
+  const y = Math.floor(rect.y * sy)
+  return { x, y, w: Math.ceil((rect.x + rect.w) * sx) - x, h: Math.ceil((rect.y + rect.h) * sy) - y }
+}
+
 /** Pixelates the regions active at `tMs` on a 2D context of the video's size, with the image editor's mosaic. */
 export function mosaicFrame(ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D, regions: VideoRegion[], tMs: number): void {
   for (const r of activeRegions(regions, tMs)) {
     const x = Math.max(0, Math.floor(r.rect.x))
     const y = Math.max(0, Math.floor(r.rect.y))
-    const w = Math.min(ctx.canvas.width - x, Math.ceil(r.rect.w))
-    const h = Math.min(ctx.canvas.height - y, Math.ceil(r.rect.h))
+    // Whole pixels covering the fractional rect: from the floor of its start to the ceiling of its end.
+    const w = Math.min(ctx.canvas.width, Math.ceil(r.rect.x + r.rect.w)) - x
+    const h = Math.min(ctx.canvas.height, Math.ceil(r.rect.y + r.rect.h)) - y
     if (w <= 0 || h <= 0) continue
     const data = ctx.getImageData(x, y, w, h)
     const img: Img = { data: data.data, width: w, height: h }

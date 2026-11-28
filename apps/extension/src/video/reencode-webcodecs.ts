@@ -60,8 +60,11 @@ export const reencodeWithWebCodecs: Reencode = async (src, regions, opts) => {
     mosaicFrame(ctx, regions, timestampUs / 1000)
     const key = activeRegions(regions, timestampUs / 1000).map((r) => r.id).join()
     const out = new VideoFrame(canvas, { timestamp: timestampUs })
-    encoder.encode(out, { keyFrame: encoded % KEY_EVERY === 0 || key !== shownKey })
-    out.close()
+    try {
+      encoder.encode(out, { keyFrame: encoded % KEY_EVERY === 0 || key !== shownKey })
+    } finally {
+      out.close()
+    }
     shownKey = key
     encoded++
     shown?.drawImage(canvas, 0, 0)

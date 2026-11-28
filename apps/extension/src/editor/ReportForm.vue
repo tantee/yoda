@@ -11,7 +11,7 @@ import { getProfile, type Profile } from '../sw/store'
 import ReviewPanel, { type ReviewFile } from './ReviewPanel.vue'
 
 /** The report beside the screenshot: what happened, where, the build, the check before sending, and Send. */
-const props = defineProps<{ draft: Draft; flatten: () => Promise<Blob | null> }>()
+const props = defineProps<{ draft: Draft; flatten: () => Promise<Blob | null>; save?: () => Promise<void> }>()
 const emit = defineEmits<{ sent: [DefectReportCreated] }>()
 const { t } = useI18n()
 
@@ -99,6 +99,7 @@ async function send() {
   sending.value = true
   error.value = ''
   try {
+    await props.save?.()
     const image = await props.flatten()
     const edited = buildText.value.trim() && detected.value && buildText.value !== [detected.value.repo, detected.value.branch, detected.value.commit].filter(Boolean).join(' · ')
     const f: ReportForm = { ...form.value, build: edited || (buildText.value.trim() && !detected.value) ? { commit: buildText.value.trim() } : null }
@@ -126,6 +127,7 @@ function errorText(r: { error: string; reason?: string; retryAfter?: number }): 
   if (r.reason === 'video_on_production') return t('report.error.videoOnProduction')
   if (r.error === 'rate_limited') return t('report.error.rateLimited', { s: r.retryAfter ?? 60 })
   if (r.error === 'network') return t('report.error.network')
+  if (r.error === 'mosaic_not_applied') return t('report.error.mosaicNotApplied')
   return t('report.error.other')
 }
 

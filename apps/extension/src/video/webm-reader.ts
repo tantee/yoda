@@ -30,7 +30,8 @@ const ID = {
 /** Top-level Segment children: one of these ends an unknown-size Cluster. */
 const SEGMENT_CHILDREN = new Set([0x114d9b74, ID.Info, ID.Tracks, ID.Cluster, 0x1c53bb6b, 0x1043a770, 0x1941a469, 0x1254c367])
 
-type El = { id: number; start: number; end: number; next: number }
+/** `cut`: the element claims more bytes than its parent (or the file) holds: a file cut off mid-element. */
+type El = { id: number; start: number; end: number; next: number; cut: boolean }
 
 export function readWebm(input: ArrayBuffer | Uint8Array): Webm {
   const b = input instanceof Uint8Array ? input : new Uint8Array(input)
@@ -56,7 +57,7 @@ export function readWebm(input: ArrayBuffer | Uint8Array): Webm {
     const size = vint(at + id.len, false)
     const start = at + id.len + size.len
     const end = size.unknown ? parentEnd : Math.min(parentEnd, start + size.value)
-    return { id: id.value, start, end, next: end }
+    return { id: id.value, start, end, next: end, cut: !size.unknown && start + size.value > parentEnd }
   }
 
   const uint = (e: El) => {
@@ -70,7 +71,13 @@ export function readWebm(input: ArrayBuffer | Uint8Array): Webm {
   function* children(start: number, end: number, stop?: (id: number) => boolean): Generator<El> {
     let at = start
     while (at < end) {
-      const e = header(at, end)
+      let e: El
+      try {
+        e = header(at, end)
+      } catch {
+        // The file ends inside an element header: keep what was read.
+        return
+      }
       if (stop?.(e.id)) return
       yield e
       if (e.next <= at) throw new Error('webm: no progress')
@@ -107,7 +114,8 @@ export function readWebm(input: ArrayBuffer | Uint8Array): Webm {
     const e = header(at, seg.end)
     if (e.id === ID.Info) {
       for (const c of children(e.start, e.end)) {
-        if (c.id === ID.TimecodeScale) scaleNs = uint(c)
+        // 0 is invalid (every timestamp would be 0): the default 1 ms then.
+        if (c.id === ID.TimecodeScale) scaleNs = uint(c) || 1_000_000
         else if (c.id === ID.Duration) duration = c.end - c.start === 4 ? dv.getFloat32(c.start) : dv.getFloat64(c.start)
       }
     } else if (e.id === ID.Tracks) {
@@ -132,12 +140,13 @@ export function readWebm(input: ArrayBuffer | Uint8Array): Webm {
       for (const c of children(e.start, e.end, (id) => SEGMENT_CHILDREN.has(id))) {
         last = c.next
         if (c.id === ID.Timecode) tc = uint(c)
-        else if (c.id === ID.SimpleBlock) block(c, tc, null)
+        // A frame cut off by the end of the file is dropped, not decoded half.
+        else if (c.id === ID.SimpleBlock && !c.cut) block(c, tc, null)
         else if (c.id === ID.BlockGroup) {
           const kids = [...children(c.start, c.end)]
           const blk = kids.find((k) => k.id === ID.Block)
           // In a BlockGroup, a frame without a ReferenceBlock is a key frame.
-          if (blk) block(blk, tc, !kids.some((k) => k.id === ID.ReferenceBlock))
+          if (blk && !blk.cut && !c.cut) block(blk, tc, !kids.some((k) => k.id === ID.ReferenceBlock))
         }
       }
       // A Cluster ends where the next top-level element starts: an unknown-size one, and the first one after

@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { Draft } from '../drafts/db'
 import { CLIP_BITS_PER_SECOND, pickMimeType } from '../offscreen/recorder'
-import { activeRegions, applyVideoMosaic, type VideoRegion } from '../video/regions'
+import { activeRegions, applyVideoMosaic, regionsForStill, scaleRect, type VideoRegion } from '../video/regions'
 import { stillFrame } from '../video/still-frame'
 import { defaultBlock, type Op } from './doc'
 
@@ -126,8 +126,9 @@ async function apply() {
   progress.value = 0
   failed.value = false
   abort = new AbortController()
+  const applied = JSON.parse(JSON.stringify(regions.value)) as VideoRegion[]
   try {
-    const r = await applyVideoMosaic(src, JSON.parse(JSON.stringify(regions.value)) as VideoRegion[], {
+    const r = await applyVideoMosaic(src, applied, {
       mimeType: pickMimeType((type) => MediaRecorder.isTypeSupported(type)),
       bitsPerSecond: CLIP_BITS_PER_SECOND,
       onProgress: (p) => (progress.value = p),
@@ -136,8 +137,12 @@ async function apply() {
     })
     if (r.ok) {
       props.draft.video = r.blob
-      props.draft.videoRegions = []
+      // Only the regions burned in now; any added meanwhile still need an apply.
+      const done = new Set(applied.map((x) => x.id))
+      props.draft.videoRegions = regions.value.filter((x) => !done.has(x.id))
       props.draft.videoMosaicApplied = true
+      // A new video is a new report body: never let an earlier upload of the original answer for it.
+      props.draft.idempotencyKey = crypto.randomUUID()
     } else if (!r.cancelled) failed.value = true
   } finally {
     applying.value = false
@@ -155,14 +160,23 @@ function sendWithout() {
   failed.value = false
 }
 
+const stilling = ref(false)
+
 async function useStill() {
   const src = props.draft.video
-  if (!src) return
-  const t = nowMs.value
-  const bitmap = await stillFrame(src, t)
-  const ops: Op[] = activeRegions(regions.value, t).map((r) => ({ kind: 'mosaic', mode: 'rect', rect: { ...r.rect }, block: r.block }))
-  failed.value = false
-  emit('still', { bitmap, ops })
+  if (!src || stilling.value) return
+  stilling.value = true
+  try {
+    const t = nowMs.value
+    const { bitmap, seekMs } = await stillFrame(src, t)
+    // The frame may differ in size from the video the regions were drawn on (a tab resized mid-clip).
+    const frame = { w: bitmap.width, h: bitmap.height }
+    const ops: Op[] = regionsForStill(regions.value, seekMs, t).map((r) => ({ kind: 'mosaic', mode: 'rect', rect: scaleRect(r.rect, size.value, frame), block: r.block }))
+    failed.value = false
+    emit('still', { bitmap, ops })
+  } finally {
+    stilling.value = false
+  }
 }
 
 const onVisibility = () => (hidden.value = document.visibilityState === 'hidden')
@@ -282,7 +296,7 @@ onBeforeUnmount(() => {
         </v-card-text>
         <v-card-actions class="justify-end">
           <v-btn variant="text" data-testid="video-send-without" @click="sendWithout">{{ t('video.sendWithout') }}</v-btn>
-          <v-btn color="primary" variant="flat" data-testid="video-use-still" @click="useStill">{{ t('video.useStill') }}</v-btn>
+          <v-btn color="primary" variant="flat" :loading="stilling" data-testid="video-use-still" @click="useStill">{{ t('video.useStill') }}</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>

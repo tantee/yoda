@@ -77,6 +77,18 @@ describe('readWebm', () => {
     expect(b.frames[a.frames.length]!.timestampUs).toBe(2_000_000 + a.frames[0]!.timestampUs)
   })
 
+  it('a file cut off anywhere after the first frames gives only whole frames (a cut frame is dropped)', () => {
+    const a = readWebm(clip)
+    const whole = new Set(a.frames.map((f) => `${f.timestampUs}:${f.data.length}`))
+    for (let cut = 1; cut < 2000; cut += 37) {
+      const b = readWebm(clip.slice(0, clip.byteLength - cut))
+      expect(b.frames.length).toBeLessThanOrEqual(a.frames.length)
+      for (const f of b.frames) expect(whole.has(`${f.timestampUs}:${f.data.length}`)).toBe(true)
+    }
+    // Cut inside the last frame: that frame goes, the others stay.
+    expect(readWebm(clip.slice(0, clip.byteLength - 60)).frames).toHaveLength(a.frames.length - 1)
+  })
+
   it('refuses a file that is not WebM', () => {
     expect(() => readWebm(new Uint8Array([1, 2, 3, 4, 5, 6]))).toThrow()
   })

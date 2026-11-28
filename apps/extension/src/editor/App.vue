@@ -83,12 +83,18 @@ const doc = computed(() => state.value?.doc ?? null)
 /** Set once the report is sent: the draft is deleted then, and nothing may write it back. */
 const sent = ref(false)
 
-function save() {
+function save(): Promise<void> {
   saveTimer = null
   const d = draft.value
-  if (!d || sent.value) return
+  if (!d || sent.value) return Promise.resolve()
   // IndexedDB cannot clone Vue's proxies: the raw draft (its blobs as they are) with plain copies of the rest.
-  void putDraft({ ...toRaw(d), editorDoc: plain(doc.value), form: plain(d.form), videoRegions: plain(d.videoRegions) })
+  return putDraft({ ...toRaw(d), editorDoc: plain(doc.value), form: plain(d.form), videoRegions: plain(d.videoRegions) })
+}
+
+/** Before sending: the stored draft must be this tab's (the send checks the video against it). */
+function saveNow(): Promise<void> {
+  if (saveTimer) clearTimeout(saveTimer)
+  return save()
 }
 
 function scheduleSave() {
@@ -101,7 +107,7 @@ function scheduleSave() {
 function flushSave() {
   if (!saveTimer) return
   clearTimeout(saveTimer)
-  save()
+  void save()
 }
 
 function onSent() {
@@ -177,7 +183,7 @@ defineExpose({ doc, base, draft })
             </div>
           </section>
           <aside class="editor__side" data-testid="editor-side">
-            <ReportForm :draft="draft" :flatten="exportImage" @sent="onSent" />
+            <ReportForm :draft="draft" :flatten="exportImage" :save="saveNow" @sent="onSent" />
           </aside>
         </template>
       </div>
