@@ -217,6 +217,8 @@ describe('the gimmick stays on its own surfaces', () => {
       // tables, lists, tabs and filtered results: plain
       'app/pages/todo/index.vue todo-filter-empty': 'none',
       'app/pages/admin/people.vue people-empty': 'none',
+      'app/pages/settings/browsers.vue grants-empty': 'none',
+      'app/pages/admin/browsers.vue grants-empty': 'none',
       'app/components/project/WorkItemsTab.vue items-empty': 'none',
       'app/components/project/WorkItemsTab.vue items-filter-empty': 'none',
       'app/components/project/KnowledgeTab.vue knowledge-empty': 'none',
@@ -259,6 +261,8 @@ describe('the gimmick stays on its own surfaces', () => {
       'app/pages/settings/notifications.vue SkeletonList': 'caption',
       'app/pages/admin/people.vue SkeletonList': 'caption',
       'app/pages/admin/ai.vue SkeletonList': 'caption',
+      'app/pages/settings/browsers.vue SkeletonList': 'caption',
+      'app/pages/admin/browsers.vue SkeletonList': 'caption',
       // project tabs and in-page sections: quiet
       'app/components/project/KnowledgeTab.vue SkeletonList': 'quiet',
       'app/components/project/WorkItemsTab.vue SkeletonList': 'quiet',

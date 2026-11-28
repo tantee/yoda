@@ -24,7 +24,8 @@
     "admin": {
       "people": "People",
       "ai": "AI budget",
-      "settings": "System settings"
+      "settings": "System settings",
+      "browsers": "Connected browsers"
     },
     "runners": "Runners",
     "agendas": "Meeting agendas",
@@ -1486,6 +1487,11 @@
     "appUrl": {
       "production": "Production",
       "test": "Test"
+    },
+    "grant": {
+      "active": "Active",
+      "idle": "Idle",
+      "revoked": "Revoked"
     }
   },
   "stateView": {
@@ -1557,7 +1563,8 @@
       "text": "If you think you should have access, contact an administrator"
     },
     "close": "Close",
-    "skipToContent": "Skip to main content"
+    "skipToContent": "Skip to main content",
+    "connectedBrowsers": "Connected browsers"
   },
   "timeline": {
     "today": "Today, {date}",
@@ -2673,6 +2680,35 @@
       "badQuery": "This connect link is not valid. Start again from \"Connect\" in the extension.",
       "failed": "Could not connect. Please try again.",
       "done": "Approved. Returning to the extension…"
+    }
+  },
+  "grants": {
+    "title": "Connected browsers",
+    "adminTitle": "Connected browsers (everyone)",
+    "intro": "Browsers with Yoda Reporter connected to your account. Revoke one if the computer is lost or no longer used.",
+    "adminIntro": "Every browser connected to Yoda Reporter. Revoke one, or revoke all if you suspect a leak.",
+    "empty": "No connected browsers",
+    "created": "Connected",
+    "lastUsed": "last used",
+    "never": "never",
+    "revoke": "Revoke",
+    "revokeTitle": "Revoke this browser?",
+    "revokeText": "{browser} can no longer send reports until it connects again.",
+    "revokeAll": "Revoke all",
+    "revokeAllTitle": "Revoke every connected browser?",
+    "revokeAllText": "Everyone has to connect the extension again. Use this only if you suspect a leak.",
+    "revokeAllType": "Type {word} to confirm",
+    "revokedAll": "{n} revoked",
+    "filterPerson": "Filter by name",
+    "activeOnly": "Active only",
+    "revokedReason": "Revoked {when}: {reason}",
+    "reason": {
+      "user": "by its owner",
+      "admin": "by an admin",
+      "admin_all": "by an admin (all)",
+      "reuse_detected": "token reuse detected",
+      "extension_not_allowed": "extension no longer allowed",
+      "not_staff": "no longer staff"
     }
   }
 }

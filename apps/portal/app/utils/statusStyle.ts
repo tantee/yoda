@@ -83,6 +83,8 @@ const LOOKS = {
   yesNo: { yes: dot('success'), no: dot('neutral') },
   // A project application URL (Yoda Reporter): production sites get stricter capture rules.
   appUrl: { production: icon('error', 'mdi-shield-alert-outline'), test: dot('info') },
+  // A connected browser (Yoda Reporter grant): idle after 7 days without use.
+  grant: { active: dot('success'), idle: dot('warning'), revoked: icon('neutral', 'mdi-link-off') },
   // The settings master key (installer proposal §3.5): anything but ok means stored secrets cannot be read.
   masterKey: {
     ok: icon('success', 'mdi-key-outline'),

@@ -45,6 +45,7 @@ function logout() {
       </v-list-item>
       <v-divider class="my-1" />
       <v-list-item to="/settings/notifications" prepend-icon="mdi-bell-cog-outline" :title="t('shell.myNotifications')" data-testid="menu-notification-settings" />
+      <v-list-item v-if="me.isStaff" to="/settings/browsers" prepend-icon="mdi-puzzle-outline" :title="t('shell.connectedBrowsers')" data-testid="menu-connected-browsers" />
       <v-divider class="my-1" />
       <v-list-item prepend-icon="mdi-logout" :title="t('app.logout')" data-testid="menu-logout" @click="logout" />
     </v-list>

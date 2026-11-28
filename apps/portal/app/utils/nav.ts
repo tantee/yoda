@@ -39,6 +39,8 @@ export function navGroupsFor(me: Me): NavGroup[] {
         item('admin.ai', '/admin/ai', 'mdi-cash-multiple'),
         // One item for every system setting (D5); GitLab and the notification channels are its categories.
         item('admin.settings', '/admin/settings', 'mdi-cog-outline'),
+        // Yoda Reporter grants: everyone's connected browsers.
+        item('admin.browsers', '/admin/browsers', 'mdi-monitor-cellphone'),
       ],
     })
   }

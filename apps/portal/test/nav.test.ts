@@ -35,7 +35,7 @@ describe('navItemsFor', () => {
   })
   it('one system settings item (D5) replaces the GitLab and channel pages, admin only', () => {
     const keys = navItemsFor(admin).map(i => i.key)
-    expect(keys.slice(-3)).toEqual(['nav.admin.people', 'nav.admin.ai', 'nav.admin.settings'])
+    expect(keys.slice(-4)).toEqual(['nav.admin.people', 'nav.admin.ai', 'nav.admin.settings', 'nav.admin.browsers'])
     expect(keys).not.toContain('nav.admin.gitlab')
     expect(keys).not.toContain('nav.admin.notifications')
     expect(navItemsFor(admin).find(i => i.key === 'nav.admin.settings')).toMatchObject({ to: '/admin/settings', icon: 'mdi-cog-outline' })
