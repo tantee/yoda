@@ -7,7 +7,7 @@
 **The AI work portal for an IT department: AI drafts every step, people review, decide and approve.**
 
 [![CI](https://img.shields.io/github/actions/workflow/status/tantee/yoda/ci.yml?branch=main&label=CI)](https://github.com/tantee/yoda/actions/workflows/ci.yml)
-[![Version](https://img.shields.io/badge/version-1.1.0-1F5FBF)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.2.0-1F5FBF)](CHANGELOG.md)
 [![UI: ไทย | English](https://img.shields.io/badge/UI-%E0%B9%84%E0%B8%97%E0%B8%A2%20%7C%20English-1F5FBF)](docs/README.md)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-1F5FBF)](LICENSE)
 
@@ -31,31 +31,61 @@ Requesters outside IT get a simpler portal: their own requests, questions to ans
 
 ## Quick start
 
-**Production** (Docker Engine 24+ and Compose v2.24+). Download a pinned release from
-[GitHub Releases](https://github.com/tantee/yoda/releases), check its signature, then run it (never pipe a
-download into `sh`). Use the latest release; `1.1.0` here is an example:
+**Production.** On a Linux host, as the user that will run Yoda:
 
 ```bash
-curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.1.0/install.sh
-curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.1.0/SHA256SUMS
-curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.1.0/SHA256SUMS.minisig
+curl -fsSL https://github.com/tantee/yoda/releases/latest/download/install.sh | sh
+```
+
+It installs the latest release into `/srv/yoda`. Options go after `sh -s --`, for example a pinned release with
+the built-in HTTPS proxy:
+
+```bash
+curl -fsSL https://github.com/tantee/yoda/releases/latest/download/install.sh |
+  sh -s -- --version 1.2.0 --dir /srv/yoda --with-proxy --domain portal.example.org
+```
+
+**Requirements.** The installer checks them first, names whatever is missing or too old, and on Debian, Ubuntu
+and the RHEL family offers to install it (with sudo; it asks on the terminal, or `--yes` answers yes):
+
+- Docker Engine 24+ with the Compose plugin v2.24+ (from Docker's own repository), and a user who may run
+  `docker` (the installer offers to add you to the `docker` group);
+- `curl`, `tar`, `sha256sum` (or `shasum`) and `minisign`, plus `openssl` for `--cert-mode files`;
+- about 10 GB free for the database, files and backups.
+
+**What you trust.** Piping trusts GitHub's TLS for `install.sh` itself. Everything it downloads after that is
+signature-checked: `SHA256SUMS` against the Yoda release key built into the script (minisign key id
+`C73EF0AF404BAE84`), its trusted comment against the exact release, and the bundle against `SHA256SUMS`. Any
+mismatch stops it before anything is unpacked.
+
+<details>
+<summary>Prefer to verify install.sh itself?</summary>
+
+Download `install.sh` with the release's checksums, check the signature, then run it:
+
+```bash
+curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.2.0/install.sh
+curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.2.0/SHA256SUMS
+curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.2.0/SHA256SUMS.minisig
 out=$(minisign -Vm SHA256SUMS -P RWSErktAr/A+x5Gvgr0x29wiu41FmYEVlJYoXyB6oJk4kvwQLOZs9O9j) &&
-  printf '%s\n' "$out" | grep -Fx 'Trusted comment: yoda release 1.1.0' &&
+  printf '%s\n' "$out" | grep -Fx 'Trusted comment: yoda release 1.2.0' &&
   sha256sum --check --ignore-missing SHA256SUMS &&
-  sh install.sh --version 1.1.0 --dir /srv/yoda
+  sh install.sh --version 1.2.0 --dir /srv/yoda
 ```
 
 Each command runs only when the one before it passed: `minisign` checks the signature (`out=$(…) &&` keeps its
-exit status), `grep` that the signed
-trusted comment names this release (`Trusted comment: yoda release 1.1.0`; a different version means you
-downloaded the wrong files), and `sha256sum` the checksum of `install.sh`. Nothing runs if any of them fails.
-For another release, change the version in the URLs, the `grep` and `--version`.
+exit status), `grep` that the signed trusted comment names this release (`Trusted comment: yoda release 1.2.0`;
+a different version means you downloaded the wrong files), and `sha256sum` the checksum of `install.sh`. Nothing
+runs if any of them fails. Use the latest release from [GitHub Releases](https://github.com/tantee/yoda/releases);
+for another release, change the version in the URLs, the `grep` and `--version`.
+
+</details>
 
 **Verifying releases.** The `-P` key above is the Yoda release key, minisign key id `C73EF0AF404BAE84`, also in
 [`keys/yoda-release.pub`](keys/yoda-release.pub) and built into `install.sh`, which checks every download with it
 ([details](docs/releasing.md#verifying-releases)). The images come from `ghcr.io/tantee/yoda` (public, no login), pinned by the digests
 in the signed bundle.
-To install from an internal mirror, pass `--base-url` and `--image-prefix`
+To install from an internal mirror, pass `--base-url` and `--image-prefix` with a pinned `--version`
 ([releasing, internal mirror](docs/releasing.md#internal-mirror)).
 
 Then open `https://<your portal>/setup` and follow the setup wizard. Details: [install guide](docs/guides/install.md).

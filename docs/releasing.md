@@ -156,7 +156,8 @@ move them into the `release` environment. Steps 4 and 5 remain as well.
    ```
 
    Each command runs only when the one before it passed; the `grep` checks that the signature is for this
-   version. `release.env` in the install directory then lists the four digests, and
+   version. Then try the one-line install the README gives on a test host, once the release is the latest:
+   `curl -fsSL https://github.com/tantee/yoda/releases/latest/download/install.sh | sh -s -- --dir /tmp/yoda-one-line`. `release.env` in the install directory then lists the four digests, and
    `docker image ls --digests ghcr.io/tantee/yoda/core` shows the same one. The first release only: make the
    packages public first (one-time setup, step 5).
 
@@ -192,7 +193,10 @@ Dockerfiles, the compose files or `CHANGELOG.md`) runs the same workflow as a dr
   throwaway key made inside the job (never stored or uploaded), so it needs no secret, no environment, and
   works from forks;
 - verifies the bundle end to end with `install.sh` against a local HTTP server, using that throwaway key, checks
-  the digest pins in `release.env` and the compose files, and that a signature from any other key is refused;
+  the digest pins in `release.env` and the compose files, and that a signature from any other key is refused. It
+  runs `install.sh` twice: as a file next to the signed `SHA256SUMS`, and piped as the one-line install does
+  (`cat install.sh | sh -s -- …`, no `--version`: the latest release from a `releases/latest` redirect the local
+  server answers like GitHub's, then `SHA256SUMS` and its signature downloaded);
 - checks that the newest `CHANGELOG.md` section extracts as notes;
 - creates no release and no image tag. Its only artifacts are the four one-line digest files, kept for a day;
   no build record is uploaded (`DOCKER_BUILD_RECORD_UPLOAD=false`).

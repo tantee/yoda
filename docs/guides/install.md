@@ -18,10 +18,8 @@ placeholders (`portal.example.org`, `sso.example.org`); use your own. Releases a
 
 ## Before you start
 
-- A Linux host with Docker Engine 24+, Docker Compose v2.24+ and about 10 GB free, and a deploy user who may run
-  `docker` and owns the install directory (for example `/srv/yoda`).
-- On that host: `minisign` (to check the release signature), `tar`, and `curl` or `wget`. `install.sh` stops and
-  names any that are missing.
+- A Linux host with about 10 GB free, and a deploy user (with sudo, if the tools below still need installing).
+  The **requirements** below are checked by `install.sh`, which offers to install what is missing.
 - A Keycloak realm with a client for the portal and a staff group
   ([runbook, section 2](../operations.md#2-keycloak)).
 - HTTPS in front of the portal: a reverse proxy with a certificate (set `YODA_TRUSTED_PROXY_HOPS=2` in `.env`),
@@ -45,33 +43,84 @@ alias dc='docker compose --env-file .env --env-file release.env -f docker-compos
 
 ## 1. Install the release
 
-Download `install.sh` and the checksums of a pinned release from GitHub Releases, check the signature, then run
-it. Never pipe a download into `sh`. Use the latest release from
-[the releases page](https://github.com/tantee/yoda/releases); `1.1.0` below is an example.
+On the host, as the deploy user:
 
 ```bash
-curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.1.0/install.sh
-curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.1.0/SHA256SUMS
-curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.1.0/SHA256SUMS.minisig
+curl -fsSL https://github.com/tantee/yoda/releases/latest/download/install.sh | sh
+```
+
+That installs the latest release into `/srv/yoda`. Options go after `sh -s --`: a pinned release, another
+directory, the built-in HTTPS proxy (below), `--yes` to answer every question with yes:
+
+```bash
+curl -fsSL https://github.com/tantee/yoda/releases/latest/download/install.sh |
+  sh -s -- --version 1.2.0 --dir /srv/yoda --with-proxy --domain portal.example.org
+```
+
+**Requirements.** `install.sh` checks them before it downloads anything, names each one that is missing or too
+old with the version it found and the version it needs, and offers to install them:
+
+- Docker Engine 24+ and the Docker Compose plugin v2.24+, and a user who may run `docker`;
+- `curl`, `tar`, `sha256sum` (or `shasum`) and `minisign` (it checks the release signature), plus `openssl` for
+  `--cert-mode files`;
+- about 10 GB free at the install directory (the warning names the free space and the path it checked).
+
+On Debian and Ubuntu it offers to install what is missing: the tools with `apt` (minisign from `universe` on
+Ubuntu, enabled when needed) and Docker from Docker's own apt repository (`docker-ce`, `docker-ce-cli`,
+`containerd.io`, `docker-buildx-plugin`, `docker-compose-plugin`; the key goes in `/etc/apt/keyrings`). The RHEL
+family gets the same with `dnf` (minisign from EPEL). It uses sudo when you are not root, and stops clearly when
+sudo is missing. Ubuntu's or Debian's own `docker.io` and `docker-compose-v2` can be older than Compose v2.24:
+`install.sh` explains that and how to switch to Docker's packages, but never replaces them itself. On any other
+system it prints the manual steps and exits.
+
+It asks before each such change, on the terminal (also when piped: it reads `/dev/tty`). `--yes` answers yes.
+With no terminal and no `--yes` it stops and names the flag; it never assumes yes. The same goes for two more
+questions:
+
+- **The docker group.** If you may not run `docker`, it offers to add you to the `docker` group. The rest of the
+  same run uses the group through `sg docker`; log out and back in before you run `docker` or `dc` yourself (or
+  run `install.sh` with sudo instead).
+- **The install directory.** If `/srv/yoda` (or your `--dir`) cannot be created, it offers to create it with sudo
+  and give it to you.
+
+**What you trust.** Piping trusts GitHub's TLS for `install.sh` itself. Everything it downloads after that is
+signature-checked: `SHA256SUMS` and `SHA256SUMS.minisig` for the release, the signature against the release key
+built into the script, the signed trusted comment against the exact release, then the bundle against
+`SHA256SUMS`. Any verification error stops it, before anything is unpacked. A download of `install.sh` cut short
+runs nothing: the script only starts on its last line.
+
+<details>
+<summary>Prefer to verify install.sh itself?</summary>
+
+Download `install.sh` and the checksums of a pinned release from GitHub Releases, check the signature, then run
+it. Use the latest release from [the releases page](https://github.com/tantee/yoda/releases); `1.2.0` below is
+an example.
+
+```bash
+curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.2.0/install.sh
+curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.2.0/SHA256SUMS
+curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.2.0/SHA256SUMS.minisig
 out=$(minisign -Vm SHA256SUMS -P RWSErktAr/A+x5Gvgr0x29wiu41FmYEVlJYoXyB6oJk4kvwQLOZs9O9j) &&
-  printf '%s\n' "$out" | grep -Fx 'Trusted comment: yoda release 1.1.0' &&
+  printf '%s\n' "$out" | grep -Fx 'Trusted comment: yoda release 1.2.0' &&
   sha256sum --check --ignore-missing SHA256SUMS &&
-  sh install.sh --version 1.1.0 --dir /srv/yoda
+  sh install.sh --version 1.2.0 --dir /srv/yoda
 ```
 
 Each command runs only when the one before it passed: `minisign` checks the signature (`out=$(…) &&` keeps its
 exit status), `grep` that the signed
-trusted comment names this release (`Trusted comment: yoda release 1.1.0`; a different version means you
+trusted comment names this release (`Trusted comment: yoda release 1.2.0`; a different version means you
 downloaded the wrong files), and `sha256sum` the checksum of `install.sh`. Nothing runs if any of them fails.
-For another release, change the version in the URLs, the `grep` and `--version`.
+For another release, change the version in the URLs, the `grep` and `--version`. Run this way, `install.sh` uses
+the `SHA256SUMS` next to it (checking the signature again, and its own checksum).
+
+</details>
 
 The key after `-P` is the Yoda release key, minisign key id `C73EF0AF404BAE84`. It is also in
 [`keys/yoda-release.pub`](../../keys/yoda-release.pub) and built into `install.sh`
 ([verifying releases](../releasing.md#verifying-releases)).
 
-`install.sh` checks the prerequisites, downloads the **signed release bundle**, verifies its signature and checksum
-(the release key is built into the script) and refuses on any mismatch. It refuses `latest` and an existing
-install. It then unpacks the bundle (compose files, `deploy.sh`, `.env.example`, the runbook), creates an empty
+After its checks, `install.sh` downloads the **signed release bundle** and verifies it as above. It refuses an
+existing install. It then unpacks the bundle (compose files, `deploy.sh`, `.env.example`, the runbook), creates an empty
 `.env` (mode `600`) and runs the first deploy. The images come from `ghcr.io/tantee/yoda`, which is public: no
 `docker login` is needed (if a pull fails because the packages are not public yet, `install.sh` offers
 `docker login ghcr.io`). The deploy runs exactly the images the release was built with: their digests are in the
@@ -86,7 +135,7 @@ on an older release upgrades first, then turns the proxy on
 ([runbook 4b, "Turn it on later"](../operations.md#4b-built-in-https-proxy-optional)).
 
 ```bash
-sh install.sh --version 1.1.0 --dir /srv/yoda --with-proxy --domain portal.example.org
+sh install.sh --version 1.2.0 --dir /srv/yoda --with-proxy --domain portal.example.org
 ```
 
 The certificate comes from one of three places, `--cert-mode`:
@@ -107,9 +156,10 @@ The deploy then prints `https://portal.example.org/setup`, and sets the trusted 
 encrypted, offline copy of the proxy's certificate volume with the recovery kit, as the runbook says. Without `--with-proxy`, nothing about the proxy is installed
 or started.
 
-Options: `--base-url` (another file server), `--image-prefix` (another registry path), `--no-login`. **Internal
-mirror:** a host that cannot reach GitHub installs from a copy inside the network with
-`--base-url 'https://files.example.org/yoda/releases/{version}/' --image-prefix registry.example.org/group/yoda`
+Options: `--version`, `--dir`, `--yes`, `--base-url` (another file server), `--image-prefix` (another registry
+path), `--no-login`. **Internal mirror:** a host that cannot reach GitHub installs from a copy inside the network with
+`--version 1.2.0 --base-url 'https://files.example.org/yoda/releases/{version}/' --image-prefix registry.example.org/group/yoda`
+(a mirror has no "latest": `--version` is required)
 (a registry mirror of the images; `install.sh` asks for a `docker login` to it), see
 [releasing, internal mirror](../releasing.md#internal-mirror). Nothing is required in `.env` for a standard install. To use an external Postgres or S3, or to fix settings from outside the
 UI, see the runbook ([section 4, "Advanced"](../operations.md#4-first-install)).
@@ -234,23 +284,23 @@ Rotation and lost keys in detail: [runbook, section 10](../operations.md#10-rota
 1. Read `CHANGELOG.md` for the release. The deploy never changes `.env`; add any new variable yourself (most new
    options are System settings now).
 2. Take a backup: `dc run --rm backup --now`.
-3. Get the new release's files and deploy it. On the host, in the install directory (`1.1.0` stands for the new
+3. Get the new release's files and deploy it. On the host, in the install directory (`1.2.0` stands for the new
    version):
 
    ```bash
-   curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.1.0/yoda-1.1.0.tar.gz
-   curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.1.0/SHA256SUMS
-   curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.1.0/SHA256SUMS.minisig
+   curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.2.0/yoda-1.2.0.tar.gz
+   curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.2.0/SHA256SUMS
+   curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.2.0/SHA256SUMS.minisig
    out=$(minisign -Vm SHA256SUMS -P RWSErktAr/A+x5Gvgr0x29wiu41FmYEVlJYoXyB6oJk4kvwQLOZs9O9j) &&
-     printf '%s\n' "$out" | grep -Fx 'Trusted comment: yoda release 1.1.0' &&
+     printf '%s\n' "$out" | grep -Fx 'Trusted comment: yoda release 1.2.0' &&
      sha256sum --check --ignore-missing SHA256SUMS &&
-     tar -xzf yoda-1.1.0.tar.gz --no-same-owner &&
-     rm yoda-1.1.0.tar.gz SHA256SUMS SHA256SUMS.minisig &&
-     YODA_VERSION=1.1.0 sh ops/deploy/deploy.sh
+     tar -xzf yoda-1.2.0.tar.gz --no-same-owner &&
+     rm yoda-1.2.0.tar.gz SHA256SUMS SHA256SUMS.minisig &&
+     YODA_VERSION=1.2.0 sh ops/deploy/deploy.sh
    ```
 
    As at install, each command runs only when the one before it passed, and the `grep` checks that the
-   signature is for `1.1.0`. The bundle never holds `.env` or `release.env`, so unpacking it only replaces the compose files, `deploy.sh`
+   signature is for `1.2.0`. The bundle never holds `.env` or `release.env`, so unpacking it only replaces the compose files, `deploy.sh`
    and the runbook files. An internal GitLab mirror's **deploy** job does the same in one step. The deploy pulls
    the images, pins the version and the bundle's image digests in `release.env`, updates the bootstrap volume, runs the migrations (a failed
    migration stops before anything is replaced), starts the new containers and waits until the portal answers.
