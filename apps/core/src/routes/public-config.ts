@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { PublicConfig, settingDef, type SettingKey } from '@yoda/shared'
+import { EXTENSION_API_VERSION, PublicConfig, settingDef, type SettingKey } from '@yoda/shared'
 import type { FastifyInstance } from 'fastify'
 import type { AppDeps } from '../app.js'
 import type { Config } from '../config.js'
@@ -7,6 +7,7 @@ import type { Db } from '../db/client.js'
 import { setupState } from '../setup-state.js'
 import { VERSION } from '../version.js'
 import { funMode } from './admin.js'
+import { extensionSetting } from '../extension/hook.js'
 
 /** `<url>/realms/<realm>`, the Keycloak issuer form; any other issuer gives null (keycloak-js needs url + realm). */
 export function keycloakFromIssuer(issuer: string | undefined): { url: string; realm: string } | null {
@@ -101,6 +102,7 @@ export async function buildPublicConfig(
     recovery: s?.recovery ?? false,
     recoveryForced: s?.recoveryForced ?? false,
     version: VERSION,
+    extension: { enabled: extensionSetting(s, 'extension.enabled'), apiVersion: EXTENSION_API_VERSION },
   })
 }
 

@@ -7,6 +7,7 @@ import type { Config } from '../config.js'
 import { people } from '../db/schema.js'
 import { setupState } from '../setup-state.js'
 import { isStaff, TokenClaims, upsertPersonFromClaims } from './people.js'
+import { extensionGate } from '../extension/hook.js'
 
 /** Thrown by guards / auth; mapped to `{ error }` bodies by the app error handler. */
 export class HttpError extends Error {
@@ -142,10 +143,13 @@ export function registerAuth(app: FastifyInstance): void {
   app.decorateRequest('me', null as unknown as Me)
   app.decorateRequest('tokenExp', 0)
   app.decorateRequest('authTime', null)
+  app.decorateRequest('extension', null)
 
   app.addHook('onRequest', async (request) => {
     const { deps } = app
     const route = request.routeOptions.config
+    // Yoda Reporter routes (/extension/*) pass their own gate first; extension tokens are accepted nowhere else.
+    if (route?.extension && (await extensionGate(app, request, route.extension))) return
     if (route?.setupMode !== true && setupState(deps.config, deps.settings) === 'required') throw setupRequired()
     if (route?.public === true) return
     // Forced recovery mode (`yoda-admin recovery on`, 7.4): the portal API is closed; /recovery, the public routes
@@ -227,5 +231,10 @@ declare module 'fastify' {
     public?: boolean
     /** Served in setup mode (§4.1); every other route answers 503 `setup_required` until setup is done. */
     setupMode?: boolean
+    /**
+     * An `/extension/*` route (Yoda Reporter): `token` takes a `yoda_xt_` access token only, `public` nothing, and
+     * `keycloak` the normal Keycloak check. All three answer 503 in forced recovery mode and 404 when disabled.
+     */
+    extension?: 'token' | 'public' | 'keycloak'
   }
 }

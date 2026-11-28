@@ -31,6 +31,8 @@ export class GrantError extends Error {
     readonly reason: ExtensionTokenErrorReason,
     /** The grant's token family, for per-family failure limits; null when the token matched no grant. */
     readonly familyId: string | null = null,
+    /** Set when this call revoked the grant (for the lifecycle log), with the grant's id. */
+    readonly revoked: { reason: GrantRevokeReason; grantId: string } | null = null,
   ) {
     super(reason)
   }
@@ -184,8 +186,22 @@ export async function refreshGrant(db: Db, refreshToken: string, ctx: GrantCtx):
   })
   if (outcome.ok) return outcome.tokens
   // The revocation commits on its own, after the read transaction: a refusal never rolls it back.
-  if (outcome.revoke && outcome.grantId) await revokeGrant(db, outcome.grantId, { personId: null, reason: outcome.revoke })
+  if (outcome.revoke && outcome.grantId) {
+    const revoked = await revokeGrant(db, outcome.grantId, { personId: null, reason: outcome.revoke })
+    throw new GrantError(outcome.reason, outcome.familyId, revoked ? { reason: outcome.revoke, grantId: outcome.grantId } : null)
+  }
   throw new GrantError(outcome.reason, outcome.familyId)
+}
+
+/** The token family of a refresh token, for the per-family failure limit checked before a refresh; null if unknown. */
+export async function refreshFamily(db: Db, refreshToken: string): Promise<string | null> {
+  if (!extensionTokenRe('refresh').test(refreshToken)) return null
+  const [row] = await db
+    .select({ familyId: extensionGrants.familyId })
+    .from(extensionRefreshTokens)
+    .innerJoin(extensionGrants, eq(extensionGrants.id, extensionRefreshTokens.grantId))
+    .where(eq(extensionRefreshTokens.hash, hashToken(refreshToken)))
+  return row?.familyId ?? null
 }
 
 /**
