@@ -55,5 +55,72 @@
       "redact": "Redact",
       "crop": "Crop"
     }
+  },
+  "review": {
+    "title": "Check before sending",
+    "hint": "Screenshots and logs from hospital systems may contain patient data. Send only what the fix needs.",
+    "production": "This is a production site: no video, and logs only when turned on.",
+    "screenshot": "Screenshot (annotated)",
+    "video": "Video",
+    "console": "Console log",
+    "network": "Network requests",
+    "entries": "{n} entries",
+    "confirm": "I checked the screenshot and video: there is no patient data, or it is hidden with mosaic or redact",
+    "sensitive": "The text may contain patient data (the text is not sent to AI)",
+    "aiNone": "Not sent to AI",
+    "aiText": "AI may read the text; screenshots, video and logs never"
+  },
+  "report": {
+    "project": "Project",
+    "kind": {
+      "defect": "Defect",
+      "bug_fix_request": "Bug-fix request"
+    },
+    "title": "Title",
+    "severity": "Severity",
+    "sev": {
+      "blocker": "Blocker",
+      "critical": "Critical",
+      "major": "Major",
+      "minor": "Minor",
+      "trivial": "Trivial"
+    },
+    "priority": {
+      "urgent": "urgent",
+      "high": "high",
+      "normal": "normal",
+      "low": "low"
+    },
+    "priorityHint": "Suggested priority \"{p}\"; the project manager can change it in Yoda",
+    "steps": "Steps to reproduce",
+    "addStep": "Add a step",
+    "expected": "Expected result",
+    "actual": "Actual result",
+    "description": "More details",
+    "environment": "Environment",
+    "build": "Build",
+    "buildSource": "Detected from {s}; you can edit it",
+    "buildNone": "No build found; you can type it",
+    "source": {
+      "meta": "the page meta tag",
+      "well-known": "/.well-known",
+      "header": "X-Yoda-Build",
+      "gitlab": "GitLab",
+      "manual": "the tester"
+    },
+    "includeQuery": "Include the URL query string",
+    "send": "Send to Yoda",
+    "sent": "Sent:",
+    "noProfile": "The Yoda this draft belongs to is not connected",
+    "sessionFailed": "Cannot reach Yoda; the draft is kept, try again later",
+    "reconnectText": "Reconnect to Yoda; your draft is kept",
+    "error": {
+      "tooLarge": "A file is too large; remove a file",
+      "type": "A file has a type Yoda does not take",
+      "videoOnProduction": "No video from production sites; remove the video",
+      "rateLimited": "Too many reports; wait {s} seconds",
+      "network": "Sending failed (network); the draft is kept, try again",
+      "other": "Sending failed; the draft is kept"
+    }
   }
 }

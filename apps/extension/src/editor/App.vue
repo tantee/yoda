@@ -5,6 +5,9 @@ import { getDraft, putDraft, type Draft } from '../drafts/db'
 import Canvas from './Canvas.vue'
 import { apply, defaultBlock, initState, redo, undo, type EditorDoc, type Op, type State } from './doc'
 import Toolbar, { type Tool } from './Toolbar.vue'
+import ReportForm from './ReportForm.vue'
+import { drawVector } from './draw'
+import { flatten } from './flatten'
 
 /**
  * The editor tab (editor.html?draft=<id>): annotate the screenshot (blur, mosaic and redact are burned into the
@@ -92,6 +95,12 @@ onMounted(() => {
   window.addEventListener('keydown', onKey)
 })
 onBeforeUnmount(() => window.removeEventListener('keydown', onKey))
+/** The image that is uploaded: blur, mosaic and redact burned in, annotations drawn, the crop applied. */
+async function exportImage(): Promise<Blob | null> {
+  if (!base.value || !doc.value) return null
+  return flatten(base.value, doc.value, (ctx, ops) => drawVector(ctx, ops))
+}
+
 defineExpose({ doc, base, draft })
 </script>
 
@@ -118,7 +127,7 @@ defineExpose({ doc, base, draft })
             </div>
           </section>
           <aside class="editor__side" data-testid="editor-side">
-            <slot name="side" />
+            <ReportForm :draft="draft" :flatten="exportImage" />
           </aside>
         </template>
       </div>
