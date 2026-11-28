@@ -12,7 +12,7 @@ const origins = ref<string[]>([])
 const needed = (o: string) => props.profiles.some((p) => o === `${p.url}/*` || matchesPattern(o, `${p.url}/`))
 
 async function load() {
-  origins.value = ((await chrome.permissions.getAll()).origins ?? []).filter((o) => o !== '<all_urls>').sort()
+  origins.value = ((await chrome.permissions.getAll()).origins ?? []).sort()
 }
 
 async function remove(o: string) {
