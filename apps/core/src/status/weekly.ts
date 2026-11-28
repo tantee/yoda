@@ -206,7 +206,7 @@ export async function weeklyMaterial(db: Db, projectId: string, since: Date, unt
     {
       heading: 'Accepted task results',
       blocks: results
-        .filter((r) => r.result?.text?.trim())
+        .filter((r) => r.result?.text?.trim() && !(r.workItemId && hidden.has(r.workItemId)))
         .map(titled)
         .map((r) => ({ label: label(`${r.title} / ${r.key}`), text: text(r.result!.text) })),
     },

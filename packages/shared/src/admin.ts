@@ -56,6 +56,8 @@ export const PublicConfig = z.object({
       /** Days defect media and logs are kept after their item closes (0: kept), for the Help page. */
       mediaRetentionDays: z.number().int().optional(),
       logRetentionDays: z.number().int().optional(),
+      /** The address testers paste into the extension (`org.publicUrl`). */
+      publicUrl: z.string().optional(),
     })
     .optional(),
 })

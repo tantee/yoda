@@ -135,7 +135,7 @@ export async function gitlabRules(db: Conn, projectIds: readonly string[]): Prom
     .from(deployEnvironments)
     .innerJoin(projectRepos, eq(projectRepos.id, deployEnvironments.repoId))
     .where(and(inArray(projectRepos.projectId, [...projectIds]), isNotNull(deployEnvironments.externalUrl)))
-    .orderBy(asc(projectRepos.projectId), asc(projectRepos.pathWithNamespace), asc(deployEnvironments.name))
+    .orderBy(asc(projectRepos.projectId), sql`${projectRepos.pathWithNamespace} collate "C"`, sql`${deployEnvironments.name} collate "C"`)
   const rules: MappingRule[] = []
   for (const { e, projectId, path } of rows) {
     const pattern = externalUrlPattern(e.externalUrl)

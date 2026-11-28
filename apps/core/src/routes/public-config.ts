@@ -107,6 +107,7 @@ export async function buildPublicConfig(
       apiVersion: EXTENSION_API_VERSION,
       mediaRetentionDays: extensionSetting(s, 'extension.mediaRetentionDays'),
       logRetentionDays: extensionSetting(s, 'extension.logRetentionDays'),
+      publicUrl: config.portalUrl,
     },
   })
 }

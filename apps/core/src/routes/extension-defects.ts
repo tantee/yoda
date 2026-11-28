@@ -14,6 +14,8 @@ import { productionRulesForPerson } from '../extension/mappings.js'
 import { runWork } from '../work/context.js'
 
 const IdempotencyKey = z.string().uuid()
+/** Defect uploads read at once per core process (about 50 MiB of memory each at most). */
+export const MAX_CONCURRENT_UPLOADS = 8
 const rateLimited = (retryAfter: number) => new HttpError(429, { error: 'rate_limited', retryAfter })
 
 type Outcome = { status: 200 | 201; body: DefectReportCreated }
@@ -61,6 +63,8 @@ export function extensionDefectRoutes(app: FastifyInstance, limits: ExtensionLim
   const inFlight = new Map<string, Promise<Outcome>>()
   /** The key each grant is uploading: one upload per grant at a time. */
   const activeByGrant = new Map<string, string>()
+  /** Uploads being read in this process: each holds up to 50 MiB, so the server takes a few at a time. */
+  let reading = 0
 
   app.post('/extension/defects', { config: { public: true, extension: 'token' } }, async (request, reply) => {
     if (!request.extension) throw new HttpError(401, { error: 'unauthorized' })
@@ -106,7 +110,12 @@ export function extensionDefectRoutes(app: FastifyInstance, limits: ExtensionLim
       reply.header('connection', 'close')
       throw rateLimited(5)
     }
+    if (reading >= MAX_CONCURRENT_UPLOADS) {
+      reply.header('connection', 'close')
+      throw rateLimited(10)
+    }
     activeByGrant.set(grantId, key)
+    reading++
 
     /** Objects put for this upload; emptied once the report is committed (they then belong to it). */
     const keys: string[] = []
@@ -176,6 +185,7 @@ export function extensionDefectRoutes(app: FastifyInstance, limits: ExtensionLim
       }
       throw err
     } finally {
+      reading--
       if (activeByGrant.get(grantId) === key) activeByGrant.delete(grantId)
     }
   }

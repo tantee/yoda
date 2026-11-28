@@ -10,7 +10,7 @@ import {
   type GrantRevokeReason,
   type Me,
 } from '@yoda/shared'
-import { and, desc, eq, gt, isNull, or, sql, type SQL } from 'drizzle-orm'
+import { and, desc, eq, gt, inArray, isNull, lt, or, sql, type SQL } from 'drizzle-orm'
 import type { Db, Tx } from '../db/client.js'
 import { extensionAuthCodes, extensionGrants, extensionRefreshTokens, people } from '../db/schema.js'
 import { HttpError } from '../auth/plugin.js'
@@ -96,18 +96,20 @@ async function issueTokens(tx: Tx, grant: GrantRow, p: PersonRow, ctx: GrantCtx)
   const refresh = newExtensionToken('refresh')
   const now = ctx.now.getTime()
   const idle = Math.min(now + ctx.ttl.idleDays * DAY_MS, grant.absoluteExpiresAt.getTime())
+  // An access token never outlives its grant.
+  const accessUntil = Math.min(now + ctx.ttl.accessMinutes * 60_000, grant.absoluteExpiresAt.getTime())
   await tx
     .update(extensionGrants)
     .set({
       accessHash: access.hash,
-      accessExpiresAt: new Date(now + ctx.ttl.accessMinutes * 60_000),
+      accessExpiresAt: new Date(accessUntil),
       idleExpiresAt: new Date(idle),
       lastUsedAt: ctx.now,
       lastIp: ctx.ip,
     })
     .where(eq(extensionGrants.id, grant.id))
   await tx.insert(extensionRefreshTokens).values({ hash: refresh.hash, grantId: grant.id, createdAt: ctx.now })
-  return { accessToken: access.token, expiresIn: ctx.ttl.accessMinutes * 60, refreshToken: refresh.token, grantId: grant.id, person: person(p) }
+  return { accessToken: access.token, expiresIn: Math.max(1, Math.floor((accessUntil - now) / 1000)), refreshToken: refresh.token, grantId: grant.id, person: person(p) }
 }
 
 /**
@@ -288,4 +290,28 @@ export async function listGrants(db: Db | Tx, opts: { personId?: string; activeO
     revokeReason: g.revokeReason as ExtensionGrant['revokeReason'],
     person: { id: g.personId, displayName: name },
   }))
+}
+
+/**
+ * Removes token rows nothing needs any more (the nightly sweep): codes expired over a day ago, and the refresh
+ * token history of grants revoked or past their absolute expiry over 30 days ago (Connected browsers shows revoked
+ * grants for 30 days; the grant rows themselves stay).
+ */
+export async function pruneTokens(db: Db, now: Date): Promise<{ codes: number; refresh: number }> {
+  const day = new Date(now.getTime() - DAY_MS)
+  const month = new Date(now.getTime() - 30 * DAY_MS)
+  const codes = await db.delete(extensionAuthCodes).where(lt(extensionAuthCodes.expiresAt, day)).returning({ h: extensionAuthCodes.codeHash })
+  const refresh = await db
+    .delete(extensionRefreshTokens)
+    .where(
+      inArray(
+        extensionRefreshTokens.grantId,
+        db
+          .select({ id: extensionGrants.id })
+          .from(extensionGrants)
+          .where(or(lt(extensionGrants.revokedAt, month), lt(extensionGrants.absoluteExpiresAt, month))),
+      ),
+    )
+    .returning({ h: extensionRefreshTokens.hash })
+  return { codes: codes.length, refresh: refresh.length }
 }

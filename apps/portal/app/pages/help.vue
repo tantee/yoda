@@ -8,7 +8,8 @@ const api = useApi()
 const { config } = usePublicConfig()
 const latest = ref<ExtensionLatest>(null)
 const loaded = ref(false)
-const origin = typeof window === 'undefined' ? '' : window.location.origin
+// The configured address (org.publicUrl), as the extension and the download links use; this page's as a fallback.
+const origin = computed(() => config.value?.extension?.publicUrl || (typeof window === 'undefined' ? '' : window.location.origin))
 const enabled = computed(() => config.value?.extension?.enabled !== false)
 const mediaDays = computed(() => config.value?.extension?.mediaRetentionDays ?? 180)
 const logDays = computed(() => config.value?.extension?.logRetentionDays ?? 90)

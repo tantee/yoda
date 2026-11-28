@@ -10,6 +10,7 @@ import {
   exchangeCode,
   GrantError,
   issueAuthCode,
+  pruneTokens,
   refreshGrant,
   revokeAllGrants,
   revokeGrant,
@@ -220,6 +221,37 @@ describe('extension grants', () => {
       }
       await db.update(people).set({ lastSeenAt: new Date(T0.getTime() + 90 * DAY) }).where(eq(people.id, row.id))
       expect((await grantError(refreshGrant(db, t.refreshToken, at(90 * DAY + 1000)))).reason).toBe('invalid_grant')
+    })
+
+    it('an access token never outlives the grant\'s absolute expiry', async () => {
+      const { me, row } = await person(db)
+      let t = await connect(db, me)
+      for (const d of [20, 40, 60, 80]) {
+        await db.update(people).set({ lastSeenAt: new Date(T0.getTime() + d * DAY) }).where(eq(people.id, row.id))
+        t = await refreshGrant(db, t.refreshToken, at(d * DAY))
+      }
+      // 30 minutes before the absolute 90 days: the new access token lives 30 minutes, not an hour.
+      await db.update(people).set({ lastSeenAt: new Date(T0.getTime() + 90 * DAY) }).where(eq(people.id, row.id))
+      t = await refreshGrant(db, t.refreshToken, at(90 * DAY - 30 * 60_000))
+      expect(t.expiresIn).toBe(30 * 60)
+      const [g] = await db.select().from(extensionGrants)
+      expect(g!.accessExpiresAt!.getTime()).toBe(g!.absoluteExpiresAt.getTime())
+    })
+
+    it('pruneTokens removes old codes and the refresh history of long-revoked grants only', async () => {
+      const { me } = await person(db)
+      const keep = await connect(db, me)
+      const gone = await connect(db, me)
+      await revokeGrant(db, gone.grantId, { personId: null, reason: 'admin' })
+      await db.update(extensionGrants).set({ revokedAt: new Date(T0.getTime() - 31 * DAY) }).where(eq(extensionGrants.id, gone.grantId))
+      await issueAuthCode(db, me, authorizeInput(), { allowedIds: [EXT], now: T0 })
+      const r = await pruneTokens(db, new Date(T0.getTime() + 2 * DAY))
+      expect(r.codes).toBeGreaterThanOrEqual(3)
+      expect(r.refresh).toBe(1)
+      expect(await db.select().from(extensionAuthCodes)).toEqual([])
+      const left = await db.select().from(extensionRefreshTokens)
+      expect(left.map((x) => x.grantId)).toEqual([keep.grantId])
+      expect(await db.select().from(extensionGrants)).toHaveLength(2)
     })
 
     it('a person whose last_seen_at is older than reauthDays gets reauth_required, and a fresh portal sign-in clears it', async () => {

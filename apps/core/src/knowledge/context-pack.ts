@@ -96,8 +96,10 @@ export async function buildContextPack(
         .where(and(inArray(attachments.id, allowedFiles.map((a) => a.id)), eq(attachments.noAi, false)))
     : []
   const textOf = new Map(texts.map((x) => [x.id, x.text ?? '']))
+  const withheld = (await sensitiveDefectIds(db, [t.workItemId])).has(t.workItemId)
   const inputs = t.inputs.map((i) => {
-    const parts = [i.result.text.trim()]
+    // A sensitive defect: the earlier steps' notes may repeat the report's data.
+    const parts = [withheld ? '[withheld: sensitive defect report]' : i.result.text.trim()]
     for (const a of i.attachments) {
       const text = a.noAi ? '' : textOf.get(a.id)?.trim()
       if (text) parts.push(`File ${oneLine(a.fileName)}:\n${text}`)

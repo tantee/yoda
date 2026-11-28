@@ -13,6 +13,7 @@ import { secretarySweep } from '../secretary/sweep.js'
 import { fanOutWeeklySummaries, weeklySummaryJob } from '../status/weekly.js'
 import { syncEnvironmentsJob } from '../gitlab/environments.js'
 import { purgeExpired, sweepOrphans } from '../defects/retention.js'
+import { pruneTokens } from '../extension/grants.js'
 
 /** Registers every job handler on `deps.jobs` (server.ts with pg-boss, tests with InlineJobQueue). */
 export async function registerJobHandlers(deps: Pick<AppDeps, 'db' | 'ai' | 'bus' | 'jobs' | 'config' | 'gitlab' | 'mailTransport' | 'storage' | 'settings'>): Promise<void> {
@@ -37,5 +38,7 @@ export async function registerJobHandlers(deps: Pick<AppDeps, 'db' | 'ai' | 'bus
   await deps.jobs.work('defect-orphan-sweep', async () => {
     const n = await sweepOrphans(deps, new Date())
     if (n) console.info(`defect-orphan-sweep: removed ${n} orphaned objects`)
+    // Yoda Reporter token rows nothing needs any more ride along with the nightly sweep.
+    await pruneTokens(deps.db, new Date())
   })
 }

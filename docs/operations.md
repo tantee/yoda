@@ -1074,6 +1074,12 @@ before committing). The uploader, the project's PM or an admin can remove a defe
 patient data, or the project is noAi, the report text stays out of the work item description and AI sees a
 neutral title. Outside notifications (email, LINE, Telegram) still carry the real work item title, as for any
 other item: they go to people, not to AI.
+Notes written on such an item later (the triage, fix and retest results) are stored "do not send to AI" too.
+
+**Limits.** Each person may send 20 reports an hour and 100 a day (300 MB of files a day); core reads at most 8
+reports at a time and answers 429 with a retry time beyond that. Five failed connection attempts from one
+address lock Connect for that address for 15 minutes; behind one hospital NAT, a misbehaving client can block
+Connect for everyone for that long.
 
 ## 8. Runners
 

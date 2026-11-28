@@ -49,6 +49,7 @@ import {
   notifyRequestEnded,
   notifyTaskAssigned,
 } from '../notifications/service.js'
+import { sensitiveDefectIds } from '../defects/ai-view.js'
 
 const ACTIVE_STATES: readonly TaskState[] = ACTIVE_TASK_STATES
 const isActive = (state: string) => (ACTIVE_STATES as readonly string[]).includes(state)
@@ -641,6 +642,8 @@ export async function recordAcceptedKnowledge(ctx: WorkCtx, item: WorkItemRow, t
   if (!step || !templateTask) return
   // Work accepted in the Dev step (e.g. QC's draft test cases) refreshes the work item's GitLab issues.
   if (step.tasks.some((t) => t.capability === 'code-change')) await queueIssueSync(ctx, item.id, { withIssues: true })
+  // A sensitive defect's follow-up notes (triage, fix, retest) may repeat the report's data: never AI material.
+  const sensitive = (await sensitiveDefectIds(tx, [item.id])).has(item.id)
   const entry = (sourceTask: TaskRow, title: string, body: string) =>
     ({
       scope: 'work_item',
@@ -648,7 +651,7 @@ export async function recordAcceptedKnowledge(ctx: WorkCtx, item: WorkItemRow, t
       workItemId: sourceTask.workItemId,
       title,
       body,
-      noAi: false,
+      noAi: sensitive,
       sourceKind: 'task',
       sourceRef: sourceTask.id,
     }) as const

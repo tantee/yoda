@@ -29,8 +29,8 @@ import { mockModels, resetDb, testConfig, testDb, testDeps } from './helpers.js'
 import { auth, login, type Who } from './support.js'
 
 const TITLE = 'นายทดสอบ HN 0000'
-const TEXT = 'คนไข้ทดสอบ เลขที่ 4242 แพ้ยา'
-const STEP = 'เปิดแฟ้ม 4242'
+const TEXT = 'คนไข้ทดสอบ เลขที่ QX77 แพ้ยา'
+const STEP = 'เปิดแฟ้ม QX77'
 
 let deps: AppDeps
 let app: FastifyInstance
@@ -88,7 +88,7 @@ async function report(o: { sensitive: boolean; kind?: 'defect' | 'bug_fix_reques
   return (await runWork(deps, { id: m.id, kind: 'person' }, (ctx) => createDefect(ctx, m, input, [], meta))).workItemId
 }
 
-const leaks = (s: string) => [TITLE, TEXT, STEP, '4242'].filter((x) => s.includes(x))
+const leaks = (s: string) => [TITLE, TEXT, STEP, 'QX77'].filter((x) => s.includes(x))
 
 describe('ai-view', () => {
   it('sensitiveDefectIds and aiTitle', async () => {
@@ -282,6 +282,25 @@ describe('a sensitive defect never reaches AI', () => {
     const text = JSON.stringify(pack)
     expect(leaks(text)).toEqual([])
     expect(text).toContain('defect-report-sensitive')
+  })
+
+  it("a sensitive defect's follow-up notes (accepted task results) are stored noAi", async () => {
+    const id = await report({ sensitive: true })
+    const dev = await login(app, 'dev', { staff: true })
+    await app.inject({ method: 'PUT', url: `/projects/${projectId}/members/${dev.id}`, headers: auth(admin), payload: { roles: ['DEV'] } })
+    const [pmMe, qcMe, devMe] = [await me(pm), await me(qc), await me(dev)]
+    const taskOf = async (key: string) => (await deps.db.select().from(tasks).where(and(eq(tasks.workItemId, id), eq(tasks.templateTaskKey, key))))[0]!
+    const triage = await taskOf('triage-defect')
+    await runWork(deps, { id: pmMe.id, kind: 'person' }, (ctx) => assignTask(ctx, pmMe, triage.id, qc.id))
+    await runWork(deps, { id: qcMe.id, kind: 'person' }, (ctx) => submitTask(ctx, qcMe, triage.id, { text: '', attachmentIds: [], decision: 'approve' }))
+    const [advance] = await deps.db.select().from(proposals).where(and(eq(proposals.workItemId, id), eq(proposals.kind, 'step_advance'), eq(proposals.state, 'pending')))
+    if (advance) await runWork(deps, { id: pmMe.id, kind: 'person' }, (ctx) => decideProposal(ctx, pmMe, advance.id, { decision: 'accept' }))
+    const fix = await taskOf('fix-defect')
+    await runWork(deps, { id: pmMe.id, kind: 'person' }, (ctx) => assignTask(ctx, pmMe, fix.id, dev.id))
+    await runWork(deps, { id: devMe.id, kind: 'person' }, (ctx) => submitTask(ctx, devMe, fix.id, { text: `แก้แล้ว ${TEXT}`, attachmentIds: [] }))
+    const notes = await deps.db.select().from(knowledgeEntries).where(eq(knowledgeEntries.workItemId, id))
+    expect(notes.length).toBeGreaterThan(0)
+    for (const n of notes) expect(n.noAi, n.title).toBe(true)
   })
 
   it('a non-sensitive defect shows its real title to AI', async () => {
