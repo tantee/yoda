@@ -24,6 +24,9 @@ const colour = ref('#B3261E')
 const block = ref(16)
 const textAt = ref<{ x: number; y: number } | null>(null)
 const textValue = ref('')
+/** The clip, played in the editor (C2 adds mosaic regions on it). The object URL is revoked on unmount. */
+const videoUrl = computed(() => (draft.value?.video ? URL.createObjectURL(draft.value.video) : null))
+watch(videoUrl, (_n, old) => old && URL.revokeObjectURL(old))
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 const plain = <T,>(v: T): T => (v === undefined ? v : JSON.parse(JSON.stringify(v)))
 
@@ -121,6 +124,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKey)
   window.removeEventListener('pagehide', flushSave)
   base.value?.close()
+  if (videoUrl.value) URL.revokeObjectURL(videoUrl.value)
 })
 /** The image that is uploaded: blur, mosaic and redact burned in, annotations drawn, the crop applied. */
 async function exportImage(): Promise<Blob | null> {
@@ -150,6 +154,7 @@ defineExpose({ doc, base, draft })
             <div class="editor__hint text-caption text-medium-emphasis" data-testid="editor-hint">{{ t('editor.burnedIn') }}</div>
             <div class="editor__canvas">
               <Canvas v-if="base && doc" :base="base" :doc="doc" :tool="tool" :colour="colour" :block="block" @add="add" @text="(p) => (textAt = p)" />
+              <video v-else-if="videoUrl" :src="videoUrl" controls class="editor__video" data-testid="editor-video" />
               <p v-else class="text-medium-emphasis pa-4" data-testid="editor-no-image">{{ t('editor.noImage') }}</p>
             </div>
           </section>
@@ -178,6 +183,7 @@ defineExpose({ doc, base, draft })
 .editor__stage { display: flex; flex-direction: column; min-width: 0; }
 .editor__stage--sent { opacity: 0.6; }
 .editor__hint { padding: 4px 12px; }
+.editor__video { max-width: 100%; max-height: calc(100vh - 140px); display: block; background: #000; }
 .editor__canvas { flex: 1; overflow: auto; padding: 12px; background: rgb(var(--v-theme-surface-light)); }
 .editor__side { border-left: 1px solid rgba(var(--v-border-color), var(--v-border-opacity)); background: rgb(var(--v-theme-surface)); overflow: auto; max-height: 100vh; }
 @media (max-width: 960px) {

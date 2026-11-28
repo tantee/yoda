@@ -6,6 +6,7 @@ import { onConnectClick } from '../connect/connect'
 import { checkVersion } from '../sw/api'
 import { profiles as loadProfiles, type Profile } from '../sw/store'
 import { saveLocale, type Locale } from '../i18n'
+import { onRecordClick } from './record'
 import { resolveTargetTab } from './target'
 
 /** The toolbar popup (mockup extension-popup.html): which Yoda and project, capture, and the report actions. */
@@ -25,6 +26,10 @@ const reachable = ref(true)
 /** The mapping for this page (sw/rules.ts): the profile and project it picks, and whether it is production. */
 const resolved = ref<{ production: boolean; profileId: string | null; projectId: string | null; via: 'rule' | 'repo' | null } | null>(null)
 const production = computed(() => resolved.value?.production === true)
+/** A clip in progress (the offscreen document records it; the worker keeps the job). */
+const clip = ref<{ tabId: number; startedAt: number } | null>(null)
+const now = ref(Date.now())
+const maxSeconds = computed(() => session.value?.limits.maxVideoSeconds ?? 30)
 
 const profile = computed(() => list.value.find((p) => p.id === profileId.value) ?? null)
 const version = computed(() => (session.value ? checkVersion(session.value, chrome.runtime.getManifest().version_name ?? '0.0.0') : 'ok'))
@@ -50,7 +55,33 @@ async function load() {
     // On production, logs go only when the tester turns them on for this report.
     if (production.value) attach.value = { console: false, network: false }
   }
-  await Promise.all([loadSession(), refreshCapture()])
+  await Promise.all([loadSession(), refreshCapture(), refreshClip()])
+}
+
+async function refreshClip() {
+  const r = (await chrome.runtime.sendMessage({ type: 'video.state' })) as { ok: boolean; clip?: typeof clip.value }
+  clip.value = r?.clip ?? null
+  if (clip.value) setInterval(() => (now.value = Date.now()), 500)
+}
+
+function record() {
+  if (tabId.value === null || !profile.value) return
+  const message = { type: 'video.start', tabId: tabId.value, profileId: profile.value.id, projectId: projectId.value ?? undefined, attach: attach.value, maxSeconds: maxSeconds.value }
+  busy.value = 'record'
+  error.value = ''
+  // No await before this call: the tabCapture request needs the click.
+  void onRecordClick(() => chrome.runtime.sendMessage(message) as Promise<{ ok: boolean; error?: string }>).then((r) => {
+    busy.value = ''
+    if (r?.ok) window.close()
+    else error.value = t(`popup.error.${['permission_needed', 'production', 'busy'].includes(r?.error ?? '') ? r!.error : 'capture_failed'}`)
+  })
+}
+
+async function stopRecording() {
+  busy.value = 'stop'
+  await chrome.runtime.sendMessage({ type: 'video.stop' })
+  busy.value = ''
+  window.close()
 }
 
 async function loadSession() {
@@ -170,6 +201,9 @@ onMounted(load)
             <v-select v-model="projectId" :items="session?.projects ?? []" item-title="name" item-value="id" :label="t('report.project')" hide-details :disabled="!session" data-testid="popup-project" />
           </div>
 
+          <div v-if="clip" class="popup__section text-caption" data-testid="popup-recording">
+            <v-icon icon="mdi-record" color="error" size="14" /> {{ t('popup.recording', { s: Math.min(maxSeconds, Math.floor((now - clip.startedAt) / 1000)) }) }}
+          </div>
           <div class="popup__section text-caption" data-testid="popup-capture">
             <template v-if="!webPage">{{ t('popup.notWebPage') }}</template>
             <template v-else-if="capture?.state === 'armed'">
@@ -184,6 +218,8 @@ onMounted(load)
             <v-btn color="primary" prepend-icon="mdi-camera-outline" :disabled="!webPage || !session" :loading="busy === 'capture.screenshot'" data-testid="action-screenshot" @click="start('capture.screenshot')">{{ t('popup.screenshot') }}</v-btn>
             <v-btn variant="tonal" prepend-icon="mdi-arrow-expand-vertical" :disabled="!webPage || !session" :loading="busy === 'capture.fullPage'" data-testid="action-fullpage" @click="start('capture.fullPage')">{{ t('popup.fullPage') }}</v-btn>
             <v-btn variant="tonal" prepend-icon="mdi-record-rec" :disabled="!webPage || capture?.state === 'armed'" :loading="busy === 'arm'" data-testid="action-arm" @click="arm">{{ t('popup.arm') }}</v-btn>
+            <v-btn v-if="clip" color="error" prepend-icon="mdi-stop" :loading="busy === 'stop'" data-testid="action-stop" @click="stopRecording">{{ t('popup.stopRecording') }}</v-btn>
+            <v-btn v-else-if="!production" variant="tonal" prepend-icon="mdi-video-outline" :disabled="!webPage || !session" :loading="busy === 'record'" data-testid="action-record" @click="record">{{ t('popup.record', { s: maxSeconds }) }}</v-btn>
             <v-btn variant="text" prepend-icon="mdi-text" :disabled="!session" :loading="busy === 'capture.textOnly'" data-testid="action-text" @click="start('capture.textOnly')">{{ t('popup.textOnly') }}</v-btn>
           </div>
 

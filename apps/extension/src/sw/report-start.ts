@@ -27,7 +27,7 @@ export async function pageMetadata(tabId: number): Promise<PageMetadata | null> 
  * Starts a report from the popup: the screenshot (visible area or full page), the page metadata and the tab's
  * captured logs go into a new draft, and the editor opens on it.
  */
-export async function startReport(o: { tabId: number; profileId: string; kind: 'screenshot' | 'fullPage' | 'textOnly'; projectId?: string; attach?: { console: boolean; network: boolean } }): Promise<{ draftId: string; truncated?: boolean; fallback?: boolean }> {
+export async function startReport(o: { tabId: number; profileId: string; kind: 'screenshot' | 'fullPage' | 'textOnly' | 'video'; projectId?: string; attach?: { console: boolean; network: boolean }; video?: Blob }): Promise<{ draftId: string; truncated?: boolean; fallback?: boolean }> {
   await purgeOldDrafts(Date.now())
   const tab = await chrome.tabs.get(o.tabId)
   const draft = newDraft({ profileId: o.profileId, tabId: o.tabId, tabUrl: tab.url ?? '' })
@@ -41,6 +41,8 @@ export async function startReport(o: { tabId: number; profileId: string; kind: '
     draft.images.push({ role: r.fallback ? 'screenshot' : 'screenshot_full', blob: r.blob })
     extra = { truncated: r.truncated, fallback: r.fallback }
   }
+  // Never on production: the worker refused to record there, and a site marked since then loses the clip.
+  if (o.kind === 'video' && o.video && !draft.production) draft.video = o.video
   draft.metadata = (await pageMetadata(o.tabId)) ?? undefined
   const logs = await entries(o.tabId)
   draft.console = logs.console

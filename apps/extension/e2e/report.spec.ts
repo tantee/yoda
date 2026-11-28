@@ -4,20 +4,14 @@ import { expect, test } from './fixtures'
 // demo-mvp.gif was recorded the same way against the demo stack.
 if (process.env.DEMO) test.use({ video: 'on' })
 
-test('connect, arm, reproduce, screenshot, mosaic, send', async ({ context, extensionId, yoda, app, openPopup }) => {
+test('connect, arm, reproduce, screenshot, mosaic, send', async ({ context, yoda, app, openPopup, connect, tabIdOf }) => {
   // 1. Connect through the real auth window (spike finding 3): the stub's approve page redirects back.
-  const options = await context.newPage()
-  await options.goto(`chrome-extension://${extensionId}/src/options/index.html`)
-  await options.getByTestId('connect-url').locator('input').fill(yoda.url)
-  const authWindow = context.waitForEvent('page')
-  await options.getByTestId('connect-submit').click()
-  await (await authWindow).getByTestId('connect-approve').click()
-  await expect(options.getByTestId('profile-row')).toContainText('Yoda ทดสอบ')
+  await connect()
 
   // 2. The app, armed capture, the failing action.
   const page = await context.newPage()
   await page.goto(app.url)
-  const tabId = await options.evaluate(async (u) => (await chrome.tabs.query({ url: `${u}/*` }))[0]!.id!, app.url)
+  const tabId = await tabIdOf(app.url)
   const popup = await openPopup(tabId)
   await expect(popup.getByTestId('action-screenshot')).toBeEnabled()
   await popup.getByTestId('action-arm').click()

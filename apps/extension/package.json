@@ -20,6 +20,7 @@
     "@mdi/font": "^7.4.47",
     "@yoda/shared": "workspace:*",
     "fflate": "0.8.2",
+    "fix-webm-duration": "1.0.6",
     "vue": "^3.5.0",
     "vue-i18n": "^11.1.0",
     "vuetify": "^3.10.0",

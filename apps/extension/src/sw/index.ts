@@ -3,6 +3,8 @@ import { accessToken, yodaFetch } from './api'
 import { appendEntries, armTab, captureState, entries, nonceFor, onTabRemoved, onTabUpdated } from './capture-session'
 import { purgeOldDrafts } from '../drafts/db'
 import { TabChangedError } from '../capture/screenshot'
+import { purgeClips, takeClip } from '../drafts/clips'
+import { endClip, jobs, startClip, stopClip } from './offscreen'
 import { injectCapture } from './inject'
 import { pageMetadata, startReport } from './report-start'
 import { allRules, repoOf, resolveUrl } from './rules'
@@ -16,7 +18,11 @@ import { getProfile } from './store'
 // Content scripts never read storage (TRUSTED_CONTEXTS), set before anything is written.
 const ready = initSecrets()
 // Drafts hold the unredacted capture: anything past its 24 hours goes whenever the worker starts.
-const purge = () => void purgeOldDrafts(Date.now()).catch(() => 0)
+const purge = () => {
+  void purgeOldDrafts(Date.now()).catch(() => 0)
+  // A clip is taken into a draft at once; one left behind (a crash in between) goes after an hour.
+  void purgeClips(Date.now(), 3600_000).catch(() => 0)
+}
 purge()
 chrome.runtime.onStartup?.addListener(() => {
   void initSecrets()
@@ -74,6 +80,20 @@ onMessage(async (m, { sender }) => {
         if (e instanceof TabChangedError) return { ok: false, error: 'tab_changed' }
         throw e
       }
+    }
+    case 'video.start':
+      return startClip(m)
+    case 'video.stop':
+      await stopClip()
+      return { ok: true }
+    case 'video.state':
+      return { ok: true, clip: (await jobs()).clip ?? null }
+    case 'video.done': {
+      const job = await endClip()
+      const clip = await takeClip(m.clipId)
+      if (!job || !clip || job.tabId !== m.tabId) return { ok: false, error: 'unknown_clip' }
+      const r = await startReport({ tabId: job.tabId, profileId: job.profileId, kind: 'video', projectId: job.projectId, attach: job.attach, video: clip.blob })
+      return { ok: true, ...r }
     }
     case 'mapping.resolve': {
       const tab = await chrome.tabs.get(m.tabId)

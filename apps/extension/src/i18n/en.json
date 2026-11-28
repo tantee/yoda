@@ -150,7 +150,14 @@
     "error": {
       "arm": "Cannot capture logs on this page",
       "capture": "Cannot take the screenshot",
-      "tabChanged": "The tab changed during the capture; stay on the page and try again"
-    }
+      "tabChanged": "The tab changed during the capture; stay on the page and try again",
+      "permission_needed": "Allow tab recording to make a video",
+      "production": "No video on production sites",
+      "busy": "A recording is already running",
+      "capture_failed": "Cannot record this tab"
+    },
+    "record": "Record (up to {s} s)",
+    "stopRecording": "Stop and report",
+    "recording": "Recording the tab… {s} s"
   }
 }
