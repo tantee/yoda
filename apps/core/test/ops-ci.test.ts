@@ -639,9 +639,76 @@ describe('.github/workflows/release.yml (GitHub Releases + GHCR)', () => {
     expect(jobs.bundle!.needs).toEqual(['meta', 'manifest-dry', 'manifest'])
     expect(jobs.bundle!.if).toBe('${{ !cancelled() && !failure() }}')
     expect(jobs.tag!.needs).toEqual(['meta', 'bundle'])
-    expect(jobs.tag!.if).toBe(REAL)
+    expect(jobs.tag!.if).toBe("${{ !cancelled() && !failure() && needs.meta.outputs.real == 'true' && needs.bundle.result == 'success' }}")
     expect(jobs.release!.needs).toEqual(['meta', 'bundle', 'tag'])
-    expect(jobs.release!.if).toBe(REAL)
+    expect(jobs.release!.if).toBe(
+      "${{ !cancelled() && !failure() && needs.meta.outputs.real == 'true' && needs.bundle.result == 'success' && needs.tag.result == 'success' }}",
+    )
+  })
+
+  // GitHub's job conditions, for the subset this workflow uses: a job runs when its `if` holds; an `if` without a
+  // status check function (success(), failure(), cancelled(), always()) gets an implicit success(), which is false
+  // as soon as any job upstream of it did not succeed, skipped included, not only its direct needs (v1.1.0's first
+  // run: tag and release were skipped behind manifest-dry, which a release skips, though meta and bundle succeeded).
+  // failure()/cancelled() look at all upstream jobs too.
+  const needsOf = (j: string) => [jobs[j]!.needs ?? []].flat()
+  const upstream = (j: string): string[] => [...new Set(needsOf(j).flatMap((n) => [n, ...upstream(n)]))]
+  const STATUS = /\b(success|failure|cancelled|always)\(\)/
+  const simulate = (real: boolean, fail: string[] = [], ifs: Record<string, string> = {}) => {
+    const result: Record<string, 'success' | 'failure' | 'skipped'> = {}
+    const order = Object.keys(jobs)
+    while (Object.keys(result).length < order.length) {
+      for (const j of order) {
+        if (result[j] || !needsOf(j).every((n) => result[n])) continue
+        const raw = (ifs[j] ?? jobs[j]!.if ?? '').replace(/^\$\{\{\s*|\s*\}\}$/g, '').trim()
+        const terms = raw ? raw.split('&&').map((t) => t.trim()) : []
+        if (!STATUS.test(raw)) terms.unshift('success()')
+        const ups = upstream(j)
+        const ok = terms.every((t) => {
+          switch (t) {
+            // The whole upstream chain, as GitHub evaluates it (v1.1.0: tag skipped although meta and bundle succeeded).
+            case 'success()': return ups.every((n) => result[n] === 'success')
+            case '!failure()': return !ups.some((n) => result[n] === 'failure')
+            case '!cancelled()': return true
+            case "needs.meta.outputs.real == 'true'": return real
+            case "needs.meta.outputs.real != 'true'": return !real
+          }
+          const m = /^needs\.([\w-]+)\.result == 'success'$/.exec(t)
+          if (m) {
+            expect(needsOf(j), `${j}: ${t}`).toContain(m[1])
+            return result[m[1]!] === 'success'
+          }
+          throw new Error(`${j}: the simulation does not know the condition term "${t}"`)
+        })
+        result[j] = ok ? (fail.includes(j) ? 'failure' : 'success') : 'skipped'
+      }
+    }
+    return Object.keys(result).filter((j) => result[j] !== 'skipped').sort()
+  }
+
+  it('runs every job of a release and of a dry run, by GitHub\'s rules (simulated: neither path publishes in CI)', () => {
+    expect(simulate(true)).toEqual(['bundle', 'images', 'manifest', 'meta', 'release', 'tag'])
+    expect(simulate(false)).toEqual(['bundle', 'images-dry', 'manifest-dry', 'meta'])
+    // A failure anywhere stops what follows: nothing is tagged or released past a failed job.
+    expect(simulate(true, ['manifest'])).toEqual(['images', 'manifest', 'meta'])
+    expect(simulate(true, ['bundle'])).toEqual(['bundle', 'images', 'manifest', 'meta'])
+    expect(simulate(true, ['tag'])).toEqual(['bundle', 'images', 'manifest', 'meta', 'tag'])
+    expect(simulate(false, ['images-dry'])).toEqual(['images-dry', 'meta'])
+    // The conditions v1.1.0's first run had: tag and release skipped behind the skipped manifest-dry.
+    const before = { tag: REAL, release: REAL }
+    expect(simulate(true, [], before)).toEqual(['bundle', 'images', 'manifest', 'meta'])
+  })
+
+  it('gives a status check function to every job that waits, on its own path, for a job that path skips', () => {
+    for (const real of [true, false]) {
+      const runs = simulate(real)
+      for (const j of runs) {
+        if (upstream(j).every((u) => runs.includes(u))) continue
+        // A skip it does not expect would skip it too: its condition checks status itself (and never runs past a failure).
+        expect(jobs[j]!.if ?? '', `${j} (${real ? 'release' : 'dry run'})`).toMatch(STATUS)
+        expect(jobs[j]!.if ?? '', j).toContain('!failure()')
+      }
+    }
   })
 
   it('grants minimal permissions: packages:write only to the real image and tag jobs, never to a dry run', () => {
