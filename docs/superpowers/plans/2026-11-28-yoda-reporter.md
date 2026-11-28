@@ -21,27 +21,72 @@
 
 ## Decisions made in this plan
 
-1. **Mosaic on video is feasible; it runs in the editor tab.** A hidden `<video>` plays the recorded WebM at 1×; `requestVideoFrameCallback` draws each frame onto a canvas; active regions are pixelated with the downscale-then-upscale `drawImage` trick (`imageSmoothingEnabled = false`); `canvas.captureStream(0)` with `track.requestFrame()` per drawn frame feeds a `MediaRecorder` with the clip's codec and bitrate; `fix-webm-duration` writes the duration. A 30 s clip takes about 30 s, with a progress bar and Cancel. It runs in the visible editor tab rather than the offscreen document because hidden documents may throttle video frame callbacks. Task C1 measures the offscreen document, and the work moves there only if it delivers at least 95% of the frames; nothing else changes. **Fallback:** when re-encoding is unsupported, fails or delivers under 90% of the source frames, the editor says so and offers (a) send without the video or (b) send one still frame, chosen on the timeline, through the screenshot path, with the same regions burned in. A video with mosaic regions is never sent with those regions unapplied.
-2. **The e2e test runs Playwright Chromium against a stub Yoda.** It loads the unpacked e2e build (`launchPersistentContext` with `--load-extension`) against `apps/extension/e2e/stub-yoda.ts`, a small Node server that validates every request with the `@yoda/shared` zod schemas. The real core is covered by core contract tests that post the same multipart, built with the same `encodeDefectForm`. Two test-only differences are confined to the e2e build target and asserted absent from the release zip:
-   - `host_permissions: ['<all_urls>']`, because Playwright cannot click the toolbar button to grant `activeTab`;
-   - the popup reads `?tab=<id>` to choose its target tab.
+1. **Mosaic on video is feasible. It runs in the editor tab, with the preview visible.**
+   - **Path 1:** MediaRecorder re-encode.
+     - A hidden `<video>` plays the recorded WebM at 1×.
+     - `requestVideoFrameCallback` draws each frame onto a visible preview canvas.
+     - Active regions are pixelated with the downscale-then-upscale `drawImage` trick (`imageSmoothingEnabled = false`).
+     - `canvas.captureStream(0)` with `track.requestFrame()` per frame feeds a `MediaRecorder` with the clip's codec and bitrate.
+     - `fix-webm-duration` writes the duration.
 
-   Connect runs through the real `launchWebAuthFlow` if the B1 spike shows Playwright can drive the auth window. Otherwise the e2e connects through the same `profile.exchange` runtime message the options page sends after `launchWebAuthFlow`, with a code the test obtains from the stub. The e2e also records the demo video for the PR description.
-3. **URL mapping is matched in the extension**, from `GET /extension/mappings` (application URLs plus GitLab environments, cached 10 minutes). The proposal's `/extension/resolve?url=` is not built: the extension never sends every visited URL to Yoda.
-4. **Refresh-token reuse has a 30 s grace.** A used refresh token presented again within 30 s of its use, while its successor is still unused, rotates once more and voids that successor. This covers an MV3 service worker that died before storing the response. Any other reuse revokes the whole grant (`reuse_detected`).
+     A 30 s clip takes about 30 s, with a progress bar and Cancel. On `visibilitychange` to hidden, the editor pauses the source and the recorder and shows "keep this tab visible while the mosaic is applied". It resumes when the tab is visible again.
+   - **Path 2, tried when path 1 is unsupported or keeps under 90% of the source frames:** WebCodecs. An in-repo WebM (EBML) SimpleBlock reader demuxes the clip. `VideoDecoder` decodes it; each `VideoFrame` is drawn on an `OffscreenCanvas`, pixelated and wrapped in a new `VideoFrame`. `VideoEncoder` encodes it with the same codec, and `webm-muxer` (MIT) writes the WebM. This path is frame-exact and does not depend on playback timing.
+   - **Fallback, when neither path keeps at least 90% of the frames:** send the report without the video, or send one still frame, chosen on the timeline, through the screenshot path with the regions burned in.
+   - A video with mosaic regions is **never** sent with those regions unapplied.
+2. **The e2e test runs Playwright Chromium against a stub Yoda.**
+   - It loads the unpacked e2e build from `apps/extension/dist-e2e/` (`launchPersistentContext` with `--load-extension`) against `apps/extension/e2e/stub-yoda.ts`.
+   - The stub is a small Node server that validates every request with the `@yoda/shared` zod schemas.
+   - The real core is covered by core contract tests that post the same multipart, built with the same `encodeDefectForm`.
+   - Two test-only differences exist only in the e2e build. They are `host_permissions: ['<all_urls>']`, because Playwright cannot click the toolbar button to grant `activeTab`, and the popup's `?tab=<id>` target. `check-dist` asserts that both are absent from the release build output: the manifest and the bundled JavaScript.
+   - Connect runs through the real `launchWebAuthFlow` if the B1 spike shows Playwright can drive the auth window. Otherwise it runs through the same `profile.exchange` runtime message the options page sends after `launchWebAuthFlow`, with a code the test obtains from the stub.
+   - The e2e also records the demo video for the PR description.
+3. **URL mapping is matched in the extension.** The extension reads `GET /extension/mappings` (application URLs plus GitLab environments, cached 10 minutes) and matches locally. The proposal's `/extension/resolve?url=` is **dropped**: the extension never sends every visited URL to Yoda.
+4. **Refresh tokens follow the approved rule, with no grace window.**
+   - Any reuse of a rotated refresh token revokes the whole grant (`reuse_detected`).
+   - Authorization codes are marked used atomically (`UPDATE … SET used_at = now() WHERE code_hash = $1 AND used_at IS NULL RETURNING …`), so a double exchange gets exactly one token.
+   - The extension refreshes single-flight. When a grant is revoked, or a browser was closed mid-refresh so the next refresh is a reuse, the popup shows a calm "Reconnect" button. Through Keycloak SSO, reconnecting is usually one click. There is no error dialog.
 5. **The query string is kept by default.** It helps reproduce the defect. The form has an "include query string" switch.
-6. **Defect media and logs** are only removable (`DELETE /attachments/:id`) and only purged by retention when the attachment has a `role`. Other uploads keep today's behaviour.
-7. **Extension version.** `manifestVersion('x.y.z') = { version: 'x.y.z.1000', versionName: 'x.y.z' }`, and `manifestVersion('x.y.z-<tag>.N') = { version: 'x.y.z.N', versionName: 'x.y.z-<tag>.N' }` with 1 ≤ N ≤ 999. This keeps a final release newer than its release candidates for Chrome's update check, which the proposal's mapping did not.
-8. **Files are served by core.** The release zip is built into the core image at `/app/extension`. The signed CRX travels in the signed release bundle under `extension/` and is mounted read-only at `/srv/yoda-extension`. Core serves `/extension/download/:file` and `/extension/updates.xml` from `YODA_EXTENSION_DIRS`, the first directory holding the file winning. The GitLab mirror pipeline (`.gitlab-ci.yml`) is unchanged: its bundles carry no CRX, so `updates.xml` answers 404 there and the Help page hides managed install.
+6. **Defect files** have a `role`.
+   - Only files with a role are removable (`DELETE /attachments/:id`) and purged by retention.
+   - Their `noAi` flag can never be turned off: `PATCH /attachments/:id` with `noAi: false` gives 409 `invalid_state`.
+   - Other uploads keep today's behaviour.
+7. **Version scheme.** The only release versions allowed are a final `x.y.z` and `x.y.z-rc.N` with N from 1 to 999.
+   - `manifestVersion('x.y.z')` gives `{ version: 'x.y.z.1000', versionName: 'x.y.z' }`.
+   - `manifestVersion('x.y.z-rc.N')` gives `{ version: 'x.y.z.N', versionName: 'x.y.z-rc.N' }`.
+   - This keeps a final release newer than its release candidates for Chrome's update check.
+   - The release `meta` job refuses any other tag form.
+   - Dry runs build from `package.json`'s version with the same mapping, so its fourth part is fixed, never the run number.
+8. **Files are served by core.**
+   - The release zip is built into the core image at `/app/extension`.
+   - The signed CRX travels in the signed release bundle under `extension/` and is mounted read-only at `/srv/yoda-extension`.
+   - Core serves `/extension/download/:file` and `/extension/updates.xml` from `YODA_EXTENSION_DIRS`; the first directory holding the file wins.
+   - When a real release runs without `EXTENSION_CRX_KEY`, it still publishes. It ships the zip without a CRX, with a `::warning::` and a line in the release notes. A key that is present but does not match the committed public key fails the release.
+   - Without a CRX, `updates.xml` answers 404 and the Help page hides managed install. The same holds for the GitLab mirror pipeline (`.gitlab-ci.yml`, unchanged).
 9. **The CRX3 packer is about 100 lines in the repo** (`apps/extension/scripts/crx3.ts`, `node:crypto` and hand-encoded protobuf), with a verifier, instead of a dependency in the signing step (threat T12).
-10. **The extension ID comes from `keys/yoda-reporter.pub`**, the base64 SPKI DER of the CRX key's public half, which is also the manifest `key`. Until the owner commits it, builds have no `key` (a path-derived dev ID that an admin allowlists in `extension.allowedIds`), `OFFICIAL_EXTENSION_ID` is `null`, and a real release fails with instructions (Tasks B13, D4).
+10. **The extension ID comes from a committed public key**, `keys/yoda-reporter.pub`: the base64 SPKI DER of the CRX key's public half, which is also the manifest `key`.
+    - The owner supplies it **before PR B merges**. PR B is blocked at merge until then; releases are not blocked.
+    - Until it is committed, local builds have no `key` (a path-derived dev ID that an admin allowlists in `extension.allowedIds`), and `OFFICIAL_EXTENSION_ID` is `null`.
+11. **Sensitive report text never reaches AI.**
+    - A report is sensitive when the tester ticked "the text may contain patient data" or its project is noAi. For a sensitive report, the text fields live only in `defect_reports`.
+    - `work_items.description` holds the fixed marker `DEFECT_WITHHELD_DESCRIPTION`: "[รายงานข้อบกพร่อง: ข้อความเก็บแยก ไม่ส่งให้ AI]" / "[Defect report: text kept separately, not sent to AI]".
+    - `work_items.title` keeps the tester's title, for people and notifications as today. Every AI path (context packs, secretary events, secretary tools) and the GitLab issue section use `aiTitle(item)`, which gives the neutral `DEFECT_SENSITIVE_TITLE` ("รายงานข้อบกพร่อง (ข้อมูลอ่อนไหว)" / "Defect report (sensitive)") for a sensitive defect.
+    - People read the real text on the portal's defect card.
+    - Outside notifications (email, LINE, Telegram) keep their existing behaviour and carry the real work item title; the docs say so.
+12. **The `defect` template is extension-only.** `EXTENSION_ONLY_TEMPLATES = ['defect']` is filtered out of `listTemplates` (the portal create dialog), and is refused by `POST /projects/:id/work-items` and by the secretary's create tools and proposals. Every defect item therefore has a report.
+13. **Reporting rights are as approved: staff members of the project only.**
+    - The session lists only the person's member projects, for admins too.
+    - The item's owner and requester is the reporter, who is a member, so `createWorkItem`'s member rule holds.
+    - Requesters never get a grant (authorize is staff-only).
+14. **The upload runs from the editor tab**, an extension page, not from the service worker. The editor asks the service worker for the current access token (`token.get`), keeps it in memory only, and posts the multipart itself. The B1 spike confirms the service-worker fetch limits that motivate this: event lifetime and large request bodies.
+15. **The refresh token lives in the extension origin's IndexedDB** (database `yoda-secrets`), or in `storage.session` when "sign out when the browser closes" is set. It moves to `storage.local` only if the B1 spike confirms that `setAccessLevel` keeps `storage.local` out of content scripts. The access token lives in `storage.session` with the default `TRUSTED_CONTEXTS` access level.
+16. **One offscreen document** exists at a time. Clips (C1) and the buffer (D1) share it, with messages routed by a `target` field. The 30 s hard stop and the buffer's 15-minute disarm are timed **in the offscreen document** with `setTimeout`, because the service worker can be stopped and the `alarms` permission is not requested.
 
 ## Delivery
 
 | PR | Branch | Tasks | Base |
 |---|---|---|---|
 | A: Yoda server side | `feat/extension-server` (this branch; its first commit is this plan plus the proposal update) | A1–A13 | `main` |
-| B: extension MVP (phase 0 spike + phase 1) | `feat/extension-mvp` | B1–B13 | stacked on A; retarget to `main` when A merges |
+| B: extension MVP (phase 0 spike + phase 1) | `feat/extension-mvp` | B1–B13 | stacked on A; retarget to `main` when A merges. **Merge gate:** the owner's `keys/yoda-reporter.pub` is committed |
 | C: video and mapping (phase 2) | `feat/extension-video-mapping` | C1–C5 | stacked on B |
 | D: buffer and managed install (phase 3) | `feat/extension-enterprise` | D1–D5 | stacked on C |
 
@@ -59,20 +104,33 @@ Verification per PR: CI green (`secrets`, `test` with `pnpm typecheck` and `pnpm
 - **No secrets anywhere.** No private keys, tokens or passwords in the repo, the zip, the CRX, logs, API responses (tokens only in the token response) or the extension's MAIN world. The private CRX key exists only as the `release`-environment secret `EXTENSION_CRX_KEY` (owner) or as a throwaway key made and deleted inside a dry-run job or test.
 - **Hostnames:** `example.org` placeholders only. Never write the internal GitLab hostname or any part of its domain.
 - **Versions:** `apps/extension/package.json` `version` equals the root and `apps/core` `package.json` version. The manifest uses `manifestVersion()` (decision 7).
-- **Tokens:** a prefix plus 32 random bytes in base64url (43 characters), as `runners/tokens.ts`. Only the SHA-256 (`hashToken`) and a 12-character display prefix are stored. Keycloak tokens are refused on `/extension/*`, and extension tokens are refused everywhere else.
-- **AI:** `defect_reports.no_ai` withholds the report text from context packs and the GitLab issue section. Attachment rows written by the defect route are always `noAi = true` and never call the knowledge `onStored` hook. A noAi project sends nothing to AI.
+- **Tokens:** a prefix plus 32 random bytes in base64url (43 characters), as `runners/tokens.ts`. Only the SHA-256 (`hashToken`) and a 12-character display prefix are stored.
+  - Extension tokens are never accepted outside `/extension/*`.
+  - Keycloak tokens are accepted, among the extension routes, only on `/extension/authorize`.
+- **AI:** sensitive report text and titles never reach AI (decision 11). Attachment rows written by the defect route are always `noAi = true`, can never be set back to `false`, and never call the knowledge `onStored` hook. A noAi project sends nothing to AI.
 - **Untrusted page data:** everything from the MAIN world or the page is schema-validated, size-capped (500 entries, 2 KB per message, 10 back-end builds), and rendered as text (never `v-html`) in the extension and the portal.
 - **No automatic masking (D2):** no regex masking, no capture stylesheet, no `data-yoda-mask` handling, in any package.
-- **Repo rules:** single quotes and no semicolons; th/en parity, Thai default; `data-testid` on new controls; the portal's components (`PageHeader`, `StatusChip`, `AppDialog`, `ConfirmDialog`, `EmptyState`, `ErrorState`); `pnpm typecheck` and `pnpm test` pass; migrations continue from `0024`, and each new table joins the `TRUNCATE` list in `apps/core/test/helpers.ts`; `runWork`, lock order and jobs-after-commit as in earlier plans; never `git stash`, never push to `main`.
-- **Permissions (§5):** required `activeTab`, `scripting`, `storage`, `identity`, `offscreen`; optional `tabCapture` and per-origin host permissions. Never `<all_urls>`, `tabs`, `debugger`, `webRequest`, `cookies`, `externally_connectable`, `web_accessible_resources` or manifest `content_scripts` in the release build.
+- **Repo rules:**
+  - single quotes and no semicolons;
+  - th/en parity, Thai default;
+  - `data-testid` on new controls;
+  - the portal's components (`PageHeader`, `StatusChip`, `AppDialog`, `ConfirmDialog`, `EmptyState`, `ErrorState`);
+  - `pnpm typecheck` and `pnpm test` pass;
+  - migrations continue from `0024`, and each new table joins the `TRUNCATE` list in `apps/core/test/helpers.ts`;
+  - `runWork`, lock order and jobs-after-commit as in earlier plans;
+  - never `git stash`, never push to `main`.
+- **Permissions (§5):**
+  - Required: `activeTab`, `scripting`, `storage`, `identity`, `offscreen`.
+  - Optional: `tabCapture` and per-origin host permissions, requested only from a click handler in an extension page (the popup or the options page), before any `await`, never from the service worker.
+  - Never in the release build: `<all_urls>`, `tabs`, `alarms`, `debugger`, `webRequest`, `cookies`, `externally_connectable`, `web_accessible_resources` or manifest `content_scripts`.
 
 ## Review Focus
 
-1. **The service worker dies mid-refresh, or two refreshes race.** The extension is single-flight. Core's 30 s grace (decision 4) rotates once instead of revoking; a later or second reuse revokes the grant. Tests in A2 and B3.
-2. **A 50 MB report through the built-in proxy.** Caddy caps bodies at 32 MiB today. `/api/extension/defects` gets its own 56 MiB cap, and a larger report gets 413 `too_large` with the limit, which the extension shows as "remove a file". Tests in A6 and A13.
-3. **A retry with the same `Idempotency-Key`**, sequential (after a timeout) or concurrent (two tabs). One work item results; the loser's objects are removed; both callers get the same body. Test in A6.
-4. **A hostile or noisy page**: 10 000 console lines, 1 MB messages, HTML in messages, a forged `yoda-build`, foreign `postMessage`s with our type. Entries stay capped; text renders as text in the editor and on the portal card; the forged build is visible and editable. Tests in B6 and A12.
-5. **Production sites with a stale or missing rule.** A page that matches a production application URL or GitLab production environment must not carry video or buffer files, even from an older or patched extension. Core refuses them: 422 `invalid_state`, reason `video_on_production`. Tests in A6 and C3.
+1. **The browser closes, or the service worker dies, mid-refresh.** The next refresh is a reuse and revokes the grant, as approved. The popup shows a calm "Reconnect", with no error dialog and no lost draft. Two refreshes in one browser never race, because refresh is single-flight. Tests in A2 and B3.
+2. **A 50 MB report through the built-in proxy.** Caddy caps bodies at 32 MiB, and `request_body` blocks are middleware that all apply. So the 32 MiB block must exclude `/api/extension/defects` (`@other not path …`), and the defect path gets its own 56 MiB block. A larger report gets 413 `too_large`, which the extension shows as "remove a file". Tests in A6 and A13, including a real Caddy run.
+3. **A retry with the same `Idempotency-Key`**, sequential (after a timeout) or concurrent (two clicks). It is checked before any limiter. A duplicate in flight waits for the winner and gets its body, and exactly one work item results. Test in A6.
+4. **A hostile or noisy page**: 10 000 console lines, 1 MB messages, HTML in messages, a forged `yoda-build`, foreign `postMessage`s with our type. Entries stay capped; text renders as text in the extension and on the portal card; the forged build is visible and editable. Tests in B6 and A12.
+5. **Production sites with a stale or missing rule in the extension.** Core refuses video and buffer files when the page URL matches a production rule of **any** of the person's projects, or when `privacy.productionSite` is set: 422 `invalid_state`, reason `video_on_production`. This catches stale or honest clients only: a hostile client can report another URL. The real guard is the extension's own production rules plus the confirmation. Tests in A6 and C3.
 
 ---
 
@@ -87,16 +145,17 @@ Verification per PR: CI green (`secrets`, `test` with `pnpm typecheck` and `pnpm
 **Interfaces (Produces):**
 - `EXTENSION_API_VERSION = 1`. `EXTENSION_TOKEN = { code: 'yoda_xc_', access: 'yoda_xt_', refresh: 'yoda_xr_' } as const`, and `extensionTokenRe(kind): RegExp`, which matches the prefix plus 43 base64url characters.
 - `OFFICIAL_EXTENSION_ID: string | null` (`extension-id.ts`, `null` until the owner commits `keys/yoda-reporter.pub`); `isExtensionId(s): boolean` (`/^[a-p]{32}$/`); `chromiumappRedirect(id) => 'https://<id>.chromiumapp.org/'`; `extensionIdFromPublicKey(spkiDer: Uint8Array): Promise<string>` (SHA-256 with WebCrypto, first 16 bytes, each nibble mapped to `a`–`p`).
-- `manifestVersion(yodaVersion: string): { version: string; versionName: string }` (decision 7; throws on anything else).
+- `isReleaseVersion(v): boolean` (only `x.y.z` or `x.y.z-rc.N`, N 1–999) and `manifestVersion(yodaVersion: string): { version: string; versionName: string }` (decision 7; throws on anything else).
+- `EXTENSION_ONLY_TEMPLATES`, `DEFECT_SENSITIVE_TITLE` and `DEFECT_WITHHELD_DESCRIPTION` (decisions 11 and 12; both `{ th, en }`).
 - Enums: `DefectSeverity` (`blocker | critical | major | minor | trivial`), `DefectKind` (`defect | bug_fix_request`), `AttachmentRole` (`screenshot | screenshot_full | video | buffer | console | network`), `BuildSource` (`meta | well-known | header | gitlab | manual`). `severityPriority(s): Priority` maps blocker and critical to `urgent`, major to `high`, minor to `normal`, trivial to `low`.
 - `DEFECT_LIMITS = { maxFiles: 8, maxReportBytes: 50 MiB, perRole: { screenshot: 10 MiB, screenshot_full: 15 MiB, video: 25 MiB, buffer: 25 MiB, console: 1 MiB, network: 1 MiB } }`. `DEFECT_TYPES: Record<AttachmentRole, string[]>`: images take `image/png`, `image/jpeg` and `image/webp`; video and buffer take `video/webm`; logs take `application/json`. `MEDIA_ROLES` and `LOG_ROLES`.
 - `ConsoleEntry` (`{ t, level: 'log'|'info'|'warn'|'error'|'debug'|'exception'|'rejection', message: string.max(2048), source?: string.max(500) }`) and `NetworkEntry` (`{ t, method, url: string.max(2048), status: number|null, durationMs, failed: boolean, kind: 'fetch'|'xhr'|'resource', yodaBuild?: string.max(500) }`); `CAPTURE_CAPS = { entries: 500, message: 2048, backendBuilds: 10 }`.
 - Schemas, as §10.1 with D2 applied:
   - `ExtensionAuthorize`, `ExtensionAuthorizeResponse`, `ExtensionTokenRequest` and `ExtensionTokenResponse`.
-  - `ExtensionSession`: `{ apiVersion, instance, latestExtension, person, projects: { id, name, noAi, kinds, repos }[], limits: { maxFileBytes, maxReportBytes, maxFiles, maxVideoSeconds, perRole, allowedTypes }, policy: { videoOnProduction: false, logsOnProductionDefault: false, requireConfirm: true } }`.
+  - `ExtensionSession` (projects: the person's member projects only): `{ apiVersion, instance, latestExtension, person, projects: { id, name, noAi, kinds, repos }[], limits: { maxFileBytes, maxReportBytes, maxFiles, maxVideoSeconds, perRole, allowedTypes }, policy: { videoOnProduction: false, logsOnProductionDefault: false, requireConfirm: true } }`.
   - `MappingRule`: `{ pattern, projectId, environment: string|null, production, source: 'app_url'|'gitlab', build: { repo, ref, sha, deployedAt }|null }`, and `ExtensionMappings = { rules: MappingRule[], ttlSeconds: 600 }`.
   - `ExtensionGrant` (the list view: `id, extensionId, browserLabel, createdAt, lastUsedAt, lastIp, revokedAt, revokeReason, person`), `AppUrl`, `AppUrlsPut` (at most 50), `ExtensionLatest` (`{ version, zipUrl, crxUrl: string|null } | null`).
-  - `DefectReportCreate`: §10.1 without `attachments[].masked`. `privacy` is `{ confirmedNoPatientData: literal(true), productionSite: boolean, textMayContainPatientData: boolean }`, and `page.url` is kept as captured.
+  - `DefectReportCreate`: §10.1 without `attachments[].masked`; each attachment declares `{ part, role, name, type, sizeBytes }` (A6). `privacy` is `{ confirmedNoPatientData: literal(true), productionSite: boolean, textMayContainPatientData: boolean }`, and `page.url` is kept as captured.
   - `DefectReportCreated` and `DefectReportView` (what the portal card reads).
 - `encodeDefectForm(report, files: { part: string; name: string; type: string; data: Blob }[]): FormData` (part `report` first, then the files in order).
 - `match-pattern.ts`: `parseMatchPattern(p): { scheme: 'http'|'https'|'*'; host: string; path: string } | null` (Chrome match-pattern grammar, with `*.` host prefix, no `<all_urls>`); `matchesPattern(p, url): boolean`; `patternSpecificity(p): [hostScore: number, pathLength: number]`, where a literal host scores higher than a wildcard host and longer hosts score higher.
@@ -112,7 +171,7 @@ Verification per PR: CI green (`secrets`, `test` with `pnpm typecheck` and `pnpm
 - `PublicConfig.extension = { enabled: boolean, apiVersion: number }`.
 
 - [ ] **Step 1: Write failing tests** in `extension.test.ts`:
-  - `manifestVersion`: `'1.2.0'` gives `{ version: '1.2.0.1000', versionName: '1.2.0' }`, `'1.2.0-rc.3'` gives `{ version: '1.2.0.3', versionName: '1.2.0-rc.3' }`, and it throws on `'1.2'` and `'1.2.0-rc'`;
+  - `manifestVersion`: `'1.2.0'` gives `{ version: '1.2.0.1000', versionName: '1.2.0' }`, `'1.2.0-rc.3'` gives `{ version: '1.2.0.3', versionName: '1.2.0-rc.3' }`, and it throws on `'1.2'`, `'1.2.0-rc'`, `'1.2.0-rc.0'`, `'1.2.0-rc.1000'` and `'1.2.0-beta.1'`;
   - `extensionIdFromPublicKey` gives a known ID for a fixed test SPKI (generate a throwaway key once, inline its public DER and the ID Chrome showed for it);
   - `chromiumappRedirect` and `isExtensionId`;
   - `severityPriority` for all five severities;
@@ -120,7 +179,7 @@ Verification per PR: CI green (`secrets`, `test` with `pnpm typecheck` and `pnpm
   - `encodeDefectForm`, through `new Response(fd)`, has the `report` part first and the file parts named `file1`…;
   - `ConsoleEntry` rejects a 2049-character message.
 
-  In `match-pattern.test.ts`, a table: `https://*.review.example.org/*` matches `https://a.review.example.org/x` and `https://review.example.org/` and not `http://a.review.example.org/`. `http://localhost:3000/*` matches its own port. `patternSpecificity` ranks `https://app.example.org/opd/*` above `https://app.example.org/*` above `https://*.example.org/*`. Invalid patterns give null.
+  In `match-pattern.test.ts`, a table: `https://*.review.example.org/*` matches `https://a.review.example.org/x` and `https://review.example.org/` and not `http://a.review.example.org/`. `http://localhost:3000/*` matches its own port only. `http://localhost/*` matches `http://localhost:5173/x` and `http://localhost/` (a port-less host pattern matches any port, as in Chrome). `patternSpecificity` ranks `https://app.example.org/opd/*` above `https://app.example.org/*` above `https://*.example.org/*`. Invalid patterns give null.
 
   In `settings-registry.test.ts`: every `extension.*` key has a default, and `extension.dirs` is bootstrap-only with its env name.
 - [ ] **Step 2: Run** `pnpm vitest run packages/shared` — Expected: FAIL (module not found).
@@ -132,71 +191,127 @@ Verification per PR: CI green (`secrets`, `test` with `pnpm typecheck` and `pnpm
 
 **Files:**
 - Create: `apps/core/src/extension/tokens.ts`, `apps/core/src/extension/grants.ts`, migration `apps/core/drizzle/0024_extension_grants.sql` (via `pnpm --filter @yoda/core db:generate`), `apps/core/test/extension-grants.test.ts`
-- Modify: `apps/core/src/db/schema.ts`, `apps/core/test/helpers.ts` (TRUNCATE list)
+- Modify: `apps/core/src/db/schema.ts`, `apps/core/test/helpers.ts` (TRUNCATE list), `apps/core/src/settings/rate-limit.ts` (`check`), `apps/core/test/settings-rate-limit.test.ts`
 
 **Tables:**
-- `extension_grants`: `id, person_id → people, extension_id, browser_label, access_hash unique null, access_expires_at, family_id uuid, idle_expires_at, absolute_expires_at, created_at, last_used_at, last_ip, revoked_at, revoked_by → people null, revoke_reason`, where `revoke_reason` is one of `user`, `admin`, `admin_all`, `reuse_detected`, `person_blocked` or `extension_disabled`.
+- `extension_grants`: `id, person_id → people, extension_id, browser_label, access_hash unique null, access_expires_at, family_id uuid, idle_expires_at, absolute_expires_at, created_at, last_used_at, last_ip, revoked_at, revoked_by → people null, revoke_reason`, where `revoke_reason` is one of:
+  - `user`;
+  - `admin`;
+  - `admin_all`;
+  - `reuse_detected`;
+  - `extension_not_allowed`: set when a refresh finds the extension ID no longer in the effective allowlist;
+  - `not_staff`: set when a refresh finds the person is no longer staff by `meFromPerson`. `people` has no blocked column; a person disabled in Keycloak stops at the 14-day re-check.
 - `extension_auth_codes`: `code_hash PK, person_id, extension_id, redirect_uri, code_challenge, browser_label, expires_at, used_at`.
-- `extension_refresh_tokens`: `hash PK, grant_id → extension_grants on delete cascade, created_at, used_at null, successor_hash null`.
+- `extension_refresh_tokens`: `hash PK, grant_id → extension_grants on delete cascade, created_at, used_at null`.
 
 **Interfaces (Produces):**
 - `newExtensionToken(kind: 'code'|'access'|'refresh'): { token; hash; prefix }` (it reuses `hashToken` from `runners/tokens.ts`); `verifyPkceS256(verifier: string, challenge: string): boolean` (the verifier has 43–128 unreserved characters; the comparison is constant-time).
-- `class GrantError extends Error { reason: 'invalid_grant' | 'reauth_required' | 'revoked' }`.
+- `class GrantError extends Error { reason: 'invalid_grant' | 'reauth_required' | 'revoked'; familyId: string | null }`.
+- `effectiveAllowedIds(settings): string[]` is `extension.allowedIds` plus `OFFICIAL_EXTENSION_ID`.
 - `issueAuthCode(db, me: Me, input: ExtensionAuthorize, opts: { allowedIds: string[]; now: Date }): Promise<{ redirectTo: string }>`. It throws `HttpError(403, { error: 'forbidden', reason: 'extension_not_allowed' | 'redirect_mismatch' | 'not_staff' })`. The code lives 60 s.
-- `exchangeCode(db, req: { code; codeVerifier; extensionId }, ctx: GrantCtx): Promise<ExtensionTokenResponse>` and `refreshGrant(db, refreshToken: string, ctx: GrantCtx): Promise<ExtensionTokenResponse>`. `GrantCtx = { now: Date; ip: string; ttl: { accessMinutes; idleDays; absoluteDays; reauthDays } }`.
-- `authenticateExtension(db, authorization: string | undefined, now: Date): Promise<{ grant: GrantRow; me: Me } | null>`. It uses `meFromPerson`, requires staff, and updates `last_used_at` and `last_ip` at most once a minute.
+- `exchangeCode(db, req: { code; codeVerifier; extensionId }, ctx: GrantCtx): Promise<ExtensionTokenResponse>`. It claims the code with one atomic `UPDATE … WHERE used_at IS NULL AND expires_at > now RETURNING`, then checks PKCE and the extension ID.
+- `refreshGrant(db, refreshToken: string, ctx: GrantCtx): Promise<ExtensionTokenResponse>`.
+  - It locks the token row, then the grant, `FOR UPDATE`.
+  - A token whose `used_at` is set revokes the grant with `reuse_detected`, with no grace window.
+  - It checks revocation, idle and absolute expiry, the re-auth window (`people.last_seen_at` within `reauthDays`), staff status, and the effective allowlist.
+  - On success it marks the token used and issues the successor and a new access token.
+- `GrantCtx = { now: Date; ip: string; allowedIds: string[]; ttl: { accessMinutes; idleDays; absoluteDays; reauthDays } }`.
+- `authenticateExtension(db, authorization: string | undefined, ctx: { now: Date; allowedIds: string[] }): Promise<{ grant: GrantRow; me: Me } | null>`.
+  - It refuses a grant whose `extension_id` is not in the effective allowlist, so removing an ID cuts its grants at once.
+  - It uses `meFromPerson` and requires staff.
+  - It updates `last_used_at` and `last_ip` at most once a minute.
 - `revokeGrant(db, grantId, by: { personId: string | null; reason }): Promise<boolean>` and `revokeAllGrants(db, by): Promise<number>`.
+- `RateLimiter.check(key): { ok: true } | { ok: false; retryAfter: number }`: like `take`, but it never records a call.
 
 - [ ] **Step 1: Write failing tests** (`extension-grants.test.ts`, against the test DB):
   - Codes:
     - `code is single use, expires after 60 s, and is bound to the verifier and the extension id`;
+    - `two concurrent exchanges of one code: exactly one gets tokens, the other gets invalid_grant`;
     - `an unknown extension id or a redirect other than chromiumappRedirect(id) is refused, and no code is stored`;
     - `requesters get not_staff`.
   - Refresh:
-    - `refresh rotates: the old token's successor is issued and the access token changes`;
-    - `reuse within 30 s while the successor is unused rotates again and voids that successor`;
-    - `reuse after 30 s, or after the successor was used, revokes the grant with reuse_detected`;
+    - `refresh rotates: the successor works and the access token changes`;
+    - `any reuse of a rotated refresh token, even one second later, revokes the grant with reuse_detected, and the successor stops working`;
     - `idle 30 d and absolute 90 d expiry give invalid_grant`;
-    - `a person whose last_seen_at is older than reauthDays gets reauth_required, and a fresh portal sign-in clears it`.
+    - `a person whose last_seen_at is older than reauthDays gets reauth_required, and a fresh portal sign-in clears it`;
+    - `a person who lost staff status is refused and the grant is revoked with not_staff`.
+  - Allowlist:
+    - `removing the extension id from extension.allowedIds makes authenticate refuse at once`;
+    - `the next refresh revokes the grant with extension_not_allowed`.
   - Access and revocation:
-    - `authenticateExtension refuses a Keycloak JWT, a revoked grant, an expired access token, a non-staff owner, and a yoda_rt_ token`;
+    - `authenticateExtension refuses a Keycloak JWT, a revoked grant, an expired access token, and a yoda_rt_ token`;
     - `revokeGrant stops the access token at once`;
     - `only hashes and prefixes are stored` (no raw token in any row).
-- [ ] **Step 2: Run** `pnpm vitest run apps/core/test/extension-grants.test.ts` — Expected: FAIL.
-- [ ] **Step 3: Implement** the schema and migration, then the module. Lock order: the refresh token row, then the grant row, both `FOR UPDATE`, in one transaction.
-- [ ] **Step 4: Run** `pnpm vitest run apps/core/test/extension-grants.test.ts apps/core/test/db.test.ts` — Expected: PASS.
+
+  In `settings-rate-limit.test.ts`:
+  - `check reports the wait without consuming`;
+  - `check after take sees the take`.
+- [ ] **Step 2: Run** `pnpm vitest run apps/core/test/extension-grants.test.ts apps/core/test/settings-rate-limit.test.ts` — Expected: FAIL.
+- [ ] **Step 3: Implement** the schema and migration, `RateLimiter.check`, and the module.
+- [ ] **Step 4: Run** `pnpm vitest run apps/core/test/extension-grants.test.ts apps/core/test/settings-rate-limit.test.ts apps/core/test/db.test.ts` — Expected: PASS.
 - [ ] **Step 5: Commit** `feat(core): extension grants, PKCE codes and rotating refresh tokens`
 
-### Task A3: `/extension/*` auth hook, connect, token, revoke and session routes
+### Task A3: `/extension/*` route modes, connect, token, revoke and session routes
 
 **Files:**
 - Create: `apps/core/src/routes/extension.ts`, `apps/core/src/extension/hook.ts`, `apps/core/src/extension/limits.ts`, `apps/core/test/extension-routes.test.ts`
-- Modify: `apps/core/src/app.ts` (register the routes, add `yoda_xt_`/`yoda_xr_` bodies and the `idempotency-key` header to `LOGGER_OPTIONS.redact`), `apps/core/src/auth/plugin.ts` (`FastifyContextConfig.extension?: boolean`; `FastifyRequest.extension`), `apps/core/src/routes/public-config.ts`, `apps/core/test/public-config.test.ts`
+- Modify:
+  - `apps/core/src/app.ts`: register the routes; add `body.refreshToken`, `body.code`, `body.codeVerifier` and `req.headers["idempotency-key"]` to `LOGGER_OPTIONS.redact`.
+  - `apps/core/src/auth/plugin.ts`: `FastifyContextConfig.extension?: 'token' | 'public' | 'keycloak'`; `FastifyRequest.extension`; the gate below runs at the start of the `onRequest` hook in `registerAuth`.
+  - `apps/core/src/routes/public-config.ts`, `apps/core/test/public-config.test.ts`.
 
-**Interfaces:**
-- Consumes: A1 and A2.
-- Produces: routes marked `{ public: true, extension: true }` run `extensionHook`. It answers 404 when `extension.enabled` is false; otherwise it requires `authenticateExtension` and sets `request.extension = { grant, me }`, or answers 401 `unauthorized`. `limits.ts` exports `extensionLimiters(now)`: `token` (20/min per IP), `tokenFailures` (5 per 15 min per IP, counted only on `GrantError`), `authorize` (10/h per person), `session` (120/h per grant), plus `defects` and `DailyBytes`, used in A6.
-- Routes (core paths; the portal proxies `/api/*`):
-  - `POST /extension/authorize` (Keycloak), body `ExtensionAuthorize` → `ExtensionAuthorizeResponse`.
-  - `POST /extension/token` (public, body `ExtensionTokenRequest`) → `ExtensionTokenResponse`, or 401 `{ error: 'unauthorized', reason }`.
-  - `POST /extension/revoke` (extension token) → 204, reason `user`.
-  - `GET /extension/session` → `ExtensionSession`. Its projects are the person's member projects (admins: every active project); `latestExtension` comes from A12's `latestExtension()` (null until A12 lands); its limits come from `DEFECT_LIMITS` and `extension.maxVideoSeconds`.
-  - `GET /public-config` gains `extension`.
+**Route modes**, set on every `/extension/*` route:
+
+| Mode | Routes | Authentication |
+|---|---|---|
+| `token` | revoke, session, mappings (A8), defects (A6) | a `yoda_xt_` access token only, through `authenticateExtension`; any other bearer gets 401 |
+| `public` | `/extension/token`, `/extension/latest`, `/extension/download/:file`, `/extension/updates.xml` | none |
+| `keycloak` | `/extension/authorize` | the normal Keycloak path of `registerAuth`; no extension token |
+
+The gate runs in this order for every route with `config.extension` set:
+1. setup mode, as today: 503 `setup_required`;
+2. forced recovery mode: **503 `recovery_mode`**, for all three modes, because `registerAuth` returns early for public routes and must not skip this;
+3. `extension.enabled` is false: **404 `not_found`**, for all three modes, before any token is read;
+4. `token`: `authenticateExtension`, else 401; `public`: continue; `keycloak`: fall through to Keycloak verification.
+
+`token` and `public` routes are also marked `public: true`, so the Keycloak check skips them.
+
+**Limiters** (`limits.ts`, `RateLimiter` with `check` and `take`):
+- `token`: 120/min per IP, generous for one hospital NAT.
+- `codeFailures`: 5 per 15 min per IP. It is checked with `check` before a code exchange and taken only when the exchange fails.
+- `refreshFailures`: 5 per 15 min per token family (`GrantError.familyId`). An unknown refresh token (no family) counts only against `token`.
+- `authorize`: 10/h per person.
+- `session`: 120/h per grant.
+- `defects` and `DailyBytes`, used in A6.
+
+**Routes** (core paths; the portal proxies `/api/*`):
+- `POST /extension/authorize` (`keycloak`), body `ExtensionAuthorize` → `ExtensionAuthorizeResponse`.
+- `POST /extension/token` (`public`), body `ExtensionTokenRequest` → `ExtensionTokenResponse`, or 401 `{ error: 'unauthorized', reason }`.
+- `POST /extension/revoke` (`token`) → 204, reason `user`.
+- `GET /extension/session` (`token`) → `ExtensionSession`.
+  - Its projects are the person's **member** projects only, for admins too.
+  - `latestExtension` comes from A12's `latestExtension()` (null until A12 lands).
+  - Its limits come from `DEFECT_LIMITS` and `extension.maxVideoSeconds`.
+- `GET /public-config` gains `extension`.
 
 - [ ] **Step 1: Write failing tests**:
   - Connect:
     - `authorize → token → session round trip for a staff member, with PKCE`;
-    - `authorize is 401 without a Keycloak token`;
-    - `token answers 429 rate_limited with retryAfter after 20 calls a minute, and after 5 failed exchanges in 15 minutes`.
+    - `authorize is 401 without a Keycloak token and 401 with a yoda_xt_ token`.
   - Separation:
-    - `session refuses a Keycloak bearer, and /me and /projects refuse a yoda_xt_ token` (401);
-    - `revoke ends the grant`.
-  - Switch and contents:
-    - `extension.enabled=false gives 404 on every /extension/* route, and grants are kept`;
-    - `session lists only member projects, with noAi and repos`;
+    - `session refuses a Keycloak bearer, and /me and /projects refuse a yoda_xt_ token` (401).
+  - Modes:
+    - `all three modes answer 404 when extension.enabled=false, and grants are kept`;
+    - `all three modes answer 503 recovery_mode in forced recovery mode`.
+  - Limits:
+    - `5 failed code exchanges from one IP give 429 with retryAfter, and successful ones do not count`;
+    - `5 failed refreshes in one family give 429 for that family only; another family from the same IP still refreshes`.
+  - Contents:
+    - `revoke ends the grant`;
+    - `session lists only member projects (an admin sees only their member projects), with noAi and repos`;
     - `public-config reports extension.enabled`.
 - [ ] **Step 2: Run** `pnpm vitest run apps/core/test/extension-routes.test.ts` — Expected: FAIL.
-- [ ] **Step 3: Implement** the hook as an app-level `onRequest` after `registerAuth`, keyed on `routeOptions.config.extension`. Log grant lifecycle lines (`created`, `refreshed_after_reauth`, `revoked`, `reuse_detected`) with grant id and person id only.
+- [ ] **Step 3: Implement** them. Log grant lifecycle lines (`created`, `refreshed_after_reauth`, `revoked`, `reuse_detected`) with grant id and person id only.
 - [ ] **Step 4: Run** `pnpm vitest run apps/core` — Expected: PASS.
 - [ ] **Step 5: Commit** `feat(core): extension connect, token, revoke and session routes`
 
@@ -223,11 +338,20 @@ Verification per PR: CI green (`secrets`, `test` with `pnpm typecheck` and `pnpm
 - [ ] **Step 4: Run** the same command — Expected: PASS.
 - [ ] **Step 5: Commit** `feat(core): connected browsers API`
 
-### Task A5: The `defect` template, `defect_reports` and the create service
+### Task A5: The `defect` template, `defect_reports`, the create service and AI withholding
 
 **Files:**
-- Create: `apps/core/src/workflow/templates/defect.json`, `apps/core/src/defects/service.ts`, migration `0025_defect_reports.sql`, `apps/core/test/defects-service.test.ts`
-- Modify: `apps/core/src/db/schema.ts`, `apps/core/src/work/queries.ts` (`getWorkItemDetail` adds `defect`), `apps/core/src/knowledge/context-pack.ts`, `apps/core/src/gitlab/issue-section.ts`, `apps/core/test/templates.test.ts`, `apps/core/test/context-pack.test.ts`, `apps/core/test/issue-section.test.ts`, `apps/core/test/helpers.ts`, `apps/portal/i18n/locales/{th,en}.json` (`events.defect.reported`, `events.attachment.removed`, `events.attachment.purged`)
+- Create: `apps/core/src/workflow/templates/defect.json`, `apps/core/src/defects/service.ts`, `apps/core/src/defects/ai-view.ts`, migration `0025_defect_reports.sql`, `apps/core/test/defects-service.test.ts`, `apps/core/test/defects-ai.test.ts`
+- Modify:
+  - `apps/core/src/db/schema.ts`;
+  - `apps/core/src/work/queries.ts`: `getWorkItemDetail` adds `defect`; `listTemplates` filters `EXTENSION_ONLY_TEMPLATES`;
+  - `apps/core/src/work/engine.ts`: `createWorkItem` refuses an extension-only template unless called with `{ allowExtensionOnly: true }`, with 422 `invalid_state` and reason `extension_only_template`;
+  - `apps/core/src/secretary/tools.ts`: the create tools refuse extension-only templates; the tool-output wrapper applies `aiTitle`;
+  - `apps/core/src/secretary/events.ts`: the done summary uses `aiTitle`, and the description is already the marker;
+  - `apps/core/src/knowledge/context-pack.ts`, `apps/core/src/gitlab/issue-section.ts`;
+  - `apps/core/test/templates.test.ts`, `apps/core/test/context-pack.test.ts`, `apps/core/test/issue-section.test.ts`, `apps/core/test/secretary.test.ts`, `apps/core/test/secretary-events.test.ts`, `apps/core/test/helpers.ts`;
+  - `packages/shared/src/extension.ts`: `EXTENSION_ONLY_TEMPLATES`, `DEFECT_SENSITIVE_TITLE`, `DEFECT_WITHHELD_DESCRIPTION`, each `{ th, en }` where text;
+  - `apps/portal/i18n/locales/{th,en}.json`: `events.defect.reported`, `events.attachment.removed`, `events.attachment.purged`.
 
 **Template** (§10.2, human-only):
 - step `triage` (คัดกรอง / Triage): `triage-defect`, approval, QC;
@@ -237,72 +361,114 @@ Verification per PR: CI green (`secrets`, `test` with `pnpm typecheck` and `pnpm
 Write th/en titles and instructions in the style of `bug-fix.json`.
 
 **Table** `defect_reports`:
-- `work_item_id PK → work_items on delete cascade, kind, severity, steps jsonb, expected, actual`;
+- `work_item_id PK → work_items on delete cascade, kind, severity, description, steps jsonb, expected, actual`;
 - `page_url, page_title, route, build jsonb null, backend_builds jsonb, client jsonb, captured_at`;
-- `reported_by → people, source ('extension'|'portal'), extension_version, grant_id null`;
-- `production_site bool, no_ai bool, idempotency_key uuid null, created_at`;
+- `reported_by → people, source ('extension'), extension_version, grant_id null`;
+- `production_site bool, sensitive bool, idempotency_key uuid null, created_at`;
 - `unique(reported_by, idempotency_key)`.
 
 The same migration adds `attachments.role text null`, checked against `AttachmentRole`, and `attachments.purged_at timestamptz null`.
 
-**Interfaces (Produces):** `createDefect(ctx: WorkCtx, me: Me, input: DefectReportCreate, files: StoredDefectFile[], meta: { grantId; extensionVersion; idempotencyKey }): Promise<{ workItemId: string }>`, where `StoredDefectFile = { role; storageKey; fileName; contentType; sizeBytes }`.
-
-The service:
-1. calls `createWorkItem` with template `defect`, or `bug-fix` for `bug_fix_request`, with priority `severityPriority`, requester = the reporter, and a description built from the text fields;
-2. inserts `defect_reports` with `no_ai = input.privacy.textMayContainPatientData`, unless the project is noAi, which makes it true;
-3. inserts one attachment row per file with `noAi: true`, `role` and `workItemId`;
-4. records `defect.reported` with the metadata-only payload `{ source, extensionVersion, grantId, kind, severity, files: [{ role, sizeBytes }], productionSite, aiAllowed }`.
+**Interfaces (Produces):**
+- `createDefect(ctx: WorkCtx, me: Me, input: DefectReportCreate, files: StoredDefectFile[], meta: { grantId; extensionVersion; idempotencyKey }): Promise<{ workItemId: string }>`, where `StoredDefectFile = { role; storageKey; fileName; contentType; sizeBytes }`. It:
+  1. computes `sensitive = input.privacy.textMayContainPatientData || project.noAi`;
+  2. calls `createWorkItem(…, { allowExtensionOnly: true })` with template `defect`, or `bug-fix` for `bug_fix_request`, with:
+     - priority `severityPriority`;
+     - owner and requester = the reporter, a staff member of the project;
+     - the title as given;
+     - the description: the composed text when not sensitive, else `DEFECT_WITHHELD_DESCRIPTION` in the project's language pair (th, then en);
+  3. inserts `defect_reports` with the full text and `sensitive`;
+  4. inserts one attachment row per file with `noAi: true`, `role` and `workItemId`;
+  5. records `defect.reported` with the metadata-only payload `{ source, extensionVersion, grantId, kind, severity, files: [{ role, sizeBytes }], productionSite, aiAllowed: !sensitive }`.
+- `ai-view.ts`:
+  - `sensitiveDefectIds(db, workItemIds): Promise<Set<string>>`;
+  - `aiTitle(item: { id; title }, sensitive: Set<string>, lang: 'th' | 'en'): string`;
+  - `redactToolOutput(db, output: unknown): Promise<unknown>` walks a secretary tool result. Every object carrying `workItemId`, or the `work_item` tool's root `id`, of a sensitive defect gets `title` replaced by `DEFECT_SENSITIVE_TITLE`, and `description` by the marker. It is applied once, in the secretary tools' `guarded()` wrapper.
 
 - [ ] **Step 1: Write failing tests**:
-  - `defect.json passes validateTemplate and seeds`;
-  - `createDefect makes a triage-step item with requester = reporter and priority from severity`;
-  - `bug_fix_request uses the bug-fix template`;
-  - `every attachment row is noAi and has its role; no knowledge entry is created`;
-  - `the event payload holds no text from the report`;
-  - `context pack shows "[withheld: report marked do not send to AI]" for a no_ai defect`, and `the GitLab issue section withholds the text the same way, never links media bytes, and shows severity, build and browser`;
-  - `a noAi project forces defect_reports.no_ai`.
-- [ ] **Step 2: Run** `pnpm vitest run apps/core/test/defects-service.test.ts apps/core/test/templates.test.ts apps/core/test/context-pack.test.ts apps/core/test/issue-section.test.ts` — Expected: FAIL.
-- [ ] **Step 3: Implement** the template, the migration, the service, the detail field and the two withholding changes.
+  - `defects-service.test.ts`:
+    - `defect.json passes validateTemplate and seeds`;
+    - `createDefect makes a triage-step item owned and requested by the reporter, priority from severity`;
+    - `bug_fix_request uses the bug-fix template`;
+    - `every attachment row is noAi and has its role; no knowledge entry is created`;
+    - `the event payload holds no text from the report`;
+    - `a sensitive report keeps the text in defect_reports and the marker in work_items.description`;
+    - `a noAi project makes every report sensitive`.
+  - Templates:
+    - `listTemplates omits defect`;
+    - `POST /projects/:id/work-items with templateKey defect is 422 extension_only_template`;
+    - `the secretary's create tools refuse defect`.
+  - `defects-ai.test.ts`, with a sensitive defect titled "นายทดสอบ HN 0000":
+    - `the context pack shows DEFECT_SENSITIVE_TITLE and the marker, never the title or the text`;
+    - `the GitLab issue section shows the neutral title and the marker, severity, build and browser, and no media bytes`;
+    - `the secretary done-event summary prompt never contains the real title or text` (capture the prompt with the mock model);
+    - `every secretary tool that returns work items (search, todo, list_work_items, work_item, my_requests and the priority change summary) never returns the real title or text` (call each tool in the registry and search its JSON output);
+    - `a non-sensitive defect shows its real title to AI`;
+    - `outside notifications still carry the real work item title` (unchanged behaviour, asserted).
+- [ ] **Step 2: Run** `pnpm vitest run apps/core/test/defects-service.test.ts apps/core/test/defects-ai.test.ts apps/core/test/templates.test.ts apps/core/test/context-pack.test.ts apps/core/test/issue-section.test.ts apps/core/test/secretary.test.ts apps/core/test/secretary-events.test.ts` — Expected: FAIL.
+- [ ] **Step 3: Implement** the template, the migration, the service, the template filter and refusals, `ai-view.ts`, and its use in the context pack, the issue section, the secretary events and the tools wrapper.
 - [ ] **Step 4: Run** `pnpm vitest run apps/core` — Expected: PASS.
-- [ ] **Step 5: Commit** `feat(core): defect template, defect_reports and createDefect`
+- [ ] **Step 5: Commit** `feat(core): defect template and reports; sensitive text and titles kept from AI`
 
 ### Task A6: `POST /extension/defects`, multipart and idempotent
 
 **Files:**
 - Create: `apps/core/src/defects/upload.ts`, `apps/core/test/extension-defects.test.ts`
-- Modify: `apps/core/src/routes/extension.ts`, `apps/core/src/extension/limits.ts`
+- Modify: `apps/core/src/routes/extension.ts`, `apps/core/src/extension/limits.ts`, `packages/shared/src/extension.ts` (each `DefectReportCreate.attachments[]` entry declares `{ part, role, name, type, sizeBytes }`)
 
 **Interfaces:**
-- Consumes: `createDefect` (A5), `encodeDefectForm`, `DEFECT_LIMITS`, `DEFECT_TYPES`, `matchesPattern`, and the project's production rules (A7 and A8; until they land, `productionRulesFor()` returns `[]`).
-- Produces: `readDefectParts(request, limits): Promise<{ report: DefectReportCreate; files: { part; name; type; buf }[] }>` and `isWebm(buf): boolean` (EBML magic `1A 45 DF A3`).
-- `POST /extension/defects` behaviour, in order:
-  1. Read the `Idempotency-Key` header (a uuid); without one, answer 400 `validation`.
-  2. If `(person, key)` already has a report, drain the body and answer 200 with the stored `DefectReportCreated`.
-  3. Run the limiters: `defects` (20/h and 100/day per person), one in-flight upload per grant (otherwise 429, `retryAfter: 5`), and `DailyBytes` (300 MB/day per person).
-  4. Parse with `request.parts({ limits: { files: 8, fileSize: 25 MiB } })`: the part `report` (JSON) first; each file must be named in `report.attachments` with an allowed type for its role and its role's size cap; WebM must pass `isWebm`; the running total must stay ≤ 50 MiB. On failure answer 413 `too_large` (with `reason` naming the limit), 415 `unsupported_type` or 400.
-  5. Check the project: membership is checked as in `POST /projects/:id/work-items` (a non-member gets 404, a requester 403).
-  6. Refuse video or buffer files when `privacy.productionSite` is set, or when the page URL matches a production rule of the project: 422 `invalid_state`, reason `video_on_production`.
-  7. Put every object under `projects/<projectId>/defects/<uuid>/<name>`.
-  8. Run `runWork(createDefect)`. On any failure, remove the stored objects. On a unique violation of the idempotency key, remove ours and answer 200 with the winner's body.
-  9. Answer 201 `DefectReportCreated`, with the portal link `${org.publicUrl}/work-items/<id>`.
-- The production refusal is `new HttpError(422, { error: 'invalid_state', reason: 'video_on_production' })` (422 is already in the status union; `invalidState()` stays 409 elsewhere).
+- Consumes: `createDefect` (A5), `encodeDefectForm`, `DEFECT_LIMITS`, `DEFECT_TYPES`, `matchesPattern`, and `productionRulesForPerson(db, personId): Promise<string[]>` (A7 and A8; until they land, it returns `[]`).
+- Produces:
+  - `validateDeclaredReport(db, me, report, opts): Promise<void>`;
+  - `readDefectParts(request, onReport): Promise<{ report; files }>`;
+  - `isWebm(buf): boolean` (EBML magic `1A 45 DF A3`).
+
+**Order of work in `POST /extension/defects` (mode `token`):**
+1. Require the `Idempotency-Key` header (a uuid); without one, answer 400 `validation`.
+2. **Idempotency first, before any limiter:**
+   - if `(person, key)` already has a report, drain the body and answer 200 with its `DefectReportCreated`;
+   - if an upload with the same `(grant, key)` is in flight, await its promise and answer 200 with the winner's body (or its error).
+
+   The in-flight map is keyed by `${grantId}:${key}`.
+3. Limiters:
+   - another upload from the same grant with a **different** key gives 429 with `retryAfter: 5`;
+   - `defects` allows 20/h and 100/day per person.
+4. Parse the multipart with `request.parts({ limits: { parts: 9, files: 8, fields: 1, fieldSize: 64 KiB, fileSize: 25 MiB, headerPairs: 50 } })`. A `partsLimit`, `filesLimit` or `fieldsLimit` error, or a truncated field (`valueTruncated`), gives 413 `too_large` with `reason` `parts`, `files`, `fields` or `report_size`.
+5. **The `report` field must be the first part.** As soon as it arrives, before any file part is read, `validateDeclaredReport` checks:
+   - the zod schema (400 `validation` with `issues`, the existing shape);
+   - staff membership of the project (a non-member gets 404);
+   - every declared attachment: an allowed type for its role, the per-role size cap, and the total of at most 50 MiB (413 `too_large`, `reason: 'role:<role>' | 'total'`, or 415 `unsupported_type`);
+   - `DailyBytes` against the declared total (300 MB/day per person; 429 with `retryAfter`);
+   - production: video or buffer roles are refused when `privacy.productionSite` is set or the page URL matches a production rule of **any** of the person's projects (422 `invalid_state`, `reason: 'video_on_production'`).
+
+   On any rejection, answer with `Connection: close` and do not read the remaining parts.
+6. Read each file part. It must be declared, and its type and byte length must equal the declaration (400 `validation`). WebM must pass `isWebm`.
+7. Put every object under `projects/<projectId>/defects/<uuid>/<name>`.
+8. Run `runWork(createDefect)`. On any failure, remove the stored objects. A unique violation on `(reported_by, idempotency_key)`, from another grant of the same person, removes ours and answers 200 with the stored body.
+9. Answer 201 `DefectReportCreated`, with the portal link `${org.publicUrl}/work-items/<id>`.
+
+Only existing `HttpError` fields are used (`error`, `reason`, `retryAfter`, and `issues` through `ZodError`). No new fields.
 
 - [ ] **Step 1: Write failing tests**, building bodies with `encodeDefectForm` and `new Response(fd)`:
-  - Happy path and retries:
+  - Happy path and idempotency:
     - `a report with a PNG, a WebM and two JSON logs creates one item and four noAi attachments`;
-    - `the same Idempotency-Key returns 200 and the same body, and stores nothing new`;
-    - `two concurrent posts with one key make one item, and the loser's objects are removed`.
-  - Limits and types:
-    - `a fake .webm without EBML magic is 415`;
-    - `a 26 MB video is 413`, and so are a 51 MB total and a ninth file;
-    - `a file whose part is not listed in report.attachments is 400`.
+    - `the same Idempotency-Key afterwards returns 200 and the same body, and stores nothing new`;
+    - `two concurrent posts from one grant with one key: the second waits and gets the winner's body; one item; no 429`;
+    - `two concurrent posts from one grant with different keys: the second gets 429`.
+  - Early rejection:
+    - `a report part that is not first is 400`;
+    - `an invalid report is rejected before any file part is read` (the test stream holds the file part back and asserts it was never consumed);
+    - `a declared 26 MB video is 413 role:video, read before the bytes`;
+    - `a ninth file is 413 files`, and so is a 65 KiB report field;
+    - `a file whose length differs from its declaration is 400`;
+    - `a fake .webm without EBML magic is 415`.
   - Access and rules:
-    - `video on a production site is 422 video_on_production`;
-    - `a non-member gets 404, a requester's grant 403, a revoked grant 401`;
+    - `video whose URL matches a production rule of another of the person's projects is 422 video_on_production`;
+    - `a non-member gets 404; a revoked grant 401`;
     - `the 21st report in an hour is 429 with retryAfter`;
     - `a storage failure after two puts removes both objects and creates no item`.
 - [ ] **Step 2: Run** `pnpm vitest run apps/core/test/extension-defects.test.ts` — Expected: FAIL.
-- [ ] **Step 3: Implement** the route and helpers. Do not touch the app-wide multipart registration.
+- [ ] **Step 3: Implement** them. Do not touch the app-wide multipart registration.
 - [ ] **Step 4: Run** `pnpm vitest run apps/core` — Expected: PASS.
 - [ ] **Step 5: Commit** `feat(core): POST /extension/defects, multipart and idempotent`
 
@@ -338,7 +504,7 @@ The service:
 - `upsertDeployment(db, repoId, d: { name; externalUrl; tier; ref; sha; status; deployedAt })`, which ignores an event older than the stored `deployed_at`; `syncEnvironments(deps, repoId)`.
 - `externalUrlPattern(url): string | null` turns `https://review-12.example.org/app` into `https://review-12.example.org/*`.
 - `GET /extension/mappings` (extension token, `session` limiter) → `ExtensionMappings`. It holds the app URL rules and the GitLab rules of the person's projects; a GitLab rule has `production` when the tier is `production` and `build` from the deployment.
-- `productionRulesFor(db, projectId): Promise<string[]>`, consumed by A6.
+- `productionRulesForPerson(db, personId): Promise<string[]>`: the production patterns of **all** the person's member projects (application URLs with `production` plus GitLab `production`-tier environments), consumed by A6.
 
 - [ ] **Step 1: Write failing tests**:
   - `a deployment webhook upserts the environment and ignores an older event`;
@@ -350,27 +516,46 @@ The service:
 - [ ] **Step 4: Run** `pnpm vitest run apps/core` — Expected: PASS.
 - [ ] **Step 5: Commit** `feat(core): GitLab deploy environments and extension URL mappings`
 
-### Task A9: Removing defect files and retention
+### Task A9: Defect files: noAi lock, removal, retention, orphan sweep
 
 **Files:**
 - Create: `apps/core/src/defects/retention.ts`, `apps/core/test/defects-retention.test.ts`
-- Modify: `apps/core/src/routes/attachments.ts` (`DELETE /attachments/:id`; download of a purged row → 404 `not_found`, reason `purged`), `apps/core/src/attachments/service.ts` (`role` and `purgedAt` in the shape), `apps/core/src/jobs/queue.ts` and `jobs/handlers.ts` (`defect-retention`, daily at 03:00 Asia/Bangkok)
+- Modify:
+  - `apps/core/src/routes/attachments.ts`:
+    - `PATCH` refuses `noAi: false` on a row with a `role`;
+    - `DELETE /attachments/:id`;
+    - downloading a purged row gives 404 `not_found` with reason `purged`.
+  - `apps/core/src/attachments/service.ts` (`role` and `purgedAt` in the shape);
+  - `apps/core/src/storage/s3.ts` and `storage/memory.ts` (`list(prefix): AsyncIterable<{ key: string; lastModified: Date }>`), `apps/core/test/memory-storage.test.ts`;
+  - `apps/core/src/jobs/queue.ts` and `jobs/handlers.ts`: `defect-retention` daily at 03:00 Asia/Bangkok, `defect-orphan-sweep` daily at 03:15; `registerJobHandlers`' deps type adds `'storage'`.
 
 **Interfaces:**
-- `DELETE /attachments/:id` takes the body `{ reason: string.min(1).max(500) }`. The uploader, the project's PM or an admin may call it. An attachment without a `role` gives 409 `invalid_state`, reason `not_defect_attachment`. It removes the object, sets `purged_at` and records `attachment.removed` `{ attachmentId, role, reason }`, actor = the caller.
-- `purgeExpired(deps, now): Promise<{ media: number; logs: number }>`. An item's close time is its latest `work_item.done` or `work_item.cancelled` event. Media roles purge after `mediaRetentionDays`, log roles after `logRetentionDays`; 0 keeps the files. Items that are active (including reopened ones) are skipped. Each purge records `attachment.purged`, actor `system`.
+- `PATCH /attachments/:id` with `{ noAi: false }` on a row with a `role` gives 409 `invalid_state`, reason `defect_files_never_ai`.
+- `DELETE /attachments/:id` takes the body `{ reason: string.min(1).max(500) }`.
+  - The uploader, the project's PM or an admin may call it.
+  - An attachment without a `role` gives 409 `invalid_state`, reason `not_defect_attachment`.
+  - It removes the object, sets `purged_at` and records `attachment.removed` `{ attachmentId, role, reason }`, actor = the caller.
+- `purgeExpired(deps, now): Promise<{ media: number; logs: number }>`.
+  - An item's close time is its latest `work_item.done` or `work_item.cancelled` event.
+  - Media roles purge after `mediaRetentionDays`, log roles after `logRetentionDays`; 0 keeps the files.
+  - Items that are active, including reopened ones, are skipped.
+  - Each purge records `attachment.purged`, actor `system`.
+- `sweepOrphans(deps, now): Promise<number>` removes objects under `projects/*/defects/` that are older than 24 h and that no `attachments.storage_key` names. These are left behind by a crash between the put and the rollback.
 
 - [ ] **Step 1: Write failing tests**:
+  - `PATCH noAi:false on a defect file is 409, by the uploader and by the PM; noAi:true is a no-op`;
   - `uploader, PM and admin may remove; another member gets 403; a chat upload gets 409`;
   - `the removed file's download is 404 purged and the row stays`;
   - `a done item purges media after 180 d and logs after 90 d, not a day earlier`;
   - `0 keeps everything`;
   - `a reopened item is not purged`;
-  - `a cancelled item counts from its cancel event`.
-- [ ] **Step 2: Run** `pnpm vitest run apps/core/test/defects-retention.test.ts` — Expected: FAIL.
+  - `a cancelled item counts from its cancel event`;
+  - `the sweep removes an unreferenced object older than 24 h, and keeps a referenced one and a fresh one`;
+  - `memory storage lists by prefix`.
+- [ ] **Step 2: Run** `pnpm vitest run apps/core/test/defects-retention.test.ts apps/core/test/attachments.test.ts apps/core/test/memory-storage.test.ts` — Expected: FAIL.
 - [ ] **Step 3: Implement** them.
 - [ ] **Step 4: Run** `pnpm vitest run apps/core` — Expected: PASS.
-- [ ] **Step 5: Commit** `feat(core): remove defect files and purge them after retention`
+- [ ] **Step 5: Commit** `feat(core): defect files stay noAi, can be removed, purged and swept`
 
 ### Task A10: Portal approve page `/extension/connect`
 
@@ -383,6 +568,7 @@ The service:
 - `cancelUrl(redirectUri, state)` gives `<redirect>?error=access_denied&state=…`.
 - The page:
   - shows the Yoda name and origin in large text, the extension ID, the browser label, and what it may do: report defects, list my projects;
+  - says "Approve only right after you clicked Connect in the extension" above the buttons;
   - **Approve** calls `POST /api/extension/authorize`, then `location.replace(redirectTo)`;
   - **Cancel** goes to `cancelUrl`;
   - on 403 `extension_not_allowed`, shows "this extension is not approved by your Yoda admin" and redirects nowhere;
@@ -391,6 +577,7 @@ The service:
 - [ ] **Step 1: Write failing tests**:
   - `parseConnectQuery` cases;
   - `cancelUrl` keeps `state`;
+  - the i18n message `extension.connect.onlyAfterConnect` exists in th and en;
   - `nuxt.config.ts has the frame-ancestors rule for /extension/**` (read the file as text, as the ops tests do);
   - the i18n keys exist in both locales.
 - [ ] **Step 2: Run** `pnpm vitest run apps/portal/test/extensionConnect.test.ts` — Expected: FAIL.
@@ -436,7 +623,7 @@ The service:
   - `buildLine(build): string`;
   - `orderAttachments(list)`: screenshots, then video and buffer, then logs.
 - The card shows:
-  - severity (`StatusChip`), steps, expected and actual;
+  - severity (`StatusChip`), and the description, steps, expected and actual read from `defect_reports` (the real text, also for a sensitive report);
   - page URL (as text, opened with `rel=noopener`), build (with the commit linked to the GitLab repo for staff), browser and viewport;
   - images (blob URLs), video (`<video controls>` from a blob), and log tables, all as text;
   - "removed" placeholders for purged files, and a remove button for those allowed (A9).
@@ -466,24 +653,41 @@ The service:
 
 **Files:**
 - Create: `apps/core/scripts/dev-post-defect.ts` (`// DEV ONLY`)
-- Modify: `ops/proxy/Caddyfile`, `apps/core/test/ops-ci.test.ts`, `docs/operations.md` (the extension settings; `YODA_EXTENSION_DIRS`; the webhook's Deployment events; the defect upload limit for a hospital's own reverse proxy, e.g. nginx `client_max_body_size 56m` for `/api/extension/defects`; retention), `docs/guides/admin.md` (Connected browsers, allowlist, application URLs), `docs/guides/staff.md` and `staff.th.md` (Help page, reporting), `CHANGELOG.md` (an `unreleased` entry)
+- Modify:
+  - `ops/proxy/Caddyfile`, `apps/core/test/ops-ci.test.ts`, `apps/core/test/ops-proxy.test.ts`;
+  - `.github/workflows/release.yml`: `ops/proxy/**` joins the `pull_request.paths`, where it is missing today;
+  - `docs/operations.md`, covering:
+    - the extension settings and `YODA_EXTENSION_DIRS`;
+    - the webhook's Deployment events;
+    - the defect upload limit for a hospital's own reverse proxy (e.g. nginx `client_max_body_size 56m` for `/api/extension/defects`);
+    - retention and the orphan sweep;
+    - that outside notifications carry the real work item title even for a sensitive defect;
+  - `docs/development.md`: the curl walkthrough. Approve with a PKCE pair made by `openssl`, exchange the code, call the session, post a defect with `dev-post-defect.ts`, revoke.
+  - `docs/guides/admin.md` (Connected browsers, allowlist, application URLs), `docs/guides/staff.md` and `staff.th.md` (Help page, reporting, the notification-title note), `CHANGELOG.md` (an `unreleased` entry).
 
-The Caddyfile change, inside the site block:
+`request_body` is middleware: every matching block applies, and the innermost limit wins. So the cap is split with two matchers, inside the site block:
 
 ```
 @defects path /api/extension/defects
+@other not path /api/extension/defects
 request_body @defects {
 	max_size 56MiB
 }
+request_body @other {
+	max_size 32MiB
+}
 ```
 
-Keep the existing 32 MiB `request_body` for everything else. Check that Caddy applies the matcher-specific block to that path; the release dry run's `caddy validate` covers the syntax.
-
-- [ ] **Step 1: Write a failing test** in `ops-ci.test.ts`: `caps /api/extension/defects at 56MiB and everything else at 32MiB`.
-- [ ] **Step 2: Run** `pnpm vitest run apps/core/test/ops-ci.test.ts` — Expected: FAIL.
-- [ ] **Step 3: Implement** the Caddyfile change and the docs.
-- [ ] **Step 4: Run** `pnpm typecheck && pnpm test` — Expected: PASS.
-- [ ] **Step 5: Verify on the demo stack.** Approve a connect request as a staff user, with the curl walkthrough from `docs/development.md`: authorize with a PKCE pair, then the token exchange. Then post a defect with `apps/core/scripts/dev-post-defect.ts`, a helper marked `// DEV ONLY` that uses `encodeDefectForm`. See the card. Revoke in Settings. Take screenshots (desktop and phone) of the connect page, Connected browsers (both), the project's Application URLs tab, the defect card and Help, plus the GIF.
+- [ ] **Step 1: Write failing tests**:
+  - `ops-ci.test.ts`: `the 32MiB request_body block applies to @other, which excludes /api/extension/defects, and the defects path has its own 56MiB block; no unmatched request_body block remains`.
+  - `ops-proxy.test.ts`, extending the existing docker-gated suite: run the pinned Caddy image with the bundle's Caddyfile (internal certificate mode) on a throwaway docker network. A second Caddy container, aliased `portal`, answers `respond 200`. Then:
+    - `a 40 MiB POST to /api/extension/defects passes the proxy (200)`;
+    - `a 40 MiB POST to /api/projects/x/attachments gets 413`;
+    - `a 60 MiB POST to the defects path gets 413`.
+- [ ] **Step 2: Run** `pnpm vitest run apps/core/test/ops-ci.test.ts apps/core/test/ops-proxy.test.ts` — Expected: FAIL.
+- [ ] **Step 3: Implement** the Caddyfile change, the workflow path and the docs.
+- [ ] **Step 4: Run** `pnpm typecheck && pnpm test` — Expected: PASS. The proxy suite runs where docker is present, which includes GitHub CI.
+- [ ] **Step 5: Verify on the demo stack.** Run the `docs/development.md` walkthrough end to end and see the card. Revoke in Settings. Take screenshots (desktop and phone) of the connect page, Connected browsers (both), the project's Application URLs tab, the defect card and Help, plus the GIF.
 - [ ] **Step 6: Commit** `docs: Yoda Reporter server side, runbook and guides`, push, and open PR A with the test plan.
 
 ---
@@ -502,15 +706,18 @@ Prototype only in a scratch directory, with no production code. Write the findin
    - driving the `launchWebAuthFlow` window: is it a page Playwright sees?
 4. `tabCapture.getMediaStreamId` in automation with `--allowlisted-extension-id` and `--auto-accept-this-tab-capture`.
 5. A force-install with `ExtensionSettings` and `override_update_url` on one managed Chrome and one managed Edge (Windows VM), using a CRX from `chrome --pack-extension` and a throwaway key.
+6. Service-worker limits behind decision 14: a 40 MB multipart `fetch` from the service worker against the 5-minute event lifetime and idle shutdown, compared with the same upload from an extension page.
+7. Whether `chrome.storage.local.setAccessLevel` exists and keeps `storage.local` out of content scripts (decision 15).
+8. `permissions.request` for an origin, called from a popup click handler before any `await` (it must succeed), and after an `await` (expected to fail with "must be called during a user gesture").
 
-Record each answer and the fallback chosen (decision 2). Commit `docs: Yoda Reporter phase 0 spike findings`.
+Record each answer and the fallback chosen (decisions 2, 14 and 15). Commit `docs: Yoda Reporter phase 0 spike findings`.
 
 ### Task B2: `apps/extension` skeleton, manifest, theme and i18n
 
 **Files:**
 - Create:
   - `apps/extension/package.json` (`@yoda/extension`, version = the root version; scripts `dev`, `build`, `build:e2e`, `build:zip`, `typecheck`, `e2e`, `demo`, `check:dist`);
-  - `apps/extension/vite.config.ts`, `apps/extension/vitest.config.ts`, `apps/extension/tsconfig.json`;
+  - `apps/extension/vite.config.ts`, `apps/extension/vitest.config.ts` (`include: ['test/**/*.test.ts']` only, so the root run never picks up the Playwright specs in `e2e/`), `apps/extension/tsconfig.json`;
   - `apps/extension/src/manifest.ts`, `apps/extension/scripts/build-manifest.ts`;
   - `apps/extension/src/{popup,editor,options,offscreen}/index.html` and `main.ts`;
   - `apps/extension/src/sw/index.ts`, `apps/extension/src/injected/{isolated,main}.ts` (built as self-contained IIFEs in a second Vite build);
@@ -524,14 +731,15 @@ Record each answer and the fallback chosen (decision 2). Commit `docs: Yoda Repo
   - permissions exactly as §5, with `minimum_chrome_version: '116'` and the `_execute_action` command `Alt+Shift+Y`;
   - `storage.managed_schema` is added in D2, not here;
   - `key` only when `publicKey` is given (read from `keys/yoda-reporter.pub` when present, or `YODA_EXTENSION_PUBLIC_KEY_FILE` for tests);
-  - the `e2e` target adds `host_permissions: ['<all_urls>']`;
+  - the `e2e` target adds `host_permissions: ['<all_urls>']` and is written to `dist-e2e/`, never `dist/`;
   - `version` and `version_name` come from `manifestVersion`;
   - no `content_scripts`, no `web_accessible_resources`, no `externally_connectable`.
 - The `apps/extension/release/` output holds `yoda-reporter-<version>.zip`, built from `dist/` by `scripts/zip.ts` with sorted entries and every mtime = `SOURCE_DATE_EPOCH`.
 
 - [ ] **Step 1: Write failing tests**:
-  - `release manifest has exactly the required and optional permissions of §5 and none of the forbidden keys`;
+  - `release manifest has exactly the required and optional permissions of §5 and none of the forbidden keys (including alarms and tabs)`;
   - `e2e manifest differs only by host_permissions`;
+  - `the vitest config includes only test/**/*.test.ts`;
   - `version follows manifestVersion and package.json equals the root version`;
   - `key is present only with a public key`;
   - `th and en have identical keys and no HTML-like messages`;
@@ -544,28 +752,36 @@ Record each answer and the fallback chosen (decision 2). Commit `docs: Yoda Repo
 ### Task B3: Service worker core: messages, storage, API client
 
 **Files:**
-- Create: `apps/extension/src/sw/messages.ts`, `apps/extension/src/sw/store.ts`, `apps/extension/src/sw/api.ts`, `apps/extension/test/{messages,api}.test.ts`, `apps/extension/test/support/chrome.ts` (an in-memory `chrome.*` fake for unit tests)
+- Create: `apps/extension/src/sw/messages.ts`, `apps/extension/src/sw/store.ts`, `apps/extension/src/sw/secrets.ts`, `apps/extension/src/sw/api.ts`, `apps/extension/test/{messages,api,secrets}.test.ts`, `apps/extension/test/support/chrome.ts` (an in-memory `chrome.*` fake for unit tests)
 
 **Interfaces (Produces):**
-- `Msg`, a zod discriminated union of every runtime message: `profile.connect`, `profile.exchange`, `profile.remove`, `session.get`, `capture.arm`, `capture.screenshot`, `capture.fullPage`, `draft.get`, `draft.save`, `report.send`, and later `video.*` and `buffer.*`.
-- `onMessage(handler)` accepts only `sender.id === chrome.runtime.id`. It accepts `sender.tab` only for `capture.collected` from our injected scripts, with a matching per-injection nonce.
-- `store.ts`:
-  - `profiles(): Promise<Profile[]>`, where `Profile = { id, name, colour, url, isDefault, managed, sessionOnly, grantId, person }`, in `storage.local`;
-  - `accessToken(profileId)` and `setTokens(profileId, t)`: the access token in `storage.session`; the refresh token in `storage.local`, or in `storage.session` when `sessionOnly`.
+- `Msg`, a zod discriminated union of every runtime message: `profile.exchange`, `profile.remove`, `session.get`, `token.get`, `capture.arm`, `capture.screenshot`, `capture.fullPage`, `capture.collected`, `draft.get`, `draft.save`, and later `offscreen.*`.
+- `senderKind(sender, extensionId): 'page' | 'content' | 'foreign'`:
+  - `page`: `sender.id === extensionId` and `sender.url` starts with `chrome-extension://<id>/`, or `sender.origin` equals that origin;
+  - `content`: `sender.id === extensionId` and the URL is a web page;
+  - otherwise `foreign`.
+
+  `sender.tab` is not used to tell them apart, because an extension page in a tab also has one.
+- `onMessage(handler)` drops `foreign`. It accepts only `capture.collected` from `content`, with a matching per-injection nonce. Everything else must come from `page`, and `token.get` only from `page`.
+- `store.ts`: `profiles(): Promise<Profile[]>`, where `Profile = { id, name, colour, url, isDefault, managed, sessionOnly, grantId, person, needsReconnect }`, in `storage.local`.
+- `secrets.ts`:
+  - `getRefresh(profileId)` and `setRefresh(profileId, token | null)`: the extension origin's IndexedDB `yoda-secrets`, or `storage.session` when `sessionOnly`;
+  - `getAccess` and `setAccess`: `storage.session`.
 - `api.ts`:
   - `yodaFetch(profileId, path, init): Promise<Response>` adds the bearer;
-  - on 401, `refreshOnce(profileId)` runs a single flight shared by concurrent callers through a promise kept per profile and a `storage.session` lock entry, then retries once;
-  - `reauth_required` or `revoked` marks the profile "reconnect needed";
+  - on 401, `refreshOnce(profileId)` runs a single flight shared by concurrent callers, through a per-profile promise and a `storage.session` lock entry, then retries once;
+  - any `GrantError` reason (`invalid_grant`, `reauth_required`, `revoked`) clears the tokens and sets `needsReconnect`. The popup then shows a calm "Reconnect" button, with no error dialog, and drafts are kept;
   - `checkVersion(session)` gives `'ok' | 'update_available' | 'api_too_new'`.
 
 - [ ] **Step 1: Write failing tests**:
   - Messages:
-    - `messages from another extension id or a web page are ignored`;
+    - `senderKind: an extension page in a tab is page; a web page with our id is content; another id is foreign`;
+    - `token.get from content is refused`;
     - `unknown message types are rejected by the schema`.
   - Tokens:
     - `three concurrent 401s cause one refresh`;
-    - `a refresh answering reauth_required marks the profile and does not retry`;
-    - `sessionOnly keeps the refresh token in storage.session`.
+    - `a revoked refresh sets needsReconnect, clears the tokens, keeps drafts, and does not retry`;
+    - `sessionOnly keeps the refresh token in storage.session; otherwise it is in IndexedDB, never in storage.local`.
   - Version:
     - `checkVersion compares manifestVersion versions`;
     - `apiVersion 2 gives api_too_new`.
@@ -577,22 +793,27 @@ Record each answer and the fallback chosen (decision 2). Commit `docs: Yoda Repo
 ### Task B4: Connect flow
 
 **Files:**
-- Create: `apps/extension/src/sw/connect.ts`, `apps/extension/src/options/ConnectDialog.vue`, `apps/extension/test/connect.test.ts`
+- Create: `apps/extension/src/connect/connect.ts` (runs in the options page or the popup, never the service worker), `apps/extension/src/options/ConnectDialog.vue`, `apps/extension/test/connect.test.ts`
 
 **Interfaces:**
-- `startConnect(url: string): Promise<Profile>`:
-  1. normalise the URL: HTTPS, or `http://localhost` / `127.0.0.1`;
-  2. `GET <url>/api/public-config` must parse as `PublicConfig` with `extension.enabled`;
-  3. `permissions.request({ origins: [origin + '/*'] })`;
+- `onConnectClick(url: string)` is the click handler. It does steps 1 and 2 synchronously, before any `await`:
+  1. normalise the URL: HTTPS, or `http://localhost` / `127.0.0.1` on any port;
+  2. call `chrome.permissions.request({ origins: [origin + '/*'] })` as the first awaited call. Refusal ends the flow with "permission needed".
+
+  Then:
+  3. `GET <url>/api/public-config` must parse as `PublicConfig` with `extension.enabled`; otherwise "not a Yoda" (and `permissions.remove` the origin again);
   4. PKCE: 32 random bytes for the verifier, an S256 challenge, a random state;
   5. `launchWebAuthFlow({ url: <origin>/extension/connect?…, interactive: true })`;
-  6. check `state`, then send `profile.exchange`.
-- `exchange(origin, code, verifier)` → `POST /api/extension/token` → stores the profile.
-- The browser label is `navigator.userAgentData` brand, version and platform, at most 120 characters.
+  6. check `state`, then send `profile.exchange { origin, code, verifier }` to the service worker, which posts `/api/extension/token` and stores the profile.
+
+  The browser label is `navigator.userAgentData` brand, version and platform, at most 120 characters.
+- "Reconnect" in the popup calls `onConnectClick(profile.url)` from its own click handler. The permission is already granted, so the prompt does not appear.
 
 - [ ] **Step 1: Write failing tests** with the chrome fake and a fetch stub:
+  - `permissions.request is the first await of the click handler`: the fake records call order and asserts no awaited call before it;
   - `refuses http to a non-localhost host`;
-  - `refuses a site whose public-config is not Yoda`;
+  - `accepts http://localhost:5173`;
+  - `refuses a site whose public-config is not Yoda, and removes the origin permission`;
   - `a state mismatch aborts without exchanging`;
   - `error=access_denied gives a cancelled result`;
   - `the PKCE challenge is S256 of the verifier`;
@@ -622,33 +843,45 @@ Record each answer and the fallback chosen (decision 2). Commit `docs: Yoda Repo
 - [ ] **Step 4: Run** the same command — Expected: PASS.
 - [ ] **Step 5: Commit** `feat(extension): page metadata and build detection`
 
-### Task B6: Console and network capture (MAIN world)
+### Task B6: Console and network capture (MAIN world), across navigations
 
 **Files:**
-- Create: `apps/extension/src/injected/main.ts`, `apps/extension/src/capture/bridge.ts`, `apps/extension/src/capture/logs.ts`, `apps/extension/test/logs.test.ts`
+- Create: `apps/extension/src/injected/main.ts`, `apps/extension/src/capture/bridge.ts`, `apps/extension/src/capture/logs.ts`, `apps/extension/src/sw/capture-session.ts`, `apps/extension/test/{logs,capture-session}.test.ts`
 
 **Interfaces:**
-- `main.ts`, injected on "arm" or capture with `scripting.executeScript({ world: 'MAIN' })`, idempotent per page:
+- `main.ts` is injected on "arm" or capture with `scripting.executeScript({ world: 'MAIN' })`, and is idempotent per page. It:
   - wraps the `console.*` methods, `onerror`, `unhandledrejection`, `fetch` and XHR (method, URL, status, duration, and the `X-Yoda-Build` response header only; never other headers or bodies);
   - keeps a ring buffer of 500 entries;
-  - posts `{ type: 'yoda-reporter/v1', nonce, entries }` to `window`.
-- `bridge.ts` (ISOLATED) accepts only `event.source === window` messages with the type and nonce, and forwards them to the service worker.
+  - **forwards entries as they arrive**, batched every 500 ms, as `{ type: 'yoda-reporter/v1', nonce, entries }` posted to `window`.
+- `bridge.ts` (ISOLATED) accepts only `event.source === window` messages with the type and nonce, and forwards them to the service worker as `capture.collected`.
+- `capture-session.ts`:
+  - `appendEntries(tabId, entries)` keeps the newest 500 of each kind **per tab in `storage.session`**, so they survive a page navigation and a service-worker restart;
+  - on `tabs.onUpdated` with `status: 'complete'` for an armed tab, it re-injects the isolated and MAIN scripts when the new URL has the same origin. `activeTab` still applies on a same-origin navigation; a failed injection or another origin ends the session;
+  - `captureState(tabId)` gives `'armed' | 'stopped' | 'off'` with a `stoppedReason` of `'navigated_away' | 'injection_failed' | 'tab_closed'`. The popup and editor show "capture stopped at <time> (<reason>)" so the tester knows the logs end there;
+  - it clears the tab's entries when the tab closes or the draft is sent.
 - `resourceFailures(entries: PerformanceResourceTiming[]): NetworkEntry[]` keeps `responseStatus >= 400`, or 0 with `transferSize 0` on a same-origin entry.
 - `sanitizeEntries(raw: unknown[]): { console: ConsoleEntry[]; network: NetworkEntry[]; dropped: number }` validates with the shared schemas, truncates messages to 2048 characters, and keeps the newest 500 of each.
-- `backendBuilds(network): { origin; repo?; branch?; commit? }[]` gives at most 10, one per origin.
+- `backendBuilds(network)` gives at most 10, one per origin.
 
 - [ ] **Step 1: Write failing tests**:
-  - `10 000 entries keep the newest 500`;
-  - `a 1 MB message is cut to 2048 characters`;
-  - `non-schema entries are dropped and counted`;
-  - `HTML in a message stays text` (the editor renders with `{{ }}`; assert no `v-html` in `src/`);
-  - `resourceFailures` picks a 500 and a blocked same-origin load;
-  - `backendBuilds` dedupes per origin;
-  - `main.ts wraps fetch without changing its result or rejection` (run `main.ts` in a vitest `happy-dom` environment for this file only).
-- [ ] **Step 2: Run** `pnpm vitest run apps/extension/test/logs.test.ts` — Expected: FAIL.
+  - Caps and validation:
+    - `10 000 entries keep the newest 500`;
+    - `a 1 MB message is cut to 2048 characters`;
+    - `non-schema entries are dropped and counted`;
+    - `HTML in a message stays text` (assert no `v-html` in `src/`).
+  - Collection:
+    - `resourceFailures` picks a 500 and a blocked same-origin load;
+    - `backendBuilds` dedupes per origin;
+    - `main.ts wraps fetch without changing its result or rejection` (`happy-dom` environment for this file only).
+  - Navigation:
+    - `entries survive a same-origin navigation and the capture is re-injected`;
+    - `a cross-origin navigation stops capture with navigated_away and keeps the earlier entries`;
+    - `a failed re-injection stops capture with injection_failed`;
+    - `entries persist in storage.session across a service-worker restart` (the chrome fake reloads the module).
+- [ ] **Step 2: Run** `pnpm vitest run apps/extension/test/logs.test.ts apps/extension/test/capture-session.test.ts` — Expected: FAIL.
 - [ ] **Step 3: Implement** them.
 - [ ] **Step 4: Run** the same command — Expected: PASS.
-- [ ] **Step 5: Commit** `feat(extension): console and network capture without debugger`
+- [ ] **Step 5: Commit** `feat(extension): console and network capture without debugger, across navigations`
 
 ### Task B7: Screenshots: visible area and full page (beta)
 
@@ -752,22 +985,27 @@ Record each answer and the fallback chosen (decision 2). Commit `docs: Yoda Repo
 - [ ] **Step 4: Run** the same command and `pnpm --filter @yoda/extension typecheck` — Expected: PASS.
 - [ ] **Step 5: Commit** `feat(extension): annotation editor with blur, mosaic and redact burned in`
 
-### Task B10: Report form, check before sending, send
+### Task B10: Report form, check before sending, send from the editor tab
 
 **Files:**
-- Create: `apps/extension/src/editor/ReportForm.vue`, `apps/extension/src/editor/ReviewPanel.vue`, `apps/extension/src/report/build-report.ts`, `apps/extension/src/sw/send.ts`, `apps/extension/test/{build-report,send}.test.ts`
+- Create: `apps/extension/src/editor/ReportForm.vue`, `apps/extension/src/editor/ReviewPanel.vue`, `apps/extension/src/report/build-report.ts`, `apps/extension/src/editor/send.ts`, `apps/extension/test/{build-report,send}.test.ts`
 
 **Interfaces:**
 - `buildReport(draft, form, ctx: { profile; project; production: boolean; includeQuery: boolean; extensionVersion }): { report: DefectReportCreate; files: { part; name; type; data: Blob }[] }`:
   - file names are `screenshot.png`, `screenshot-full.png`, `video.webm`, `buffer-1.webm`, `buffer-2.webm`, `console.json` and `network.json`;
+  - each declaration carries `type` and `sizeBytes` (A6);
   - files the tester unticked are left out;
   - on production, console and network are included only when the tester turned them on for this report.
-- `sendReport(draftId)`:
-  1. reuses `draft.idempotencyKey`;
-  2. `POST /api/extension/defects` with `encodeDefectForm`;
-  3. retries network failures and 5xx 3 times with backoff, keeping the same key;
-  4. maps 413 to "remove a file (limit X)", 415, 422 `video_on_production` and 429 (`retryAfter`) to messages;
-  5. on 200 or 201, deletes the draft and shows the work item link.
+- `sendReport(draftId)` runs **in the editor tab** (decision 14):
+  1. it asks the service worker with `token.get { profileId }` and keeps the access token in a local variable only;
+  2. it reuses `draft.idempotencyKey`;
+  3. `POST <origin>/api/extension/defects` with `encodeDefectForm`, the host permission covering the Yoda origin;
+  4. on 401 it asks `token.get` again once, which triggers the service worker's single-flight refresh;
+  5. it retries network failures and 5xx 3 times with backoff, keeping the same key;
+  6. it maps 413 (with `reason`) to "remove a file", 415, 422 `video_on_production` and 429 (`retryAfter`) to messages;
+  7. on 200 or 201 it deletes the draft and shows the work item link.
+
+  A `needsReconnect` profile shows the calm Reconnect button and keeps the draft.
 - `ReviewPanel` shows:
   - every file with its size and a checkbox;
   - the required tick "I checked the screenshot and video: there is no patient data, or it is hidden with mosaic or redact" (Send is disabled until ticked);
@@ -776,13 +1014,15 @@ Record each answer and the fallback chosen (decision 2). Commit `docs: Yoda Repo
   - on production, a red `v-alert` warning.
 
 - [ ] **Step 1: Write failing tests**:
-  - `buildReport` sets `confirmedNoPatientData` only when ticked (otherwise throws);
+  - `buildReport` sets `confirmedNoPatientData` only when ticked (otherwise throws), and declares each file's type and exact size;
   - `on production, video and buffer are never included and logs only when turned on`;
   - `includeQuery=false strips the query`;
   - `unticked files are omitted`;
+  - `send asks token.get and never reads storage directly`;
   - `send retries a 503 with the same Idempotency-Key and deletes the draft on 201`;
   - `413 shows the limit and keeps the draft`;
-  - `429 waits retryAfter`.
+  - `429 waits retryAfter`;
+  - `a reconnect-needed profile keeps the draft and shows Reconnect`.
 - [ ] **Step 2: Run** `pnpm vitest run apps/extension/test/build-report.test.ts apps/extension/test/send.test.ts` — Expected: FAIL.
 - [ ] **Step 3: Implement** them. The form fields are kind (defect or bug-fix request), title, severity, steps (a list), expected, actual and description, with metadata and build shown with their source and editable.
 - [ ] **Step 4: Run** the same command — Expected: PASS.
@@ -801,7 +1041,7 @@ Record each answer and the fallback chosen (decision 2). Commit `docs: Yoda Repo
   - console and network counts after arming;
   - the actions Screenshot, Full page (beta), Arm capture and Text only;
   - toggles to attach the console log and the failed requests;
-  - the "update available" and "reconnect" banners.
+  - the "update available" banner, and the calm "Reconnect" button for a `needsReconnect` profile, whose click handler calls `onConnectClick` (B4).
 
 - [ ] **Step 1: Write failing tests**:
   - `?tab is ignored in the release build`;
@@ -820,8 +1060,8 @@ Record each answer and the fallback chosen (decision 2). Commit `docs: Yoda Repo
 
 **Interfaces:**
 - The fixture `withExtension`:
-  - builds `build:e2e` once, with a throwaway key made in the test's temp directory (never committed), giving a fixed ID per run;
-  - calls `chromium.launchPersistentContext('', { channel: 'chromium', args: ['--disable-extensions-except=<dist>', '--load-extension=<dist>'], recordVideo? })`;
+  - builds `build:e2e` into `dist-e2e/` once, with a throwaway key made in the test's temp directory (never committed), giving a fixed ID per run;
+  - calls `chromium.launchPersistentContext('', { channel: 'chromium', args: ['--disable-extensions-except=<dist-e2e>', '--load-extension=<dist-e2e>'], recordVideo? })`;
   - exposes `extensionId`, `sw` (from `context.serviceWorkers()`) and `openPopup(tabId)`.
 - `stub-yoda.ts` serves the endpoints below and records every report it receives, for the test to assert on:
   - `/api/public-config`;
@@ -863,31 +1103,48 @@ Record each answer and the fallback chosen (decision 2). Commit `docs: Yoda Repo
 **Files:**
 - Create: `apps/extension/scripts/check-dist.ts`
 - Modify:
-  - `.github/workflows/ci.yml` (`extension` job: `build:zip`, then `check:dist`, then gitleaks over `apps/extension/dist` with `detect --no-git --source`);
-  - `apps/core/Dockerfile` (stage `extension`: `pnpm install --frozen-lockfile --ignore-scripts --filter @yoda/extension...`, then `pnpm --filter @yoda/extension build:zip`; copy `apps/extension/release/` to `/app/extension/`);
-  - `.github/workflows/release.yml` (`meta` also checks `apps/extension/package.json`; on a real release, `keys/yoda-reporter.pub` must exist and `OFFICIAL_EXTENSION_ID` must equal its derived ID, otherwise `::error::` with the owner step from `docs/releasing.md`; `apps/extension/**` joins the `pull_request.paths`);
-  - `packages/shared/test/extension.test.ts` (when `keys/yoda-reporter.pub` exists, `OFFICIAL_EXTENSION_ID` matches it; when it is null, the file is absent);
+  - `apps/extension/package.json`:
+    - `build` writes `dist/`;
+    - `build:e2e` writes `dist-e2e/`;
+    - `build:zip` deletes `dist/`, runs a clean release build, then zips;
+  - `.gitignore` (`apps/extension/dist-e2e/`);
+  - `.github/workflows/ci.yml`: the `extension` job runs `build:zip`, then `check:dist`, then gitleaks over `apps/extension/dist` with `detect --no-git --source`;
+  - `apps/core/Dockerfile`: a stage `extension` runs `pnpm install --frozen-lockfile --ignore-scripts --filter @yoda/extension...`, then `pnpm --filter @yoda/extension build:zip`, and `apps/extension/release/` is copied to `/app/extension/`;
+  - `.github/workflows/release.yml`:
+    - `meta` refuses any tag other than `v<x.y.z>` or `v<x.y.z>-rc.<N>` with N from 1 to 999;
+    - `meta` checks that `apps/extension/package.json` has the same version;
+    - `apps/extension/**` joins the `pull_request.paths`;
+  - `packages/shared/test/extension.test.ts`: when `keys/yoda-reporter.pub` exists, `OFFICIAL_EXTENSION_ID` matches it; when it is null, the file is absent;
   - `apps/core/test/ops-ci.test.ts`;
-  - `docs/releasing.md` (the version rule, the zip in the core image, and the owner's key step, written for D but needed from the first tag after B);
-  - `docs/development.md` (building, loading unpacked, the dev ID and allowlisting it, running the e2e);
+  - `docs/releasing.md`: the version rule, the zip in the core image, and the owner's public-key step before PR B merges;
+  - `docs/development.md`: building, loading unpacked, the dev ID and allowlisting it, running the e2e;
   - `CHANGELOG.md`.
 
 **Interfaces:** `check-dist.ts <dir|zip>` exits non-zero when:
 - `manifest.json` breaks the §5 rules;
-- any `.js` file contains `eval(`, `new Function(` or a remote `http(s)://` script URL other than the profile's runtime fetches;
-- any file matches the gitleaks-style patterns for private keys;
-- the zip's manifest `version_name` is not the package version.
+- the release output contains the e2e-only code: the string `<all_urls>` anywhere, or the `?tab=` target branch, found by a marker constant `E2E_TAB_TARGET` that only the e2e build keeps;
+- any `.js` file contains `eval(` or `new Function(`, or loads a remote script;
+- any file matches the private-key patterns;
+- the manifest `version_name` is not the package version.
 
 - [ ] **Step 1: Write failing tests**:
-  - `check-dist` refuses a planted `host_permissions` entry and a planted `-----BEGIN PRIVATE KEY-----` (fixtures under `apps/extension/test/fixtures/`);
-  - `ops-ci`: `ci.yml builds and checks the zip and scans it with gitleaks`, `the core image carries the extension zip`, and `the release meta step checks the extension version and the public key`.
+  - `check-dist` refuses fixtures (under `apps/extension/test/fixtures/`) with:
+    - a planted `host_permissions` entry;
+    - `<all_urls>` in a bundle;
+    - the `E2E_TAB_TARGET` marker;
+    - a planted `-----BEGIN PRIVATE KEY-----`;
+  - `check-dist` passes a clean release build;
+  - in `ops-ci.test.ts`:
+    - `ci.yml builds and checks the zip and scans it with gitleaks`;
+    - `the core image carries the extension zip`;
+    - `the release meta step accepts only x.y.z and x.y.z-rc.N, and checks the extension version`.
 - [ ] **Step 2: Run** `pnpm vitest run apps/extension apps/core/test/ops-ci.test.ts` — Expected: FAIL.
 - [ ] **Step 3: Implement** them.
-- [ ] **Step 4: Run**:
-  - `pnpm --filter @yoda/extension build:zip && pnpm --filter @yoda/extension check:dist release/yoda-reporter-$(node -p "require('./package.json').version").zip` — Expected: OK;
-  - `docker build -f apps/core/Dockerfile -t yoda/core .`, then `docker run --rm yoda/core ls /app/extension` — Expected: the zip.
+- [ ] **Step 4: Run** the checks:
+  - `pnpm --filter @yoda/extension build:zip && pnpm --filter @yoda/extension check:dist release/yoda-reporter-$(node -p "require('./package.json').version").zip`. Expected: OK.
+  - `docker build -f apps/core/Dockerfile -t yoda/core .`, then `docker run --rm yoda/core ls /app/extension`. Expected: the zip.
 - [ ] **Step 5: Verify** on the demo stack with the zip loaded unpacked in Chrome and in Edge: connect, report, and see the card in the portal. Take screenshots of the popup, editor (mosaic visible), options and the Help page with a working download.
-- [ ] **Step 6: Commit** `build(extension): zip in CI and in the core image, release checks`, push, and open PR B (stacked on A) with the test plan, screenshots and the GIF.
+- [ ] **Step 6: Commit** `build(extension): zip in CI and in the core image, release checks`, push, and open PR B (stacked on A) with the test plan, screenshots and the GIF. **Merge gate:** `keys/yoda-reporter.pub` (owner) is committed and `OFFICIAL_EXTENSION_ID` is filled before PR B merges.
 
 ---
 
@@ -896,27 +1153,36 @@ Record each answer and the fallback chosen (decision 2). Commit `docs: Yoda Repo
 ### Task C1: 30 s clips (tabCapture and an offscreen MediaRecorder)
 
 **Files:**
-- Create: `apps/extension/src/offscreen/recorder.ts`, `apps/extension/src/sw/video.ts`, `apps/extension/test/recorder.test.ts`, `docs/design/extension-spike.md` (section "Video re-encode measurement")
+- Create: `apps/extension/src/offscreen/router.ts`, `apps/extension/src/offscreen/recorder.ts`, `apps/extension/src/sw/offscreen.ts`, `apps/extension/test/{recorder,offscreen}.test.ts`, `docs/design/extension-spike.md` (section "Video re-encode measurement")
 - Modify: `apps/extension/src/popup/App.vue`, `apps/extension/src/sw/messages.ts`
 
 **Interfaces:**
+- The popup's Record click handler calls `chrome.permissions.request({ permissions: ['tabCapture'] })` the first time, before any `await`, then sends `video.start { tabId }`. The service worker never requests permissions.
+- `sw/offscreen.ts`:
+  - `ensureOffscreen()` creates the single offscreen document (`reasons: ['USER_MEDIA']`) unless `chrome.runtime.getContexts({ contextTypes: ['OFFSCREEN_DOCUMENT'] })` finds it;
+  - `closeOffscreenIfIdle()` closes it when neither a clip nor the buffer runs;
+  - messages carry `target: 'offscreen'` and `job: 'clip' | 'buffer'`, and `router.ts` dispatches them in the document.
 - `startClip(tabId)`:
-  1. `permissions.request({ permissions: ['tabCapture'] })` the first time;
-  2. `tabCapture.getMediaStreamId({ targetTabId })`;
-  3. `offscreen.createDocument({ reasons: ['USER_MEDIA'] })`;
-  4. send `video.start { streamId, maxSeconds }`.
-- `stopClip()` → a `Blob`.
-- `pickMimeType(isSupported): string` prefers `video/webm;codecs=vp9`, then `vp8`.
-- The recorder: about 1 Mbit/s, at most 1280 px wide, no audio, a hard stop at `session.limits.maxVideoSeconds`; `fixDuration(blob, ms)` with `fix-webm-duration`.
+  1. `tabCapture.getMediaStreamId({ targetTabId })`;
+  2. `ensureOffscreen()`;
+  3. send `{ target: 'offscreen', job: 'clip', type: 'start', streamId, maxSeconds }`.
+- The recorder:
+  - `pickMimeType(isSupported): string` prefers `video/webm;codecs=vp9`, then `vp8`;
+  - about 1 Mbit/s, at most 1280 px wide, no audio;
+  - **the hard stop at `maxSeconds` is a `setTimeout` in the offscreen document** (decision 16);
+  - `fixDuration(blob, ms)` with `fix-webm-duration`;
+  - the clip goes back to the service worker, which stores it in the draft.
 - Production rules (`rule.production`) hide the video action, and the service worker refuses `video.start` on such a tab.
-- The measurement for decision 1 runs the C2 pipeline in the offscreen document and in the editor tab on a 30 s synthetic clip and records the frame ratio of each.
+- The measurement for decision 1 runs C2's two paths in the editor tab on a 30 s synthetic clip, and records the frame ratio and duration of each.
 
 - [ ] **Step 1: Write failing tests**:
   - `pickMimeType` falls back to vp8;
-  - `the recorder stops at maxSeconds` (fake timers, a fake `MediaRecorder`);
+  - `the offscreen recorder stops itself at maxSeconds without the service worker` (fake timers, a fake `MediaRecorder`);
   - `video.start is refused on a production tab`;
-  - `the offscreen document is closed after stop`.
-- [ ] **Step 2: Run** `pnpm vitest run apps/extension/test/recorder.test.ts` — Expected: FAIL.
+  - `only one offscreen document is created when the buffer already runs, and a clip message is routed to the clip job`;
+  - `the document is closed when the last job ends`;
+  - `the popup requests tabCapture before any await`.
+- [ ] **Step 2: Run** `pnpm vitest run apps/extension/test/recorder.test.ts apps/extension/test/offscreen.test.ts` — Expected: FAIL.
 - [ ] **Step 3: Implement** them, and record the measurement in the spike doc.
 - [ ] **Step 4: Run** the same command — Expected: PASS.
 - [ ] **Step 5: Commit** `feat(extension): 30-second tab clips`
@@ -924,27 +1190,36 @@ Record each answer and the fallback chosen (decision 2). Commit `docs: Yoda Repo
 ### Task C2: Mosaic on video
 
 **Files:**
-- Create: `apps/extension/src/editor/VideoEditor.vue`, `apps/extension/src/video/regions.ts`, `apps/extension/src/video/reencode.ts`, `apps/extension/test/regions.test.ts`
+- Create: `apps/extension/src/editor/VideoEditor.vue`, `apps/extension/src/video/regions.ts`, `apps/extension/src/video/reencode-recorder.ts`, `apps/extension/src/video/reencode-webcodecs.ts`, `apps/extension/src/video/webm-reader.ts`, `apps/extension/test/{regions,webm-reader}.test.ts`
 
 **Interfaces:**
 - `VideoRegion = { id; rect; fromMs; toMs; block }` (rectangle only on video). `activeRegions(regions, tMs): VideoRegion[]` uses `fromMs` inclusive and `toMs` exclusive.
-- `reencodeWithMosaic(src: Blob, regions: VideoRegion[], opts: { mimeType; bitsPerSecond; onProgress(p: number); signal: AbortSignal }): Promise<{ blob: Blob; framesIn: number; framesOut: number }>`, implemented as decision 1 describes.
-- `acceptReencode(r): 'ok' | 'too_lossy'` (`framesOut / framesIn < 0.9` is too lossy).
+- `type Reencode = (src: Blob, regions: VideoRegion[], opts: { mimeType; bitsPerSecond; onProgress(p: number); signal: AbortSignal; preview: HTMLCanvasElement }) => Promise<{ blob: Blob; framesIn: number; framesOut: number }>`.
+- `reencodeWithRecorder: Reencode` is path 1. It draws on the visible `preview` canvas. On `visibilitychange` to hidden it pauses the source video and calls `MediaRecorder.pause()`, shows "keep this tab visible while the mosaic is applied", and resumes when visible.
+- `reencodeWithWebCodecs: Reencode` is path 2, using `readWebm(buf): { codec; width; height; frames: { timestampUs; key; data }[] }` and `webm-muxer`.
+- `applyVideoMosaic(src, regions, opts)`:
+  1. tries path 1;
+  2. tries path 2 when path 1 throws, is unsupported, or `acceptReencode` says `too_lossy`;
+  3. returns `{ ok: false }` when both fail.
+
+  `acceptReencode(r): 'ok' | 'too_lossy'` (`framesOut / framesIn < 0.9` is too lossy).
 - The editor shows:
   - a timeline with a scrubber;
   - a drag on the frame draws a region, and range handles set its time range;
   - for each region, a list row with a delete button;
-  - an "Apply mosaic" action with a progress bar and Cancel.
+  - "Apply mosaic" with progress and Cancel.
 
-  The result replaces the draft's video. With regions and no successful apply, Send is disabled for the video: the fallback dialog offers "send without video" or "use a still frame".
-- The fallback: `stillFrame(src, tMs): Promise<ImageBitmap>` goes into the screenshot editor with the active regions pre-added as mosaic rect ops.
+  The result replaces the draft's video. While regions exist and no successful apply has replaced the video, Send is disabled for the video. When `applyVideoMosaic` fails, the dialog offers only "send without video" or "use a still frame".
+- The still frame: `stillFrame(src, tMs): Promise<ImageBitmap>` goes into the screenshot editor with the active regions pre-added as mosaic rect ops.
 
 - [ ] **Step 1: Write failing tests**:
   - `activeRegions` boundaries;
   - `acceptReencode`;
+  - `applyVideoMosaic tries WebCodecs after a lossy recorder result, and reports failure when both fail` (fake paths);
+  - `readWebm reads codec, size and SimpleBlocks from a small fixture WebM` (generated once by a test page, committed under `test/fixtures/`, a few KB, synthetic frames only);
   - `a video with unapplied regions cannot be sent` (`buildReport` throws `mosaic_not_applied`);
-  - an e2e step in C5 covers the real pipeline.
-- [ ] **Step 2: Run** `pnpm vitest run apps/extension/test/regions.test.ts apps/extension/test/build-report.test.ts` — Expected: FAIL.
+  - an e2e step in C5 covers the real pipelines.
+- [ ] **Step 2: Run** `pnpm vitest run apps/extension/test/regions.test.ts apps/extension/test/webm-reader.test.ts apps/extension/test/build-report.test.ts` — Expected: FAIL.
 - [ ] **Step 3: Implement** them.
 - [ ] **Step 4: Run** the same command — Expected: PASS.
 - [ ] **Step 5: Commit** `feat(extension): mosaic regions on video, applied by re-encoding`
@@ -968,7 +1243,7 @@ Record each answer and the fallback chosen (decision 2). Commit `docs: Yoda Repo
 
 - [ ] **Step 1: Write failing tests**, a table covering:
   - each precedence step;
-  - port-specific `localhost` rules;
+  - port-specific `localhost` rules, and `http://localhost/*` matching any port;
   - a Yoda rule never mapping to another profile;
   - the `repo` fallback choosing only a member project;
   - `why` naming the winning reason;
@@ -1026,16 +1301,23 @@ Record each answer and the fallback chosen (decision 2). Commit `docs: Yoda Repo
 
 **Interfaces:**
 - `class SegmentRing { constructor(segmentMs = 30000); push(chunk); rotate(); snapshot(): Blob[] }` holds the previous complete segment and the current one, in memory only. The recorder restarts at every rotation.
-- `armBuffer(tabId)` is user-initiated (popup), needs tabCapture, and sets the red badge (`action.setBadgeText({ text: '●', tabId })` with the error colour).
-- `disarmBuffer(reason: 'saved' | 'timeout' | 'left_mapped_site' | 'production' | 'tab_closed' | 'user')`: 15 minutes without a save, leaving a mapped site (`tabs.onUpdated` URL change re-checked with `pickRule`), production or a tab close disarms it.
+- `armBuffer(tabId)`:
+  - is started from the popup's click handler, which requests `tabCapture` before any `await` if needed;
+  - runs as job `buffer` in the **shared** offscreen document (C1's `ensureOffscreen` and router);
+  - sets the red badge (`action.setBadgeText({ text: '●', tabId })` with the error colour).
+- `disarmBuffer(reason: 'saved' | 'timeout' | 'left_mapped_site' | 'production' | 'tab_closed' | 'user')`:
+  - the **15-minute timeout is a `setTimeout` in the offscreen document**, reset on every save (decision 16); the document reports `disarmed { reason }` to the service worker, which clears the badge;
+  - leaving a mapped site (`tabs.onUpdated` URL change re-checked with `pickRule`), production and tab close disarm it from the service worker.
 - `saveBuffer()` → `buffer-1.webm` and `buffer-2.webm` into a new draft. Mosaic regions (C2) apply per segment, with the time offsets of the joined timeline.
 - `allowBuffer` (policy, D2) false hides it.
 
 - [ ] **Step 1: Write failing tests**:
   - `snapshot after 75 s gives two segments covering 45–75 s` (fake timers);
   - `nothing is written to IndexedDB or storage while armed`;
+  - `the offscreen document disarms itself after 15 minutes without a save, with the service worker stopped`;
   - `each disarm reason stops the recorder and clears the badge`;
   - `production never arms`;
+  - `a clip while the buffer runs shares the one offscreen document`;
   - `regions spanning the segment boundary are split per segment`.
 - [ ] **Step 2: Run** `pnpm vitest run apps/extension/test/buffer.test.ts` — Expected: FAIL.
 - [ ] **Step 3: Implement** them. The portal card plays buffer segments back to back (extend `DefectCard.vue` and `defectView.ts` with `bufferPlaylist(list)`, tested in `apps/portal/test/defectView.test.ts`).
@@ -1092,26 +1374,41 @@ Record each answer and the fallback chosen (decision 2). Commit `docs: Yoda Repo
 
 **Files:**
 - Modify:
-  - `.github/workflows/release.yml`: the `bundle` job gains node, pnpm and the extension build, plus the signing steps below;
+  - `.github/workflows/release.yml`: the `bundle` job gains node, pnpm and the extension build, plus the signing steps below; the `release` job adds the notes line;
   - `ops/install/bundle.sh`: an optional fifth argument, `<extension crx>`; when given, `extension/yoda-reporter-<version>.crx` joins the bundle's file list, so it is checksummed and signed with the rest;
+  - `ops/install/release-notes.sh`: an optional flag `--no-crx` that appends the release-notes line;
   - `ops/install/check-release.sh`: when the bundle lists an `extension/` CRX, check that it unpacked into the install directory;
   - `apps/core/test/ops-ci.test.ts`, `apps/core/test/ops-install.test.ts`;
-  - `docs/releasing.md`: one-time setup gets a new step, owner only: generate the key on a trusted machine (`openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out yoda-reporter.pem`), back it up offline, `gh secret set --env release EXTENSION_CRX_KEY < yoda-reporter.pem`, and commit the public half as `keys/yoda-reporter.pub` together with `OFFICIAL_EXTENSION_ID`; also "Rotating the extension key" (a new ID: re-push the policy).
+  - `docs/releasing.md`: one-time setup gets a new step, owner only:
+    - generate the key on a trusted machine (`openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out yoda-reporter.pem`);
+    - back it up offline;
+    - `gh secret set --env release EXTENSION_CRX_KEY < yoda-reporter.pem`;
+    - the public half must equal the committed `keys/yoda-reporter.pub`;
+  - also in `docs/releasing.md`: "Rotating the extension key" (a new ID: re-push the policy) and "A release without the CRX".
 
 **Signing steps in `bundle`:**
-1. **Real run:** read `secrets.EXTENSION_CRX_KEY`. If it is empty: `::error::The secret EXTENSION_CRX_KEY is not set in the release environment, and a release is never published without its signed extension. Set it with: gh secret set --env release EXTENSION_CRX_KEY < yoda-reporter.pem (docs/releasing.md).`, exit 1. Write the key to `$RUNNER_TEMP` under `umask 077` with an `EXIT` trap removing it. If `publicKeyB64(key)` differs from `keys/yoda-reporter.pub`, fail: `::error::EXTENSION_CRX_KEY does not match keys/yoda-reporter.pub: the extension would get another ID.`
-2. **Dry run:** generate a throwaway key in a `mkdir -m 700` temp directory, use it once and delete it. The dry run's ID differs, as with the minisign throwaway key.
-3. `pnpm --filter @yoda/extension build:zip`, then `crx:pack`, then `crx:verify --expect-id <id>`, where the ID comes from `keys/yoda-reporter.pub` on a real run and from the throwaway key on a dry run.
-4. Run `bundle.sh` with the CRX path, before the minisign signing.
+1. **Real run, secret set:**
+   - write the key to `$RUNNER_TEMP` under `umask 077`, with an `EXIT` trap removing it;
+   - if `publicKeyB64(key)` differs from `keys/yoda-reporter.pub`, **fail** with `::error::EXTENSION_CRX_KEY does not match keys/yoda-reporter.pub: the extension would get another ID (docs/releasing.md).`;
+   - otherwise pack and verify with `--expect-id OFFICIAL_EXTENSION_ID`.
+2. **Real run, secret missing or empty:** do **not** fail.
+   - Emit `::warning::EXTENSION_CRX_KEY is not set in the release environment: this release ships the extension zip (in the core image) without a signed CRX, so managed installs cannot update from it (docs/releasing.md).`
+   - Run `bundle.sh` without the CRX, and set the job output `crx=false`.
+   - The `release` job then calls `release-notes.sh --no-crx`, which adds "This release has no signed extension package (CRX); managed Chrome and Edge installs keep their current version." to the notes.
+3. **Dry run:** generate a throwaway key in a `mkdir -m 700` temp directory, use it once, delete it, and verify with the throwaway ID. It never touches `EXTENSION_CRX_KEY`.
+4. In every case, run `pnpm --filter @yoda/extension build:zip` first (the clean release build), and run `bundle.sh` before the minisign signing.
 
-- [ ] **Step 1: Write failing tests** in `ops-ci.test.ts`:
-  - `bundle fails with a clear error when EXTENSION_CRX_KEY is missing on a real release`;
-  - `checks the key against keys/yoda-reporter.pub`;
-  - `uses a throwaway key on a dry run that is never uploaded`;
-  - `packs before minisign signs SHA256SUMS`;
-  - `apps/extension/** triggers the dry run`.
-
-  In `ops-install.test.ts`, `bundle.sh with a CRX lists extension/yoda-reporter-<v>.crx in the tarball, and check-release passes`.
+- [ ] **Step 1: Write failing tests**:
+  - in `ops-ci.test.ts`:
+    - `a real release without EXTENSION_CRX_KEY warns, bundles without the CRX and adds the notes line, and does not fail`;
+    - `a present but mismatched key fails the release`;
+    - `the dry run uses a throwaway key that is never uploaded`;
+    - `packs before minisign signs SHA256SUMS`;
+    - `apps/extension/** triggers the dry run`;
+  - in `ops-install.test.ts`:
+    - `bundle.sh with a CRX lists extension/yoda-reporter-<v>.crx in the tarball, and check-release passes`;
+    - `without one, the bundle is unchanged and check-release passes`;
+    - `release-notes.sh --no-crx appends the line`.
 - [ ] **Step 2: Run** `pnpm vitest run apps/core/test/ops-ci.test.ts apps/core/test/ops-install.test.ts` — Expected: FAIL.
 - [ ] **Step 3: Implement** them.
 - [ ] **Step 4: Run** the same command. Expected: PASS. Then push the branch. Expected: the Release dry run is green, and its log shows the throwaway CRX ID and `check-release` passing.
@@ -1139,7 +1436,7 @@ Record each answer and the fallback chosen (decision 2). Commit `docs: Yoda Repo
 </gupdate>
 ```
 
-It answers 404 when there is no CRX for the running version, when `OFFICIAL_EXTENSION_ID` is null, or when the extension is disabled. Values are XML-escaped.
+It answers 404 when there is no CRX for the running version (a release made without `EXTENSION_CRX_KEY`), when `OFFICIAL_EXTENSION_ID` is null, or when the extension is disabled. Values are XML-escaped.
 
 - [ ] **Step 1: Write failing tests**:
   - `updates.xml names the official id, the manifest version and the CRX URL under PORTAL_URL`;
@@ -1158,7 +1455,9 @@ It answers 404 when there is no CRX for the running version, when `OFFICIAL_EXTE
 
 ## Owner-only items
 
-1. **The CRX signing key** (the decision is already approved; the action is the owner's). Generate the RSA key, back it up offline, store it as `EXTENSION_CRX_KEY` in the GitHub `release` environment, and commit its public half as `keys/yoda-reporter.pub`, which fixes the extension ID. Do it before the first release tag that includes PR B: that tag's release fails with instructions until the public key is committed (Task B13), and from PR D also until the secret is set (Task D4). The plan never creates, stores or prints this key.
+1. **The extension key pair** (the decision is already approved; the action is the owner's). Generate the RSA key and back it up offline. The plan never creates, stores or prints it.
+   - **Before PR B merges:** commit the public half as `keys/yoda-reporter.pub`, the manifest `key` that fixes the extension ID. PR B is blocked at merge until then; releases are not.
+   - **For signed CRX releases (PR D):** store the private key as `EXTENSION_CRX_KEY` in the GitHub `release` environment. Until then, real releases still publish: the zip without a CRX, with a warning and a release-notes line. A secret that does not match the committed public key fails the release.
 2. **Chrome Web Store:** recommended off and not planned. Only the owner can decide to list it later (a developer account, privacy disclosures, the first upload with the same key).
 
 Already approved, for the owner's calendar rather than as a decision: the DPO review before the managed rollout (§15 item 13).
@@ -1166,45 +1465,106 @@ Already approved, for the owner's calendar rather than as a decision: the DPO re
 ## SDD task list
 
 PR A, Yoda server side (`feat/extension-server`)
-1. **A1** Shared contracts and settings. Acceptance: `pnpm vitest run packages/shared` passes with the manifest-version, extension-ID, schema and match-pattern tables, and the `extension` settings page lists every key in th and en.
-2. **A2** Grants and tokens. Acceptance: codes are single use with PKCE; refresh rotates with a 30 s grace; any other reuse revokes the grant; reauth and expiry give the right reasons; only hashes are stored.
-3. **A3** Hook and connect, token, revoke and session routes. Acceptance: the round trip works, Keycloak and extension tokens are each refused on the other's routes, the rate limits answer 429, and the disabled switch gives 404.
+1. **A1** Shared contracts and settings. Acceptance: `pnpm vitest run packages/shared` passes with the manifest-version (final and rc only), extension-ID, schema and match-pattern tables (including `http://localhost/*` on any port), and the `extension` settings page lists every key in th and en.
+2. **A2** Grants and tokens. Acceptance:
+   - codes are claimed atomically, and a double exchange yields one token;
+   - any refresh reuse revokes the grant, with no grace;
+   - removing an extension ID from the allowlist cuts its grants;
+   - reauth, expiry and lost staff status give the right reasons;
+   - only hashes are stored;
+   - `RateLimiter.check` does not consume.
+3. **A3** Route modes and the connect, token, revoke and session routes. Acceptance:
+   - `token`, `public` and `keycloak` modes behave as specified, and all three give 404 when disabled and 503 `recovery_mode` in forced recovery;
+   - extension tokens are refused outside `/extension/*`, and Keycloak tokens on every extension route but `/extension/authorize`;
+   - code failures are limited per IP and refresh failures per family;
+   - the session lists member projects only.
 4. **A4** Connected browsers API. Acceptance: a person sees and revokes only their own grants, an admin sees all and can revoke all, and no secret appears in a response.
-5. **A5** Defect template and `createDefect`. Acceptance: a defect item starts at triage with requester = reporter; attachments are noAi with roles and no knowledge entry; no_ai text is withheld from context packs and GitLab.
-6. **A6** `POST /extension/defects`. Acceptance: limits, types, WebM magic, idempotency (sequential and concurrent), cleanup on failure, and the production video refusal all pass.
+5. **A5** Defect template, `createDefect` and AI withholding. Acceptance:
+   - a defect item starts at triage, owned and requested by the reporter;
+   - its attachments are noAi with roles;
+   - sensitive text lives only in `defect_reports`, with the marker in the description;
+   - the neutral title replaces the real one in the context pack, the issue section, the secretary events and every secretary tool;
+   - the template is extension-only.
+6. **A6** `POST /extension/defects`. Acceptance:
+   - idempotency is checked first, and an in-flight duplicate reuses the winner;
+   - the report part is validated in full before any file part is read;
+   - the multipart limits reject with existing error shapes;
+   - the production video refusal covers all the person's projects;
+   - failures clean up the stored objects.
 7. **A7** Application URLs. Acceptance: a PM edits validated patterns, members read them, and the project tab shows them in th and en.
 8. **A8** GitLab environments and mappings. Acceptance: deployment webhooks and sync fill `deploy_environments`, and `/extension/mappings` returns member-only rules with production from the tier.
-9. **A9** Removal and retention. Acceptance: authorised removal writes `attachment.removed`; the daily purge honours 180/90/0 days from the close event and skips active items.
-10. **A10** Approve page. Acceptance: Approve redirects only to the allowlisted `chromiumapp.org` URI, Cancel returns `access_denied`, unknown IDs see the admin message, and the page cannot be framed.
+9. **A9** Defect files. Acceptance:
+   - `noAi` cannot be turned off;
+   - authorised removal writes `attachment.removed`;
+   - the daily purge honours 180/90/0 days from the close event;
+   - the orphan sweep removes unreferenced objects older than 24 h.
+10. **A10** Approve page. Acceptance:
+    - Approve redirects only to the allowlisted `chromiumapp.org` URI;
+    - Cancel returns `access_denied`;
+    - the page says "approve only right after you clicked Connect in the extension" and cannot be framed;
+    - unknown IDs see the admin message.
 11. **A11** Connected browsers UI. Acceptance: settings and admin pages list and revoke, revoke-all needs typed confirmation, and the admin rail item is admin-only.
-12. **A12** Defect card, Help page and downloads. Acceptance: the card renders media and logs as text, with placeholders for purged files; Help shows a download or the build placeholder; downloads serve only release file names.
-13. **A13** Proxy cap and docs. Acceptance: Caddy allows 56 MiB on the defect route only, the runbook and guides are updated, and the demo-stack screenshots and GIF are in PR A.
+12. **A12** Defect card, Help page and downloads. Acceptance: the card renders the report text from `defect_reports`, and media and logs as text, with placeholders for purged files; Help shows a download or the build placeholder; downloads serve only release file names.
+13. **A13** Proxy cap and docs. Acceptance:
+    - Caddy's 32 MiB block excludes the defect path, which has its own 56 MiB block;
+    - a real Caddy run passes 40 MiB to the defect path and refuses it elsewhere;
+    - the development walkthrough, runbook and guides are written;
+    - `ops/proxy/**` triggers the release dry run;
+    - the demo-stack screenshots and GIF are in PR A.
 
 PR B, extension MVP (`feat/extension-mvp`)
-14. **B1** Phase 0 spike. Acceptance: `docs/design/extension-spike.md` answers the five questions with evidence and names the e2e connect path.
-15. **B2** Skeleton, manifest, theme and i18n. Acceptance: the release manifest has exactly the §5 permissions, the e2e manifest adds only host permissions, the versions are in lockstep, and the shared theme is used by the portal and the extension.
-16. **B3** Service worker core. Acceptance: foreign messages are ignored, refresh is single-flight, reauth marks the profile, and version skew is detected.
-17. **B4** Connect flow. Acceptance: only HTTPS or localhost Yoda origins work, state and PKCE are checked, and no code or verifier is stored.
+14. **B1** Phase 0 spike. Acceptance: `docs/design/extension-spike.md` answers the eight questions with evidence, including service-worker upload limits, `setAccessLevel` and the gesture rule, and names the e2e connect path.
+15. **B2** Skeleton, manifest, theme and i18n. Acceptance:
+    - the release manifest has exactly the §5 permissions, and the e2e manifest (in `dist-e2e/`) adds only host permissions;
+    - the versions are in lockstep;
+    - the Vitest config includes only `test/**/*.test.ts`;
+    - the shared theme is used by the portal and the extension.
+16. **B3** Service worker core. Acceptance:
+    - senders are told apart by URL or origin, not `sender.tab`;
+    - the refresh token lives in IndexedDB (or `storage.session`), never in `storage.local`;
+    - refresh is single-flight, and a revoked grant shows a calm Reconnect.
+17. **B4** Connect flow. Acceptance: `permissions.request` is the first await of a page click handler and precedes the public-config check; only HTTPS or localhost (any port) Yoda origins work; state and PKCE are checked; no code or verifier is stored.
 18. **B5** Metadata and build detection. Acceptance: the meta, well-known, header and gitlab precedence holds, with the source recorded and the query switch working.
-19. **B6** Console and network capture. Acceptance: entries are capped and validated, rendered as text, with Resource Timing failures and back-end builds collected; no headers or bodies.
+19. **B6** Console and network capture. Acceptance: entries are forwarded as they arrive, kept per tab in `storage.session`, re-injected after same-origin navigations, and the tester is told when capture stopped; entries are capped and validated, with no headers or bodies.
 20. **B7** Screenshots. Acceptance: visible capture works; the full-page plan respects the 15 000 px cap and falls back cleanly.
 21. **B8** Drafts and editor shell. Acceptance: drafts survive a reload, keep their idempotency key, and are purged after 24 h.
 22. **B9** Annotation editor. Acceptance: all tools work, including mosaic rectangle and brush, with undo and redo; the destructive ops are burned into the exported PNG, and only the flattened image is uploadable.
-23. **B10** Report form and send. Acceptance: Send needs the confirmation, production rules are applied, retries keep the key, and errors map to clear messages.
+23. **B10** Report form and send. Acceptance: the editor tab uploads with a token from the service worker; Send needs the confirmation; production rules are applied; retries keep the key; a reconnect keeps the draft.
 24. **B11** Popup and profiles. Acceptance: profiles switch, removal revokes, and `?tab` works only in the e2e build.
 25. **B12** E2E and demo. Acceptance: the Playwright spec connects, captures, applies mosaic and sends to the stub with validated payloads in CI; the demo GIF is recorded.
-26. **B13** Zip, image and release checks. Acceptance: CI builds, checks and gitleaks-scans the zip; the core image serves it on the Help page; release meta enforces the extension version and the public key.
+26. **B13** Zip, image and release checks. Acceptance:
+    - a clean release build is zipped, and `check-dist` proves the absence of `<all_urls>` and of the `?tab` path in the code;
+    - the zip is gitleaks-scanned;
+    - the core image serves it;
+    - release meta accepts only final and rc versions;
+    - PR B's merge waits for the owner's public key.
 
 PR C, video and mapping (`feat/extension-video-mapping`)
-27. **C1** 30 s clips. Acceptance: tabCapture is requested on first use, recording stops hard at the limit, production tabs refuse video, and the offscreen-versus-tab measurement is recorded.
-28. **C2** Mosaic on video. Acceptance: regions over time ranges are burned in by re-encoding; a lossy or failed re-encode offers only "without video" or "still frame", never the unmasked clip.
+27. **C1** 30 s clips. Acceptance:
+    - tabCapture is requested from the popup gesture;
+    - one shared offscreen document with routed jobs;
+    - the hard stop is timed in the offscreen document;
+    - production tabs refuse video;
+    - the re-encode measurement is recorded.
+28. **C2** Mosaic on video. Acceptance:
+    - the recorder path pauses while hidden;
+    - WebCodecs is tried second;
+    - below 90% of frames, only "without video" or "still frame" is offered;
+    - unmasked regions are never sent.
 29. **C3** URL mapping. Acceptance: the most specific rule wins with the policy, yoda, mine tiebreak, the repo fallback picks member projects only, and Yoda rules stay on their own profile.
 30. **C4** Options page. Acceptance: profiles, locked and editable rules, the URL tester with reasons, and granted origins with remove.
 31. **C5** E2E and demo. Acceptance: the video-mosaic and mapping specs pass in CI, and the GIFs and screenshots are in PR C.
 
 PR D, buffer and managed install (`feat/extension-enterprise`)
-32. **D1** Rolling buffer. Acceptance: it is armed by click only, keeps two in-memory segments, shows a red badge, disarms on every listed reason, never runs on production, and the portal plays the segments back to back.
+32. **D1** Rolling buffer. Acceptance:
+    - it is armed by click only and keeps two in-memory segments in the shared offscreen document;
+    - the 15-minute disarm is timed there;
+    - it shows a red badge, never runs on production, and the portal plays the segments back to back.
 33. **D2** Managed policy and IT guide. Acceptance: the managed schema drives locked instances and rules, `sessionOnly`, and the video and buffer switches; the Chrome, Edge and Intune guide is written.
 34. **D3** CRX3 packer. Acceptance: pack and verify round-trip with a throwaway key, tampering fails, and a force-install on managed Chrome and Edge succeeds by hand.
-35. **D4** Release signing. Acceptance: a real release fails clearly without `EXTENSION_CRX_KEY` or with a mismatched key, the dry run signs with a throwaway key, and the signed bundle carries the CRX.
-36. **D5** `updates.xml` and Help managed section. Acceptance: core serves `updates.xml` and the CRX from the mounted bundle directory, the Help page shows the policy snippet, and the managed VM screenshot is in PR D.
+35. **D4** Release signing. Acceptance:
+    - a real release without `EXTENSION_CRX_KEY` publishes the zip without a CRX, with a warning and a notes line;
+    - a mismatched key fails;
+    - the dry run signs with a throwaway key;
+    - a signed bundle carries the CRX.
+36. **D5** `updates.xml` and Help managed section. Acceptance: core serves `updates.xml` and the CRX from the mounted bundle directory (404 without a CRX), the Help page shows the policy snippet, and the managed VM screenshot is in PR D.
