@@ -142,6 +142,7 @@ defineExpose({ doc, base, draft })
         <v-alert v-if="missing" type="warning" class="ma-4" data-testid="draft-missing">{{ t('editor.draftMissing') }}</v-alert>
         <template v-else-if="draft">
           <section class="editor__stage" :class="{ 'editor__stage--sent': sent }" :inert="sent || undefined">
+            <v-alert v-if="draft.notice === 'video_dropped'" type="warning" variant="tonal" density="compact" class="ma-2" data-testid="editor-video-dropped">{{ t('editor.videoDropped') }}</v-alert>
             <Toolbar
               v-model:tool="tool"
               v-model:colour="colour"

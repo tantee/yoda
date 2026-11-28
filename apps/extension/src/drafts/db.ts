@@ -27,6 +27,8 @@ export type Draft = {
   idempotencyKey: string
   /** The page is a production site (a policy or Yoda rule says so, decision 3): no video, logs off by default. */
   production?: boolean
+  /** Shown in the editor: the clip was discarded because the tab went to a page not known to be safe. */
+  notice?: 'video_dropped'
 }
 
 const DB = 'yoda-drafts'

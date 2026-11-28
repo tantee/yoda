@@ -1,6 +1,9 @@
+import 'fake-indexeddb/auto'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { route } from '../src/offscreen/router'
-import { closeOffscreenIfIdle, endClip, ensureOffscreen, jobs, startClip } from '../src/sw/offscreen'
+import { clearStaleClip, closeOffscreenIfIdle, endClip, ensureOffscreen, jobs, onClipTabNavigated, startClip } from '../src/sw/offscreen'
+import { startReport } from '../src/sw/report-start'
+import { getDraft } from '../src/drafts/db'
 import { installChrome } from './support/chrome'
 
 let docs = 0
@@ -89,5 +92,58 @@ describe('offscreen document', () => {
     expect(await startClip({ tabId: 1, profileId: 'p1', maxSeconds: 30 })).toEqual({ ok: false, error: 'capture_failed' })
     expect((await jobs()).clip).toBeUndefined()
   })
-})
 
+  it('two concurrent starts: one records, the other is busy, and the running job is kept', async () => {
+    const [a, b] = await Promise.all([startClip({ tabId: 1, profileId: 'p1', maxSeconds: 30 }), startClip({ tabId: 1, profileId: 'p1', maxSeconds: 30 })])
+    expect([a, b].filter((r) => r.ok)).toHaveLength(1)
+    expect([a, b].find((r) => !r.ok)).toEqual({ ok: false, error: 'busy' })
+    expect((await jobs()).clip).toMatchObject({ tabId: 1, tainted: false })
+    expect(closed).not.toHaveBeenCalled()
+  })
+
+  it('an unreadable page is refused like production', async () => {
+    tabs[4] = { url: undefined as unknown as string }
+    expect(await startClip({ tabId: 4, profileId: 'p1', maxSeconds: 30 })).toEqual({ ok: false, error: 'unknown_page' })
+  })
+
+  it('navigating to a page not known to be safe taints the clip and stops it', async () => {
+    await startClip({ tabId: 1, profileId: 'p1', maxSeconds: 30 })
+    await onClipTabNavigated(1, 'https://uat.example.org/other')
+    expect((await jobs()).clip!.tainted).toBe(false)
+    // activeTab is gone on another origin: the URL cannot be read.
+    await onClipTabNavigated(1, undefined)
+    expect((await jobs()).clip!.tainted).toBe(true)
+    expect(sent.at(-1)).toMatchObject({ target: 'offscreen', job: 'clip', type: 'stop' })
+  })
+
+  it('a job whose offscreen document is gone, or long past its limit, is cleared', async () => {
+    await startClip({ tabId: 1, profileId: 'p1', maxSeconds: 30 })
+    await clearStaleClip(Date.now())
+    expect((await jobs()).clip).toBeDefined()
+    await clearStaleClip(Date.now() + 91_000)
+    expect((await jobs()).clip).toBeUndefined()
+    await startClip({ tabId: 1, profileId: 'p1', maxSeconds: 30 })
+    docs = 0
+    await clearStaleClip()
+    expect((await jobs()).clip).toBeUndefined()
+  })
+
+  it('a tainted clip, or one whose tab closed on an unknown page, keeps no video; the draft is still made', async () => {
+    const g = globalThis as unknown as { chrome: Record<string, Record<string, unknown>> }
+    g.chrome.tabs!.create = async () => ({})
+    g.chrome.scripting = { executeScript: async () => [] } as never
+    const video = new Blob([new Uint8Array([0x1a, 0x45, 0xdf, 0xa3])], { type: 'video/webm' })
+    const tainted = await startReport({ tabId: 1, profileId: 'p1', kind: 'video', video, url: 'https://uat.example.org/opd', tainted: true })
+    const d1 = (await getDraft(tainted.draftId))!
+    expect(d1.video).toBeUndefined()
+    expect(d1.notice).toBe('video_dropped')
+    // The tab is gone: the clip's start URL is used, and it is safe here.
+    g.chrome.tabs!.get = async () => {
+      throw new Error('No tab')
+    }
+    const gone = await startReport({ tabId: 9, profileId: 'p1', kind: 'video', video, url: 'https://uat.example.org/opd' })
+    expect((await getDraft(gone.draftId))!.video).toBeDefined()
+    const unknown = await startReport({ tabId: 9, profileId: 'p1', kind: 'video', video })
+    expect((await getDraft(unknown.draftId))!.video).toBeUndefined()
+  })
+})

@@ -48,3 +48,25 @@ test('record a clip of the tab, stop, and send it', async ({ context, yoda, app,
   expect([...video.bytes.subarray(0, 4)]).toEqual([0x1a, 0x45, 0xdf, 0xa3])
   expect(video.bytes.length).toBeGreaterThan(2000)
 })
+
+test('a clip that reaches a production page mid-recording is discarded', async ({ context, yoda, app, openPopup, connect, tabIdOf }) => {
+  // The same app under another host name is a production site.
+  const prod = app.url.replace('localhost', '127.0.0.1')
+  yoda.rules = [{ pattern: `${prod}/*`, projectId: '00000000-0000-4000-8000-000000000001', environment: 'production', production: true, source: 'gitlab', build: null }]
+  await connect()
+  const page = await context.newPage()
+  await page.goto(app.url)
+  const tabId = await tabIdOf(app.url)
+  const popup = await openPopup(tabId)
+  const closed = popup.waitForEvent('close')
+  await popup.getByTestId('action-record').click()
+  await closed
+
+  await page.bringToFront()
+  // The worker stops the clip itself; the editor opens without the video and says why.
+  const editorP = context.waitForEvent('page', { timeout: 15_000 })
+  await page.goto(prod)
+  const editor = await editorP
+  await expect(editor.getByTestId('editor-video-dropped')).toBeVisible()
+  await expect(editor.getByTestId('editor-video')).toHaveCount(0)
+})

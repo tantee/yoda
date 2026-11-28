@@ -37,11 +37,13 @@ export async function putClip(c: Clip): Promise<void> {
   await tx('readwrite', (s) => s.put(c))
 }
 
-/** Reads and deletes a clip. */
-export async function takeClip(id: string): Promise<Clip | null> {
-  const c = ((await tx<Clip>('readonly', (s) => s.get(id))) as Clip | undefined) ?? null
-  if (c) await tx('readwrite', (s) => s.delete(id))
-  return c
+export async function getClip(id: string): Promise<Clip | null> {
+  return ((await tx<Clip>('readonly', (s) => s.get(id))) as Clip | undefined) ?? null
+}
+
+/** Deleted once the clip is safely in a draft (or discarded). */
+export async function deleteClip(id: string): Promise<void> {
+  await tx('readwrite', (s) => s.delete(id))
 }
 
 /** Clips older than `maxAgeMs` (never taken): removed. */

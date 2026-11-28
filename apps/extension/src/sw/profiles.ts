@@ -3,7 +3,7 @@ import type { Msg } from './messages'
 import { getRefresh, setAccess, setRefresh } from './secrets'
 import { deleteProfile, getProfile, profiles, saveProfile, updateProfile, type Profile } from './store'
 import { normaliseYodaUrl } from '../connect/connect'
-import { yodaFetch } from './api'
+import { withTokenMove, yodaFetch } from './api'
 import { deleteDraftsOf } from '../drafts/db'
 import { forgetYodaRules } from './rules'
 
@@ -78,9 +78,13 @@ export async function updateProfileSettings(id: string, patch: { colour?: string
   if (patch.colour !== undefined && !/^#[0-9a-f]{6}$/i.test(patch.colour)) return { ok: false, error: 'invalid' }
   if (patch.sessionOnly !== undefined && p.managed) return { ok: false, error: 'managed' }
   if (patch.sessionOnly !== undefined && patch.sessionOnly !== p.sessionOnly) {
-    const token = await getRefresh(p)
-    const next = await updateProfile(id, { sessionOnly: patch.sessionOnly })
-    if (next) await setRefresh(next, token)
+    const sessionOnly = patch.sessionOnly
+    await withTokenMove(id, async () => {
+      const current = (await getProfile(id)) ?? p
+      const token = await getRefresh(current)
+      const next = await updateProfile(id, { sessionOnly })
+      if (next) await setRefresh(next, token)
+    })
   }
   const rest: Partial<Profile> = {}
   if (patch.colour !== undefined) rest.colour = patch.colour.toLowerCase()

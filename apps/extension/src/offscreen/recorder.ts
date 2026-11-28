@@ -62,7 +62,7 @@ export function recordClip(
     rec.stop()
   }
   const hard = setTimeout(() => stop('max'), o.maxSeconds * 1000)
-  // The tab closing or navigating away ends the capture track.
+  // The tab closing ends the capture track (navigation does not: the worker watches that).
   for (const t of stream.getTracks() as (MediaStreamTrack & { onended?: unknown })[]) {
     if ('onended' in t || typeof (t as { addEventListener?: unknown }).addEventListener === 'function') (t as MediaStreamTrack).onended = () => stop('ended')
   }

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { exchangeProfile } from '../src/sw/profiles'
-import { allRules, MINE_KEY, resolveUrl, validateRuleInput, yodaRules } from '../src/sw/rules'
+import { allRules, MINE_KEY, productionVerdict, resolveUrl, validateRuleInput, yodaRules } from '../src/sw/rules'
+import { updateProfile } from '../src/sw/store'
 import { initSecrets } from '../src/sw/secrets'
 import { profiles } from '../src/sw/store'
 import { installChrome, type FakeChrome } from './support/chrome'
@@ -103,5 +104,28 @@ describe('sw rules', () => {
     expect(validateRuleInput({ pattern: 'localhost', profileId: 'a', projectId: null }, ['a'])).toEqual(['pattern_invalid'])
     expect(validateRuleInput({ pattern: 'https://*/*', profileId: 'a', projectId: null }, ['a'])).toEqual(['too_broad'])
     expect(validateRuleInput({ pattern: 'https://app.example.org/*', profileId: 'b', projectId: null }, ['a'])).toEqual(['profile_unknown'])
+  })
+
+  it('productionVerdict fails closed', async () => {
+    const id = await connect()
+    mappings = [yodaRule('https://his.example.org/*', P1, true)]
+    expect(await productionVerdict('https://his.example.org/opd')).toBe('production')
+    expect(await productionVerdict('https://uat.example.org/opd')).toBe('ok')
+    expect(await productionVerdict('')).toBe('unknown')
+    expect(await productionVerdict('chrome://extensions')).toBe('unknown')
+    // A profile needing reconnect: its cached production marks still count.
+    await updateProfile(id, { needsReconnect: true })
+    expect(await productionVerdict('https://his.example.org/opd')).toBe('production')
+    // A policy rule naming no connected profile still marks production.
+    ;(globalThis as unknown as { chrome: { storage: Record<string, unknown> } }).chrome.storage.managed = {
+      get: async () => ({ rules: [{ pattern: 'https://lis.example.org/*', profileId: 'other', projectId: null, environment: null, production: true }] }),
+    }
+    expect(await productionVerdict('https://lis.example.org/')).toBe('production')
+  })
+
+  it('productionVerdict: a connected Yoda whose mappings were never fetched makes the answer unknown', async () => {
+    await connect()
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('offline'))
+    expect(await productionVerdict('https://uat.example.org/')).toBe('unknown')
   })
 })

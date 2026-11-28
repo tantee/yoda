@@ -60,6 +60,30 @@ export async function policyRules(): Promise<Rule[]> {
   }
 }
 
+async function cachedRules(profileId: string): Promise<Rule[] | null> {
+  const v = (await chrome.storage.local.get(cacheKey(profileId)))[cacheKey(profileId)] as Cached | undefined
+  return v ? v.rules : null
+}
+
+/**
+ * Whether a page is a production site, for the video and log defaults (decision 3). Fails closed: every known
+ * production mark counts (each stored profile's cached Yoda rules, reconnect-pending ones too, and every policy
+ * rule, whatever profile it names), and the answer is `unknown` when the URL is not a readable web address or a
+ * connected Yoda's mappings were never fetched. Video is allowed only on `ok`.
+ */
+export async function productionVerdict(url: string): Promise<'production' | 'ok' | 'unknown'> {
+  if (!/^https?:\/\//i.test(url)) return 'unknown'
+  let complete = true
+  const rules: Rule[] = [...(await policyRules())]
+  for (const p of await profiles()) {
+    const yoda = p.needsReconnect ? await cachedRules(p.id) : ((await yodaRules(p.id).catch(() => null)) && (await cachedRules(p.id)))
+    if (yoda) rules.push(...yoda)
+    else if (!p.needsReconnect) complete = false
+  }
+  if (isProduction(url, rules)) return 'production'
+  return complete ? 'ok' : 'unknown'
+}
+
 /** Every rule of every connected (not reconnect-pending) profile, mine and policy included. */
 export async function allRules(opts: { refresh?: boolean } = {}): Promise<Rule[]> {
   const list = (await profiles()).filter((p) => !p.needsReconnect)
@@ -72,11 +96,23 @@ export async function allRules(opts: { refresh?: boolean } = {}): Promise<Rule[]
 
 export type MineRuleInput = { id?: string; pattern: string; profileId: string; projectId: string | null; environment: string | null }
 
+/** Writes of my rules run one at a time (read-modify-write of one storage key). */
+let mineQueue: Promise<unknown> = Promise.resolve()
+function serialMine<T>(fn: () => Promise<T>): Promise<T> {
+  const next = mineQueue.then(fn, fn)
+  mineQueue = next.catch(() => {})
+  return next
+}
+
 /** Rules from a Yoda or from policy: shown with a lock, never written by the options page. */
 const isLocked = (id: string) => id.startsWith('yoda:') || id.startsWith('policy:')
 
 /** Adds or edits one of my rules (validated, the pattern normalised). Mine are never production (decision 3). */
-export async function saveMineRule(input: MineRuleInput): Promise<{ ok: true; rule: Rule } | { ok: false; errors: string[] }> {
+export function saveMineRule(input: MineRuleInput): Promise<{ ok: true; rule: Rule } | { ok: false; errors: string[] }> {
+  return serialMine(() => writeMineRule(input))
+}
+
+async function writeMineRule(input: MineRuleInput): Promise<{ ok: true; rule: Rule } | { ok: false; errors: string[] }> {
   if (input.id && isLocked(input.id)) return { ok: false, errors: ['locked'] }
   const errors = validateRuleInput(input, (await profiles()).map((p) => p.id))
   if (errors.length) return { ok: false, errors }
@@ -98,11 +134,13 @@ export async function saveMineRule(input: MineRuleInput): Promise<{ ok: true; ru
   return { ok: true, rule }
 }
 
-export async function deleteMineRule(id: string): Promise<{ ok: true } | { ok: false; error: 'locked' }> {
-  if (isLocked(id)) return { ok: false, error: 'locked' }
-  const list = (await mineRules()).filter((r) => r.id !== id).map((r, i) => ({ ...r, order: i }))
-  await chrome.storage.local.set({ [MINE_KEY]: list })
-  return { ok: true }
+export function deleteMineRule(id: string): Promise<{ ok: true } | { ok: false; error: 'locked' }> {
+  if (isLocked(id)) return Promise.resolve({ ok: false, error: 'locked' })
+  return serialMine(async () => {
+    const list = (await mineRules()).filter((r) => r.id !== id).map((r, i) => ({ ...r, order: i }))
+    await chrome.storage.local.set({ [MINE_KEY]: list })
+    return { ok: true as const }
+  })
 }
 
 /** Errors for a rule the tester types in the options page (empty when it can be saved). */
@@ -128,6 +166,8 @@ async function sessionView(profileId: string, isDefault: boolean): Promise<Sessi
 
 export type Resolved = {
   production: boolean
+  /** Video only where the page is known not to be production (productionVerdict `ok`). */
+  videoAllowed: boolean
   profileId: string | null
   projectId: string | null
   via: 'rule' | 'repo' | null
@@ -141,23 +181,25 @@ export type Resolved = {
  */
 export async function resolveUrl(url: string, opts: { refresh?: boolean; readBuild?: () => Promise<{ repo?: string | null } | null> } = {}): Promise<Resolved> {
   const rules = await allRules({ refresh: opts.refresh })
-  const production = isProduction(url, rules)
+  const verdict = await productionVerdict(url).catch(() => 'unknown' as const)
+  const production = verdict === 'production'
+  const videoAllowed = verdict === 'ok'
   const picked = pickRule(url, rules)
   const list = await profiles()
   if (picked) {
     const p = list.find((x) => x.id === picked.rule.profileId)
     const view = p ? await sessionView(p.id, p.isDefault) : null
     const r = view ? projectFor(url, null, [picked.rule], [view]) : null
-    return { production, profileId: picked.rule.profileId, projectId: r?.projectId ?? null, via: r ? 'rule' : null, ruleId: picked.rule.id, why: picked.why }
+    return { production, videoAllowed, profileId: picked.rule.profileId, projectId: r?.projectId ?? null, via: r ? 'rule' : null, ruleId: picked.rule.id, why: picked.why }
   }
   const def = list.find((p) => p.isDefault && !p.needsReconnect)
   const build = def && opts.readBuild ? await opts.readBuild().catch(() => null) : null
   if (def && build?.repo) {
     const view = await sessionView(def.id, true)
     const r = view ? projectFor(url, build, [], [view]) : null
-    if (r) return { production, profileId: r.profileId, projectId: r.projectId, via: 'repo', ruleId: null, why: [] }
+    if (r) return { production, videoAllowed, profileId: r.profileId, projectId: r.projectId, via: 'repo', ruleId: null, why: [] }
   }
-  return { production, profileId: null, projectId: null, via: null, ruleId: null, why: [] }
+  return { production, videoAllowed, profileId: null, projectId: null, via: null, ruleId: null, why: [] }
 }
 
 /** The repo of the page's build, from what the page itself says (meta, well-known, headers). */

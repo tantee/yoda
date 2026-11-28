@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { refreshOnce } from '../src/sw/api'
 import { updateProfileSettings } from '../src/sw/profiles'
 import { deleteMineRule, mineRules, saveMineRule, validateRuleInput } from '../src/sw/rules'
 import { getRefresh, initSecrets, setRefresh } from '../src/sw/secrets'
@@ -83,5 +84,22 @@ describe('options: profile settings', () => {
 
   it('an invalid colour is refused', async () => {
     expect(await updateProfileSettings('p1', { colour: 'red; background:url(x)' })).toEqual({ ok: false, error: 'invalid' })
+  })
+
+  it('switching sign-out-on-close while a refresh runs keeps the rotated token, in the new area only', async () => {
+    await setRefresh(profile(), 'yoda_xr_old')
+    let answer!: (r: Response) => void
+    vi.spyOn(globalThis, 'fetch').mockImplementation(() => new Promise<Response>((r) => (answer = r)))
+    const refreshing = refreshOnce('p1')
+    await new Promise((r) => setTimeout(r, 0))
+    const moving = updateProfileSettings('p1', { sessionOnly: true })
+    answer(new Response(JSON.stringify({ accessToken: 'yoda_xt_2', expiresIn: 3600, refreshToken: 'yoda_xr_new', grantId: '00000000-0000-4000-8000-000000000009', person: { id: P, displayName: 'x', isStaff: true } }), { status: 200 }))
+    expect(await refreshing).toBe(true)
+    await moving
+    const p = (await getProfile('p1'))!
+    expect(p.sessionOnly).toBe(true)
+    expect(await getRefresh(p)).toBe('yoda_xr_new')
+    expect(JSON.stringify([...(chrome.storage.local as unknown as { data: Map<string, unknown> }).data.entries()])).not.toContain('yoda_xr_')
+    vi.restoreAllMocks()
   })
 })

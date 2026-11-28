@@ -3,8 +3,8 @@ import { accessToken, yodaFetch } from './api'
 import { appendEntries, armTab, captureState, entries, nonceFor, onTabRemoved, onTabUpdated } from './capture-session'
 import { purgeOldDrafts } from '../drafts/db'
 import { TabChangedError } from '../capture/screenshot'
-import { purgeClips, takeClip } from '../drafts/clips'
-import { endClip, jobs, startClip, stopClip } from './offscreen'
+import { deleteClip, getClip, purgeClips } from '../drafts/clips'
+import { clearStaleClip, endClip, jobs, onClipTabNavigated, startClip, stopClip } from './offscreen'
 import { injectCapture } from './inject'
 import { pageMetadata, startReport } from './report-start'
 import { allRules, deleteMineRule, repoOf, resolveUrl, saveMineRule } from './rules'
@@ -87,12 +87,22 @@ onMessage(async (m, { sender }) => {
       await stopClip()
       return { ok: true }
     case 'video.state':
+      await clearStaleClip()
       return { ok: true, clip: (await jobs()).clip ?? null }
+    case 'video.failed':
+      // The offscreen document could not store the clip: end the job so the next one is not refused as busy.
+      await endClip()
+      return { ok: true }
     case 'video.done': {
       const job = await endClip()
-      const clip = await takeClip(m.clipId)
-      if (!job || !clip || job.tabId !== m.tabId) return { ok: false, error: 'unknown_clip' }
-      const r = await startReport({ tabId: job.tabId, profileId: job.profileId, kind: 'video', projectId: job.projectId, attach: job.attach, video: clip.blob })
+      const clip = await getClip(m.clipId)
+      if (!job || !clip || job.tabId !== m.tabId) {
+        await deleteClip(m.clipId)
+        return { ok: false, error: 'unknown_clip' }
+      }
+      const r = await startReport({ tabId: job.tabId, profileId: job.profileId, kind: 'video', projectId: job.projectId, attach: job.attach, video: clip.blob, url: job.url, tainted: job.tainted })
+      // Only once the draft holds it (or has discarded it).
+      await deleteClip(m.clipId)
       return { ok: true, ...r }
     }
     case 'mapping.resolve': {
@@ -126,5 +136,9 @@ onMessage(async (m, { sender }) => {
 
 const countsOf = (e: Awaited<ReturnType<typeof entries>>) => ({ console: e.console.length, errors: e.console.filter((c) => c.level === 'error' || c.level === 'exception' || c.level === 'rejection').length, failedRequests: e.network.filter((n) => n.failed).length })
 
-chrome.tabs.onUpdated.addListener((tabId, change, tab) => void onTabUpdated(tabId, change, tab, injectCapture).catch(() => {}))
+chrome.tabs.onUpdated.addListener((tabId, change, tab) => {
+  void onTabUpdated(tabId, change, tab, injectCapture).catch(() => {})
+  // A clip records across navigation: each new page is checked (onClipTabNavigated).
+  if (change.status === 'loading' || change.url) void onClipTabNavigated(tabId, change.url ?? tab.url).catch(() => {})
+})
 chrome.tabs.onRemoved.addListener((tabId) => void onTabRemoved(tabId).catch(() => {}))

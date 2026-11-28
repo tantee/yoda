@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ExtensionSession } from '@yoda/shared'
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { onConnectClick } from '../connect/connect'
 import { checkVersion } from '../sw/api'
@@ -24,7 +24,7 @@ const busy = ref('')
 const error = ref('')
 const reachable = ref(true)
 /** The mapping for this page (sw/rules.ts): the profile and project it picks, and whether it is production. */
-const resolved = ref<{ production: boolean; profileId: string | null; projectId: string | null; via: 'rule' | 'repo' | null } | null>(null)
+const resolved = ref<{ production: boolean; videoAllowed: boolean; profileId: string | null; projectId: string | null; via: 'rule' | 'repo' | null } | null>(null)
 const production = computed(() => resolved.value?.production === true)
 /** A clip in progress (the offscreen document records it; the worker keeps the job). */
 const clip = ref<{ tabId: number; startedAt: number } | null>(null)
@@ -61,8 +61,10 @@ async function load() {
 async function refreshClip() {
   const r = (await chrome.runtime.sendMessage({ type: 'video.state' })) as { ok: boolean; clip?: typeof clip.value }
   clip.value = r?.clip ?? null
-  if (clip.value) setInterval(() => (now.value = Date.now()), 500)
+  if (clip.value && !ticker) ticker = setInterval(() => (now.value = Date.now()), 500)
 }
+let ticker: ReturnType<typeof setInterval> | null = null
+onBeforeUnmount(() => ticker && clearInterval(ticker))
 
 function record() {
   if (tabId.value === null || !profile.value) return
@@ -73,7 +75,7 @@ function record() {
   void onRecordClick(() => chrome.runtime.sendMessage(message) as Promise<{ ok: boolean; error?: string }>).then((r) => {
     busy.value = ''
     if (r?.ok) window.close()
-    else error.value = t(`popup.error.${['permission_needed', 'production', 'busy'].includes(r?.error ?? '') ? r!.error : 'capture_failed'}`)
+    else error.value = t(`popup.error.${['permission_needed', 'production', 'busy', 'unknown_page'].includes(r?.error ?? '') ? r!.error : 'capture_failed'}`)
   })
 }
 
@@ -219,7 +221,7 @@ onMounted(load)
             <v-btn variant="tonal" prepend-icon="mdi-arrow-expand-vertical" :disabled="!webPage || !session" :loading="busy === 'capture.fullPage'" data-testid="action-fullpage" @click="start('capture.fullPage')">{{ t('popup.fullPage') }}</v-btn>
             <v-btn variant="tonal" prepend-icon="mdi-record-rec" :disabled="!webPage || capture?.state === 'armed'" :loading="busy === 'arm'" data-testid="action-arm" @click="arm">{{ t('popup.arm') }}</v-btn>
             <v-btn v-if="clip" color="error" prepend-icon="mdi-stop" :loading="busy === 'stop'" data-testid="action-stop" @click="stopRecording">{{ t('popup.stopRecording') }}</v-btn>
-            <v-btn v-else-if="!production" variant="tonal" prepend-icon="mdi-video-outline" :disabled="!webPage || !session" :loading="busy === 'record'" data-testid="action-record" @click="record">{{ t('popup.record', { s: maxSeconds }) }}</v-btn>
+            <v-btn v-else-if="resolved?.videoAllowed" variant="tonal" prepend-icon="mdi-video-outline" :disabled="!webPage || !session" :loading="busy === 'record'" data-testid="action-record" @click="record">{{ t('popup.record', { s: maxSeconds }) }}</v-btn>
             <v-btn variant="text" prepend-icon="mdi-text" :disabled="!session" :loading="busy === 'capture.textOnly'" data-testid="action-text" @click="start('capture.textOnly')">{{ t('popup.textOnly') }}</v-btn>
           </div>
 
