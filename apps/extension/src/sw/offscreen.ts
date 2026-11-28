@@ -1,3 +1,4 @@
+import { readPolicy } from './policy'
 import { productionVerdict } from './rules'
 
 /**
@@ -56,7 +57,7 @@ export async function closeOffscreenIfIdle(): Promise<boolean> {
 }
 
 export type StartClip = { tabId: number; profileId: string; projectId?: string; attach?: { console: boolean; network: boolean }; maxSeconds: number }
-export type StartError = 'production' | 'unknown_page' | 'busy' | 'capture_failed'
+export type StartError = 'production' | 'unknown_page' | 'busy' | 'capture_failed' | 'policy'
 
 /** The clip's frame: the tab's size scaled to at most 1280 wide, even numbers (VP8/VP9 need them). */
 export function clipSize(tab: { width?: number; height?: number }): { width?: number; height?: number } {
@@ -92,6 +93,8 @@ export async function clearStaleClip(now = Date.now()): Promise<void> {
  */
 export function startClip(o: StartClip): Promise<{ ok: true } | { ok: false; error: StartError }> {
   return serial(async () => {
+    // IT can turn video off for everyone (managed policy allowVideo).
+    if (!(await readPolicy()).policy.allowVideo) return { ok: false, error: 'policy' }
     const tab = await chrome.tabs.get(o.tabId)
     const url = tab.url ?? ''
     const verdict = await productionVerdict(url).catch(() => 'unknown' as const)

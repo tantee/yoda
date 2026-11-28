@@ -1,0 +1,36 @@
+{
+  "type": "object",
+  "properties": {
+    "instances": {
+      "title": "Yoda instances",
+      "description": "Yodas pre-seeded for every user. Each user still approves the connection once in Yoda; no token is set by policy.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "title": "Name", "type": "string" },
+          "url": { "title": "Yoda address (https)", "type": "string" },
+          "default": { "title": "Default Yoda", "type": "boolean" }
+        }
+      }
+    },
+    "rules": {
+      "title": "URL mapping rules",
+      "description": "Map application addresses (Chrome match patterns) to a Yoda and project. Users cannot change these.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "pattern": { "title": "Site pattern, e.g. https://*.example.org/*", "type": "string" },
+          "instance": { "title": "Yoda (its name or address)", "type": "string" },
+          "projectId": { "title": "Project id (optional)", "type": "string" },
+          "environment": { "title": "Environment (optional)", "type": "string" },
+          "production": { "title": "Production site: no video, logs off by default", "type": "boolean" }
+        }
+      }
+    },
+    "allowVideo": { "title": "Allow video clips", "type": "boolean" },
+    "allowBuffer": { "title": "Allow the rolling replay buffer", "type": "boolean" },
+    "sessionOnly": { "title": "Sign out of every Yoda when the browser closes", "type": "boolean" }
+  }
+}

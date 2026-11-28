@@ -35,6 +35,8 @@ export function buildManifest(opts: { yodaVersion: string; publicKey: string | n
     optional_permissions: [...OPTIONAL_PERMISSIONS],
     optional_host_permissions: [...OPTIONAL_HOST_PERMISSIONS],
     commands: { _execute_action: { suggested_key: { default: 'Alt+Shift+Y' } } },
+    // What IT may set through Chrome or Edge policy (src/sw/policy.ts).
+    storage: { managed_schema: 'managed-schema.json' },
   }
   if (opts.publicKey) manifest.key = opts.publicKey
   if (opts.target === 'e2e') {

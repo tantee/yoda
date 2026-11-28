@@ -3,7 +3,7 @@ import { useI18n } from 'vue-i18n'
 import type { Profile } from '../sw/store'
 
 /** The connected Yodas (mockup extension-setup.html): default, colour, sign-out-on-close, remove. */
-defineProps<{ list: Profile[] }>()
+defineProps<{ list: Profile[]; forcedSessionOnly?: boolean }>()
 const emit = defineEmits<{ changed: [] }>()
 const { t } = useI18n()
 const COLOURS = ['#1f5fbf', '#1d6b3a', '#b3261e', '#8a5a00', '#6b3fa0', '#00727a']
@@ -51,7 +51,7 @@ async function remove(p: Profile) {
         </div>
         <v-switch
           :model-value="p.sessionOnly"
-          :disabled="p.managed"
+          :disabled="p.managed || forcedSessionOnly"
           :label="t('options.sessionOnly')"
           density="compact"
           hide-details

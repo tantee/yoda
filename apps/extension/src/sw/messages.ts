@@ -37,6 +37,7 @@ export const Msg = z.discriminatedUnion('type', [
   z.object({ type: z.literal('mapping.resolve'), tabId: z.number().int(), refresh: z.boolean().optional() }),
   z.object({ type: z.literal('mapping.test'), url: z.string().max(2048) }),
   z.object({ type: z.literal('rules.list'), refresh: z.boolean().optional() }),
+  z.object({ type: z.literal('policy.get') }),
   z.object({
     type: z.literal('rules.saveMine'),
     rule: z.object({ id: id.optional(), pattern: z.string().max(500), profileId: id, projectId: id.nullable(), environment: z.string().max(100).nullable() }),

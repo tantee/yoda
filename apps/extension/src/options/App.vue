@@ -11,10 +11,13 @@ import Rules from './Rules.vue'
 /** The options page (mockup extension-setup.html): profiles, URL mapping with the tester, granted sites. */
 const { t, locale } = useI18n()
 const list = ref<Profile[]>([])
+/** The managed policy (sw/policy.ts): a notice when IT's policy is invalid, and the switches it locks. */
+const policy = ref<{ notice: string | null; policy: { sessionOnly: boolean } } | null>(null)
 const version = chrome.runtime.getManifest().version_name ?? chrome.runtime.getManifest().version
 
 async function load() {
   list.value = await loadProfiles()
+  policy.value = (await chrome.runtime.sendMessage({ type: 'policy.get' })) as typeof policy.value
 }
 
 async function switchLocale(value: string) {
@@ -51,10 +54,11 @@ onMounted(load)
           <section id="profiles">
             <h1 class="text-h6 mb-1">{{ t('options.nav.profiles') }}</h1>
             <p class="text-body-2 text-medium-emphasis mb-4">{{ t('options.subtitle') }}</p>
+            <v-alert v-if="policy?.notice === 'invalid_policy'" type="warning" variant="tonal" density="compact" class="mb-4" data-testid="policy-invalid">{{ t('options.policyInvalid') }}</v-alert>
             <div class="options__grid">
               <div>
                 <h2 class="text-subtitle-1 font-weight-bold mb-2">{{ t('options.profiles') }}</h2>
-                <Profiles :list="list" @changed="load" />
+                <Profiles :list="list" :forced-session-only="policy?.policy.sessionOnly" @changed="load" />
               </div>
               <ConnectDialog @connected="load" />
             </div>

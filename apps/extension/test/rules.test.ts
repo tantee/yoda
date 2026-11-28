@@ -118,7 +118,7 @@ describe('sw rules', () => {
     expect(await productionVerdict('https://his.example.org/opd')).toBe('production')
     // A policy rule naming no connected profile still marks production.
     ;(globalThis as unknown as { chrome: { storage: Record<string, unknown> } }).chrome.storage.managed = {
-      get: async () => ({ rules: [{ pattern: 'https://lis.example.org/*', profileId: 'other', projectId: null, environment: null, production: true }] }),
+      get: async () => ({ rules: [{ pattern: 'https://lis.example.org/*', instance: 'Another Yoda', production: true }] }),
     }
     expect(await productionVerdict('https://lis.example.org/')).toBe('production')
   })

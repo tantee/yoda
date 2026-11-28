@@ -29,7 +29,8 @@ describe('buildManifest', () => {
     expect(all).not.toContain('<all_urls>')
     expect(release.commands).toEqual({ _execute_action: { suggested_key: { default: 'Alt+Shift+Y' } } })
     expect(release.background).toEqual({ service_worker: 'sw.js', type: 'module' })
-    expect(release).not.toHaveProperty('storage')
+    // Only the managed-policy schema (D2): no other storage keys.
+    expect(release.storage).toEqual({ managed_schema: 'managed-schema.json' })
   })
 
   it('e2e manifest differs only by host_permissions and a required tabCapture', () => {

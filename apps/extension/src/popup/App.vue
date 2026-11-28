@@ -75,7 +75,7 @@ function record() {
   void onRecordClick(() => chrome.runtime.sendMessage(message) as Promise<{ ok: boolean; error?: string }>).then((r) => {
     busy.value = ''
     if (r?.ok) window.close()
-    else error.value = t(`popup.error.${['permission_needed', 'production', 'busy', 'unknown_page'].includes(r?.error ?? '') ? r!.error : 'capture_failed'}`)
+    else error.value = t(`popup.error.${['permission_needed', 'production', 'busy', 'unknown_page', 'policy'].includes(r?.error ?? '') ? r!.error : 'capture_failed'}`)
   })
 }
 

@@ -80,7 +80,8 @@
     "privacyHint": "Granted when you connected a Yoda or started capture on a site. Remove any you no longer need.",
     "noOrigins": "No sites granted.",
     "about": "About",
-    "version": "Version {v}"
+    "version": "Version {v}",
+    "policyInvalid": "Your organisation's policy for this extension is invalid and was ignored. Tell IT."
   },
   "editor": {
     "draftMissing": "This draft is gone: it was sent, or it is older than 24 hours.",
@@ -205,7 +206,8 @@
       "production": "No video on production sites",
       "busy": "A recording is already running",
       "capture_failed": "Cannot record this tab",
-      "unknown_page": "This page cannot be checked against Yoda's production sites (not reachable, or the address cannot be read), so no video"
+      "unknown_page": "This page cannot be checked against Yoda's production sites (not reachable, or the address cannot be read), so no video",
+      "policy": "Video is turned off by your organisation"
     },
     "record": "Record (up to {s} s)",
     "stopRecording": "Stop and report",

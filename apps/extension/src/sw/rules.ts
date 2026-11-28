@@ -3,6 +3,7 @@ import { detectBuild } from '../capture/build'
 import type { PageMetadata } from '../capture/metadata'
 import { isProduction, pickRule, projectFor, type Rule, type SessionView } from '../rules/match'
 import { yodaFetch } from './api'
+import { instanceProfile, readPolicy } from './policy'
 import { profiles } from './store'
 
 /**
@@ -51,13 +52,23 @@ export async function mineRules(): Promise<Rule[]> {
   return Array.isArray(v) ? (v as Rule[]).map((r) => ({ ...r, source: 'mine' as const })) : []
 }
 
+/**
+ * The policy's rules, each on the profile its `instance` names (empty when that Yoda is not stored: it maps
+ * nothing, but its production mark still counts in productionVerdict).
+ */
 export async function policyRules(): Promise<Rule[]> {
-  try {
-    const v = (await chrome.storage.managed.get('rules'))?.rules
-    return Array.isArray(v) ? (v as Rule[]).map((r, i) => ({ ...r, id: `policy:${i}`, source: 'policy' as const, order: i })) : []
-  } catch {
-    return []
-  }
+  const { policy } = await readPolicy()
+  const list = await profiles()
+  return policy.rules.map((r, i) => ({
+    id: `policy:${i}`,
+    pattern: normalizeMatchPattern(r.pattern),
+    profileId: instanceProfile(r.instance, list)?.id ?? '',
+    projectId: r.projectId ?? null,
+    environment: r.environment ?? null,
+    production: r.production,
+    source: 'policy' as const,
+    order: i,
+  }))
 }
 
 async function cachedRules(profileId: string): Promise<Rule[] | null> {
@@ -183,7 +194,7 @@ export async function resolveUrl(url: string, opts: { refresh?: boolean; readBui
   const rules = await allRules({ refresh: opts.refresh })
   const verdict = await productionVerdict(url).catch(() => 'unknown' as const)
   const production = verdict === 'production'
-  const videoAllowed = verdict === 'ok'
+  const videoAllowed = verdict === 'ok' && (await readPolicy()).policy.allowVideo
   const picked = pickRule(url, rules)
   const list = await profiles()
   if (picked) {

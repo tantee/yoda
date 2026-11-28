@@ -11,6 +11,7 @@ import { allRules, deleteMineRule, repoOf, resolveUrl, saveMineRule } from './ru
 import { pickRule } from '../rules/match'
 import { onMessage } from './messages'
 import { exchangeProfile, removeProfile, updateProfileSettings } from './profiles'
+import { applyPolicy, readPolicy } from './policy'
 import { initSecrets } from './secrets'
 import { getProfile } from './store'
 
@@ -24,6 +25,10 @@ const purge = () => {
   void purgeClips(Date.now(), 3600_000).catch(() => 0)
 }
 purge()
+// Managed policy: applied at start and whenever IT changes it.
+const policy = () => void readPolicy().then(({ policy: p }) => applyPolicy(p)).catch(() => {})
+policy()
+chrome.storage.onChanged?.addListener((_changes, area) => area === 'managed' && policy())
 chrome.runtime.onStartup?.addListener(() => {
   void initSecrets()
   purge()
@@ -120,6 +125,8 @@ onMessage(async (m, { sender }) => {
     }
     case 'rules.deleteMine':
       return deleteMineRule(m.id)
+    case 'policy.get':
+      return { ok: true, ...(await readPolicy()) }
     case 'profile.update':
       return updateProfileSettings(m.profileId, m)
     case 'mapping.test': {

@@ -4,6 +4,7 @@ import { getRefresh, setAccess, setRefresh } from './secrets'
 import { deleteProfile, getProfile, profiles, saveProfile, updateProfile, type Profile } from './store'
 import { normaliseYodaUrl } from '../connect/connect'
 import { withTokenMove, yodaFetch } from './api'
+import { readPolicy } from './policy'
 import { deleteDraftsOf } from '../drafts/db'
 import { forgetYodaRules } from './rules'
 
@@ -77,6 +78,8 @@ export async function updateProfileSettings(id: string, patch: { colour?: string
   if (!p) return { ok: false, error: 'unknown' }
   if (patch.colour !== undefined && !/^#[0-9a-f]{6}$/i.test(patch.colour)) return { ok: false, error: 'invalid' }
   if (patch.sessionOnly !== undefined && p.managed) return { ok: false, error: 'managed' }
+  // Policy can force sign-out on close for every profile.
+  if (patch.sessionOnly === false && (await readPolicy()).policy.sessionOnly) return { ok: false, error: 'managed' }
   if (patch.sessionOnly !== undefined && patch.sessionOnly !== p.sessionOnly) {
     const sessionOnly = patch.sessionOnly
     await withTokenMove(id, async () => {
