@@ -2654,5 +2654,25 @@
     "removeTitle": "Remove this URL?",
     "removeText": "Yoda Reporter will no longer use it to pick the project.",
     "removeProductionText": "This is a production site. Once removed, Yoda no longer knows it is production and stops refusing video from it."
+  },
+  "extension": {
+    "connect": {
+      "title": "Connect Yoda Reporter",
+      "intro": "The Yoda Reporter extension in this browser asks to connect to your account.",
+      "origin": "You are connecting it to",
+      "extensionId": "Extension ID",
+      "browser": "Browser",
+      "mayDo": "Once approved, the extension can only",
+      "mayReport": "report defects in projects you are a member of",
+      "mayListProjects": "list your projects",
+      "onlyAfterConnect": "Approve only right after you clicked \"Connect\" in the extension yourself. If you did not, choose Cancel.",
+      "approve": "Approve",
+      "cancel": "Cancel",
+      "notAllowed": "This extension is not approved by your Yoda admin. Contact your administrator.",
+      "notStaff": "Only staff can connect the extension.",
+      "badQuery": "This connect link is not valid. Start again from \"Connect\" in the extension.",
+      "failed": "Could not connect. Please try again.",
+      "done": "Approved. Returning to the extension…"
+    }
   }
 }

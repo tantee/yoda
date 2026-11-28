@@ -27,6 +27,8 @@ export default defineNuxtConfig({
       })
     },
   ],
+  // The extension approve page is never framed (clickjacking an Approve).
+  routeRules: { '/extension/**': { headers: { 'Content-Security-Policy': "frame-ancestors 'none'", 'X-Frame-Options': 'DENY' } } },
   css: ['~/assets/fonts.css', '@mdi/font/css/materialdesignicons.css', 'vuetify/styles', '~/assets/main.css'],
   build: { transpile: ['vuetify'] },
   vite: { vue: { template: { transformAssetUrls } } },
