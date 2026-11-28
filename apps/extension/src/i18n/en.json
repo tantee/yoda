@@ -169,7 +169,8 @@
       "videoOnProduction": "No video from production sites; remove the video",
       "rateLimited": "Too many reports; wait {s} seconds",
       "network": "Sending failed (network); the draft is kept, try again",
-      "other": "Sending failed; the draft is kept"
+      "other": "Sending failed; the draft is kept",
+      "mosaicNotApplied": "Apply the mosaic to the video first, or untick the video"
     }
   },
   "popup": {
@@ -209,5 +210,25 @@
     "record": "Record (up to {s} s)",
     "stopRecording": "Stop and report",
     "recording": "Recording the tab… {s} s"
+  },
+  "video": {
+    "title": "Mosaic on video",
+    "hint": "Drag on the video to cover an area with mosaic, then set its time range. Apply burns it into the clip.",
+    "play": "Play",
+    "pause": "Pause",
+    "region": "Region {n}",
+    "regionRange": "{from}–{to} s",
+    "noRegions": "No mosaic regions yet",
+    "apply": "Apply mosaic",
+    "applying": "Applying the mosaic… {p}%",
+    "keepVisible": "Keep this tab visible while the mosaic is applied",
+    "paused": "Paused: this tab is hidden. It continues when the tab is visible again.",
+    "applied": "The mosaic is burned into the video",
+    "pending": "Apply the mosaic before sending, or untick the video",
+    "failedTitle": "The mosaic could not be applied to the video",
+    "failedText": "The video is never sent with the regions unapplied. Send the report without the video, or use one still frame with the regions hidden.",
+    "sendWithout": "Send without video",
+    "useStill": "Use a still frame",
+    "stillAt": "Frame at {s} s"
   }
 }

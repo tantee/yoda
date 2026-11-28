@@ -6,6 +6,7 @@ import Canvas from './Canvas.vue'
 import { apply, defaultBlock, initState, redo, undo, type EditorDoc, type Op, type State } from './doc'
 import Toolbar, { type Tool } from './Toolbar.vue'
 import ReportForm from './ReportForm.vue'
+import VideoEditor from './VideoEditor.vue'
 import { drawVector } from './draw'
 import { flatten } from './flatten'
 
@@ -24,9 +25,6 @@ const colour = ref('#B3261E')
 const block = ref(16)
 const textAt = ref<{ x: number; y: number } | null>(null)
 const textValue = ref('')
-/** The clip, played in the editor (C2 adds mosaic regions on it). The object URL is revoked on unmount. */
-const videoUrl = computed(() => (draft.value?.video ? URL.createObjectURL(draft.value.video) : null))
-watch(videoUrl, (_n, old) => old && URL.revokeObjectURL(old))
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 const plain = <T,>(v: T): T => (v === undefined ? v : JSON.parse(JSON.stringify(v)))
 
@@ -90,7 +88,7 @@ function save() {
   const d = draft.value
   if (!d || sent.value) return
   // IndexedDB cannot clone Vue's proxies: the raw draft (its blobs as they are) with plain copies of the rest.
-  void putDraft({ ...toRaw(d), editorDoc: plain(doc.value), form: plain(d.form) })
+  void putDraft({ ...toRaw(d), editorDoc: plain(doc.value), form: plain(d.form), videoRegions: plain(d.videoRegions) })
 }
 
 function scheduleSave() {
@@ -114,6 +112,25 @@ function onSent() {
 
 watch(doc, scheduleSave, { deep: true })
 watch(() => draft.value?.form, scheduleSave, { deep: true })
+watch(() => [draft.value?.video, draft.value?.videoRegions], scheduleSave, { deep: true })
+
+/**
+ * The fallback when the mosaic cannot be applied to the video: one frame becomes the screenshot, the regions
+ * active on it become mosaic rectangles in the screenshot editor, and the video is dropped.
+ */
+async function onStill({ bitmap, ops }: { bitmap: ImageBitmap; ops: Op[] }) {
+  const d = draft.value
+  if (!d) return bitmap.close()
+  const c = new OffscreenCanvas(bitmap.width, bitmap.height)
+  c.getContext('2d')!.drawImage(bitmap, 0, 0)
+  d.images = [{ role: 'screenshot', blob: await c.convertToBlob({ type: 'image/png' }) }]
+  d.video = undefined
+  d.videoRegions = []
+  base.value?.close()
+  base.value = bitmap
+  state.value = initState({ width: bitmap.width, height: bitmap.height, ops })
+  block.value = defaultBlock(bitmap.width, bitmap.height)
+}
 onMounted(() => {
   void load()
   window.addEventListener('keydown', onKey)
@@ -124,7 +141,6 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKey)
   window.removeEventListener('pagehide', flushSave)
   base.value?.close()
-  if (videoUrl.value) URL.revokeObjectURL(videoUrl.value)
 })
 /** The image that is uploaded: blur, mosaic and redact burned in, annotations drawn, the crop applied. */
 async function exportImage(): Promise<Blob | null> {
@@ -144,6 +160,7 @@ defineExpose({ doc, base, draft })
           <section class="editor__stage" :class="{ 'editor__stage--sent': sent }" :inert="sent || undefined">
             <v-alert v-if="draft.notice === 'video_dropped'" type="warning" variant="tonal" density="compact" class="ma-2" data-testid="editor-video-dropped">{{ t('editor.videoDropped') }}</v-alert>
             <Toolbar
+              v-if="base"
               v-model:tool="tool"
               v-model:colour="colour"
               v-model:block="block"
@@ -155,7 +172,7 @@ defineExpose({ doc, base, draft })
             <div class="editor__hint text-caption text-medium-emphasis" data-testid="editor-hint">{{ t('editor.burnedIn') }}</div>
             <div class="editor__canvas">
               <Canvas v-if="base && doc" :base="base" :doc="doc" :tool="tool" :colour="colour" :block="block" @add="add" @text="(p) => (textAt = p)" />
-              <video v-else-if="videoUrl" :src="videoUrl" controls class="editor__video" data-testid="editor-video" />
+              <VideoEditor v-else-if="draft.video" :draft="draft" @still="onStill" />
               <p v-else class="text-medium-emphasis pa-4" data-testid="editor-no-image">{{ t('editor.noImage') }}</p>
             </div>
           </section>
@@ -184,7 +201,6 @@ defineExpose({ doc, base, draft })
 .editor__stage { display: flex; flex-direction: column; min-width: 0; }
 .editor__stage--sent { opacity: 0.6; }
 .editor__hint { padding: 4px 12px; }
-.editor__video { max-width: 100%; max-height: calc(100vh - 140px); display: block; background: #000; }
 .editor__canvas { flex: 1; overflow: auto; padding: 12px; background: rgb(var(--v-theme-surface-light)); }
 .editor__side { border-left: 1px solid rgba(var(--v-border-color), var(--v-border-opacity)); background: rgb(var(--v-theme-surface)); overflow: auto; max-height: 100vh; }
 @media (max-width: 960px) {

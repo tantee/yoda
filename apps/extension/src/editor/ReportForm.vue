@@ -88,7 +88,11 @@ function doReconnect() {
   })
 }
 
-const canSend = computed(() => !!form.value.title.trim() && !!form.value.projectId && form.value.confirmedNoPatientData && !sending.value && !reconnect.value)
+/** Mosaic regions on the video that no apply has burned in yet: the video cannot go until they are (decision 1). */
+const mosaicPending = computed(() => !production.value && form.value.attach.video && !!props.draft.video && !!props.draft.videoRegions?.length)
+const canSend = computed(
+  () => !!form.value.title.trim() && !!form.value.projectId && form.value.confirmedNoPatientData && !mosaicPending.value && !sending.value && !reconnect.value,
+)
 
 async function send() {
   if (!canSend.value) return
@@ -110,7 +114,7 @@ async function send() {
     } else if (r.error === 'reconnect') reconnect.value = true
     else error.value = errorText(r)
   } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e)
+    error.value = e instanceof Error && e.message === 'mosaic_not_applied' ? t('report.error.mosaicNotApplied') : e instanceof Error ? e.message : String(e)
   } finally {
     sending.value = false
   }
@@ -179,6 +183,7 @@ onMounted(load)
         :no-ai="!!project?.noAi"
         :production="production"
       />
+      <v-alert v-if="mosaicPending" type="warning" variant="tonal" density="compact" class="mt-3" data-testid="report-mosaic-pending">{{ t('report.error.mosaicNotApplied') }}</v-alert>
       <v-alert v-if="error" type="error" variant="tonal" class="mt-3" data-testid="report-error">{{ error }}</v-alert>
       <v-btn block color="primary" size="large" class="mt-4" :disabled="!canSend" :loading="sending" data-testid="report-send" @click="send">{{ t('report.send') }}</v-btn>
     </template>

@@ -1,5 +1,6 @@
 import type { ConsoleEntry, DefectBuild, NetworkEntry } from '@yoda/shared'
 import type { PageMetadata } from '../capture/metadata'
+import type { VideoRegion } from '../video/regions'
 
 /**
  * Drafts live in the extension's IndexedDB (`yoda-drafts`) until sent, discarded, or 24 hours old: a closed
@@ -18,6 +19,10 @@ export type Draft = {
   network: NetworkEntry[]
   images: DraftImage[]
   video?: Blob
+  /** Mosaic regions drawn on the video and not yet burned in (C2): while any exist, the video cannot be sent. */
+  videoRegions?: VideoRegion[]
+  /** A mosaic was burned into `video` (the original clip is gone). */
+  videoMosaicApplied?: boolean
   buffer?: Blob[]
   /** The annotation document (B9). */
   editorDoc?: unknown

@@ -30,3 +30,28 @@ CHROME=<path to Chrome for Testing> node sso.mjs "$PWD"
 - Decision 15: `storage.local` + `TRUSTED_CONTEXTS` (finding 7).
 - C1's e2e launch flags: `--allowlisted-extension-id` and `--auto-accept-this-tab-capture` (finding 4).
 - Open items for the owner: one manual Edge connect (1b), and the managed install on Windows with IT (5, in D5).
+
+## Video re-encode measurement
+
+Plan task C2, decision 1. Measured on 2026-11-28, on the same Mac with Chrome for Testing 158 (Playwright 1.57,
+new headless mode, tab visible). Both paths ran in the e2e build's editor tab. The input was a 30 s synthetic clip:
+1280x720, about 30 fps, VP9 at 1 Mbit/s (`CLIP_BITS_PER_SECOND`), a moving block and a frame counter over
+stripes. One 10 s region covered the stripes. The table shows three runs.
+
+| Path | Frame ratio (framesOut / framesIn) | Output duration | Wall time | Output size |
+|---|---|---|---|---|
+| 1: MediaRecorder (`reencode-recorder.ts`) | 0.899, 0.911, 0.922 | 29.9 s (source 29.9 s) | 30.0–30.1 s | 1.9 MB |
+| 2: WebCodecs (`reencode-webcodecs.ts`) | 1.000, 1.000, 1.000 | 29.9 s | 3.8–4.2 s | 2.3 MB |
+
+- **framesOut.** Path 1 counts the source frames that reached the canvas. Playback skips about 8–10% of them,
+  which puts path 1 right at the 0.9 bar. Path 2 counts the decoded frames it re-encodes. Neither count includes
+  the frames each path adds at region edges.
+- **Both outputs** have the written duration, are seekable, and read back with `readWebm`.
+- **A static page gives few source frames.** A 5 s e2e clip had 8 frames. Two measures keep the mosaic on time
+  and stop the encoder leaving stripe fragments in the region:
+  - path 1 repaints the visible frame at about 30 fps while it plays;
+  - path 2 adds a frame at each region start and end, and makes it a key frame whenever the set of regions changes.
+- **Default: path 1**, as decision 1 says. Path 2 catches every path 1 result under 0.9.
+- **Recommendation.** Make path 2 the default and keep path 1 as the fallback, a one-line change to the order in
+  `applyVideoMosaic`. On these numbers, path 2 is frame-exact, about 7 times faster, and does not need the tab to
+  stay visible.
