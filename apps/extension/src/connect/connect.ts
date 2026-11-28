@@ -42,7 +42,8 @@ type UaData = { brands?: { brand: string; version: string }[]; platform?: string
 /** "Edge 131 · Windows": the real brand (not Chromium or a GREASE brand), its version and the platform. */
 export function browserLabel(ua: UaData | undefined): string {
   const brands = ua?.brands ?? []
-  const pick = brands.find((b) => /edge/i.test(b.brand)) ?? brands.find((b) => /chrome/i.test(b.brand) && !/chromium/i.test(b.brand)) ?? brands.find((b) => !/not.?a.?brand/i.test(b.brand))
+  const real = brands.filter((b) => !/not.?a.?brand/i.test(b.brand))
+  const pick = real.find((b) => /edge/i.test(b.brand)) ?? real.find((b) => /chrome/i.test(b.brand) && !/chromium/i.test(b.brand)) ?? real.find((b) => /chromium/i.test(b.brand)) ?? real[0]
   const name = pick ? pick.brand.replace(/^Microsoft /, '').replace(/^Google /, '') : 'Chrome'
   const label = [pick ? `${name} ${pick.version}` : name, ua?.platform].filter(Boolean).join(' · ')
   return label.slice(0, 120)

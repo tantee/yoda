@@ -17,6 +17,17 @@ describe('collectMetadata', () => {
     expect((fetch as unknown as { mock: { calls: [string, RequestInit][] } }).mock.calls[0]![0]).toMatch(/\/\.well-known\/yoda-build\.json$/)
   })
 
+  it('names the real browser, never a GREASE brand', async () => {
+    document.head.innerHTML = '<title>x</title>'
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('none'))
+    Object.defineProperty(navigator, 'userAgentData', {
+      configurable: true,
+      value: { brands: [], platform: 'macOS', getHighEntropyValues: async () => ({ fullVersionList: [{ brand: 'Not.A/Brand', version: '24.0.0.0' }, { brand: 'Chromium', version: '158.0.8127.18' }], platformVersion: '26.6.2', platform: 'macOS' }) },
+    })
+    const m = await collectMetadata()
+    expect([m.client.browser, m.client.browserVersion, m.client.os]).toEqual(['Chromium', '158.0.8127.18', 'macOS'])
+  })
+
   it('a slow or missing well-known file is skipped', async () => {
     document.head.innerHTML = '<title>x</title>'
     vi.spyOn(globalThis, 'fetch').mockImplementation((_u, init) => new Promise((_r, reject) => (init?.signal as AbortSignal).addEventListener('abort', () => reject(new Error('aborted')))))

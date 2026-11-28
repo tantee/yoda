@@ -10,8 +10,9 @@ export const Msg = z.discriminatedUnion('type', [
   z.object({ type: z.literal('session.get'), profileId: id, fresh: z.boolean().optional() }),
   z.object({ type: z.literal('token.get'), profileId: id, after401: z.boolean().optional() }),
   z.object({ type: z.literal('capture.arm'), tabId: z.number().int() }),
-  z.object({ type: z.literal('capture.screenshot'), tabId: z.number().int(), profileId: id.optional() }),
-  z.object({ type: z.literal('capture.fullPage'), tabId: z.number().int(), profileId: id.optional() }),
+  z.object({ type: z.literal('capture.screenshot'), tabId: z.number().int(), profileId: id.optional(), projectId: id.optional(), attach: z.object({ console: z.boolean(), network: z.boolean() }).optional() }),
+  z.object({ type: z.literal('capture.fullPage'), tabId: z.number().int(), profileId: id.optional(), projectId: id.optional(), attach: z.object({ console: z.boolean(), network: z.boolean() }).optional() }),
+  z.object({ type: z.literal('capture.textOnly'), tabId: z.number().int(), profileId: id.optional(), projectId: id.optional(), attach: z.object({ console: z.boolean(), network: z.boolean() }).optional() }),
   z.object({ type: z.literal('capture.state'), tabId: z.number().int() }),
   z.object({
     type: z.literal('capture.collected'),

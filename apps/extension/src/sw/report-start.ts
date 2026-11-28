@@ -25,7 +25,7 @@ export async function pageMetadata(tabId: number): Promise<PageMetadata | null> 
  * Starts a report from the popup: the screenshot (visible area or full page), the page metadata and the tab's
  * captured logs go into a new draft, and the editor opens on it.
  */
-export async function startReport(o: { tabId: number; profileId: string; kind: 'screenshot' | 'fullPage' | 'textOnly' }): Promise<{ draftId: string; truncated?: boolean; fallback?: boolean }> {
+export async function startReport(o: { tabId: number; profileId: string; kind: 'screenshot' | 'fullPage' | 'textOnly'; projectId?: string; attach?: { console: boolean; network: boolean } }): Promise<{ draftId: string; truncated?: boolean; fallback?: boolean }> {
   await purgeOldDrafts(Date.now())
   const tab = await chrome.tabs.get(o.tabId)
   const draft = newDraft({ profileId: o.profileId, tabId: o.tabId, tabUrl: tab.url ?? '' })
@@ -41,6 +41,11 @@ export async function startReport(o: { tabId: number; profileId: string; kind: '
   const logs = await entries(o.tabId)
   draft.console = logs.console
   draft.network = logs.network
+  // The popup's choices become the form's starting point.
+  draft.form = {
+    ...(o.projectId ? { projectId: o.projectId } : {}),
+    attach: { screenshot: true, video: true, buffer: true, console: o.attach?.console ?? true, network: o.attach?.network ?? true },
+  }
   await putDraft(draft)
   await chrome.tabs.create({ url: chrome.runtime.getURL(`src/editor/index.html?draft=${draft.id}`) })
   return { draftId: draft.id, ...extra }

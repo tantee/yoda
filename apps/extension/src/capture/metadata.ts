@@ -33,7 +33,9 @@ async function clientInfo(): Promise<PageMetadata['client']> {
   try {
     const hi = await ua?.getHighEntropyValues?.(['fullVersionList', 'platformVersion'])
     const list = hi?.fullVersionList ?? ua?.brands ?? []
-    const pick = list.find((b) => /edge/i.test(b.brand)) ?? list.find((b) => /chrome/i.test(b.brand) && !/chromium/i.test(b.brand)) ?? list[0]
+    // The real browser: Edge, then Chrome, then Chromium; never a GREASE brand such as "Not.A/Brand".
+    const real = list.filter((b) => !/not.?a.?brand/i.test(b.brand))
+    const pick = real.find((b) => /edge/i.test(b.brand)) ?? real.find((b) => /chrome/i.test(b.brand) && !/chromium/i.test(b.brand)) ?? real.find((b) => /chromium/i.test(b.brand)) ?? real[0]
     if (pick) {
       browser = pick.brand.replace(/^(Microsoft|Google) /, '')
       browserVersion = pick.version

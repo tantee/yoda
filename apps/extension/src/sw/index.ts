@@ -50,9 +50,11 @@ onMessage(async (m, { sender }) => {
       if (sender.tab?.id !== undefined) await appendEntries(sender.tab.id, m.entries)
       return { ok: true }
     case 'capture.screenshot':
-    case 'capture.fullPage': {
+    case 'capture.fullPage':
+    case 'capture.textOnly': {
       if (!m.profileId) return { ok: false, error: 'no_profile' }
-      const r = await startReport({ tabId: m.tabId, profileId: m.profileId, kind: m.type === 'capture.fullPage' ? 'fullPage' : 'screenshot' })
+      const kind = m.type === 'capture.fullPage' ? 'fullPage' : m.type === 'capture.textOnly' ? 'textOnly' : 'screenshot'
+      const r = await startReport({ tabId: m.tabId, profileId: m.profileId, kind, projectId: m.projectId, attach: m.attach })
       return { ok: true, ...r }
     }
     case 'capture.state':

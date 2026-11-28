@@ -122,5 +122,34 @@
       "network": "Sending failed (network); the draft is kept, try again",
       "other": "Sending failed; the draft is kept"
     }
+  },
+  "popup": {
+    "notConnected": "Not connected to a Yoda yet",
+    "yoda": "Yoda",
+    "reconnectText": "Reconnect needed",
+    "unreachable": "Cannot reach Yoda; check the network",
+    "update": "A newer extension ({v}) is on Yoda's Help page",
+    "tooOld": "This extension is too old for this Yoda; please update",
+    "notWebPage": "This page cannot be reported",
+    "armed": "Capturing logs",
+    "counts": "{e} errors · {n} failed requests",
+    "stopped": "Log capture stopped ({reason})",
+    "stoppedReason": {
+      "navigated_away": "left the site",
+      "injection_failed": "the page does not allow it",
+      "tab_closed": "tab closed"
+    },
+    "notArmed": "Log capture not started",
+    "screenshot": "Screenshot",
+    "fullPage": "Full page (beta)",
+    "arm": "Start capturing logs",
+    "textOnly": "Text only",
+    "attachConsole": "Attach the console log",
+    "attachNetwork": "Attach failed requests",
+    "settings": "Settings",
+    "error": {
+      "arm": "Cannot capture logs on this page",
+      "capture": "Cannot take the screenshot"
+    }
   }
 }
