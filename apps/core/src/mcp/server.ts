@@ -130,7 +130,7 @@ function zodReason(err: ZodError): string {
  */
 export function createMcpServer(deps: AppDeps, rc: RunnerCtx, log: FastifyBaseLogger): Server {
   const tools = runnerTools(deps, rc)
-  const server = new Server({ name: 'yoda-core', version: '1.1.0' }, { capabilities: { tools: {} } })
+  const server = new Server({ name: 'yoda-core', version: '1.2.0' }, { capabilities: { tools: {} } })
   const listed: Tool[] = Object.entries(tools).map(([name, t]) => ({
     name,
     description: t.description,
