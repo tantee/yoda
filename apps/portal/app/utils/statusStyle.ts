@@ -85,6 +85,8 @@ const LOOKS = {
   appUrl: { production: icon('error', 'mdi-shield-alert-outline'), test: dot('info') },
   // A connected browser (Yoda Reporter grant): idle after 7 days without use.
   grant: { active: dot('success'), idle: dot('warning'), revoked: icon('neutral', 'mdi-link-off') },
+  // A defect's severity, as the tester stated it (the priority is derived once from it).
+  severity: { blocker: icon('error', 'mdi-octagon'), critical: dot('error'), major: dot('warning'), minor: dot('info'), trivial: dot('neutral') },
   // The settings master key (installer proposal §3.5): anything but ok means stored secrets cannot be read.
   masterKey: {
     ok: icon('success', 'mdi-key-outline'),

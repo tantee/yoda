@@ -314,6 +314,7 @@ useLiveEvents((e) => {
 
       <div class="wi-layout">
         <div class="wi-main">
+          <WorkItemDefectCard v-if="item.defect" :work-item-id="item.id" :project-id="item.projectId" :defect="item.defect" :me-id="me?.id ?? ''" :can-manage="canManage" />
           <section class="mb-6" :aria-labelledby="'wi-tasks-title'">
             <h2 id="wi-tasks-title" class="text-subtitle-1 wi-section-title">
               {{ t('workItems.tasks') }} <span class="wi-count tabular-nums">{{ item.tasks.length }}</span>

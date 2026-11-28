@@ -7,7 +7,6 @@ import {
   ExtensionSession,
   ExtensionTokenRequest,
   type DefectKind,
-  type ExtensionLatest,
 } from '@yoda/shared'
 import { and, asc, eq, inArray, ne } from 'drizzle-orm'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
@@ -22,6 +21,7 @@ import { gitlabRules } from '../gitlab/environments.js'
 import { appUrlRules } from '../projects/app-urls.js'
 import type { RateLimiter } from '../settings/rate-limit.js'
 import { VERSION } from '../version.js'
+import { DEFAULT_EXTENSION_DIRS, findExtensionFile, latestExtension, openExtensionFile } from '../extension/files.js'
 import { extensionDefectRoutes } from './extension-defects.js'
 
 /** Every kind a staff member may file; "bug-fix request" is optional for the tester (D1). */
@@ -29,6 +29,7 @@ const KINDS: DefectKind[] = ['defect', 'bug_fix_request']
 
 const IdParams = z.object({ id: z.string().uuid() })
 const AdminListQuery = z.object({ active: z.string().optional() })
+const DownloadParams = z.object({ file: z.string().max(100) })
 
 const rateLimited = (retryAfter: number) => new HttpError(429, { error: 'rate_limited', retryAfter })
 const tokenRefused = (reason: GrantError['reason']) => new HttpError(401, { error: 'unauthorized', reason })
@@ -40,11 +41,6 @@ function take(limiter: RateLimiter, key: string): void {
 function check(limiter: RateLimiter, key: string): void {
   const r = limiter.check(key)
   if (!r.ok) throw rateLimited(r.retryAfter)
-}
-
-/** The latest release core can serve; null until the downloads land (plan A12). */
-export async function latestExtension(): Promise<ExtensionLatest> {
-  return null
 }
 
 /**
@@ -60,6 +56,26 @@ export function extensionRoutes(app: FastifyInstance, limits: ExtensionLimits = 
     return request.extension
   }
   extensionDefectRoutes(app, limits)
+
+  const dirs = () => app.deps.config.extensionDirs ?? DEFAULT_EXTENSION_DIRS
+  const latest = () => latestExtension(dirs(), VERSION, app.deps.config.portalUrl)
+
+  // Downloads (plan A12): the zip for the Help page, the signed CRX for managed installs. Public: the files are
+  // the same for everyone and carry no secrets.
+  app.get('/extension/latest', { config: { public: true, extension: 'public' } }, async () => latest())
+
+  app.get('/extension/download/:file', { config: { public: true, extension: 'public' } }, async (request, reply) => {
+    const { file } = DownloadParams.parse(request.params)
+    const found = await findExtensionFile(dirs(), file)
+    if (!found) throw notFound()
+    return reply
+      .header('Content-Type', file.endsWith('.crx') ? 'application/x-chrome-extension' : 'application/zip')
+      .header('Content-Length', String(found.size))
+      .header('Content-Disposition', `attachment; filename="${file}"`)
+      .header('X-Content-Type-Options', 'nosniff')
+      .header('Cache-Control', 'public, max-age=300')
+      .send(openExtensionFile(found.path))
+  })
 
   /** Grants whose last refresh asked for a portal sign-in, to log the refresh that follows it. */
   const awaitingReauth = new Set<string>()
@@ -147,7 +163,7 @@ export function extensionRoutes(app: FastifyInstance, limits: ExtensionLimits = 
     return ExtensionSession.parse({
       apiVersion: EXTENSION_API_VERSION,
       instance: { name: { th: name ?? 'Yoda', en: nameEn ?? name ?? 'Yoda' }, publicUrl: app.deps.config.portalUrl, version: VERSION },
-      latestExtension: await latestExtension(),
+      latestExtension: await latest(),
       person: { id: me.id, displayName: me.displayName, isStaff: me.isStaff },
       projects: member.map((p) => ({ ...p, kinds: KINDS, repos: repos.filter((r) => r.projectId === p.id).map((r) => r.path) })),
       limits: {

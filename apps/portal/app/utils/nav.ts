@@ -22,7 +22,7 @@ export function navGroupsFor(me: Me): NavGroup[] {
   if (!me.isStaff) return [{ key: null, items: [REQUESTS, ANSWERS, ASSISTANT] }]
   const groups: NavGroup[] = [
     { key: 'nav.group.mine', items: [TODO, CHAT] },
-    { key: 'nav.group.projects', items: [PROJECTS, STATUS, item('runners', '/runners', 'mdi-server-network-outline')] },
+    { key: 'nav.group.projects', items: [PROJECTS, STATUS, item('runners', '/runners', 'mdi-server-network-outline'), item('help', '/help', 'mdi-help-circle-outline')] },
     {
       key: 'nav.group.meetings',
       items: [
@@ -79,7 +79,7 @@ export function navCount(i: NavItem, counts: MeCounts | null): string | null {
   return capCount((counts as Record<string, number>)[i.count] ?? 0)
 }
 
-const STAFF_PREFIXES = ['/todo', '/discussions', '/agendas', '/status', '/projects', '/work-items', '/runners', '/admin']
+const STAFF_PREFIXES = ['/todo', '/discussions', '/agendas', '/status', '/projects', '/work-items', '/runners', '/admin', '/help']
 
 export function isStaffPath(path: string): boolean {
   // A single task page (/todo/<id>) is also reached by requesters, from notifications and "answers".

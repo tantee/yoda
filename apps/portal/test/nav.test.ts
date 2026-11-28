@@ -24,7 +24,7 @@ const requester = { ...base, isStaff: false, isAdmin: false }
 describe('navItemsFor', () => {
   it('staff nav, in rail order (agendas join the nav)', () => {
     expect(navItemsFor(staff).map(i => i.key))
-      .toEqual(['nav.todo', 'nav.chat', 'nav.projects', 'nav.status', 'nav.runners', 'nav.discussions', 'nav.agendas'])
+      .toEqual(['nav.todo', 'nav.chat', 'nav.projects', 'nav.status', 'nav.runners', 'nav.help', 'nav.discussions', 'nav.agendas'])
   })
   it('admin also gets people admin', () => {
     expect(navItemsFor(admin).map(i => i.key)).toContain('nav.admin.people')

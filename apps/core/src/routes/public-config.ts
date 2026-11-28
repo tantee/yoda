@@ -102,7 +102,12 @@ export async function buildPublicConfig(
     recovery: s?.recovery ?? false,
     recoveryForced: s?.recoveryForced ?? false,
     version: VERSION,
-    extension: { enabled: extensionSetting(s, 'extension.enabled'), apiVersion: EXTENSION_API_VERSION },
+    extension: {
+      enabled: extensionSetting(s, 'extension.enabled'),
+      apiVersion: EXTENSION_API_VERSION,
+      mediaRetentionDays: extensionSetting(s, 'extension.mediaRetentionDays'),
+      logRetentionDays: extensionSetting(s, 'extension.logRetentionDays'),
+    },
   })
 }
 

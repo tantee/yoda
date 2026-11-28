@@ -39,7 +39,8 @@
     "short": {
       "status": "Status",
       "assistant": "Assistant"
-    }
+    },
+    "help": "Help"
   },
   "projects": {
     "title": "Projects",
@@ -1492,6 +1493,13 @@
       "active": "Active",
       "idle": "Idle",
       "revoked": "Revoked"
+    },
+    "severity": {
+      "blocker": "Blocker",
+      "critical": "Critical",
+      "major": "Major",
+      "minor": "Minor",
+      "trivial": "Trivial"
     }
   },
   "stateView": {
@@ -2718,5 +2726,71 @@
     },
     "filterEmpty": "No browsers match the filters",
     "clearFilters": "Clear filters"
+  },
+  "defect": {
+    "title": "Defect report",
+    "titleBugFix": "Bug-fix request",
+    "sensitive": "The text may contain patient data: not sent to AI",
+    "steps": "Steps",
+    "expected": "Expected",
+    "actual": "Actual",
+    "page": "Page",
+    "build": "Build",
+    "noBuild": "unknown",
+    "openCommit": "Open commit",
+    "backends": "Back-end builds",
+    "browser": "Browser",
+    "reported": "Reported by",
+    "buildSource": {
+      "meta": "from the page",
+      "well-known": "from /.well-known",
+      "header": "from a header",
+      "gitlab": "from GitLab",
+      "manual": "entered by the tester"
+    },
+    "role": {
+      "screenshot": "Screenshot",
+      "screenshot_full": "Full-page screenshot",
+      "video": "Video",
+      "buffer": "Replay buffer",
+      "console": "Console log",
+      "network": "Network requests"
+    },
+    "download": "Download",
+    "remove": "Remove file",
+    "removeTitle": "Remove this file?",
+    "removeText": "{name} is deleted for good; its entry stays on the work item.",
+    "removeReason": "Reason",
+    "removed": "File removed {when}",
+    "emptyLog": "No entries",
+    "dropped": "{n} unreadable or excess entries left out",
+    "fileFailed": "Some files could not be loaded",
+    "filesNoAi": "Screenshots, video and logs are never sent to AI."
+  },
+  "help": {
+    "title": "Help",
+    "reporter": {
+      "title": "Yoda Reporter (browser extension)",
+      "what": "A Chrome and Edge extension for reporting defects in the system you test: it captures a screenshot or a short video, the console log and failed requests, lets you highlight, blur or mosaic, and files a work item in the right project.",
+      "disabled": "The extension is turned off in this Yoda.",
+      "download": "Download",
+      "downloadZip": "Download Yoda Reporter {v} (zip)",
+      "notAvailable": "Not available in this install; build it with",
+      "install": "Install",
+      "step1": "Unzip it into a folder you will keep.",
+      "step2": "Open",
+      "step3": "Turn on Developer mode, choose \"Load unpacked\" and pick that folder.",
+      "step4": "Pin the Yoda Reporter icon to the toolbar.",
+      "connect": "Connect",
+      "connectText": "Open the extension, paste this Yoda address and press Connect, then approve on the page that opens.",
+      "address": "Yoda address",
+      "privacy": "Privacy",
+      "noMasking": "Nothing is masked automatically. If a screenshot shows patient data, use mosaic, blur or redact before sending.",
+      "noAi": "Screenshots, video and logs are never sent to AI. If you tick that the text may contain patient data, the title and text are kept from AI too.",
+      "retention": "Screenshots and video are kept{media} and logs {logs} after the item closes.",
+      "keepDays": " {n} days",
+      "keepForever": " for good",
+      "production": "On production sites there is no video, and logs are off by default."
+    }
   }
 }

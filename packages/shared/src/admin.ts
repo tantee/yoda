@@ -49,6 +49,14 @@ export const PublicConfig = z.object({
   recoveryForced: z.boolean().default(false),
   version: z.string(),
   /** Yoda Reporter: whether `/extension/*` answers, and the API version it speaks. */
-  extension: z.object({ enabled: z.boolean(), apiVersion: z.number().int() }).optional(),
+  extension: z
+    .object({
+      enabled: z.boolean(),
+      apiVersion: z.number().int(),
+      /** Days defect media and logs are kept after their item closes (0: kept), for the Help page. */
+      mediaRetentionDays: z.number().int().optional(),
+      logRetentionDays: z.number().int().optional(),
+    })
+    .optional(),
 })
 export type PublicConfig = z.infer<typeof PublicConfig>

@@ -77,5 +77,12 @@ export function useUpload() {
     setTimeout(() => URL.revokeObjectURL(url), 10000)
   }
 
-  return { upload, uploadToConversation, download }
+  /** A project file's bytes (fetched with the bearer token), e.g. to show an image or a log on the defect card. */
+  async function fetchBlob(attachmentId: string): Promise<Blob> {
+    const res = await fetch(`/api/attachments/${attachmentId}/download`, { headers: await authHeaders() })
+    if (!res.ok) throw new UploadError(res.status === 404 ? 'errors.notFound' : 'errors.generic')
+    return res.blob()
+  }
+
+  return { upload, uploadToConversation, download, fetchBlob }
 }
