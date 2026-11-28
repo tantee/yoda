@@ -178,6 +178,17 @@ Screenshots, video and logs are never sent to AI. If you tick that the text may 
 and text are kept from AI too; notifications by email, LINE or Telegram still show the real title. Your
 connected browsers are under your name → **Connected browsers**, where you can disconnect one.
 
+**Video.** **Record** captures the tab, without sound, for up to 30 seconds; press **Stop and report** in the
+extension, or it stops by itself. In the editor, drag a box over anything to hide and set when it shows on the
+timeline, then press **Apply mosaic** before sending: a video with boxes not yet applied cannot be sent. If the
+mosaic cannot be applied, send without the video or use a still frame instead.
+
+**Which project.** The extension picks the project from the page's address: from the application URLs and
+GitLab environments of your projects in Yoda, or from rules you add yourself in the extension's settings
+(**URL mapping**, with a tester that shows which rule wins and why). You can always change the project before
+sending. On a page Yoda marks as **production**, the extension says so, offers no video, and leaves the logs
+off unless you turn them on.
+
 ## Runners
 
 A **runner** works AI tasks that need a repository (code changes, repository analysis, running tests) with a

@@ -2,7 +2,7 @@ import { expect, test } from './fixtures'
 
 if (process.env.DEMO) test.use({ video: 'on' })
 
-test('record a clip, mosaic the patient card for 1–3 s, apply, send', async ({ context, yoda, app, openPopup, connect, tabIdOf }) => {
+test('record a clip, mosaic the patient card for 1–3 s, apply, send', async ({ context, yoda, app, openPopup, connect, tabIdOf, frame }) => {
   await connect()
   const page = await context.newPage()
   await page.goto(app.url)
@@ -15,10 +15,12 @@ test('record a clip, mosaic the patient card for 1–3 s, apply, send', async ({
 
   const popup = await openPopup(tabId)
   await expect(popup.getByTestId('action-record')).toBeEnabled()
+  await frame(popup, 3)
   const closed = popup.waitForEvent('close')
   await popup.getByTestId('action-record').click()
   await Promise.race([closed, expect(popup.getByTestId('popup-error')).toHaveCount(0, { timeout: 15_000 }).then(() => closed)])
   await page.bringToFront()
+  await frame(page, 2)
   for (let i = 0; i < 10; i++) {
     await page.click('#fail')
     await page.waitForTimeout(500)
@@ -50,6 +52,7 @@ test('record a clip, mosaic the patient card for 1–3 s, apply, send', async ({
   await editor.mouse.move(box.x + (want.x + want.w) * s, box.y + (want.y + want.h) * s, { steps: 8 })
   await editor.mouse.up()
   await expect(editor.getByTestId('video-region-0')).toContainText(/1\.0.+3\.0/)
+  await frame(editor, 4)
   const [x, y, w, h, block] = (await editor.getByTestId('video-region-box-0').getAttribute('data-rect'))!.split(',').map(Number) as [number, number, number, number, number]
 
   // Unapplied regions block Send.
@@ -57,13 +60,16 @@ test('record a clip, mosaic the patient card for 1–3 s, apply, send', async ({
   await editor.getByTestId('review-confirm').locator('input').check()
   await expect(editor.getByTestId('report-mosaic-pending')).toBeVisible()
   await expect(editor.getByTestId('report-send')).toBeDisabled()
+  await frame(editor, 3)
 
   // 2. Apply: the clip is re-encoded with the region burned in.
   await editor.getByTestId('video-apply').click()
   await expect(editor.getByTestId('video-applied')).toBeVisible({ timeout: 90_000 })
+  await frame(editor, 4)
   await expect(editor.getByTestId('report-send')).toBeEnabled()
   await editor.getByTestId('report-send').click()
   await expect(editor.getByTestId('report-sent')).toBeVisible()
+  await frame(editor, 4)
 
   // 3. Decode what Yoda received: block-uniform in the region at 2 s, the stripes back at 4 s.
   const [got] = yoda.reports

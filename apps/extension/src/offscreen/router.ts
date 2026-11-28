@@ -1,6 +1,6 @@
 /** A message for the offscreen document (decision 16): one document, jobs `clip` (C1) and `buffer` (D1). */
 export type OffscreenMsg =
-  | { target: 'offscreen'; job: 'clip'; type: 'start'; streamId: string; tabId: number; maxSeconds: number }
+  | { target: 'offscreen'; job: 'clip'; type: 'start'; streamId: string; tabId: number; maxSeconds: number; width?: number; height?: number }
   | { target: 'offscreen'; job: 'clip'; type: 'stop' }
   | { target: 'offscreen'; job: 'buffer'; type: string; [k: string]: unknown }
 

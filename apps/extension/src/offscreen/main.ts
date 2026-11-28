@@ -14,7 +14,15 @@ async function clipJob(m: OffscreenMsg): Promise<unknown> {
   if (clip) return { ok: false, error: 'busy' }
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: false,
-    video: { mandatory: { chromeMediaSource: 'tab', chromeMediaSourceId: m.streamId, maxWidth: 1280, maxHeight: 1280, maxFrameRate: 30 } } as unknown as MediaTrackConstraints,
+    // The tab's own shape (at most 1280 wide): without min and max sizes Chrome letterboxes it into a square.
+    video: {
+      mandatory: {
+        chromeMediaSource: 'tab',
+        chromeMediaSourceId: m.streamId,
+        ...(m.width && m.height ? { minWidth: m.width, maxWidth: m.width, minHeight: m.height, maxHeight: m.height } : { maxWidth: 1280, maxHeight: 1280 }),
+        maxFrameRate: 30,
+      },
+    } as unknown as MediaTrackConstraints,
   })
   const tabId = m.tabId
   try {

@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { route } from '../src/offscreen/router'
-import { clearStaleClip, closeOffscreenIfIdle, endClip, ensureOffscreen, jobs, onClipTabNavigated, startClip } from '../src/sw/offscreen'
+import { clipSize, clearStaleClip, closeOffscreenIfIdle, endClip, ensureOffscreen, jobs, onClipTabNavigated, startClip } from '../src/sw/offscreen'
 import { startReport } from '../src/sw/report-start'
 import { getDraft } from '../src/drafts/db'
 import { installChrome } from './support/chrome'
@@ -145,5 +145,12 @@ describe('offscreen document', () => {
     expect((await getDraft(gone.draftId))!.video).toBeDefined()
     const unknown = await startReport({ tabId: 9, profileId: 'p1', kind: 'video', video })
     expect((await getDraft(unknown.draftId))!.video).toBeUndefined()
+  })
+
+  it('the clip keeps the tab shape, at most 1280 wide, in even pixels', () => {
+    expect(clipSize({ width: 1280, height: 773 })).toEqual({ width: 1280, height: 774 })
+    expect(clipSize({ width: 1920, height: 1001 })).toEqual({ width: 1280, height: 668 })
+    expect(clipSize({ width: 800, height: 600 })).toEqual({ width: 800, height: 600 })
+    expect(clipSize({})).toEqual({})
   })
 })

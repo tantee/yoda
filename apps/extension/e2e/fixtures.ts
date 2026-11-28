@@ -34,6 +34,8 @@ type Fixtures = {
   connect: () => Promise<Page>
   /** The id of the tab showing `url`. */
   tabIdOf: (url: string) => Promise<number>
+  /** FRAMES=<dir>: a numbered screenshot of `page` for the PR's demo GIF (a no-op otherwise). */
+  frame: (page: Page, hold?: number) => Promise<void>
 }
 
 export const test = base.extend<Fixtures>({
@@ -86,6 +88,19 @@ export const test = base.extend<Fixtures>({
       await (await authWindow).getByTestId('connect-approve').click()
       await test.expect(options.getByTestId('profile-row')).toContainText('Yoda ทดสอบ')
       return options
+    })
+  },
+  frame: async ({}, use, info) => {
+    let n = 0
+    await use(async (page, hold = 1) => {
+      const dir = process.env.FRAMES
+      if (!dir) return
+      await page.waitForTimeout(400)
+      const base = `${dir}/${info.title.slice(0, 20).replace(/\W+/g, '-')}`
+      ;(await import('node:fs')).mkdirSync(dir, { recursive: true })
+      // `hold` repeats the frame, so the GIF lingers on it.
+      const png = await page.screenshot()
+      for (let i = 0; i < hold; i++) (await import('node:fs')).writeFileSync(`${base}-${String(n++).padStart(3, '0')}.png`, png)
     })
   },
   tabIdOf: async ({ sw }, use) => {

@@ -58,6 +58,14 @@ export async function closeOffscreenIfIdle(): Promise<boolean> {
 export type StartClip = { tabId: number; profileId: string; projectId?: string; attach?: { console: boolean; network: boolean }; maxSeconds: number }
 export type StartError = 'production' | 'unknown_page' | 'busy' | 'capture_failed'
 
+/** The clip's frame: the tab's size scaled to at most 1280 wide, even numbers (VP8/VP9 need them). */
+export function clipSize(tab: { width?: number; height?: number }): { width?: number; height?: number } {
+  if (!tab.width || !tab.height) return {}
+  const scale = Math.min(1, 1280 / tab.width)
+  const even = (n: number) => Math.max(2, Math.round((n * scale) / 2) * 2)
+  return { width: even(tab.width), height: even(tab.height) }
+}
+
 /** Starts run one at a time: two clicks must not both pass the busy check. */
 let lock: Promise<unknown> = Promise.resolve()
 function serial<T>(fn: () => Promise<T>): Promise<T> {
@@ -99,7 +107,7 @@ export function startClip(o: StartClip): Promise<{ ok: true } | { ok: false; err
     }
     await setJobs({ ...j, clip: { tabId: o.tabId, profileId: o.profileId, projectId: o.projectId, attach: o.attach, startedAt: Date.now(), maxSeconds: o.maxSeconds, url, tainted: false } })
     await ensureOffscreen()
-    const r = (await chrome.runtime.sendMessage({ target: 'offscreen', job: 'clip', type: 'start', streamId, tabId: o.tabId, maxSeconds: o.maxSeconds }).catch(() => null)) as { ok?: boolean } | null
+    const r = (await chrome.runtime.sendMessage({ target: 'offscreen', job: 'clip', type: 'start', streamId, tabId: o.tabId, maxSeconds: o.maxSeconds, ...clipSize(tab) }).catch(() => null)) as { ok?: boolean } | null
     if (!r?.ok) {
       await endClip()
       return { ok: false, error: 'capture_failed' }
