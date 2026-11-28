@@ -23,6 +23,7 @@ Contents:
 5. [Upgrade and rollback](#5-upgrade-and-rollback)
 6. [Backups and restore](#6-backups-and-restore)
 7. [GitLab integration](#7-gitlab-integration)
+   - [7a. Yoda Reporter (browser extension)](#7a-yoda-reporter-browser-extension)
 8. [Runners](#8-runners)
 9. [Email, LINE and Telegram](#9-email-line-and-telegram)
 10. [Rotating secrets](#10-rotating-secrets)
@@ -222,6 +223,7 @@ Bootstrap only: master key and settings import (installer proposal §3.5, §6):
 | `YODA_DEV_SKIP_SETUP` | Dev only: setup counts as done without the setup wizard. Never set in production | optional (`false`) | `true` |
 | `YODA_SETTINGS_IMPORT` | `false` = env secrets are not copied into the database on start (other values still are) | optional (`true`) | `true` |
 | `YODA_TRUSTED_PROXY_HOPS` | How many proxies in front of core add a believed `X-Forwarded-For` entry; decides the client address in rate limits, the audit log and break-glass alerts. `1` = the portal only (the portal published directly, or reached through an SSH tunnel). Set `2` when a reverse proxy (nginx, Caddy, a load balancer) sits in front of the portal and adds `X-Forwarded-For`; otherwise every browser shows as the reverse proxy's address. Never higher than the proxies really there: a client could then choose its own address. The portal reads it too: with `1` it tells core its own `Host` (what the setup wizard detects as the public URL) and honours an incoming `X-Forwarded-Proto: https` (upgrade only); with `2` it passes on the reverse proxy's scheme and host, so the proxy must set them (see the upgrade notes in section 5) | optional (`1`) | `2` |
+| `YODA_EXTENSION_DIRS` | Comma-separated directories where core finds the Yoda Reporter zip and CRX it serves at `/extension/download/:file` and `/extension/updates.xml`; the first directory holding a file wins | optional (`/srv/yoda-extension,/app/extension`) | `/srv/yoda-extension,/app/extension` |
 | `YODA_OUTBOUND_ALLOW_LOOPBACK` | Dev only: the admin settings tests may connect to loopback (the dev fakes). Never set in production | optional (`false`) | `false` |
 
 In production core reads the master key from the bootstrap volume (section 4a): the `init` service generates it,
@@ -602,7 +604,8 @@ the `0600` key of files mode, which the deploy user owns and Caddy reads as root
 default set and limited to the container's own mounts; never `DAC_READ_SEARCH`, which re-enables
 `open_by_handle_at`, the "shocker" escape to host files), with `no-new-privileges` and a read-only root file
 system (it writes only its two volumes and `/tmp`). Slow clients get 30 seconds for their request headers and a
-request body is capped at 32 MiB; there is no body or write timeout, which would cut the portal's server-sent
+request body is capped at 32 MiB, except Yoda Reporter's defect reports (`/api/extension/defects`, 56 MiB; section
+7a); there is no body or write timeout, which would cut the portal's server-sent
 events (on HTTP/1.1 Go's read timeout covers the whole request). Its admin endpoint (`localhost:2019`) exists only inside the container, for the healthcheck and the
 reload. It sends no `Strict-Transport-Security` (HSTS) header: in internal mode a lost root would otherwise lock
 browsers out until the new one is trusted. HSTS may come later as an option for files and acme mode only.
@@ -1011,12 +1014,72 @@ Owner checklist (details in [docs/development.md, "GitLab integration"](developm
 - [ ] A **webhook** on each linked project, or once on the group: URL
       `https://portal.example.org/api/gitlab/webhook`, secret token = the webhook secret (System settings →
       GitLab can generate it, shown once; or `GITLAB_WEBHOOK_SECRET`), triggers
-      **Merge request events**, **Pipeline events** and **Comments**, SSL verification on.
+      **Merge request events**, **Pipeline events**, **Comments** and **Deployment events**, SSL verification on.
+      Deployment events keep the environments current for Yoda Reporter's URL mapping (an environment with tier
+      `production` counts as a production site); a nightly sync at 03:30 also reads them.
 - [ ] System settings → GitLab shows core configured, GitLab reachable, the bot user, and the time of the last webhook.
 
 GitLab does not retry failed deliveries and disables a webhook that keeps failing. After an outage, open the
 webhook's **Recent events**, re-enable it if needed and **Resend** the failed deliveries; resending is harmless.
 Core also re-reads the merge requests of active work items every 15 minutes.
+
+## 7a. Yoda Reporter (browser extension)
+
+Yoda Reporter (Thai: Yoda แจ้งปัญหา) is a Chrome and Edge extension that files a UI defect, with a screenshot or a
+short video, the console log and failed requests, as a `defect` work item in the right project. Staff members
+of a project report to it; the extension connects to Yoda through the approve page and holds its own tokens.
+
+**Settings** (System settings → Yoda Reporter; all live):
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| `extension.enabled` | on | Off: every `/extension/*` route answers 404 (connected browsers stay listed and revocable). |
+| `extension.allowedIds` | empty | Extension IDs allowed besides the official one (`hcnhkfonaflhcknbhcphbfgpdfmgmibm`), e.g. a locally built copy. Removing an ID cuts its browsers at once. |
+| `extension.accessTtlMinutes` | 60 | Access token lifetime. |
+| `extension.refreshIdleDays` / `refreshAbsoluteDays` | 30 / 90 | A connection ends after this long unused, and after this long in any case. |
+| `extension.reauthDays` | 14 | The person must have signed in to the portal within this many days for a refresh to work. |
+| `extension.maxVideoSeconds` | 30 | The longest clip the extension records. |
+| `extension.mediaRetentionDays` / `logRetentionDays` | 180 / 90 | Days screenshots and video, and logs, are kept after their item closes (0 keeps them). |
+
+`YODA_EXTENSION_DIRS` (section 3) lists where core finds the release files it serves: the zip built into the
+core image (`/app/extension`) and, for managed installs, the signed CRX mounted at `/srv/yoda-extension`.
+
+**Connected browsers.** Each person sees and revokes their own under their name → Connected browsers; admins see
+everyone's under System → Connected browsers, and **Revoke all** (typed confirmation) ends every connection. A
+refresh token used twice ends its connection at once (the browser shows "Reconnect").
+
+**URL mapping.** The extension picks the project from the page URL, matched locally against the project's
+**Application URLs** (project → App URLs tab, PM) and the GitLab environments of its linked repos (deployment
+events on the webhook, section 7, and a nightly sync at 03:30). A URL marked production, or a GitLab environment
+of tier `production`, is a production site: no video or replay buffer, logs off by default, and core refuses
+video from it.
+
+**Your own reverse proxy.** A defect report is one multipart request of up to 50 MiB. With the built-in proxy
+(section 4b) `/api/extension/defects` is allowed 56 MiB. In front of your own proxy, allow the same for that
+path only, e.g. nginx:
+
+```nginx
+location = /api/extension/defects {
+    client_max_body_size 56m;
+    proxy_pass http://portal;
+}
+```
+
+**Retention and cleanup.** Daily at 03:00 (Asia/Bangkok) core deletes defect media and logs whose work item
+closed longer ago than the retention settings; the files show as "removed" on the card and their rows stay. At
+03:15 it removes defect objects older than a day that no attachment row names (left by an upload that crashed
+before committing). The uploader, the project's PM or an admin can remove a defect file earlier, with a reason.
+
+**AI.** Defect media and logs are always "do not send to AI". When the tester marks that the text may contain
+patient data, or the project is noAi, the report text stays out of the work item description and AI sees a
+neutral title. Outside notifications (email, LINE, Telegram) still carry the real work item title, as for any
+other item: they go to people, not to AI.
+Notes written on such an item later (the triage, fix and retest results) are stored "do not send to AI" too.
+
+**Limits.** Each person may send 20 reports an hour and 100 a day (300 MB of files a day); core reads at most 8
+reports at a time and answers 429 with a retry time beyond that. Five failed connection attempts from one
+address lock Connect for that address for 15 minutes; behind one hospital NAT, a misbehaving client can block
+Connect for everyone for that long.
 
 ## 8. Runners
 
@@ -1312,6 +1375,7 @@ after it). For a value still in `.env`, the same holds with `dc up -d --no-build
     again (the wizard card warns). If the hops are 2 and every client is still the Docker gateway's address, see
     **Client addresses** in section 4b.
   - *413 Request Entity Too Large:* the proxy refuses a request body above 32 MiB (the portal's own limit for an
-    upload is 25 MiB).
+    upload is 25 MiB), or above 56 MiB on `/api/extension/defects` (a defect report holds at most 50 MiB).
+    The extension then asks the tester to remove a file.
 - **Disk full.** `docker system df`; old images: `docker image prune -a` (keeps the running ones); the
   `backups` volume (section 6).

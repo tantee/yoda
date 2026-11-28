@@ -42,6 +42,7 @@ import { publicConfigRoutes } from './routes/public-config.js'
 import { setupRoutes } from './routes/setup.js'
 import { setupWizardRoutes } from './routes/setup-wizard.js'
 import { recoveryRoutes } from './routes/recovery.js'
+import { extensionRoutes } from './routes/extension.js'
 import type { ProxyProbe } from './proxy-status.js'
 import { readiness } from './readiness.js'
 import { VERSION } from './version.js'
@@ -105,6 +106,12 @@ export const LOGGER_OPTIONS = {
       'req.body',
       'body.changes',
       'body.values',
+      // Yoda Reporter: refresh tokens, codes and PKCE verifiers in /extension/token bodies; the idempotency key.
+      'body.refreshToken',
+      'body.code',
+      'body.codeVerifier',
+      'req.headers["idempotency-key"]',
+      'headers["idempotency-key"]',
     ],
     censor: '[redacted]',
   },
@@ -203,6 +210,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   statusRoutes(app)
   shellRoutes(app)
   if (deps.config.mcpEnabled) mcpRoutes(app)
+  extensionRoutes(app)
   streamRoutes(app)
   // Text-bearing uploads become `document` entries. The attachment is already committed, so a failure here
   // is logged rather than failing the upload (a retried upload would duplicate the file).

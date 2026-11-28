@@ -78,6 +78,8 @@ export type Config = {
     /** The YODA_PROXY_* names whose value core could not use (ignored, reported on the card; never a boot failure). */
     invalid: string[]
   }
+  /** Yoda Reporter file directories (YODA_EXTENSION_DIRS), searched in order. */
+  extensionDirs?: string[]
 }
 
 const modelId = z.string().regex(/^(anthropic|openai):.+$/, 'must be provider:model with provider anthropic or openai')
@@ -150,6 +152,8 @@ export const envSchema = z.object({
   YODA_PROXY_DOMAIN: z.string().optional(),
   YODA_PROXY_CERT_MODE: z.string().default('internal'),
   YODA_PROXY_HTTPS_PORT: z.string().default('443'),
+  // Yoda Reporter: where core finds the release zip and CRX it serves; the first directory holding the file wins.
+  YODA_EXTENSION_DIRS: emptyUnset(z.string().default('/srv/yoda-extension,/app/extension')),
   YODA_SETTINGS_IMPORT: z.preprocess((v) => (v === '' ? undefined : v), z.enum(['true', 'false']).default('true')),
   // Dev and tests only: the settings tests may reach loopback (the fakes). Read by server.ts, not mapped into Config.
   YODA_OUTBOUND_ALLOW_LOOPBACK: z.preprocess((v) => (v === '' ? undefined : v), z.enum(['true', 'false']).default('false')),
@@ -210,6 +214,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): Config {
     telegramApiUrl: e.TELEGRAM_API_URL.replace(/\/+$/, ''),
     devSkipSetup: e.YODA_DEV_SKIP_SETUP === 'true',
     trustedProxyHops: e.YODA_TRUSTED_PROXY_HOPS,
+    extensionDirs: e.YODA_EXTENSION_DIRS.split(',').map((s) => s.trim()).filter(Boolean),
     ...(e.YODA_PROXY_ENABLED?.trim() === 'true' ? { proxy: proxyConfig(e) } : {}),
   }
 }

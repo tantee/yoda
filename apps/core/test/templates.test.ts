@@ -8,7 +8,7 @@ const load = (name: string) =>
     JSON.parse(readFileSync(fileURLToPath(new URL(`../src/workflow/templates/${name}.json`, import.meta.url)), 'utf8')),
   )
 
-for (const name of ['software-change', 'bug-fix']) {
+for (const name of ['software-change', 'bug-fix', 'defect']) {
   it(`${name} is valid`, () => {
     const def = load(name)
     expect(def.key).toBe(name)
@@ -33,4 +33,6 @@ it('ai tasks carry the expected capabilities', () => {
     'draft-requirements': 'draft-text', 'draft-design': 'draft-text', implement: 'code-change', 'draft-tests': 'draft-text',
   })
   expect(caps('bug-fix')).toEqual({ implement: 'code-change', 'draft-tests': 'draft-text' })
+  // The defect template is human-only, so it works unchanged in noAi projects.
+  expect(caps('defect')).toEqual({})
 })

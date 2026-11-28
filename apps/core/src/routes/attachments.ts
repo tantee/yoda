@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { and, eq } from 'drizzle-orm'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { z } from 'zod'
-import { forbidden, notFound, requireSignedIn, requireStaff, tooLarge, unsupportedType } from '../auth/plugin.js'
+import { forbidden, HttpError, invalidState, notFound, requireSignedIn, requireStaff, tooLarge, unsupportedType } from '../auth/plugin.js'
 import { attachmentInConversation, requireConversation } from '../chat/service.js'
 import { extractText } from '../attachments/extract.js'
 import {
@@ -13,6 +13,7 @@ import {
   type AttachmentStoredHook,
 } from '../attachments/service.js'
 import { attachments, tasks, workItems } from '../db/schema.js'
+import { purgeOne } from '../defects/retention.js'
 import { canManageProject } from '../projects/access.js'
 import { propagateAttachmentNoAi } from '../knowledge/service.js'
 import { runWork } from '../work/context.js'
@@ -21,6 +22,7 @@ import { canSeeProject } from '../work/queries.js'
 const IdParams = z.object({ id: z.string().uuid() })
 const ListQuery = z.object({ workItemId: z.string().uuid().optional(), taskId: z.string().uuid().optional() })
 const Patch = z.object({ noAi: z.boolean() })
+const RemoveBody = z.object({ reason: z.string().trim().min(1).max(500) })
 const OptionalUuid = z.string().uuid().optional()
 const ConversationFileParams = z.object({ conversationId: z.string().uuid(), id: z.string().uuid() })
 
@@ -82,7 +84,9 @@ export function attachmentRoutes(app: FastifyInstance, opts: { onStored: Attachm
     }
   }
 
+  /** Every download path: a removed or expired defect file is 404 `purged` (the row stays, the bytes are gone). */
   async function sendFile(reply: FastifyReply, row: typeof attachments.$inferSelect) {
+    if (row.purgedAt) throw new HttpError(404, { error: 'not_found', reason: 'purged' })
     const stream = await storage().get(row.storageKey)
     return reply
       .header('Content-Type', row.contentType)
@@ -174,6 +178,23 @@ export function attachmentRoutes(app: FastifyInstance, opts: { onStored: Attachm
     return sendFile(reply, row)
   })
 
+  /**
+   * Removes a defect file (Yoda Reporter): the uploader, the project's PM or an admin, with a reason. The row
+   * stays, marked purged; other uploads cannot be removed this way (409 `not_defect_attachment`).
+   */
+  app.delete('/attachments/:id', async (request, reply) => {
+    requireStaff(request)
+    const { id } = IdParams.parse(request.params)
+    const { reason } = RemoveBody.parse(request.body ?? {})
+    const me = request.me
+    const [row] = await db().select().from(attachments).where(eq(attachments.id, id))
+    if (!row?.projectId || !(await canSeeProject(db(), me, row.projectId))) throw notFound()
+    if (!row.role) throw invalidState('not_defect_attachment')
+    if (row.uploadedBy !== me.id && !(await canManageProject(db(), me, row.projectId))) throw forbidden()
+    await purgeOne(app.deps, id, { kind: 'person', personId: me.id, reason })
+    return reply.status(204).send()
+  })
+
   app.patch('/attachments/:id', async (request) => {
     requireStaff(request)
     const { id } = IdParams.parse(request.params)
@@ -182,6 +203,11 @@ export function attachmentRoutes(app: FastifyInstance, opts: { onStored: Attachm
     const [row] = await db().select().from(attachments).where(eq(attachments.id, id))
     if (!row?.projectId || !(await canSeeProject(db(), me, row.projectId))) throw notFound()
     if (row.uploadedBy !== me.id && !(await canManageProject(db(), me, row.projectId))) throw forbidden()
+    // Defect files are media and logs: never AI material (plan decision 6).
+    if (row.role) {
+      if (!body.noAi) throw new HttpError(409, { error: 'invalid_state', reason: 'defect_files_never_ai' })
+      return getAttachment(db(), id)
+    }
     await runWork(app.deps, { id: me.id, kind: 'person' }, async (ctx) => {
       await ctx.tx.update(attachments).set({ noAi: body.noAi }).where(eq(attachments.id, id))
       // In place on the current entry: a handling flag, not a content change (see propagateAttachmentNoAi).

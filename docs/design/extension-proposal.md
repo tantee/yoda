@@ -1,7 +1,11 @@
 # Yoda Reporter (Chrome extension for UI defects): proposal
 
-Status: **proposal for owner review**. No extension code exists. Nothing under `apps/` or `packages/` changes until
-this is approved. Inputs read: `packages/shared/src/{work,knowledge,proposals}.ts`, `packages/shared/src/settings/registry.ts`,
+Status: **approved 2026-11-28**, with every §15 recommendation and one change from the owner: **no automatic
+masking**. Test data is usually mock, and auto-masking hinders debugging. Nothing masks form fields, `[data-yoda-mask]`
+elements or HN, Thai ID, phone, e-mail or token patterns, in the extension or in core. The annotation editor gets a
+manual **mosaic** tool (rectangle and brush, burned in) beside blur and redact, and mosaic also works on video (§11).
+The confirmation before sending, "do not send to AI" for media and logs, the project's noAi rule, the production rules
+and retention are unchanged. Implementation plan: `docs/superpowers/plans/2026-11-28-yoda-reporter.md`. Inputs read: `packages/shared/src/{work,knowledge,proposals}.ts`, `packages/shared/src/settings/registry.ts`,
 `apps/core/src/{app,config}.ts`, `apps/core/src/auth/*`, `apps/core/src/local/session.ts`,
 `apps/core/src/routes/{attachments,work,requests,projects}.ts`, `apps/core/src/attachments/service.ts`,
 `apps/core/src/storage/s3.ts`, `apps/core/src/ai/gateway.ts`, `apps/core/src/knowledge/context-pack.ts`,
@@ -17,7 +21,7 @@ opens English). Screenshots at 1440 px wide:
 | Mockup | Shows | Screenshot |
 | --- | --- | --- |
 | [extension-popup.html](mockups/extension-popup.html) | The toolbar popup on an app under test: matched Yoda profile and project, capture choices, collected metadata with its source, capture toggles, the "sent" state | `extension-popup.png`, `extension-popup-en.png` |
-| [extension-editor.html](mockups/extension-editor.html) | The annotation editor (arrow, box, highlight, text, numbered step, pixelate, redact, crop) and the report form with the check-before-sending step | `extension-editor.png` |
+| [extension-editor.html](mockups/extension-editor.html) | The annotation editor (arrow, box, highlight, text, numbered step, blur, mosaic, redact, crop) and the report form with the check-before-sending step | `extension-editor.png` |
 | [extension-setup.html](mockups/extension-setup.html) | The options page: Yoda profiles, connecting a new Yoda in three steps (including Yoda's approval page), URL mapping with a URL tester | `extension-setup.png` |
 
 Every hostname is a placeholder (`example.org`). The page under test in the mockups is fictional and its data is
@@ -54,7 +58,7 @@ instances and maps sites to instance and project automatically.
 `Alt+Shift+Y`) on the page that misbehaves. The popup already knows which Yoda and which project the page belongs
 to, and what build it runs. The tester takes a screenshot or a video of up to 30 s, or saves the last 30 s from a
 rolling buffer. They mark it up, fill in title, severity, steps, expected and actual, check a privacy confirmation,
-and send. Yoda creates a **defect** work item in that project, with the media and masked logs attached, and the
+and send. Yoda creates a **defect** work item in that project, with the media and logs attached, and the
 tester gets a link to it.
 
 ![Popup on an app under test](screenshots/extension-popup.png)
@@ -73,7 +77,7 @@ Recommendations, one line each:
 | Files | `video/webm` is added for this route. Each file stays within the existing `MAX_UPLOAD_BYTES` (25 MB), with up to 8 files and 50 MB per report. Files go to RustFS under `projects/<id>/defects/<workItemId>/…`. They create no knowledge entries (§10.3). |
 | AI | Media and logs are **always** stored `noAi`. A project's noAi wins over everything. The report text reaches AI only on AI-enabled projects, and only when the tester has not marked it sensitive. No automatic AI triage in v1 (§10.4). |
 | Who | Staff members of the project report directly. Requesters (UAT users) come later and only to projects that opt in. Their reports become `create_work_item` proposals for the PM (§10.5). |
-| Privacy | Form fields and `[data-yoda-mask]` elements are masked **before** capture. Pixelate and redact tools are burned into the image, and the original is never uploaded. Regex masking covers Thai national ID (with checksum), HN (configurable), phone, email and tokens, both in the extension and again in core. A confirmation step comes before sending. Rules for production sites are stricter. Media is deleted 180 days after the item closes (§11). |
+| Privacy | **Nothing is masked automatically** (owner, 2026-11-28). The editor's blur, mosaic (rectangle and brush) and redact tools are burned into the image, and the original is never uploaded. Mosaic regions also apply to video. A confirmation step comes before sending. Media and logs are always stored "do not send to AI". Rules for production sites are stricter. Media is deleted 180 days after the item closes (§11). |
 | Distribution | MVP: a zip on a new Yoda **Help** page, loaded unpacked by IT testers. Rollout: managed Chrome and Edge **force-install** of a signed CRX that Yoda serves with an `updates.xml` (`ExtensionSettings` with `override_update_url`). The Chrome Web Store (unlisted) is optional. The extension ID is the same across all channels (§12). |
 | Effort | About **36 to 52 dev-days** for phases 0 to 3. Phase 4 adds 6 to 10 (§13). |
 
@@ -109,7 +113,7 @@ Arguments for a separate repo, and why they do not win here:
 Build: Vite with multiple entries (service worker, popup, editor, options, offscreen, injected scripts), no
 remote code (MV3 forbids it), and IBM Plex fonts bundled (OFL). The annotation canvas uses **Konva** (MIT, about
 150 KB) rather than a hand-written canvas layer. CI adds `pnpm --filter @yoda/extension test` (Vitest for the
-masking, matching and metadata parsers) to `ci.yml`.
+matching and metadata parsers and the editor's pixel operations) to `ci.yml`.
 
 ---
 
@@ -127,7 +131,7 @@ masking, matching and metadata parsers) to `ci.yml`.
      ┌──────────────────────────┐   ┌─────────▼──┐   │   ┌──▼─────────────────────┐
      │ MAIN world: console,     │◀─▶│ ISOLATED:  │   │   │ offscreen document:    │
      │ fetch/XHR, errors ring   │   │ metadata,  │   │   │ MediaRecorder (WebM),  │
-     │ buffer (untrusted data)  │   │ masking CSS│   │   │ 30 s clip or buffer    │
+     │ buffer (untrusted data)  │   │ build meta │   │   │ 30 s clip or buffer    │
      └──────────────────────────┘   └────────────┘   │   └────────────────────────┘
                                                       │
                                            ┌──────────▼──────────┐
@@ -152,8 +156,8 @@ masking, matching and metadata parsers) to `ci.yml`.
 
 | Field | How | Notes |
 | --- | --- | --- |
-| URL | `tab.url` (available through `activeTab` after the click) | The query string is **stripped by default**, because it often carries HN or IDs. The tester can include it, and it is regex-masked when included. The hash is kept, for hash-router SPAs. |
-| Page title | `tab.title` | Regex-masked. |
+| URL | `tab.url` (available through `activeTab` after the click) | Kept as it is, query string included, because it helps reproduce the defect. The form has an "include query string" switch. The hash is kept, for hash-router SPAs. |
+| Page title | `tab.title` | |
 | Route | `location.pathname` + `hash`; a route name from `<meta name="yoda-route">` if the app sets one (§6) | |
 | Build (front end) | §6 chain | Shows its source: `meta`, `well-known`, `header`, `gitlab`, `manual`. |
 | Build (back ends) | `X-Yoda-Build` headers seen by the fetch/XHR hook on the page's API calls | One entry per API origin. |
@@ -166,8 +170,8 @@ masking, matching and metadata parsers) to `ci.yml`.
 
 ### 4.2 Screenshots
 
-- **Visible area (MVP):** `chrome.tabs.captureVisibleTab` works with `activeTab` alone. The masking stylesheet
-  (§11.1) is injected first and removed right after.
+- **Visible area (MVP):** `chrome.tabs.captureVisibleTab` works with `activeTab` alone. Nothing on the page is
+  hidden before the capture (§11.1).
 - **Full page (phase 2, labelled beta):** scroll and stitch. After the first frame, `position: fixed/sticky`
   elements are hidden so they do not repeat. Chrome allows two captures per second
   (`MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND`), so ten screens take about 5 s, with a progress bar. Limits: the
@@ -182,8 +186,8 @@ masking, matching and metadata parsers) to `ci.yml`.
   the user invokes the extension on that tab). The offscreen document then calls
   `getUserMedia({video: {mandatory: {chromeMediaSource: 'tab', chromeMediaSourceId}}})` and `MediaRecorder` with
   `video/webm;codecs=vp9` (falling back to vp8), at about 1 Mbit/s, at most 1280 px wide, with no audio. It stops
-  hard at 30 s. That is about 4 to 5 MB per 30 s. Chrome shows its own "this tab is being shared" indicator. The
-  masking stylesheet stays injected while recording.
+  hard at 30 s. That is about 4 to 5 MB per 30 s. Chrome shows its own "this tab is being shared" indicator. In the
+  editor the tester can add mosaic regions over a time range, applied by re-encoding the clip (§11.2).
 - **Rolling buffer (phase 3):** a WebM stream cannot simply drop its first chunks, because the header and the
   keyframes are at the start. The offscreen document therefore runs a recorder that **restarts every 30 s** and
   keeps the previous complete segment plus the current one. "Save last 30 s" yields 30 to 60 s as two files
@@ -205,8 +209,8 @@ masking, matching and metadata parsers) to `ci.yml`.
 
 **Recommendation: A in the MVP, B in phase 3, C not planned.** If testers find gaps, C could later be an
 optional permission with an off-by-default "deep capture" switch. Injected scripts run in the page's world and the
-page can tamper with them, so everything they send back is **untrusted page data** (§8). Every entry is masked
-(§11.2) and truncated to 2 KB per message and 500 entries.
+page can tamper with them, so everything they send back is **untrusted page data** (§8). Every entry is truncated
+to 2 KB per message and 500 entries. Nothing in them is masked (§11).
 
 ---
 
@@ -228,7 +232,7 @@ page can tamper with them, so everything they send back is **untrusted page data
 
 | Permission | Why | Install warning |
 | --- | --- | --- |
-| `activeTab` | `captureVisibleTab`, the tab's URL and title, and injecting the metadata, masking and capture scripts into **the current tab only, after the user clicks** | None |
+| `activeTab` | `captureVisibleTab`, the tab's URL and title, and injecting the metadata and capture scripts into **the current tab only, after the user clicks** | None |
 | `scripting` | `executeScript` for the above; `registerContentScripts` for pre-armed sites (phase 3) | None by itself; it acts only where `activeTab` or a host permission allows |
 | `storage` | Profiles, rules and settings; session-scoped tokens; managed policy (`storage.managed`) | None |
 | `identity` | `launchWebAuthFlow` to connect to Yoda (§7) | None |
@@ -444,10 +448,10 @@ Further rules:
 | T8 | A cloned extension phishes users | Republished code with another ID asking people to approve | The ID allowlist (default: the official ID). The approve page shows the ID. Unknown IDs get "this extension is not approved by your Yoda admin". | An admin who adds a dev ID accepts that risk |
 | T9 | A fake Yoda | The tester types a look-alike URL | HTTPS only (plus `localhost` for dev). The `/api/public-config` shape is checked. The origin is shown in large text at every step. Policy pre-seeds the real instances. Reports go only to origins the user granted. | A user who approves a look-alike origin themselves |
 | T10 | `externally_connectable` or postMessage added later | A future "detect the extension from the portal" feature | If ever added: list exact Yoda origins in a per-install build (managed channel only), check `sender.origin` against connected profiles, and expose only "is installed, version". Never tokens. | n/a |
-| T11 | Compromised or malicious Yoda server | Pushing rules or policy to the extension | Server rules can only map sites to **that same** Yoda. They cannot grant host permissions (the user must), cannot start capture (that needs a user gesture), and cannot change masking to weaker than the local or policy setting. | It receives what testers send to it, by design |
+| T11 | Compromised or malicious Yoda server | Pushing rules or policy to the extension | Server rules can only map sites to **that same** Yoda. They cannot grant host permissions (the user must), cannot start capture (that needs a user gesture), and cannot turn off the confirmation step or the production rules. | It receives what testers send to it, by design |
 | T12 | Supply chain | A dependency or build tampering | Pinned lockfile. No remote code (MV3). The default extension CSP. Built in release CI. CRX signed, bundle minisign-signed (§12). | Standard |
 | T13 | Abuse or DoS | Huge uploads or report floods | Per-route size limits, rate limits (§10.8), idempotency keys | None |
-| T14 | Patient data | Screens and logs from hospital systems | §11 | Human error; reduced by masking and the confirmation step |
+| T14 | Patient data | Screens and logs from hospital systems | §11 | Human error; reduced by the mosaic and redact tools, the confirmation step and the production rules |
 | T15 | Drafts left on disk | A tester abandons a report | Drafts in extension-origin IndexedDB, purged on send or after 24 h. The buffer is never written to disk. | Short window on that PC |
 
 **Token storage in `chrome.storage`.** `storage.session` is memory-only and by default not visible to content
@@ -530,8 +534,7 @@ ExtensionSession = {
                     repos: string[] /* path_with_namespace */,
                     rules: Array<{ pattern, environment?: string, production: boolean }> }>,
   limits: { maxFileBytes, maxReportBytes, maxFiles, maxVideoSeconds, allowedTypes: string[] },
-  policy: { maskInputsLocked: true, piiPatterns: Array<{ name, regex }>, videoOnProduction: false,
-            consoleOnProduction: false, requireConfirm: true },
+  policy: { videoOnProduction: false, logsOnProductionDefault: false, requireConfirm: true },
 }
 
 // POST /extension/defects   multipart/form-data, headers: Authorization, Idempotency-Key: <uuid>
@@ -543,13 +546,12 @@ DefectReportCreate = {
   severity: 'blocker' | 'critical' | 'major' | 'minor' | 'trivial',
   description: string.max(10000).default(''),
   steps: string.max(500).array().max(30), expected: string.max(2000), actual: string.max(2000),
-  page: { url: string.url() /* query stripped unless included */, title: string.max(300), route?: string.max(200) },
+  page: { url: string.url() /* query kept unless the tester drops it */, title: string.max(300), route?: string.max(200) },
   build?: { repo?, branch?, commit?, env?, builtAt?, source: 'meta'|'well-known'|'header'|'gitlab'|'manual' },
   backendBuilds: Array<{ origin, repo?, branch?, commit? }>.max(10),
   client: { browser, browserVersion, os, osVersion, viewport: { w, h, dpr }, zoom, locale, timeZone, extensionVersion },
   capturedAt: string.datetime({ offset: true }),
-  attachments: Array<{ part: string, role: 'screenshot'|'screenshot_full'|'video'|'buffer'|'console'|'network',
-                       masked: { inputs: boolean, regexHits: number } }>.max(8),
+  attachments: Array<{ part: string, role: 'screenshot'|'screenshot_full'|'video'|'buffer'|'console'|'network' }>.max(8),
   privacy: { confirmedNoPatientData: literal(true), productionSite: boolean, textMayContainPatientData: boolean },
 }
 // → 201 { workItemId, url /* portal link */, title, stepKey: 'triage', state: 'active', aiAllowed: boolean,
@@ -568,8 +570,7 @@ Implementation notes from the current code:
   `attachments` rows in **one** `runWork` transaction, and remove the objects if it fails.
 - The `onStored` knowledge hook is **not** called. `console.json` is `application/json`, so it would otherwise
   become a knowledge `document` entry.
-- Core **re-runs the masking** (§11.2) on the text fields, `console.json` and `network.json` before storing, and
-  records the hit counts.
+- Nothing is masked, in the extension or in core (§11). Network entries never carry headers or bodies.
 
 ### 10.2 The `defect` template and data model
 
@@ -587,7 +588,7 @@ There is no separate work-item "type" concept today: types *are* workflow templa
   step has AI tasks. That fits AI-enabled projects that want an AI-drafted fix. In a noAi project those tasks
   already fall back to a person.
 - The item's dev step gets a GitLab issue exactly as for `bug-fix` (spec §12). The issue section includes the
-  masked text, build and browser, plus links to the attachments in Yoda. **No media is copied into GitLab.**
+  report text (withheld when the tester marked it as possibly holding patient data), build and browser, plus links to the attachments in Yoda. **No media is copied into GitLab.**
 - **Severity versus priority:** severity is the tester's statement and is kept. Priority is derived once and the
   PM may change it: blocker or critical → `urgent`, major → `high`, minor → `normal`, trivial → `low`.
 
@@ -597,7 +598,7 @@ New tables (Drizzle, one migration):
 defect_reports      work_item_id PK→work_items, kind, severity, steps jsonb, expected, actual,
                     page_url, page_title, route, build jsonb, backend_builds jsonb, client jsonb,
                     captured_at, reported_by→people, source ('extension'|'portal'), extension_version,
-                    production_site bool, no_ai bool, masked_counts jsonb,
+                    production_site bool, no_ai bool,
                     idempotency_key, unique(reported_by, idempotency_key)
 extension_grants    id, person_id, extension_id, browser_label, access_hash, access_expires_at,
                     refresh_hash unique, refresh_prefix, family_id, idle_expires_at, absolute_expires_at,
@@ -645,8 +646,8 @@ projects (`context-pack.ts`). Proposal:
 
 1. **The project's noAi wins**, unchanged: nothing about the defect reaches AI.
 2. **Media and logs are always `noAi = true`**, whatever the project setting. Images and video carry no
-   extracted text, but a future vision model must not pick them up by default, and logs can hold patient data
-   that the regexes missed.
+   extracted text, but a future vision model must not pick them up by default, and logs can hold patient data,
+   since nothing is masked automatically.
 3. **Report text** (title, description, steps, expected, actual) on an AI-enabled project is AI-eligible only
    when the tester has **not** ticked "the text may contain patient data". If ticked, `defect_reports.no_ai = true`
    and the context pack replaces the description with "[withheld: report marked do not send to AI]". That is a
@@ -654,7 +655,7 @@ projects (`context-pack.ts`). Proposal:
 4. **AI secretary triage: not in v1.** Defects are short, structured and arrive already sorted to a project. The
    value of an AI summary is low, and the patient-data risk is real. A later, opt-in "AI triage" on AI-enabled
    projects would read only AI-eligible text plus non-sensitive metadata (path without query, build, browser,
-   console *message* lines already masked). It would produce **proposals** (possible duplicate, suggested
+   console *message* lines). It would produce **proposals** (possible duplicate, suggested
    assignee, suggested severity), never act directly. This matches the secretary's `propose` autonomy (spec §9).
    The popup shows "Not sent to AI" or "Text may be read by AI" before sending (see the editor mockup).
 
@@ -685,7 +686,7 @@ those three event types. Added:
 
 - A **work item event** `defect.reported` (the existing `events` table: project, work item, actor = the
   person). The payload holds `{ source: 'extension', extensionVersion, grantId, kind, severity, roles of files,
-  sizes, maskedCounts, productionSite, aiAllowed }`. It holds **metadata only, never content**. The existing
+  sizes, productionSite, aiAllowed }`. It holds **metadata only, never content**. The existing
   timeline shows it.
 - **Grant lifecycle** (created, refreshed-after-reauth, revoked, reuse-detected) is kept on the grant row (who
   revoked, why) and in structured logs. Admin → Connected browsers is the audit view.
@@ -717,7 +718,6 @@ A new `SettingCategory` `extension`, with an Admin → System settings page:
 | `extension.refreshIdleDays` / `refreshAbsoluteDays` / `reauthDays` | 30 / 90 / 14 | |
 | `extension.maxVideoSeconds` | 30 | 5 to 60 |
 | `extension.mediaRetentionDays` / `logRetentionDays` | 180 / 90 | After the item is done or cancelled; 0 = keep |
-| `extension.piiPatterns` | `[]` | Extra named regexes, for example the hospital's HN format (§11.2) |
 | `extension.requesterReports` | `false` | Phase 4 |
 
 All are `scope: 'core'` and `apply: 'live'`, editable in the UI, and not secret.
@@ -730,42 +730,34 @@ Health information is **sensitive personal data** under the PDPA (B.E. 2562, sec
 assumption, "no patient data is expected" (§4), does not hold for screenshots of hospital systems, so the
 extension is designed as if patient data **will** appear.
 
-### 11.1 Before capture: masking on the page
+### 11.1 No automatic masking (owner decision, 2026-11-28)
 
-- Before every screenshot, and for the whole of a recording or buffer, the extension injects a stylesheet that
-  hides the **values** of `input` (except buttons), `textarea`, `select`, `[contenteditable]`, and every element
-  with **`data-yoda-mask`**. They render as a solid hatched block, not a blur, because blurred text can be partly
-  readable. The policy can lock this on, and it is locked by default (see the popup mockup).
-- **Apps adopt `data-yoda-mask`** on patient banners, name and HN cells, and result panels: one attribute, no
-  dependency. `data-yoda-unmask` exempts a harmless field (for example a search box on test data).
-- Cross-origin iframes, `<canvas>`, PDFs and images cannot be masked by CSS. When the page has them, the editor
-  shows a warning to check those areas by hand.
+The proposal first masked form fields and `[data-yoda-mask]` elements before capture and ran regexes (Thai ID, HN,
+phone, e-mail, tokens) over logs and text, in the extension and again in core. **The owner dropped all of it.** Test
+data is usually mock, and automatic masking hinders debugging: it hides the very values a developer needs to
+reproduce the defect. Nothing is hidden or rewritten automatically, before or after capture, in the extension or in
+core. Patient data is kept out by the editor tools (11.2), the check before sending (11.3), the production rules
+(11.4), the AI exclusion (§10.4) and retention (11.5).
 
-### 11.2 After capture: tools and regexes
+### 11.2 Editor tools: blur, mosaic, redact
 
-- **Editor tools:** pixelate (large blocks) and **redact** (solid fill) are *burned in*. The editor exports a
-  flattened PNG, and **the unedited original is never uploaded** (it is discarded with the draft). Crop removes
-  whole regions.
-- **Regex masking** of console entries, network URLs, the page title and URL, and the form text. It runs in the
-  extension (so the preview shows exactly what will be sent) and again in core.
-
-| Name | Pattern (sketch) | Notes |
-| --- | --- | --- |
-| Thai national ID | `\b\d[- ]?\d{4}[- ]?\d{5}[- ]?\d{2}[- ]?\d\b` | Masked only when the **mod-11 checksum** holds: d13 = (11 − Σ dᵢ·(14−i) mod 11) mod 10. This avoids masking every 13-digit number. |
-| HN | Configured (`extension.piiPatterns`), for example `\bHN[:\s-]*\d{6,9}\b` | The hospital's HN format must come from the owner (§15) |
-| Phone | `(?:\+66[- ]?\|\b0)[689]\d[- ]?\d{3}[- ]?\d{4}\b` and landlines `\b0[2-7][- ]?\d{3}[- ]?\d{4}\b` | |
-| E-mail | Standard local@domain | |
-| Credentials | `Bearer \S+`, `eyJ[\w-]+\.[\w-]+\.[\w-]+` (JWT), query keys `token\|password\|secret\|hn\|cid\|idcard` | Never needed in a defect |
-
-Replacement keeps the shape (`[NID:…1234]`, `[HN]`, `[PHONE]`, `[EMAIL]`, `[TOKEN]`), so the log still makes
-sense. Counts appear in the editor ("38 entries · 2 masked"). Network capture **never** includes request or
-response bodies or headers (except `X-Yoda-Build`).
+- **Blur** (a strong Gaussian blur), **mosaic** (pixelate with large blocks, in two modes: **rectangle**, and
+  **brush** for irregular areas such as a name in a table cell) and **redact** (solid fill) are *burned in*. Mosaic
+  is the recommended tool for text, because blurred text can be partly readable. The editor exports a flattened PNG,
+  and **the unedited original is never uploaded** (it is discarded with the draft). Crop removes whole regions.
+- **Mosaic on video:** the tester draws a rectangle over the clip and sets the time range it covers. The editor
+  re-encodes the clip with the regions burned in: a canvas redraws each frame and a `MediaRecorder` records the
+  canvas. A 30 s clip takes about 30 s. If re-encoding fails or drops too many frames, the video is **not** sent with
+  the regions unapplied. The tester sends the report without the video, or with one still frame through the
+  screenshot path.
+- Network capture **never** includes request or response bodies or headers (except `X-Yoda-Build`). That is the
+  scope of the capture, not masking.
 
 ### 11.3 The check before sending
 
 The editor's last section (see the mockup) lists every file with its size, each with a checkbox to drop it, and
 requires the tester to tick **"I checked the screenshot and video: there is no patient data, or it is
-redacted."** Sending is disabled until it is ticked. A second, optional tick, "the text may contain patient
+hidden with mosaic or redact."** Sending is disabled until it is ticked. A second, optional tick, "the text may contain patient
 data", sets `no_ai` (§10.4). The same panel says whether the project sends anything to AI.
 
 ![Annotation editor and report form](screenshots/extension-editor.png)
@@ -813,7 +805,7 @@ confirmation shows a red warning. Testing on UAT with synthetic data is the docu
   mirror get them the same way (`--base-url`). Installs from source show "build with
   `pnpm --filter @yoda/extension build`" on the Help page instead.
 - **Managed configuration:** `storage.managed_schema` accepts `instances` (name, URL, default), `rules`,
-  `maskInputsLocked`, `allowVideo`, `allowBuffer` and `sessionOnly`. On Windows these live under
+  `allowVideo`, `allowBuffer` and `sessionOnly`. On Windows these live under
   `…\Policies\Google\Chrome\3rdparty\extensions\<id>\policy` and `…\Policies\Microsoft\Edge\3rdparty\extensions\<id>\policy`.
   Force-installed plus managed configuration means **zero setup** apart from the one-click Approve.
 - **Edge compatibility:** Edge is Chromium. MV3, `chrome.*` APIs, `tabCapture`, `offscreen`, `scripting`,
@@ -832,9 +824,9 @@ Sizes are for the single builder working with AI agents, as in the other proposa
 
 | Phase | Scope | Size |
 | --- | --- | --- |
-| **0. Spike** | `launchWebAuthFlow` against the portal and Keycloak in Chrome and Edge; masking CSS plus `captureVisibleTab`; `tabCapture` in an offscreen document; force-install with `override_update_url` on one managed Chrome and one managed Edge | 2–3 d |
-| **1. MVP** | `apps/extension` skeleton (Vite, Vue, Vuetify, i18n); one profile; connect (code + PKCE) and the token model; visible screenshot; annotation (arrow, box, highlight, text, numbers, pixelate, redact, crop); metadata; build detection (meta, well-known, header, manual); console and network via on-click injection plus Resource Timing; regex masking on both sides; the check before sending; `POST /extension/defects`; `defect` template, `defect_reports`, the work item card; Help page with zip; Connected browsers (settings and admin); settings registry entries; rate limits; audit event; retention job; tests | 18–24 d |
-| **2. Video and mapping** | 30 s clips (WebM) and portal playback; full-page stitch (beta); multiple profiles; URL rules (mine plus from Yoda); project Application URLs; GitLab deployment events and environment sync; `/extension/resolve` | 8–12 d |
+| **0. Spike** | `launchWebAuthFlow` against the portal and Keycloak in Chrome and Edge; `captureVisibleTab`; `tabCapture` in an offscreen document; force-install with `override_update_url` on one managed Chrome and one managed Edge | 2–3 d |
+| **1. MVP** | `apps/extension` skeleton (Vite, Vue, Vuetify, i18n); one profile; connect (code + PKCE) and the token model; visible screenshot; annotation (arrow, box, highlight, text, numbers, blur, mosaic rectangle and brush, redact, crop); metadata; build detection (meta, well-known, header, manual); console and network via on-click injection plus Resource Timing; the check before sending; `POST /extension/defects`; `defect` template, `defect_reports`, the work item card; Help page with zip; Connected browsers (settings and admin); settings registry entries; rate limits; audit event; retention job; tests | 18–24 d |
+| **2. Video and mapping** | 30 s clips (WebM) and portal playback; mosaic regions on video; full-page stitch (beta); multiple profiles; URL rules (mine plus from Yoda); project Application URLs; GitLab deployment events and environment sync; `/extension/resolve` | 8–12 d |
 | **3. Buffer and enterprise** | Rolling buffer; pre-armed capture on mapped sites; CRX signing in release CI, `updates.xml`, `storage.managed` schema, policy documentation; Edge pass; pairing-code fallback | 8–13 d |
 | **4. Optional** | Requester (UAT) reports as proposals; opt-in AI triage proposals; Chrome Web Store listing; `debugger` "deep capture" if asked | 6–10 d |
 
@@ -847,7 +839,7 @@ MVP alone already replaces "screenshot in LINE plus a chat message".
 
 | Risk | Likelihood | Mitigation |
 | --- | --- | --- |
-| Patient data reaches Yoda despite masking | Medium | Masking before capture; `data-yoda-mask` adoption; the confirmation; production rules; no AI on media; retention; removal route. Ask the DPO to review before rollout. |
+| Patient data reaches Yoda (nothing is masked automatically) | Medium | Mostly mock data on UAT; the mosaic and redact tools; the confirmation; production rules; no AI on media; retention; removal route. Ask the DPO to review before rollout. |
 | `launchWebAuthFlow` quirks (Edge, or Keycloak SSO not shared with the auth window, forcing a second sign-in) | Low–medium | The phase 0 spike; the pairing-code fallback; a second sign-in is acceptable |
 | Hospital policy blocks developer mode and extensions until IT signs off | Medium | Move the managed channel earlier; involve hospital IT from phase 0 |
 | WebM rolling buffer is awkward (two segments) | Medium | Accept two files; re-mux later if testers dislike it |
@@ -863,6 +855,9 @@ MVP alone already replaces "screenshot in LINE plus a chat message".
 
 Each has a recommended answer. Accepting the recommendation needs no reply.
 
+**Answered 2026-11-28:** the owner approved every recommendation below as written, except question 6, which is
+replaced by the masking decision (§11.1).
+
 1. **Name.** *Recommended:* "Yoda Reporter", in Thai "Yoda แจ้งปัญหา".
 2. **Who may report in v1?** *Recommended:* staff members of the project only. Requester (UAT) reporting is phase
    4 and per project.
@@ -872,8 +867,8 @@ Each has a recommended answer. Accepting the recommendation needs no reply.
    tester has not marked it sensitive; no automatic AI triage in v1.
 5. **Distribution.** *Recommended:* the unpacked zip for IT testers in the MVP, then managed force-install from
    Yoda for everyone. Skip the Chrome Web Store unless unmanaged devices need it.
-6. **HN format.** Needed for masking. *Recommended:* the owner gives the hospital's HN formats (and any other
-   identifiers such as AN or lab numbers). They go into `extension.piiPatterns`, not into code.
+6. **HN format.** ~~Needed for masking.~~ *Decided 2026-11-28:* void. There is no automatic masking, so no HN
+   format is needed. The editor has a manual mosaic tool (rectangle and brush, also on video) instead (§11.1, §11.2).
 7. **Production use.** *Recommended:* allowed, but production rules force no video, no buffer, logs off by
    default and a red warning. UAT with synthetic data is the norm.
 8. **Retention.** *Recommended:* media 180 days and logs 90 days after the item closes; text kept with the work

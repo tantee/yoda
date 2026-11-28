@@ -24,7 +24,8 @@
     "admin": {
       "people": "People",
       "ai": "AI budget",
-      "settings": "System settings"
+      "settings": "System settings",
+      "browsers": "Connected browsers"
     },
     "runners": "Runners",
     "agendas": "Meeting agendas",
@@ -38,7 +39,8 @@
     "short": {
       "status": "Status",
       "assistant": "Assistant"
-    }
+    },
+    "help": "Help"
   },
   "projects": {
     "title": "Projects",
@@ -64,7 +66,8 @@
       "knowledge": "Knowledge",
       "ai": "AI budget",
       "repos": "Repository",
-      "status": "Status"
+      "status": "Status",
+      "appUrls": "App URLs"
     },
     "list": {
       "active": "Active",
@@ -506,6 +509,13 @@
       "decided": "Discussion decided",
       "withdrawn": "Discussion withdrawn",
       "responded": "New response in a discussion"
+    },
+    "defect": {
+      "reported": "Defect reported from the extension"
+    },
+    "attachment": {
+      "removed": "Defect file removed",
+      "purged": "File removed by retention"
     }
   },
   "knowledge": {
@@ -1474,6 +1484,22 @@
       "missing": "Missing",
       "malformed": "Malformed",
       "mismatch": "Mismatch"
+    },
+    "appUrl": {
+      "production": "Production",
+      "test": "Test"
+    },
+    "grant": {
+      "active": "Active",
+      "idle": "Idle",
+      "revoked": "Revoked"
+    },
+    "severity": {
+      "blocker": "Blocker",
+      "critical": "Critical",
+      "major": "Major",
+      "minor": "Minor",
+      "trivial": "Trivial"
     }
   },
   "stateView": {
@@ -1545,7 +1571,8 @@
       "text": "If you think you should have access, contact an administrator"
     },
     "close": "Close",
-    "skipToContent": "Skip to main content"
+    "skipToContent": "Skip to main content",
+    "connectedBrowsers": "Connected browsers"
   },
   "timeline": {
     "today": "Today, {date}",
@@ -1598,6 +1625,7 @@
       "gitlab": "GitLab",
       "channels": "Notification channels",
       "runners": "Runners",
+      "extension": "Browser extension",
       "backups": "Backups",
       "storage": "Storage and database",
       "security": "Security",
@@ -1614,7 +1642,8 @@
       "runners": "Runners",
       "backups": "Backups",
       "storage": "Storage and database",
-      "security": "Security"
+      "security": "Security",
+      "extension": "Yoda Reporter (browser extension)"
     },
     "apply": {
       "live": "Applies at once",
@@ -2167,6 +2196,48 @@
         "acmeCa": {
           "label": "Built-in proxy ACME directory"
         }
+      },
+      "extension": {
+        "enabled": {
+          "label": "Yoda Reporter enabled",
+          "help": "When off, the extension cannot connect or send reports; connected browsers are kept"
+        },
+        "allowedIds": {
+          "label": "Allowed extension IDs",
+          "help": "32-letter IDs (a-p) of locally built extensions. The official extension is always allowed."
+        },
+        "accessTtlMinutes": {
+          "label": "Access token lifetime (minutes)",
+          "help": "5 to 240 minutes, default 60"
+        },
+        "refreshIdleDays": {
+          "label": "Sign out after idle (days)",
+          "help": "An extension unused this long must connect again"
+        },
+        "refreshAbsoluteDays": {
+          "label": "Longest connection (days)",
+          "help": "After this the extension must connect again, even when used every day"
+        },
+        "reauthDays": {
+          "label": "Portal sign-in needed within (days)",
+          "help": "Without a Keycloak sign-in this long, the extension asks to connect again"
+        },
+        "maxVideoSeconds": {
+          "label": "Longest video (seconds)",
+          "help": "5 to 60 seconds, default 30"
+        },
+        "mediaRetentionDays": {
+          "label": "Keep screenshots and videos (days)",
+          "help": "Counted from when the item is closed. 0 keeps them."
+        },
+        "logRetentionDays": {
+          "label": "Keep console and network logs (days)",
+          "help": "Counted from when the item is closed. 0 keeps them."
+        },
+        "dirs": {
+          "label": "Extension file folders",
+          "help": "Where core finds the zip and CRX it serves for download. Set in the environment only."
+        }
       }
     }
   },
@@ -2578,6 +2649,152 @@
       "internalTrust": "Caddy renews this certificate itself. Staff PCs must trust the internal CA's root certificate, which the deploy copied to the host as",
       "acmeRenew": "Caddy renews this certificate from Let's Encrypt itself; the host must stay reachable on ports 80 and 443.",
       "filesRenew": "The organisation's own certificate: replace the files in time, then reload the proxy. They live on the host in"
+    }
+  },
+  "appUrls": {
+    "title": "Application URLs",
+    "intro": "Where this project's application runs. Yoda Reporter uses these to pick the project when a tester reports a defect; production sites get stricter rules (no video, logs off by default).",
+    "empty": "No application URLs yet",
+    "pattern": "URL pattern",
+    "patternHint": "A Chrome match pattern, e.g. https://opd.example.org/* or https://*.review.example.org/*",
+    "environment": "Environment",
+    "production": "Production site",
+    "productionHint": "No video or recording buffer, and logs are off by default",
+    "add": "Add URL",
+    "addTitle": "Add an application URL",
+    "remove": "Remove",
+    "invalid": "Not a valid URL pattern",
+    "tooBroad": "This pattern matches every site; name the host",
+    "duplicate": "This pattern is already in the list",
+    "removeTitle": "Remove this URL?",
+    "removeText": "Yoda Reporter will no longer use it to pick the project.",
+    "removeProductionText": "This is a production site. Once removed, Yoda no longer knows it is production and stops refusing video from it."
+  },
+  "extension": {
+    "connect": {
+      "title": "Connect Yoda Reporter",
+      "intro": "The Yoda Reporter extension in this browser asks to connect to your account.",
+      "origin": "You are connecting it to",
+      "extensionId": "Extension ID",
+      "browser": "Browser",
+      "mayDo": "Once approved, the extension can only",
+      "mayReport": "report defects, with attachments, in projects you are a member of",
+      "mayListProjects": "list your projects",
+      "onlyAfterConnect": "Approve only right after you clicked \"Connect\" in the extension yourself. If you did not, choose Cancel.",
+      "approve": "Approve",
+      "cancel": "Cancel",
+      "notAllowed": "This extension is not approved by your Yoda admin. Contact your administrator.",
+      "notStaff": "Only staff can connect the extension.",
+      "badQuery": "This connect link is not valid. Start again from \"Connect\" in the extension.",
+      "failed": "Could not connect. Please try again.",
+      "done": "Approved. Returning to the extension…",
+      "signedInAs": "Signed in as",
+      "backToExtension": "Back to the extension",
+      "rateLimited": "Too many attempts. Wait {s} seconds and try again.",
+      "disabled": "The extension is turned off in this Yoda. Contact your administrator.",
+      "framed": "This page cannot open inside another site. Start again from \"Connect\" in the extension.",
+      "mayReadRules": "read the URL rules of those projects, to pick the project for you"
+    }
+  },
+  "grants": {
+    "title": "Connected browsers",
+    "adminTitle": "Connected browsers (everyone)",
+    "intro": "Browsers with Yoda Reporter connected to your account. Revoke one if the computer is lost or no longer used.",
+    "adminIntro": "Every browser connected to Yoda Reporter. Revoke one, or revoke all if you suspect a leak.",
+    "empty": "No connected browsers",
+    "created": "Connected",
+    "lastUsed": "last used",
+    "never": "never",
+    "revoke": "Revoke",
+    "revokeTitle": "Revoke this browser?",
+    "revokeText": "{browser} can no longer send reports until it connects again.",
+    "revokeAll": "Revoke all",
+    "revokeAllTitle": "Revoke every connected browser?",
+    "revokeAllText": "Everyone has to connect the extension again. Use this only if you suspect a leak.",
+    "revokeAllType": "Type {word} to confirm",
+    "revokedAll": "{n} revoked",
+    "filterPerson": "Filter by name",
+    "activeOnly": "Active only",
+    "revokedReason": "Revoked {when} ({reason})",
+    "reason": {
+      "user": "by its owner",
+      "admin": "by an admin",
+      "admin_all": "by an admin (all)",
+      "reuse_detected": "token reuse detected",
+      "extension_not_allowed": "extension no longer allowed",
+      "not_staff": "no longer staff"
+    },
+    "filterEmpty": "No browsers match the filters",
+    "clearFilters": "Clear filters"
+  },
+  "defect": {
+    "title": "Defect report",
+    "titleBugFix": "Bug-fix request",
+    "sensitive": "The text may contain patient data: not sent to AI",
+    "steps": "Steps",
+    "expected": "Expected",
+    "actual": "Actual",
+    "page": "Page",
+    "build": "Build",
+    "noBuild": "unknown",
+    "openCommit": "Open commit",
+    "backends": "Back-end builds",
+    "browser": "Browser",
+    "reported": "Reported by",
+    "buildSource": {
+      "meta": "from the page",
+      "well-known": "from /.well-known",
+      "header": "from a header",
+      "gitlab": "from GitLab",
+      "manual": "entered by the tester"
+    },
+    "role": {
+      "screenshot": "Screenshot",
+      "screenshot_full": "Full-page screenshot",
+      "video": "Video",
+      "buffer": "Replay buffer",
+      "console": "Console log",
+      "network": "Network requests"
+    },
+    "download": "Download",
+    "remove": "Remove file",
+    "removeTitle": "Remove this file?",
+    "removeText": "{name} is deleted for good; its entry stays on the work item.",
+    "removeReason": "Reason",
+    "removed": "File removed {when}",
+    "emptyLog": "No entries",
+    "dropped": "{n} unreadable or excess entries left out",
+    "fileFailed": "This file could not be loaded",
+    "filesNoAi": "Screenshots, video and logs are never sent to AI.",
+    "projectNoAi": "This project sends nothing to AI",
+    "noFiles": "This report has no files",
+    "retry": "Retry",
+    "loadVideo": "Load video ({mb} MB)"
+  },
+  "help": {
+    "title": "Help",
+    "reporter": {
+      "title": "Yoda Reporter (browser extension)",
+      "what": "A Chrome and Edge extension for reporting defects in the system you test: it captures a screenshot or a short video, the console log and failed requests, lets you highlight, blur or mosaic, and files a work item in the right project.",
+      "disabled": "The extension is turned off in this Yoda.",
+      "download": "Download",
+      "downloadZip": "Download Yoda Reporter {v} (zip)",
+      "notAvailable": "Not available in this install; build it with",
+      "install": "Install",
+      "step1": "Unzip it into a folder you will keep.",
+      "step2": "Open",
+      "step3": "Turn on Developer mode, choose \"Load unpacked\" and pick that folder.",
+      "step4": "Pin the Yoda Reporter icon to the toolbar.",
+      "connect": "Connect",
+      "connectText": "Open the extension, paste this Yoda address and press Connect, then approve on the page that opens.",
+      "address": "Yoda address",
+      "privacy": "Privacy",
+      "noMasking": "Nothing is masked automatically. If a screenshot shows patient data, use mosaic, blur or redact before sending.",
+      "noAi": "Screenshots, video and logs are never sent to AI. If you tick that the text may contain patient data, the title and text are kept from AI too.",
+      "retention": "Screenshots and video are kept{media} and logs{logs} after the item closes.",
+      "keepDays": " {n} days",
+      "keepForever": " for good",
+      "production": "On production sites there is no video, and logs are off by default."
     }
   }
 }

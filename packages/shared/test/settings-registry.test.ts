@@ -62,6 +62,38 @@ describe('settings registry', () => {
     }
   })
 
+  it('has the extension settings, each with a default; the file directories are bootstrap only', () => {
+    const keys = byCategory('extension').map((d) => d.key)
+    expect(keys).toEqual([
+      'extension.enabled',
+      'extension.allowedIds',
+      'extension.accessTtlMinutes',
+      'extension.refreshIdleDays',
+      'extension.refreshAbsoluteDays',
+      'extension.reauthDays',
+      'extension.maxVideoSeconds',
+      'extension.mediaRetentionDays',
+      'extension.logRetentionDays',
+      'extension.dirs',
+    ])
+    for (const d of byCategory('extension')) {
+      expect(d.default, d.key).toBeDefined()
+      expect(d.scope, d.key).toBe('core')
+      if (d.key === 'extension.dirs') continue
+      expect(d.uiEditable, d.key).toBe(true)
+      expect(d.apply, d.key).toBe('live')
+      expect(d.envName, d.key).toBeUndefined()
+    }
+    expect(settingDef('extension.dirs')).toMatchObject({ envName: 'YODA_EXTENSION_DIRS', bootstrapOnly: true, uiEditable: false, default: ['/srv/yoda-extension', '/app/extension'] })
+    expect(SETTINGS['extension.allowedIds'].schema.safeParse(['a'.repeat(32)]).success).toBe(true)
+    expect(SETTINGS['extension.allowedIds'].schema.safeParse(['not-an-id']).success).toBe(false)
+    expect(SETTINGS['extension.accessTtlMinutes'].schema.safeParse(4).success).toBe(false)
+    expect(SETTINGS['extension.accessTtlMinutes'].schema.safeParse(240).success).toBe(true)
+    expect(SETTINGS['extension.maxVideoSeconds'].schema.safeParse(61).success).toBe(false)
+    expect(SETTINGS['extension.mediaRetentionDays'].schema.safeParse(0).success).toBe(true)
+    expect(SETTINGS['extension.reauthDays'].schema.safeParse(366).success).toBe(false)
+  })
+
   it('shows the last 4 characters only for long secrets', () => {
     expect(secretHint('x'.repeat(19))).toBeNull()
     expect(secretHint(`${'x'.repeat(16)}a1b2`)).toBe('a1b2')

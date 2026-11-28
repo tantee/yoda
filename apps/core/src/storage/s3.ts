@@ -3,6 +3,7 @@ import {
   DeleteObjectCommand,
   GetObjectCommand,
   HeadBucketCommand,
+  ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3'
@@ -13,6 +14,8 @@ export interface Storage {
   put(key: string, body: Buffer, contentType: string): Promise<void>
   get(key: string): Promise<NodeJS.ReadableStream>
   remove(key: string): Promise<void>
+  /** Every object whose key starts with `prefix`, with its last-modified time (the defect orphan sweep). */
+  list(prefix: string): AsyncIterable<{ key: string; lastModified: Date }>
   /** Throws when the bucket cannot be reached (readiness). */
   ping(): Promise<void>
 }
@@ -51,6 +54,18 @@ export async function createS3Storage(
     },
     async remove(key) {
       await client.send(new DeleteObjectCommand({ Bucket, Key: k(key) }))
+    },
+    async *list(prefix) {
+      let ContinuationToken: string | undefined
+      const base = opts.prefix ?? ''
+      do {
+        const res = await client.send(new ListObjectsV2Command({ Bucket, Prefix: k(prefix), ContinuationToken }))
+        for (const o of res.Contents ?? []) {
+          // An object without a time is never old enough to sweep.
+          if (o.Key && o.LastModified && o.Key.startsWith(base)) yield { key: o.Key.slice(base.length), lastModified: o.LastModified }
+        }
+        ContinuationToken = res.IsTruncated ? res.NextContinuationToken : undefined
+      } while (ContinuationToken)
     },
     async ping() {
       await client.send(new HeadBucketCommand({ Bucket }))

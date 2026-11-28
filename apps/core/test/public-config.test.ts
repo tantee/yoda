@@ -123,6 +123,7 @@ describe('buildPublicConfig', () => {
       recovery: true,
       recoveryForced: false,
       version: '1.2.0',
+      extension: { enabled: true, apiVersion: 1, mediaRetentionDays: 180, logRetentionDays: 90, publicUrl: 'http://localhost:3000' },
     })
   })
 
@@ -137,6 +138,7 @@ describe('buildPublicConfig', () => {
       funMode: false,
       setup: 'required',
       recovery: false,
+      extension: { enabled: true, apiVersion: 1, mediaRetentionDays: 180, logRetentionDays: 90, publicUrl: 'http://localhost:3000' },
     })
   })
 })

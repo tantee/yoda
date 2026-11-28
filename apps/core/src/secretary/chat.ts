@@ -15,6 +15,7 @@ import { runWork, type WorkCtx } from '../work/context.js'
 import { canSeeProject, getMyRequests, getWorkItemDetail, listTemplates, listWorkItems } from '../work/queries.js'
 import { secretarySystemPrompt } from './prompt.js'
 import { logLine, secretaryTools, type PendingAction } from './tools.js'
+import { aiTitle, aiTitleOf, sensitiveDefectIds } from '../defects/ai-view.js'
 
 export type SecretaryDeps = Pick<AppDeps, 'db' | 'ai' | 'bus' | 'jobs' | 'config'>
 
@@ -235,13 +236,13 @@ async function threadContext(db: Db, me: Me, c: ConversationRow): Promise<string
     if (!insider) {
       // The requester's own request, in plain-language status only.
       const r = (await getMyRequests(db, me)).find((x) => x.workItemId === c.workItemId)
-      return r ? `Their request "${r.title}" (id ${r.workItemId}): status ${r.status}${r.currentStepName ? `, step ${r.currentStepName.th}` : ''}.` : null
+      return r ? `Their request "${await aiTitleOf(db, { id: r.workItemId, title: r.title }, 'en')}" (id ${r.workItemId}): status ${r.status}${r.currentStepName ? `, step ${r.currentStepName.th}` : ''}.` : null
     }
     const d = await getWorkItemDetail(db, me, c.workItemId)
     const current = d.steps.find((s) => s.status === 'current')
     const open = d.tasks.filter((t) => ['proposed', 'open', 'in_progress', 'submitted'].includes(t.state))
     const lines = [
-      `Work item "${d.title}" (id ${d.id}), priority ${d.priority}, state ${d.state}${current ? `, current step ${current.name.th}` : ''}.`,
+      `Work item "${await aiTitleOf(db, d, 'en')}" (id ${d.id}), priority ${d.priority}, state ${d.state}${current ? `, current step ${current.name.th}` : ''}.`,
       // No GitLab links (e.g. an imported issue's URL): the requester may read the thread.
       d.description ? `Description: ${clip(await withoutGitLabLinks(db, d.projectId, d.description), 1000)}` : '',
       open.length ? 'Open tasks:' : 'No open tasks.',
@@ -253,11 +254,12 @@ async function threadContext(db: Db, me: Me, c: ConversationRow): Promise<string
   if (!insider) return null
   const [p] = await db.select({ name: projects.name, description: projects.description }).from(projects).where(eq(projects.id, c.projectId))
   const items = (await listWorkItems(db, me, c.projectId)).filter((w) => w.state === 'active').slice(0, 15)
+  const hidden = await sensitiveDefectIds(db, items.map((w) => w.id))
   return [
     `Project "${p?.name ?? ''}" (id ${c.projectId}).`,
     p?.description ? `Description: ${clip(p.description, 500)}` : '',
     items.length ? 'Active work items:' : 'No active work items.',
-    ...items.map((w) => `- ${w.title} (id ${w.id}, priority ${w.priority}, step ${w.currentStepKey ?? '-'})`),
+    ...items.map((w) => `- ${aiTitle(w, hidden, 'en')} (id ${w.id}, priority ${w.priority}, step ${w.currentStepKey ?? '-'})`),
   ]
     .filter(Boolean)
     .join('\n')

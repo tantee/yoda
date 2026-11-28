@@ -6,6 +6,7 @@ import { attachments, knowledgeEntries, projects, tasks, workItems } from '../db
 import { tasksWithContext } from '../work/queries.js'
 import { searchKnowledge } from './search.js'
 import { notGitLabDraft } from './service.js'
+import { aiTitle, sensitiveDefectIds } from '../defects/ai-view.js'
 
 export const PACK_MAX_CHARS = 60_000
 const PROGRESS_LIMIT = 10
@@ -95,8 +96,10 @@ export async function buildContextPack(
         .where(and(inArray(attachments.id, allowedFiles.map((a) => a.id)), eq(attachments.noAi, false)))
     : []
   const textOf = new Map(texts.map((x) => [x.id, x.text ?? '']))
+  const withheld = (await sensitiveDefectIds(db, [t.workItemId])).has(t.workItemId)
   const inputs = t.inputs.map((i) => {
-    const parts = [i.result.text.trim()]
+    // A sensitive defect: the earlier steps' notes may repeat the report's data.
+    const parts = [withheld ? '[withheld: sensitive defect report]' : i.result.text.trim()]
     for (const a of i.attachments) {
       const text = a.noAi ? '' : textOf.get(a.id)?.trim()
       if (text) parts.push(`File ${oneLine(a.fileName)}:\n${text}`)
@@ -112,18 +115,20 @@ export async function buildContextPack(
     currentEntries(db, scope, 'memory', { workItemOnly: true }),
   ])
 
+  // A sensitive defect: AI sees the neutral title (its description is already the withheld marker).
+  const title = aiTitle(item, await sensitiveDefectIds(db, [item.id]), 'en')
   const included = new Set([...documents, ...decisions, ...progress, ...memory].map((e) => e.id))
   const hits = await searchKnowledge(
     db,
     opts.me ?? SYSTEM_ME,
-    { query: `${item.title} ${t.title.en}`, projectId: t.projectId, limit: RELATED_LIMIT, forAi: true },
+    { query: `${title} ${t.title.en}`, projectId: t.projectId, limit: RELATED_LIMIT, forAi: true },
     deps.ai,
   )
   const related = hits.filter((h) => !included.has(h.id)).map(toPackEntry)
 
   const pack = ContextPack.parse({
     task: { id: t.id, title: t.title, instructions: t.instructions, feedback: t.feedback, stepKey: t.stepKey, attempt: t.attempt },
-    workItem: { id: item.id, title: item.title, description: item.description, priority: item.priority },
+    workItem: { id: item.id, title, description: item.description, priority: item.priority },
     project: { id: project.id, name: project.name, description: project.description },
     inputs,
     documents,

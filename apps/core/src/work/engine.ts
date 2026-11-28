@@ -6,6 +6,7 @@ import {
   type WorkflowTemplateDef,
   type WorkItemCreate,
   type WorkItemPatch,
+  isExtensionOnlyTemplate,
 } from '@yoda/shared'
 import { and, asc, desc, eq, inArray, isNull, like, or, sql } from 'drizzle-orm'
 import {
@@ -48,6 +49,7 @@ import {
   notifyRequestEnded,
   notifyTaskAssigned,
 } from '../notifications/service.js'
+import { sensitiveDefectIds } from '../defects/ai-view.js'
 
 const ACTIVE_STATES: readonly TaskState[] = ACTIVE_TASK_STATES
 const isActive = (state: string) => (ACTIVE_STATES as readonly string[]).includes(state)
@@ -116,9 +118,16 @@ export async function createWorkItem(
   projectId: string,
   input: WorkItemCreate,
   /** Repos to link instead of all of the project's (an imported issue links its own repo, issue known). */
-  opts: { repos?: { repoId: string; issueIid: number; issueUrl: string }[] } = {},
+  opts: {
+    repos?: { repoId: string; issueIid: number; issueUrl: string }[]
+    /** Only the defect service (Yoda Reporter) may use an extension-only template (plan decision 12). */
+    allowExtensionOnly?: boolean
+  } = {},
 ): Promise<string> {
   const { tx } = ctx
+  if (!opts.allowExtensionOnly && isExtensionOnlyTemplate(input.templateKey)) {
+    throw new HttpError(422, { error: 'invalid_state', reason: 'extension_only_template' })
+  }
   // Waits for any in-flight member removal, so the new item's tasks never go to a departing member.
   await lockProject(tx, projectId, 'share')
   if (!me.isAdmin && !(await memberRoles(tx, projectId, me.id))) throw notFound()
@@ -633,6 +642,8 @@ export async function recordAcceptedKnowledge(ctx: WorkCtx, item: WorkItemRow, t
   if (!step || !templateTask) return
   // Work accepted in the Dev step (e.g. QC's draft test cases) refreshes the work item's GitLab issues.
   if (step.tasks.some((t) => t.capability === 'code-change')) await queueIssueSync(ctx, item.id, { withIssues: true })
+  // A sensitive defect's follow-up notes (triage, fix, retest) may repeat the report's data: never AI material.
+  const sensitive = (await sensitiveDefectIds(tx, [item.id])).has(item.id)
   const entry = (sourceTask: TaskRow, title: string, body: string) =>
     ({
       scope: 'work_item',
@@ -640,7 +651,7 @@ export async function recordAcceptedKnowledge(ctx: WorkCtx, item: WorkItemRow, t
       workItemId: sourceTask.workItemId,
       title,
       body,
-      noAi: false,
+      noAi: sensitive,
       sourceKind: 'task',
       sourceRef: sourceTask.id,
     }) as const

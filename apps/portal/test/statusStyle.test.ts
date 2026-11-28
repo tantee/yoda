@@ -40,6 +40,9 @@ const DOMAINS: Record<StatusKind, readonly string[]> = {
   knowledge: KnowledgeStatus.options,
   project: ['active', 'archived'],
   yesNo: ['yes', 'no'],
+  appUrl: ['production', 'test'],
+  grant: ['active', 'idle', 'revoked'],
+  severity: ['blocker', 'critical', 'major', 'minor', 'trivial'],
   masterKey: MasterKeyView.shape.status.options,
 }
 

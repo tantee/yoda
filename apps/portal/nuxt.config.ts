@@ -27,6 +27,12 @@ export default defineNuxtConfig({
       })
     },
   ],
+  // Never framed (clickjacking an Approve on the extension page): every path, so a case variant such as
+  // /EXTENSION/connect (Vue Router ignores case, Nitro does not) is covered too; the portal is never embedded.
+  routeRules: {
+    '/**': { headers: { 'Content-Security-Policy': "frame-ancestors 'none'", 'X-Frame-Options': 'DENY' } },
+    '/extension/**': { headers: { 'Content-Security-Policy': "frame-ancestors 'none'", 'X-Frame-Options': 'DENY' } },
+  },
   css: ['~/assets/fonts.css', '@mdi/font/css/materialdesignicons.css', 'vuetify/styles', '~/assets/main.css'],
   build: { transpile: ['vuetify'] },
   vite: { vue: { template: { transformAssetUrls } } },

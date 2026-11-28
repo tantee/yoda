@@ -81,6 +81,10 @@ export const Attachment = z.object({
   uploadedById: uuid.nullable(),
   uploadedByName: z.string(),
   createdAt: z.string(),
+  /** Set on defect report files (the extension's roles); only these are removable and purged by retention. */
+  role: z.enum(['screenshot', 'screenshot_full', 'video', 'buffer', 'console', 'network']).nullable().default(null),
+  /** When retention removed the file's bytes; the row stays as a placeholder. */
+  purgedAt: z.string().nullable().default(null),
 })
 export type Attachment = z.infer<typeof Attachment>
 

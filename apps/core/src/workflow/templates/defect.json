@@ -1,0 +1,110 @@
+{
+  "key": "defect",
+  "name": {
+    "th": "รายงานข้อบกพร่อง",
+    "en": "Defect report"
+  },
+  "steps": [
+    {
+      "key": "triage",
+      "name": {
+        "th": "คัดกรอง",
+        "en": "Triage"
+      },
+      "tasks": [
+        {
+          "key": "triage-defect",
+          "type": "approval",
+          "role": "QC",
+          "title": {
+            "th": "คัดกรองข้อบกพร่อง",
+            "en": "Triage the defect"
+          },
+          "instructions": {
+            "th": "ทำซ้ำปัญหาตามรายงาน ยืนยันความรุนแรง และตรวจว่าซ้ำกับรายงานอื่นหรือไม่ หากไม่ใช่ข้อบกพร่อง ให้ยกเลิกงานพร้อมเหตุผล",
+            "en": "Reproduce the problem from the report, confirm the severity and check for duplicates. If it is not a defect, cancel the work item with a reason"
+          },
+          "dependsOn": []
+        }
+      ]
+    },
+    {
+      "key": "fix",
+      "name": {
+        "th": "แก้ไข",
+        "en": "Fix"
+      },
+      "tasks": [
+        {
+          "key": "fix-defect",
+          "type": "human",
+          "role": "DEV",
+          "title": {
+            "th": "แก้ไขข้อบกพร่อง",
+            "en": "Fix the defect"
+          },
+          "instructions": {
+            "th": "แก้ไขข้อบกพร่องตามรายงานบนงาน แล้วบันทึกสิ่งที่แก้ไขและเวอร์ชันที่มีการแก้ไข",
+            "en": "Fix the defect described in the report on the work item, then record what changed and the build that has the fix"
+          },
+          "dependsOn": []
+        },
+        {
+          "key": "review-fix",
+          "type": "review",
+          "role": "DEV",
+          "title": {
+            "th": "ตรวจการแก้ไข",
+            "en": "Review the fix"
+          },
+          "instructions": {
+            "th": "ตรวจการแก้ไข แล้วอนุมัติหรือส่งกลับให้แก้ไข",
+            "en": "Review the fix, then approve it or request changes"
+          },
+          "dependsOn": [
+            "fix-defect"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "verify",
+      "name": {
+        "th": "ทดสอบซ้ำ",
+        "en": "Retest"
+      },
+      "tasks": [
+        {
+          "key": "retest",
+          "type": "human",
+          "role": "REQUESTER",
+          "title": {
+            "th": "ทดสอบซ้ำ",
+            "en": "Retest"
+          },
+          "instructions": {
+            "th": "ทดสอบซ้ำตามขั้นตอนในรายงานบนเวอร์ชันที่แก้ไขแล้ว และบันทึกผลที่พบ",
+            "en": "Retest with the steps in the report on the build with the fix, and record what you found"
+          },
+          "dependsOn": []
+        },
+        {
+          "key": "close-defect",
+          "type": "approval",
+          "role": "QC",
+          "title": {
+            "th": "ปิดข้อบกพร่อง",
+            "en": "Close the defect"
+          },
+          "instructions": {
+            "th": "ยืนยันว่าผลการทดสอบซ้ำผ่าน แล้วปิดงาน",
+            "en": "Confirm the retest passed, then close the work item"
+          },
+          "dependsOn": [
+            "retest"
+          ]
+        }
+      ]
+    }
+  ]
+}

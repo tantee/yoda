@@ -9,6 +9,7 @@ import { PORTAL_NOTE_MARKER, stripCommentMarkers } from './issue-section.js'
 import { notify } from '../notifications/service.js'
 import { recordEvent, runWork, type WorkCtx, type WorkDeps } from '../work/context.js'
 import { templateById } from '../workflow/seed.js'
+import { upsertDeployment } from './environments.js'
 
 export type WebhookResult = { ok: true; duplicate?: true; ignored?: true }
 
@@ -102,6 +103,27 @@ const NoteHook = z.object({
   issue: z.object({ iid: z.number().int() }).nullish(),
 })
 
+const DeploymentHook = z.object({
+  object_kind: z.literal('deployment'),
+  project: Project,
+  status: z.string(),
+  status_changed_at: z.string().nullish(),
+  environment: z.string().min(1).max(255),
+  environment_tier: z.string().nullish(),
+  environment_external_url: z.string().nullish(),
+  ref: z.string().nullish(),
+  short_sha: z.string().nullish(),
+  commit_url: z.string().nullish(),
+})
+
+/** GitLab's hook timestamps: `2021-04-28 21:50:00 +0200` or `… UTC`; ISO strings pass through. */
+export function hookTime(s: string | null | undefined): Date | null {
+  if (!s) return null
+  const m = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})(?:\.\d+)? ?(?:UTC|Z|([+-]\d{2}):?(\d{2}))$/.exec(s.trim())
+  const d = m ? new Date(`${m[1]}T${m[2]}${m[3] ? `${m[3]}:${m[4]}` : 'Z'}`) : new Date(s)
+  return Number.isNaN(d.getTime()) ? null : d
+}
+
 const MR_STATES: Record<string, MergeRequestState> = { opened: 'opened', locked: 'opened', reopened: 'opened', merged: 'merged', closed: 'closed' }
 const PIPELINE_STATES: Record<string, PipelineStatus> = {
   created: 'pending',
@@ -140,6 +162,9 @@ export async function handleWebhook(deps: WorkDeps, eventUuid: string, body: unk
     } else if (kind === 'note') {
       const p = NoteHook.safeParse(body)
       if (p.success) result = await onNote(ctx, p.data, botUserId)
+    } else if (kind === 'deployment') {
+      const p = DeploymentHook.safeParse(body)
+      if (p.success) result = await onDeployment(ctx, p.data)
     }
     await ctx.tx.update(gitlabSettings).set({ lastWebhookAt: sql`now()` }).where(eq(gitlabSettings.id, 1))
     return result
@@ -147,6 +172,25 @@ export async function handleWebhook(deps: WorkDeps, eventUuid: string, body: unk
 }
 
 type RepoRow = typeof projectRepos.$inferSelect
+
+/** A successful deployment updates the environment of every portal repo of its GitLab project (URL mapping). */
+async function onDeployment(ctx: WorkCtx, hook: z.infer<typeof DeploymentHook>): Promise<WebhookResult> {
+  if (hook.status !== 'success') return IGNORED
+  const repos = await reposOf(ctx.tx, hook.project.id)
+  if (!repos.length) return IGNORED
+  const full = hook.commit_url?.match(/\/commit\/([0-9a-f]{40})(?:[/?#]|$)/i)?.[1]
+  const deployment = {
+    name: hook.environment,
+    externalUrl: hook.environment_external_url ?? null,
+    tier: hook.environment_tier ?? null,
+    ref: hook.ref ?? null,
+    sha: full ?? hook.short_sha ?? null,
+    status: hook.status,
+    deployedAt: hookTime(hook.status_changed_at) ?? new Date(),
+  }
+  for (const repo of repos) await upsertDeployment(ctx.tx, repo.id, deployment)
+  return OK
+}
 
 const reposOf = (tx: Tx, gitlabProjectId: number) => tx.select().from(projectRepos).where(eq(projectRepos.gitlabProjectId, gitlabProjectId))
 

@@ -29,6 +29,7 @@ import { asOwner, leaseFrom, lockRunTask, nowOf, requireLiveRun, workable, type 
 
 export { workable }
 import { endRun } from './records.js'
+import { aiTitleOf } from '../defects/ai-view.js'
 
 export type { RunCode }
 
@@ -70,7 +71,8 @@ async function runCode(db: RunnerDeps['db'], item: Pick<WorkItemRow, 'id' | 'tit
     .innerJoin(projectRepos, eq(projectRepos.id, workItemRepos.repoId))
     .where(eq(workItemRepos.workItemId, item.id))
     .orderBy(asc(projectRepos.pathWithNamespace), asc(projectRepos.id))
-  return { repos: rows, branch: branchFor(item.id, item.title) }
+  // The branch name reaches GitLab and the agent: a sensitive defect's is made from the neutral title.
+  return { repos: rows, branch: branchFor(item.id, await aiTitleOf(db, item, 'en')) }
 }
 
 /**

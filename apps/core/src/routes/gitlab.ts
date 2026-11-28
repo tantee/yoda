@@ -84,6 +84,12 @@ export function gitlabRoutes(app: FastifyInstance): void {
       return r ?? null
     })
     if (!row) throw new HttpError(409, { error: 'invalid_state' })
+    // Its environments (Yoda Reporter URL mapping) are read once now; webhooks and the nightly run keep them current.
+    try {
+      await app.deps.jobs.send('gitlab-env-sync', { id: row.id })
+    } catch (err) {
+      console.error(`jobs: failed to send gitlab-env-sync ${row.id}`, err)
+    }
     return reply.status(201).send(toRepo(row))
   })
 

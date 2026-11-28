@@ -114,7 +114,7 @@ describe('GET /admin/settings', () => {
     expect(res.statusCode).toBe(200)
     const body = res.json()
     expect(JSON.stringify(body)).not.toContain(SMTP_PASSWORD)
-    expect(body.categories.map((c: { category: string }) => c.category)).toEqual(['general', 'signin', 'ai', 'gitlab', 'email', 'line', 'telegram', 'runners', 'backups', 'storage', 'security'])
+    expect(body.categories.map((c: { category: string }) => c.category)).toEqual(['general', 'signin', 'ai', 'gitlab', 'email', 'line', 'telegram', 'runners', 'backups', 'storage', 'security', 'extension'])
     expect(body.masterKey).toEqual({ status: 'ok', keyId: KEY.status === 'ok' ? KEY.key.id : null, recovery: false })
 
     expect(find(body, 'smtp.password')).toMatchObject({ secret: true, source: 'db', locked: null, apply: 'reconnect', version: 1, secretState: { set: true, hint: '1234', unavailable: false } })

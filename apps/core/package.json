@@ -11,7 +11,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx --env-file-if-exists=../../.env src/db/migrate.ts",
     "fake-gitlab": "tsx test/fake-gitlab-dev.ts",
-    "fake-channels": "tsx test/fake-channels-dev.ts"
+    "fake-channels": "tsx test/fake-channels-dev.ts",
+    "dev-post-defect": "tsx scripts/dev-post-defect.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.107",

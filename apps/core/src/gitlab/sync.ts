@@ -1,10 +1,11 @@
 import type { TaskResult } from '@yoda/shared'
 import { and, asc, desc, eq, isNotNull, isNull, sql } from 'drizzle-orm'
 import type { Db } from '../db/client.js'
-import { discussions, knowledgeEntries, projectRepos, projects, tasks, workItemRepos, workItems } from '../db/schema.js'
+import { defectReports, discussions, knowledgeEntries, projectRepos, projects, tasks, workItemRepos, workItems } from '../db/schema.js'
 import type { JobRun } from '../jobs/queue.js'
 import { recordEvent, runWork, type WorkCtx, type WorkDeps } from '../work/context.js'
 import { templateById } from '../workflow/seed.js'
+import { aiTitle } from '../defects/ai-view.js'
 import { GitLabError, type GitLabClient } from './client.js'
 import { changedSections, markerQuery, mergeSection, PORTAL_NOTE_MARKER, renderIssueSection, sectionHash, type IssueSectionInput } from './issue-section.js'
 
@@ -93,7 +94,15 @@ async function readContent(db: Db, item: typeof workItems.$inferSelect, projectN
   const latestCode = current.find((t) => codeKeys.has(t.key))
   const feedback = latestCode?.feedback?.trim() || null
 
-  return { workItem: { id: item.id, title: item.title }, projectName, portalUrl, requirements, originalRequest, design, decisions, testCases, feedback }
+  // A Yoda Reporter report: AI and GitLab see the neutral title of a sensitive defect (its description is the marker).
+  const [report] = await db
+    .select({ severity: defectReports.severity, build: defectReports.build, client: defectReports.client, sensitive: defectReports.sensitive })
+    .from(defectReports)
+    .where(eq(defectReports.workItemId, item.id))
+  const title = aiTitle(item, new Set(report?.sensitive ? [item.id] : []), 'th')
+  const defect = report ? { severity: report.severity, build: report.build ?? null, client: report.client } : null
+
+  return { workItem: { id: item.id, title }, projectName, portalUrl, requirements, originalRequest, design, decisions, testCases, feedback, defect }
 }
 
 const errorCode = (err: unknown) => (err instanceof GitLabError ? err.code : 'internal')
@@ -152,7 +161,7 @@ async function syncOnce(deps: SyncDeps, run: JobRun): Promise<void> {
       const section = render(l)
       const issue =
         (await gitlab.findIssueByMarker(l.repo.gitlabProjectId, markerQuery(item.id))) ??
-        (await gitlab.createIssue(l.repo.gitlabProjectId, { title: item.title, description: section }))
+        (await gitlab.createIssue(l.repo.gitlabProjectId, { title: content.workItem.title, description: section }))
       known.set(l.repo.id, { iid: issue.iid, url: issue.web_url })
       created.add(l.repo.id)
       await db

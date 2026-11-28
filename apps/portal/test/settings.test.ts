@@ -89,7 +89,7 @@ const hasText = (key: string) => typeof TH[key] === 'string' && typeof EN[key] =
 
 describe('settings pages', () => {
   it('one page per category (email, LINE and Telegram share the channels page), then the change log', () => {
-    expect(SETTINGS_PAGES.map(p => p.id)).toEqual(['general', 'signin', 'ai', 'gitlab', 'channels', 'runners', 'backups', 'storage', 'security', 'audit'])
+    expect(SETTINGS_PAGES.map(p => p.id)).toEqual(['general', 'signin', 'ai', 'gitlab', 'channels', 'runners', 'extension', 'backups', 'storage', 'security', 'audit'])
     const covered = SETTINGS_PAGES.flatMap(p => p.categories).sort()
     expect(covered).toEqual([...SettingCategory.options].sort())
     expect(pageForCategory('telegram')).toBe('channels')

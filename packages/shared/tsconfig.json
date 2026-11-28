@@ -1,4 +1,8 @@
 {
   "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // The extension contracts use web APIs (Blob, FormData, WebCrypto) that core, the portal and the extension all have.
+    "lib": ["ES2023", "DOM"]
+  },
   "include": ["src", "test"]
 }

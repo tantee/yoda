@@ -66,7 +66,6 @@ h1, h2, h3, p { margin: 0; }
 .s-form { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 12px 0; }
 .s-form small { display: block; font-size: 10px; color: #4B5563; }
 .s-in { height: 26px; border: 1px solid #C7CDD4; background: #fff; border-radius: 3px; padding: 0 6px; display: flex; align-items: center; font-size: 11px; }
-.s-in.masked { background: #2A3546; border-color: #2A3546; }
 .s-table { width: 100%; border-collapse: collapse; background: #fff; font-size: 11px; border: 1px solid #DDE1E5; }
 .s-table th { background: #EEF1EE; text-align: left; padding: 6px; font-size: 10px; }
 .s-table td { padding: 6px; border-top: 1px solid #E5E7EB; }
@@ -152,6 +151,7 @@ svg.arrows { position: absolute; inset: 0; width: 100%; height: 100%; pointer-ev
     <div class="tool"><span class="mdi mdi-numeric-1-circle-outline"></span></div>
     <hr>
     <div class="tool"><span class="mdi mdi-blur"></span></div>
+    <div class="tool" title="Mosaic: rectangle or brush (M)"><span class="mdi mdi-checkerboard"></span></div>
     <div class="tool"><span class="mdi mdi-square"></span></div>
     <div class="tool"><span class="mdi mdi-crop"></span></div>
     <hr>
@@ -163,9 +163,9 @@ svg.arrows { position: absolute; inset: 0; width: 100%; height: 100%; pointer-ev
   <main class="canvas-col">
     <div class="canvas-bar">
       <span class="mdi mdi-monitor-screenshot" style="font-size:18px"></span>
-      <span data-en="Visible area · 1536 × 864 · form fields masked before capture">ส่วนที่เห็น · 1536 × 864 · ปิดบังช่องกรอกก่อนจับภาพแล้ว</span>
+      <span data-en="Visible area · 1536 × 864 · nothing is masked automatically">ส่วนที่เห็น · 1536 × 864 · ไม่มีการปิดบังอัตโนมัติ</span>
       <span class="grow"></span>
-      <span data-en="Pixelate and redact are burned in; the original is never uploaded">การเบลอและทึบถูกฝังในภาพ ไม่ส่งภาพต้นฉบับ</span>
+      <span data-en="Blur, mosaic and redact are burned in; the original is never uploaded">เบลอ โมเสก และทึบ ถูกฝังในภาพ ไม่ส่งภาพต้นฉบับ</span>
       <span class="mdi mdi-shield-check-outline" style="color:var(--success-dot);font-size:18px"></span>
     </div>
     <div class="canvas-wrap">
@@ -175,8 +175,8 @@ svg.arrows { position: absolute; inset: 0; width: 100%; height: 100%; pointer-ev
           <h4 data-en="Clinic queue: Medicine">คิวคลินิกอายุรกรรม</h4>
           <div style="font-size:10px;color:#6B7280" data-en="Synthetic test data">ข้อมูลทดสอบ (สังเคราะห์)</div>
           <div class="s-form">
-            <div><small>HN</small><div class="s-in masked"></div></div>
-            <div><small data-en="Patient name">ชื่อผู้ป่วย</small><div class="s-in masked"></div></div>
+            <div><small>HN</small><div class="s-in">00-000000</div></div>
+            <div><small data-en="Patient name">ชื่อผู้ป่วย</small><div class="s-in" data-en="Test Patient">ทดสอบ ระบบ</div></div>
             <div><small data-en="Appointment date">วันที่นัด</small><div class="s-in">28/11/2569</div></div>
           </div>
           <table class="s-table">
@@ -208,7 +208,7 @@ svg.arrows { position: absolute; inset: 0; width: 100%; height: 100%; pointer-ev
     <div class="files">
       <div class="file on"><div class="thumb img"></div><div class="grow"><div class="n" data-en="Screenshot (annotated)">ภาพหน้าจอ (วาดแล้ว)</div><div class="d">PNG · 412 KB</div></div></div>
       <div class="file"><div class="thumb"><span class="mdi mdi-play-circle-outline"></span></div><div class="grow"><div class="n" data-en="Last 30 s video">วิดีโอ 30 วิ ล่าสุด</div><div class="d">WebM · 0:28 · 4.6 MB</div></div></div>
-      <div class="file"><div class="thumb"><span class="mdi mdi-console"></span></div><div class="grow"><div class="n">console.json</div><div class="d"><span data-en="38 entries · 2 masked">38 รายการ · ปิดบัง 2</span></div></div></div>
+      <div class="file"><div class="thumb"><span class="mdi mdi-console"></span></div><div class="grow"><div class="n">console.json</div><div class="d"><span data-en="38 entries · 3 errors">38 รายการ · ข้อผิดพลาด 3</span></div></div></div>
       <div class="file"><div class="thumb"><span class="mdi mdi-lan-disconnect"></span></div><div class="grow"><div class="n">network.json</div><div class="d"><span data-en="2 failed requests">คำขอผิดพลาด 2</span></div></div></div>
     </div>
   </main>
@@ -241,7 +241,7 @@ svg.arrows { position: absolute; inset: 0; width: 100%; height: 100%; pointer-ev
         <div class="env">
           <div><span class="k" data-en="Build">บิลด์</span><span class="mono">feature/opd-queue · 3f9c2e1</span><span class="src ok">meta</span></div>
           <div><span class="k" data-en="Backend">แบ็กเอนด์</span><span class="mono">develop · 9a01b77</span><span class="src ok">X-Yoda-Build</span></div>
-          <div><span class="k" data-en="Page">หน้า</span><span class="mono">appt-uat.example.org/opd/queue</span><span class="src" data-en="query hidden">ซ่อน query</span></div>
+          <div><span class="k" data-en="Page">หน้า</span><span class="mono">appt-uat.example.org/opd/queue</span><span class="src" data-en="query kept">มี query</span></div>
           <div><span class="k" data-en="Browser">เบราว์เซอร์</span><span>Chrome 131 · Windows 11 · 1536×864</span><span class="src">auto</span></div>
         </div>
       </div>
@@ -252,10 +252,10 @@ svg.arrows { position: absolute; inset: 0; width: 100%; height: 100%; pointer-ev
         <div class="inc">
           <div><span class="cb on"><span class="mdi mdi-check"></span></span><span data-en="Screenshot (annotated)">ภาพหน้าจอ (วาดแล้ว)</span><span class="sz">412 KB</span></div>
           <div><span class="cb on"><span class="mdi mdi-check"></span></span><span data-en="Video, last 30 s">วิดีโอ 30 วินาทีล่าสุด</span><span class="sz">4.6 MB</span></div>
-          <div><span class="cb on"><span class="mdi mdi-check"></span></span><span data-en="Console log (masked)">Console log (ปิดบังแล้ว)</span><span class="sz">9 KB</span></div>
+          <div><span class="cb on"><span class="mdi mdi-check"></span></span><span data-en="Console log">Console log</span><span class="sz">9 KB</span></div>
           <div><span class="cb on"><span class="mdi mdi-check"></span></span><span data-en="Failed network requests">คำขอเครือข่ายที่ผิดพลาด</span><span class="sz">2 KB</span></div>
         </div>
-        <div class="confirm"><span class="cb on"><span class="mdi mdi-check"></span></span><span data-en="I checked the screenshot and video: there is no patient data, or it is redacted.">ฉันตรวจภาพและวิดีโอแล้ว ไม่มีข้อมูลผู้ป่วย หรือปิดบังแล้ว</span></div>
+        <div class="confirm"><span class="cb on"><span class="mdi mdi-check"></span></span><span data-en="I checked the screenshot and video: there is no patient data, or it is hidden with mosaic or redact.">ฉันตรวจภาพและวิดีโอแล้ว ไม่มีข้อมูลผู้ป่วย หรือปิดด้วยโมเสกหรือทึบแล้ว</span></div>
       </div>
       <div class="ai-line"><span class="chip neutral"><span class="mdi mdi-robot-off-outline"></span><span data-en="Not sent to AI">ไม่ส่งให้ AI</span></span><span data-en="This project is set to &quot;do not send to AI&quot;.">โครงการนี้ตั้งค่า "ห้ามส่งให้ AI"</span></div>
     </div>

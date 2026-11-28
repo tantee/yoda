@@ -6,6 +6,13 @@ type Project = { id: number; path_with_namespace: string; web_url: string; defau
 /** `byBot`: created through the API (i.e. by the token's user), as `scope=created_by_me` sees it. */
 type Issue = { iid: number; title: string; description: string; web_url: string; state: string; byBot: boolean }
 type Send = (status: number, data?: unknown) => void
+export type FakeEnvironment = {
+  id: number
+  name: string
+  external_url: string | null
+  tier: string | null
+  last_deployment: { ref: string; sha: string; status: string; created_at: string; updated_at: string; deployable: { finished_at: string | null } | null } | null
+}
 export type FakeMergeRequest = { project_id: number; iid: number; title: string; web_url: string; state: string; source_branch: string; description: string }
 
 /** GitLab's basic search splits on non-alphanumerics and needs every term (here: as a whole word). */
@@ -28,6 +35,8 @@ export class FakeGitLab {
   readonly mergeRequests = new Map<number, (FakeMergeRequest & { target_branch: string; remove_source_branch: boolean })[]>()
   /** Branches that exist (were pushed), by project; MRs can only be opened from these. */
   readonly branches = new Map<number, Set<string>>()
+  /** Environments by project, each with its last deployment (`GET …/environments[/:id]`). */
+  readonly environments = new Map<number, FakeEnvironment[]>()
   /** DEV ONLY (fake-gitlab-dev): the fake hosts no git, so treat every source branch as pushed. */
   acceptAnyBranch = false
   private readonly nextIid = new Map<number, number>()
@@ -148,6 +157,17 @@ export class FakeGitLab {
     if (!project) return send(404, { message: '404 Project Not Found' })
     if (parts.length === 2 && method === 'GET') return send(200, project)
     if (parts[2] === 'merge_requests' && parts.length === 3) return this.handleMergeRequests(project, method, rawUrl, body, send)
+    if (parts[2] === 'environments' && method === 'GET') {
+      const envs = this.environments.get(project.id) ?? []
+      if (parts.length === 3) {
+        const params = new URL(rawUrl, 'http://x').searchParams
+        const per = Number(params.get('per_page') ?? 20)
+        const page = Number(params.get('page') ?? 1)
+        return send(200, envs.slice((page - 1) * per, page * per).map(({ last_deployment: _, ...e }) => e))
+      }
+      const env = envs.find((e) => String(e.id) === parts[3])
+      return env ? send(200, env) : send(404, { message: '404 Environment Not Found' })
+    }
     if (parts[2] !== 'issues') return send(404, { message: '404 Not Found' })
     const list = this.issues.get(project.id)!
     const b = (body ?? {}) as { title?: string; description?: string; body?: string }

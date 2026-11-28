@@ -16,6 +16,7 @@ import { recordEvent, runWork, type WorkCtx, type WorkDeps } from '../work/conte
 import { definitionOf, failAiTask, lockItem, type WorkItemRow } from '../work/engine.js'
 import { endRun, type RunnerRow } from './records.js'
 import { checkSafeguards } from './safeguards.js'
+import { aiTitle, sensitiveDefectIds } from '../defects/ai-view.js'
 
 /** An authenticated runner and the staff person it acts for. */
 export type RunnerCtx = { runner: RunnerRow; owner: Me }
@@ -104,13 +105,14 @@ export async function listAvailableTasks(deps: RunnerDeps, rc: RunnerCtx, input:
     )
     .orderBy(priorityRank, asc(tasks.createdAt), asc(tasks.id))
     .limit(LIST_LIMIT)
+  const hidden = await sensitiveDefectIds(deps.db, rows.map((r) => r.w.id))
   return rows.map(({ t, w, projectName, definition }) => {
     const tt = templateTaskOf(definition as WorkflowTemplateDef, t)!
     return AvailableTask.parse({
       taskId: t.id,
       title: tt.title,
       workItemId: w.id,
-      workItemTitle: w.title,
+      workItemTitle: aiTitle(w, hidden, 'en'),
       projectName,
       capability: tt.capability,
       stepKey: t.stepKey,

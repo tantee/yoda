@@ -63,8 +63,6 @@ h1, h2, h3, p { margin: 0; }
 .app-form { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 16px 0; }
 .app-form label { font-size: 12px; color: #4B5563; display: block; margin-bottom: 4px; }
 .app-input { height: 34px; border: 1px solid #C7CDD4; border-radius: 4px; background: #fff; display: flex; align-items: center; padding: 0 8px; font-size: 13px; }
-.masked { background: repeating-linear-gradient(45deg, #2A3546, #2A3546 6px, #344156 6px, #344156 12px); color: transparent; border-color: #2A3546; position: relative; }
-.masked::after { content: 'masked'; position: absolute; right: 6px; top: 7px; font-size: 10px; color: #C3D0E2; font-family: 'IBM Plex Sans', sans-serif; letter-spacing: .04em; }
 .app-table { width: 100%; border-collapse: collapse; font-size: 13px; background: #fff; border: 1px solid #DDE1E5; }
 .app-table th { background: #EEF1EE; text-align: left; padding: 8px; font-weight: 600; font-size: 12px; }
 .app-table td { padding: 8px; border-top: 1px solid #E5E7EB; }
@@ -168,8 +166,8 @@ h1, h2, h3, p { margin: 0; }
         <h2><span data-en="Clinic queue: Medicine">คิวคลินิกอายุรกรรม</span><span class="uat-band">UAT</span></h2>
         <div style="font-size:12px;color:#6B7280" data-en="Synthetic test data">ข้อมูลทดสอบ (สังเคราะห์)</div>
         <div class="app-form">
-          <div><label>HN</label><div class="app-input masked">00-000000</div></div>
-          <div><label data-en="Patient name">ชื่อผู้ป่วย</label><div class="app-input masked">ทดสอบ ระบบ</div></div>
+          <div><label>HN</label><div class="app-input">00-000000</div></div>
+          <div><label data-en="Patient name">ชื่อผู้ป่วย</label><div class="app-input" data-en="Test Patient">ทดสอบ ระบบ</div></div>
           <div><label data-en="Appointment date">วันที่นัด</label><div class="app-input">28/11/2569</div></div>
         </div>
         <table class="app-table">
@@ -215,7 +213,7 @@ h1, h2, h3, p { margin: 0; }
 
         <div class="field-label"><span data-en="Collected automatically">ข้อมูลที่เก็บอัตโนมัติ</span><span class="grow"></span><span class="btn-text" style="font-size:12px;padding:0" data-en="Show all">ดูทั้งหมด</span></div>
         <div class="meta">
-          <div class="meta-row"><span class="k" data-en="Page">หน้า</span><span class="v mono">/opd/queue</span><span class="src" data-en="query hidden">ซ่อน query</span></div>
+          <div class="meta-row"><span class="k" data-en="Page">หน้า</span><span class="v mono">/opd/queue</span><span class="src" data-en="query kept">มี query</span></div>
           <div class="meta-row"><span class="k" data-en="Build">บิลด์</span><span class="v mono">feature/opd-queue · 3f9c2e1</span><span class="src ok">meta yoda-build</span></div>
           <div class="meta-row"><span class="k" data-en="Browser">เบราว์เซอร์</span><span class="v">Chrome 131 · Windows 11 · 1536×864</span><span class="src">auto</span></div>
           <div class="meta-row"><span class="k">Console</span><span class="v"><span class="chip error">3 errors</span> <span class="chip warning">1 warning</span></span><span class="src" data-en="since load">ตั้งแต่โหลด</span></div>
@@ -223,9 +221,8 @@ h1, h2, h3, p { margin: 0; }
         </div>
 
         <div class="toggles">
-          <div class="tg"><span class="sw on"></span><span class="grow" data-en="Attach console log">แนบ console log</span><span class="note" data-en="masked: ID, HN, phone, email">ปิดบัง เลขบัตร HN โทร อีเมล</span></div>
+          <div class="tg"><span class="sw on"></span><span class="grow" data-en="Attach console log">แนบ console log</span><span class="note" data-en="never sent to AI">ไม่ส่งให้ AI</span></div>
           <div class="tg"><span class="sw on"></span><span class="grow" data-en="Attach failed network requests">แนบคำขอเครือข่ายที่ผิดพลาด</span><span class="note" data-en="no bodies, no headers">ไม่มี body / header</span></div>
-          <div class="tg"><span class="sw locked"></span><span class="grow" data-en="Mask form fields before capture">ปิดบังช่องกรอกข้อมูลก่อนจับภาพ</span><span class="note"><span class="mdi mdi-lock-outline"></span> <span data-en="set by Yoda">กำหนดโดย Yoda</span></span></div>
         </div>
       </div>
       <div class="pop-foot">
@@ -243,8 +240,8 @@ h1, h2, h3, p { margin: 0; }
         <ol>
           <li data-en="The popup opens from the toolbar button (or Alt+Shift+Y). The red dot means the 30-second buffer is recording this tab.">ป๊อปอัปเปิดจากปุ่มบนแถบเครื่องมือ (หรือ Alt+Shift+Y) จุดแดงคือบัฟเฟอร์ 30 วินาทีกำลังบันทึกแท็บนี้</li>
           <li data-en="The URL matched a rule, so the Yoda instance and project are already chosen.">URL ตรงกับกฎ จึงเลือก Yoda และโครงการให้แล้ว</li>
-          <li data-en="Build comes from the page's yoda-build meta tag; the query string is hidden by default.">บิลด์อ่านจาก meta tag <span class="mono">yoda-build</span> ของหน้า ส่วน query string ซ่อนไว้โดยค่าเริ่มต้น</li>
-          <li data-en="Form fields (HN, name) are already masked on the page before the capture is taken.">ช่องกรอก (HN, ชื่อ) ถูกปิดบังบนหน้าก่อนจับภาพ</li>
+          <li data-en="Build comes from the page's yoda-build meta tag; the query string is kept (the form can drop it).">บิลด์อ่านจาก meta tag <span class="mono">yoda-build</span> ของหน้า ส่วน query string เก็บไว้ (ตัดออกได้ในฟอร์ม)</li>
+          <li data-en="Nothing is masked automatically (test data is mock). Hide anything sensitive with mosaic or redact in the editor.">ไม่มีการปิดบังอัตโนมัติ (ข้อมูลทดสอบเป็นข้อมูลจำลอง) ซ่อนส่วนที่อ่อนไหวด้วยโมเสกหรือทึบในหน้าวาด</li>
         </ol>
       </div>
     </div>

@@ -52,6 +52,13 @@ import {
   type RunUsage,
   type TaskResult,
   type WorkingHours,
+  GrantRevokeReason,
+  AttachmentRole,
+  DefectKind,
+  DefectSeverity,
+  type DefectBackendBuild,
+  type DefectBuild,
+  type DefectClient,
 } from '@yoda/shared'
 
 const list = (values: readonly string[]) => sql.raw(values.map((v) => `'${v}'`).join(', '))
@@ -362,8 +369,15 @@ export const attachments = pgTable(
       .notNull()
       .references(() => people.id),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    /** Set on defect files only (Yoda Reporter): always noAi, removable, purged by retention. */
+    role: text('role'),
+    /** When a defect file's object was removed (by a person or retention); the row stays. */
+    purgedAt: timestamp('purged_at', { withTimezone: true }),
   },
-  (t) => [check('attachments_owner_check', sql`${t.projectId} is not null or ${t.conversationId} is not null`)],
+  (t) => [
+    check('attachments_owner_check', sql`${t.projectId} is not null or ${t.conversationId} is not null`),
+    check('attachments_role_check', sql`${t.role} in (${list(AttachmentRole.options)})`),
+  ],
 )
 
 export const knowledgeEntries = pgTable(
@@ -951,4 +965,143 @@ export const localSessions = pgTable(
     expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
   },
   (t) => [check('local_sessions_kind_check', sql`${t.kind} in ('setup', 'recovery')`), index('local_sessions_expires').on(t.expiresAt)],
+)
+
+/**
+ * Yoda Reporter grants (plan 2026-11-28-yoda-reporter, A2): one per connected browser. Only token hashes are kept:
+ * the current access token's on the grant, each rotating refresh token's in `extension_refresh_tokens`.
+ */
+export const extensionGrants = pgTable(
+  'extension_grants',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    personId: uuid('person_id')
+      .notNull()
+      .references(() => people.id, { onDelete: 'cascade' }),
+    extensionId: text('extension_id').notNull(),
+    browserLabel: text('browser_label').notNull(),
+    accessHash: text('access_hash').unique(),
+    accessExpiresAt: timestamp('access_expires_at', { withTimezone: true }),
+    familyId: uuid('family_id').notNull().defaultRandom(),
+    idleExpiresAt: timestamp('idle_expires_at', { withTimezone: true }).notNull(),
+    absoluteExpiresAt: timestamp('absolute_expires_at', { withTimezone: true }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    lastUsedAt: timestamp('last_used_at', { withTimezone: true }),
+    lastIp: text('last_ip'),
+    revokedAt: timestamp('revoked_at', { withTimezone: true }),
+    revokedBy: uuid('revoked_by').references(() => people.id, { onDelete: 'set null' }),
+    revokeReason: text('revoke_reason'),
+  },
+  (t) => [
+    check('extension_grants_revoke_reason_check', sql`${t.revokeReason} in (${list(GrantRevokeReason.options)})`),
+    index('extension_grants_person').on(t.personId),
+  ],
+)
+
+/** Authorization codes: 60 s, single use, claimed atomically (`used_at`). */
+export const extensionAuthCodes = pgTable('extension_auth_codes', {
+  codeHash: text('code_hash').primaryKey(),
+  personId: uuid('person_id')
+    .notNull()
+    .references(() => people.id, { onDelete: 'cascade' }),
+  extensionId: text('extension_id').notNull(),
+  redirectUri: text('redirect_uri').notNull(),
+  codeChallenge: text('code_challenge').notNull(),
+  browserLabel: text('browser_label').notNull(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  usedAt: timestamp('used_at', { withTimezone: true }),
+})
+
+/** Every refresh token a grant was given; a used one presented again revokes the grant (`reuse_detected`). */
+export const extensionRefreshTokens = pgTable(
+  'extension_refresh_tokens',
+  {
+    hash: text('hash').primaryKey(),
+    grantId: uuid('grant_id')
+      .notNull()
+      .references(() => extensionGrants.id, { onDelete: 'cascade' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    usedAt: timestamp('used_at', { withTimezone: true }),
+  },
+  (t) => [index('extension_refresh_tokens_grant').on(t.grantId)],
+)
+
+/**
+ * The structured report behind a `defect` (or extension `bug-fix`) work item. For a sensitive report the text
+ * lives only here: the work item description holds `DEFECT_WITHHELD_DESCRIPTION`.
+ */
+export const defectReports = pgTable(
+  'defect_reports',
+  {
+    workItemId: uuid('work_item_id')
+      .primaryKey()
+      .references(() => workItems.id, { onDelete: 'cascade' }),
+    kind: text('kind').notNull(),
+    severity: text('severity').notNull(),
+    description: text('description').notNull().default(''),
+    steps: jsonb('steps').$type<string[]>().notNull(),
+    expected: text('expected').notNull().default(''),
+    actual: text('actual').notNull().default(''),
+    pageUrl: text('page_url').notNull(),
+    pageTitle: text('page_title').notNull().default(''),
+    route: text('route'),
+    build: jsonb('build').$type<DefectBuild>(),
+    backendBuilds: jsonb('backend_builds').$type<DefectBackendBuild[]>().notNull(),
+    client: jsonb('client').$type<DefectClient>().notNull(),
+    capturedAt: timestamp('captured_at', { withTimezone: true }).notNull(),
+    reportedBy: uuid('reported_by')
+      .notNull()
+      .references(() => people.id),
+    source: text('source').notNull().default('extension'),
+    extensionVersion: text('extension_version'),
+    grantId: uuid('grant_id').references(() => extensionGrants.id, { onDelete: 'set null' }),
+    productionSite: boolean('production_site').notNull().default(false),
+    textMayContainPatientData: boolean('text_may_contain_patient_data').notNull().default(false),
+    /** The tester's flag or the project's noAi at report time: the text is kept from AI. */
+    sensitive: boolean('sensitive').notNull(),
+    idempotencyKey: uuid('idempotency_key'),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    check('defect_reports_kind_check', sql`${t.kind} in (${list(DefectKind.options)})`),
+    check('defect_reports_severity_check', sql`${t.severity} in (${list(DefectSeverity.options)})`),
+    check('defect_reports_source_check', sql`${t.source} in ('extension', 'portal')`),
+    unique('defect_reports_idempotency').on(t.reportedBy, t.idempotencyKey),
+  ],
+)
+
+/** Where a project's application runs (Yoda Reporter URL mapping, plan A7); production rows get stricter rules. */
+export const projectAppUrls = pgTable(
+  'project_app_urls',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    pattern: text('pattern').notNull(),
+    environment: text('environment'),
+    production: boolean('production').notNull().default(false),
+    createdBy: uuid('created_by').references(() => people.id, { onDelete: 'set null' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [unique('project_app_urls_pattern').on(t.projectId, t.pattern)],
+)
+
+/** A linked repo's GitLab environments and their last deployment (Yoda Reporter URL mapping, plan A8). */
+export const deployEnvironments = pgTable(
+  'deploy_environments',
+  {
+    repoId: uuid('repo_id')
+      .notNull()
+      .references(() => projectRepos.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    externalUrl: text('external_url'),
+    tier: text('tier'),
+    ref: text('ref'),
+    sha: text('sha'),
+    status: text('status'),
+    deployedAt: timestamp('deployed_at', { withTimezone: true }),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.repoId, t.name] })],
 )

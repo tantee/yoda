@@ -4,6 +4,20 @@ Releases follow [semantic versioning](https://semver.org); each is a git tag `v<
 as a GitHub Release, and the version without the `v` is the image tag a host runs. Upgrade steps:
 [docs/operations.md](docs/operations.md#5-upgrade-and-rollback).
 
+## Unreleased
+
+- **Yoda Reporter, server side** (the extension itself follows): staff connect the browser extension through
+  an approve page (PKCE, rotating refresh tokens; a reused one ends the connection) and see or revoke their
+  connected browsers; admins see everyone's and can revoke all. `POST /extension/defects` files a defect report
+  (screenshot, video, logs; idempotent, up to 50 MiB) as a work item on the new human-only `defect` template,
+  or on `bug-fix`. Defect media and logs are always "do not send to AI", and a report marked as possibly
+  holding patient data keeps its text and title from every AI path. Projects get **App URLs**; GitLab
+  environments (deployment webhook events and a nightly sync) map pages to projects and mark production sites,
+  where video is refused. Defect files can be removed with a reason and are purged 180 days (media) or 90 days
+  (logs) after the item closes. The work item page shows a defect card; a new **Help** page offers the
+  extension. The built-in proxy allows 56 MiB on `/api/extension/defects` only (section 7a of the runbook has
+  the setting for your own proxy).
+
 ## 1.2.0 — 2026-11-28
 
 A one-line installer, which checks and installs its own dependencies and handles sudo and the docker group.

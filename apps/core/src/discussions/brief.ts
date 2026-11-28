@@ -9,6 +9,7 @@ import { searchKnowledge } from '../knowledge/search.js'
 import { runWork, type Actor } from '../work/context.js'
 import type { DiscussionRow } from './queries.js'
 import { isUndecided, lockDiscussion, recordDiscussionEvent, resetStaleVotes } from './service.js'
+import { aiTitleOf } from '../defects/ai-view.js'
 
 /** A brief is short: bounded so a runaway generation does not run up the bill. */
 export const BRIEF_MAX_OUTPUT_TOKENS = 6000
@@ -143,10 +144,12 @@ export async function buildBriefPrompt(
   if (d.workItemId) {
     const [item] = await db.select().from(workItems).where(eq(workItems.id, d.workItemId))
     if (item) {
-      query = `${item.title} ${d.question}`
+      // A sensitive defect's title never reaches AI, not even as a search query (plan decision 11).
+      const title = await aiTitleOf(db, item, 'en')
+      query = `${title} ${d.question}`
       budget.add(
         [
-          `# Work item\n\n**${oneLine(item.title)}** (priority: ${item.priority})`,
+          `# Work item\n\n**${oneLine(title)}** (priority: ${item.priority})`,
           `Current step: ${d.stepKey ?? item.currentStepKey ?? '-'}`,
           clip(item.description, ENTRY_MAX_CHARS),
         ]

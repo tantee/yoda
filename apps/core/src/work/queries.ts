@@ -21,6 +21,7 @@ import {
   type TaskRunSummary,
   type TemplateTask,
   type WorkItemStep,
+  isExtensionOnlyTemplate,
 } from '@yoda/shared'
 import { and, asc, desc, eq, inArray, isNull, lt, or, sql, type SQL } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/pg-core'
@@ -28,6 +29,7 @@ import { forbidden, notFound } from '../auth/plugin.js'
 import { attachmentsByTask } from '../attachments/service.js'
 import type { Db, Tx } from '../db/client.js'
 import { pendingForDecider } from '../proposals/service.js'
+import { defectView } from '../defects/view.js'
 import { agentRuns, discussions, events, people, projectMembers, projects, proposals, runners, tasks, workflowTemplates, workItems } from '../db/schema.js'
 
 type Conn = Db | Tx
@@ -529,6 +531,7 @@ export async function getWorkItemDetail(db: Conn, me: Me, id: string): Promise<W
     ...toWorkItem(r, await advanceState(db, [r])),
     steps,
     tasks: taskRows.map((t) => ({ ...toTask(t, def, who, ai), run: runs.get(t.id) ?? null, parked: parked.has(t.id) })),
+    defect: await defectView(db, id),
   })
 }
 
@@ -858,7 +861,8 @@ export async function listTemplates(db: Conn): Promise<WorkflowTemplateSummary[]
   const seen = new Set<string>()
   const out: WorkflowTemplateSummary[] = []
   for (const r of rows) {
-    if (seen.has(r.key)) continue
+    // Extension-only templates (defect) are never offered for manual creation.
+    if (seen.has(r.key) || isExtensionOnlyTemplate(r.key)) continue
     seen.add(r.key)
     const def = r.definition as WorkflowTemplateDef
     out.push(

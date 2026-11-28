@@ -6,7 +6,7 @@ import type { ZodTypeAny } from 'zod'
  * category list, and per category a form built from the registry. Everything here is pure so it can be tested.
  */
 
-export type SettingsPageId = 'general' | 'signin' | 'ai' | 'gitlab' | 'channels' | 'runners' | 'backups' | 'storage' | 'security' | 'audit'
+export type SettingsPageId = 'general' | 'signin' | 'ai' | 'gitlab' | 'channels' | 'runners' | 'extension' | 'backups' | 'storage' | 'security' | 'audit'
 export type SettingsPage = { id: SettingsPageId; icon: string; categories: SettingCategory[] }
 
 /** The category list, in the mockup's order. Email, LINE and Telegram share one page (notification channels). */
@@ -17,6 +17,7 @@ export const SETTINGS_PAGES: SettingsPage[] = [
   { id: 'gitlab', icon: 'mdi-source-branch', categories: ['gitlab'] },
   { id: 'channels', icon: 'mdi-bell-cog-outline', categories: ['email', 'line', 'telegram'] },
   { id: 'runners', icon: 'mdi-server-network-outline', categories: ['runners'] },
+  { id: 'extension', icon: 'mdi-puzzle-outline', categories: ['extension'] },
   { id: 'backups', icon: 'mdi-backup-restore', categories: ['backups'] },
   { id: 'storage', icon: 'mdi-database-outline', categories: ['storage'] },
   { id: 'security', icon: 'mdi-shield-key-outline', categories: ['security'] },
@@ -553,6 +554,7 @@ export const CATEGORY_ICONS: Record<SettingCategory, string> = {
   backups: 'mdi-backup-restore',
   storage: 'mdi-database-outline',
   security: 'mdi-shield-key-outline',
+  extension: 'mdi-puzzle-outline',
 }
 
 /** Where a service posts to the portal: under the public URL when set, else the address the admin is using. */
