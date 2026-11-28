@@ -23,6 +23,7 @@ Contents:
 5. [Upgrade and rollback](#5-upgrade-and-rollback)
 6. [Backups and restore](#6-backups-and-restore)
 7. [GitLab integration](#7-gitlab-integration)
+   - [7a. Yoda Reporter (browser extension)](#7a-yoda-reporter-browser-extension)
 8. [Runners](#8-runners)
 9. [Email, LINE and Telegram](#9-email-line-and-telegram)
 10. [Rotating secrets](#10-rotating-secrets)
@@ -603,7 +604,8 @@ the `0600` key of files mode, which the deploy user owns and Caddy reads as root
 default set and limited to the container's own mounts; never `DAC_READ_SEARCH`, which re-enables
 `open_by_handle_at`, the "shocker" escape to host files), with `no-new-privileges` and a read-only root file
 system (it writes only its two volumes and `/tmp`). Slow clients get 30 seconds for their request headers and a
-request body is capped at 32 MiB; there is no body or write timeout, which would cut the portal's server-sent
+request body is capped at 32 MiB, except Yoda Reporter's defect reports (`/api/extension/defects`, 56 MiB; section
+7a); there is no body or write timeout, which would cut the portal's server-sent
 events (on HTTP/1.1 Go's read timeout covers the whole request). Its admin endpoint (`localhost:2019`) exists only inside the container, for the healthcheck and the
 reload. It sends no `Strict-Transport-Security` (HSTS) header: in internal mode a lost root would otherwise lock
 browsers out until the new one is trusted. HSTS may come later as an option for files and acme mode only.
@@ -1021,6 +1023,58 @@ GitLab does not retry failed deliveries and disables a webhook that keeps failin
 webhook's **Recent events**, re-enable it if needed and **Resend** the failed deliveries; resending is harmless.
 Core also re-reads the merge requests of active work items every 15 minutes.
 
+## 7a. Yoda Reporter (browser extension)
+
+Yoda Reporter (Thai: Yoda แจ้งปัญหา) is a Chrome and Edge extension that files a UI defect, with a screenshot or a
+short video, the console log and failed requests, as a `defect` work item in the right project. Staff members
+of a project report to it; the extension connects to Yoda through the approve page and holds its own tokens.
+
+**Settings** (System settings → Yoda Reporter; all live):
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| `extension.enabled` | on | Off: every `/extension/*` route answers 404 (connected browsers stay listed and revocable). |
+| `extension.allowedIds` | empty | Extension IDs allowed besides the official one (`hcnhkfonaflhcknbhcphbfgpdfmgmibm`), e.g. a locally built copy. Removing an ID cuts its browsers at once. |
+| `extension.accessTtlMinutes` | 60 | Access token lifetime. |
+| `extension.refreshIdleDays` / `refreshAbsoluteDays` | 30 / 90 | A connection ends after this long unused, and after this long in any case. |
+| `extension.reauthDays` | 14 | The person must have signed in to the portal within this many days for a refresh to work. |
+| `extension.maxVideoSeconds` | 30 | The longest clip the extension records. |
+| `extension.mediaRetentionDays` / `logRetentionDays` | 180 / 90 | Days screenshots and video, and logs, are kept after their item closes (0 keeps them). |
+
+`YODA_EXTENSION_DIRS` (section 3) lists where core finds the release files it serves: the zip built into the
+core image (`/app/extension`) and, for managed installs, the signed CRX mounted at `/srv/yoda-extension`.
+
+**Connected browsers.** Each person sees and revokes their own under their name → Connected browsers; admins see
+everyone's under System → Connected browsers, and **Revoke all** (typed confirmation) ends every connection. A
+refresh token used twice ends its connection at once (the browser shows "Reconnect").
+
+**URL mapping.** The extension picks the project from the page URL, matched locally against the project's
+**Application URLs** (project → App URLs tab, PM) and the GitLab environments of its linked repos (deployment
+events on the webhook, section 7, and a nightly sync at 03:30). A URL marked production, or a GitLab environment
+of tier `production`, is a production site: no video or replay buffer, logs off by default, and core refuses
+video from it.
+
+**Your own reverse proxy.** A defect report is one multipart request of up to 50 MiB. With the built-in proxy
+(section 4b) `/api/extension/defects` is allowed 56 MiB. In front of your own proxy, allow the same for that
+path only, e.g. nginx:
+
+```nginx
+location = /api/extension/defects {
+    client_max_body_size 56m;
+    proxy_pass http://portal;
+}
+```
+
+**Retention and cleanup.** Daily at 03:00 (Asia/Bangkok) core deletes defect media and logs whose work item
+closed longer ago than the retention settings; the files show as "removed" on the card and their rows stay. At
+03:15 it removes defect objects older than a day that no attachment row names (left by an upload that crashed
+before committing). The uploader, the project's PM or an admin can remove a defect file earlier, with a reason.
+
+**AI.** Defect media and logs are always "do not send to AI". When the tester marks that the text may contain
+patient data, or the project is noAi, the report text stays out of the work item description and AI sees a
+neutral title. Outside notifications (email, LINE, Telegram) still carry the real work item title, as for any
+other item: they go to people, not to AI.
+
 ## 8. Runners
 
 Runners work the AI tasks that need a repository; see [docs/development.md, "Runners"](development.md#runners) for the full guide.
@@ -1315,6 +1369,7 @@ after it). For a value still in `.env`, the same holds with `dc up -d --no-build
     again (the wizard card warns). If the hops are 2 and every client is still the Docker gateway's address, see
     **Client addresses** in section 4b.
   - *413 Request Entity Too Large:* the proxy refuses a request body above 32 MiB (the portal's own limit for an
-    upload is 25 MiB).
+    upload is 25 MiB), or above 56 MiB on `/api/extension/defects` (a defect report holds at most 50 MiB).
+    The extension then asks the tester to remove a file.
 - **Disk full.** `docker system df`; old images: `docker image prune -a` (keeps the running ones); the
   `backups` volume (section 6).

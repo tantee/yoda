@@ -160,6 +160,24 @@ menu → **Notification settings**.
   confirmation, request updates, work item stuck, AI secretary messages, AI budget alerts, discussions).
 - A channel shows only once an admin has turned it on.
 
+## Reporting a defect with Yoda Reporter
+
+Yoda Reporter is a browser extension (Chrome or Edge) for reporting a problem in a system you test. **Help** in
+the side menu has the download and the install steps.
+
+1. Open the extension, paste the Yoda address shown on the Help page and press **Connect**. Approve on the page
+   that opens, only if you just pressed Connect yourself.
+2. On the page with the problem, open the extension, take a screenshot (or a short video), and mark it up:
+   arrows and boxes, and **mosaic, blur or redact** anything that must not be seen. Nothing is hidden
+   automatically.
+3. Fill in the title, severity, steps, expected and actual result, check the project, confirm the privacy
+   question and send. The report becomes a work item in the project's Triage step, with you as the requester:
+   you retest it once it is fixed.
+
+Screenshots, video and logs are never sent to AI. If you tick that the text may contain patient data, the title
+and text are kept from AI too; notifications by email, LINE or Telegram still show the real title. Your
+connected browsers are under your name → **Connected browsers**, where you can disconnect one.
+
 ## Runners
 
 A **runner** works AI tasks that need a repository (code changes, repository analysis, running tests) with a

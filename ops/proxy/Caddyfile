@@ -83,8 +83,15 @@ http://{$YODA_PROXY_DOMAIN}:{$YODA_PROXY_HTTP_PORT:80} {
 	# Readiness names the failing dependency: never outside the host (section 1). deploy.sh checks it inside.
 	@ready path /api/ready /api/ready/*
 	respond @ready 404
-	# A little above the portal's largest upload (MAX_UPLOAD_BYTES, 25 MiB): a larger body gets 413 here.
-	request_body {
+	# Body caps. request_body is middleware and every matching block applies, so the two matchers never overlap.
+	# Yoda Reporter's defect report (up to 8 files, 50 MiB in all, DEFECT_LIMITS) gets 56 MiB; everything else a
+	# little above the portal's largest upload (MAX_UPLOAD_BYTES, 25 MiB). A larger body gets 413 here.
+	@defects path /api/extension/defects
+	@other not path /api/extension/defects
+	request_body @defects {
+		max_size 56MiB
+	}
+	request_body @other {
 		max_size 32MiB
 	}
 	reverse_proxy portal:3000

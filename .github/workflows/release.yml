@@ -30,6 +30,7 @@ on:
       - ops/install/**
       - ops/deploy/**
       - ops/backup/**
+      - ops/proxy/**
       - apps/*/Dockerfile
       - .dockerignore
       - docker-compose.yml

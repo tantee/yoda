@@ -299,6 +299,39 @@ Environment (from the deploy environment only):
 
 Worktrees and clones live in the `runner-work` volume.
 
+## Yoda Reporter by hand (DEV ONLY)
+
+The extension's server side can be driven with curl against the dev stack, signed in to the portal as a staff
+member who is a member of a project. Use the official extension ID (it is always allowed) and a PKCE pair:
+
+```bash
+EXT=hcnhkfonaflhcknbhcphbfgpdfmgmibm
+VERIFIER=$(openssl rand -base64 48 | tr -d '=+/' | cut -c1-64)
+CHALLENGE=$(printf %s "$VERIFIER" | openssl dgst -sha256 -binary | openssl base64 | tr '+/' '-_' | tr -d '=')
+echo "http://localhost:3000/extension/connect?ext=$EXT&redirect_uri=https://$EXT.chromiumapp.org/&code_challenge=$CHALLENGE&state=dev&browser=curl"
+```
+
+1. **Approve.** Open the printed URL in the browser where you are signed in and press Approve. The browser then
+   goes to `https://<ext>.chromiumapp.org/?code=yoda_xc_…&state=dev`, which does not load; copy `code` from the
+   address bar. It is valid for 60 seconds.
+2. **Exchange the code** for tokens:
+
+   ```bash
+   curl -s http://localhost:3000/api/extension/token -H 'content-type: application/json' \
+     -d "{\"grantType\":\"authorization_code\",\"code\":\"$CODE\",\"codeVerifier\":\"$VERIFIER\",\"extensionId\":\"$EXT\"}"
+   ```
+
+   Keep `accessToken` as `XT` (it lives an hour) and `refreshToken` if you want to try a refresh
+   (`{"grantType":"refresh_token","refreshToken":"…"}`; using one twice ends the connection).
+3. **Read the session** and pick a project id: `curl -s http://localhost:3000/api/extension/session -H "authorization: Bearer $XT"`.
+4. **Post a defect** with a small screenshot and console log, built exactly as the extension builds it:
+   `YODA_XT=$XT PROJECT_ID=<id> pnpm --filter @yoda/core dev-post-defect`. It prints the work item link; the
+   defect card shows on that page.
+5. **Revoke**: `curl -s -X POST http://localhost:3000/api/extension/revoke -H "authorization: Bearer $XT"`, or
+   from Settings → Connected browsers in the portal.
+
+Tokens are secrets even in dev: never paste them into issues, logs or commits.
+
 ## Hospital Keycloak requirements
 
 - Access tokens must include `preferred_username`.

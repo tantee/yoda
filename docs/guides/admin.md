@@ -136,6 +136,23 @@ GitLab** shown here, the webhook secret as *Secret token*, and the **Merge reque
 **Comments** events. Projects link their repositories on their **Repository** tab. Details:
 [runbook, section 7](../operations.md#7-gitlab-integration).
 
+## Yoda Reporter (browser extension)
+
+Yoda Reporter lets staff report a defect from the page they test, with a screenshot or short video and the
+browser's logs. The runbook ([operations section 7a](../operations.md#7a-yoda-reporter-browser-extension)) has
+the details; in the portal:
+
+- **System settings → Yoda Reporter** turns it on or off, sets token lifetimes, the longest video and how long
+  files are kept. **Allowed extension IDs** adds IDs besides the official one (for example a copy built
+  locally); removing an ID disconnects its browsers at once.
+- **System → Connected browsers** lists everyone's connected browsers. Revoke one when a computer is lost, or
+  **Revoke all** (type REVOKE) if you suspect tokens leaked; everyone then connects again.
+- Each project's PM sets **App URLs** (project → App URLs): where the project's application runs, so the
+  extension picks the project by itself, and which sites are production (no video there, logs off by default).
+  GitLab environments of linked repos count too; add **Deployment events** to the GitLab webhook.
+- Nothing is masked automatically: testers use mosaic, blur or redact in the extension. Media and logs never go
+  to AI.
+
 ## Runners
 
 **System settings → Runners** holds the runner lease time and the switch for core's MCP endpoint (which runners
