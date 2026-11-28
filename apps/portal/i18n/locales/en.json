@@ -2764,8 +2764,12 @@
     "removed": "File removed {when}",
     "emptyLog": "No entries",
     "dropped": "{n} unreadable or excess entries left out",
-    "fileFailed": "Some files could not be loaded",
-    "filesNoAi": "Screenshots, video and logs are never sent to AI."
+    "fileFailed": "This file could not be loaded",
+    "filesNoAi": "Screenshots, video and logs are never sent to AI.",
+    "projectNoAi": "This project sends nothing to AI",
+    "noFiles": "This report has no files",
+    "retry": "Retry",
+    "loadVideo": "Load video ({mb} MB)"
   },
   "help": {
     "title": "Help",
@@ -2787,7 +2791,7 @@
       "privacy": "Privacy",
       "noMasking": "Nothing is masked automatically. If a screenshot shows patient data, use mosaic, blur or redact before sending.",
       "noAi": "Screenshots, video and logs are never sent to AI. If you tick that the text may contain patient data, the title and text are kept from AI too.",
-      "retention": "Screenshots and video are kept{media} and logs {logs} after the item closes.",
+      "retention": "Screenshots and video are kept{media} and logs{logs} after the item closes.",
       "keepDays": " {n} days",
       "keepForever": " for good",
       "production": "On production sites there is no video, and logs are off by default."

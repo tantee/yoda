@@ -1,5 +1,5 @@
 import { createReadStream } from 'node:fs'
-import { stat } from 'node:fs/promises'
+import { lstat } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { ExtensionLatest } from '@yoda/shared'
 
@@ -14,7 +14,8 @@ export async function findExtensionFile(dirs: readonly string[], name: string): 
   for (const dir of dirs) {
     const path = join(dir, name)
     try {
-      const s = await stat(path)
+      // A regular file only: a symlink (pointing anywhere) is never served.
+      const s = await lstat(path)
       if (s.isFile()) return { path, size: s.size }
     } catch {
       // not in this directory

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { MAX_UPLOAD_BYTES } from '@yoda/shared'
+import { DEFECT_LIMITS, MAX_UPLOAD_BYTES } from '@yoda/shared'
 import { parse } from 'yaml'
 import { interpolate } from './prod-compose-env.js'
 
@@ -399,8 +399,8 @@ describe('ops/proxy/Caddyfile', () => {
 
   it('names the admin endpoint (container-local), caps request bodies above the largest upload and times out slow clients only', () => {
     expect(caddy).toMatch(/^\tadmin localhost:2019$/m)
-    const max = /^\t\tmax_size (\d+)MiB$/m.exec(caddy)
-    expect(max, 'request_body max_size').not.toBeNull()
+    const max = /^\trequest_body @other \{\n\t\tmax_size (\d+)MiB\n\t\}$/m.exec(caddy)
+    expect(max, 'request_body @other max_size').not.toBeNull()
     const bytes = Number(max![1]) * 1024 * 1024
     expect(bytes).toBeGreaterThan(MAX_UPLOAD_BYTES)
     expect(bytes).toBeLessThanOrEqual(2 * MAX_UPLOAD_BYTES)
@@ -408,6 +408,18 @@ describe('ops/proxy/Caddyfile', () => {
     // Never a body or write timeout: on HTTP/1.1 Go's read timeout covers the whole request and would cancel the
     // portal's long server-sent-events GETs.
     expect(caddy).not.toMatch(/^\s*(read_body|write)\s/m)
+  })
+
+  it('the 32MiB request_body block applies to @other, which excludes /api/extension/defects, and the defects path has its own 56MiB block; no unmatched request_body block remains', () => {
+    expect(caddy).toMatch(/^\t@defects path \/api\/extension\/defects$/m)
+    expect(caddy).toMatch(/^\t@other not path \/api\/extension\/defects$/m)
+    const defects = /^\trequest_body @defects \{\n\t\tmax_size (\d+)MiB\n\t\}$/m.exec(caddy)
+    expect(defects, 'request_body @defects').not.toBeNull()
+    const bytes = Number(defects![1]) * 1024 * 1024
+    // Above the largest report the extension may send (50 MiB plus multipart framing), well below 64 MiB.
+    expect(bytes).toBeGreaterThan(DEFECT_LIMITS.maxReportBytes + 1024 * 1024)
+    expect(bytes).toBeLessThan(64 * 1024 * 1024)
+    expect([...caddy.matchAll(/^\s*request_body\b(.*)$/gm)].map((m) => m[1]!.trim())).toEqual(['@defects {', '@other {'])
   })
 
   it('names the internal CA after the domain, so staff recognise it in their trust store', () => {

@@ -17,6 +17,9 @@ const repos = ref<Repo[]>([])
 const urls = reactive<Record<string, string>>({})
 const logs = reactive<Record<string, { entries: (ConsoleEntry | NetworkEntry)[]; dropped: number }>>({})
 const error = ref('')
+/** Files whose bytes could not be fetched (a row placeholder each). */
+const failed = reactive<Record<string, boolean>>({})
+let unmounted = false
 const removing = ref<Attachment | null>(null)
 const removingName = ref('')
 const reason = ref('')
@@ -36,26 +39,48 @@ const isVideo = (a: Attachment) => a.role === 'video' || a.role === 'buffer'
 const isLog = (a: Attachment) => a.role === 'console' || a.role === 'network'
 const mayRemove = (a: Attachment) => !a.purgedAt && (a.uploadedById === props.meId || props.canManage)
 
+/** Fetches one file's bytes (once): images and logs on open, a video only when asked (it can be 25 MiB). */
 async function loadFile(a: Attachment) {
-  if (a.purgedAt) return
+  if (a.purgedAt || urls[a.id] || logs[a.id]) return
+  delete failed[a.id]
   try {
     const blob = await fetchBlob(a.id)
+    if (unmounted) return
     if (isLog(a)) logs[a.id] = parseLog(await blob.text(), a.role as 'console')
     else urls[a.id] = URL.createObjectURL(blob)
   } catch {
-    error.value = t('defect.fileFailed')
+    if (!unmounted) failed[a.id] = true
+  }
+}
+
+async function loadList() {
+  try {
+    files.value = (await api<Attachment[]>(`/projects/${props.projectId}/attachments`, { query: { workItemId: props.workItemId } })).filter((a) => a.role)
+  } catch (e) {
+    error.value = t(errorKey(e))
   }
 }
 
 async function load() {
-  try {
-    files.value = (await api<Attachment[]>(`/projects/${props.projectId}/attachments`, { query: { workItemId: props.workItemId } })).filter((a) => a.role)
-    await Promise.all(files.value.map(loadFile))
-  } catch (e) {
-    error.value = t(errorKey(e))
-  }
+  await loadList()
+  void Promise.all(files.value.filter((a) => !isVideo(a)).map(loadFile))
   // The commit link is a nicety: no repos (or no access) just shows the commit as text.
   repos.value = await api<Repo[]>(`/projects/${props.projectId}/repos`).catch(() => [])
+}
+
+const sizeMb = (a: Attachment) => (a.sizeBytes / 1024 / 1024).toFixed(1)
+
+async function save(a: Attachment) {
+  try {
+    if (urls[a.id]) {
+      const link = document.createElement('a')
+      link.href = urls[a.id]!
+      link.download = a.fileName
+      link.click()
+    } else await download(a.id, a.fileName)
+  } catch {
+    failed[a.id] = true
+  }
 }
 
 function askRemove(a: Attachment) {
@@ -75,7 +100,7 @@ async function remove() {
     if (urls[a.id]) URL.revokeObjectURL(urls[a.id]!)
     delete urls[a.id]
     delete logs[a.id]
-    await load()
+    await loadList()
   } catch (e) {
     removeError.value = t(errorKey(e))
   } finally {
@@ -85,6 +110,7 @@ async function remove() {
 
 onMounted(load)
 onBeforeUnmount(() => {
+  unmounted = true
   for (const u of Object.values(urls)) URL.revokeObjectURL(u)
 })
 </script>
@@ -97,7 +123,7 @@ onBeforeUnmount(() => {
         <StatusChip kind="severity" :value="defect.severity" size="x-small" data-testid="defect-severity" />
         <StatusChip v-if="defect.productionSite" kind="appUrl" value="production" size="x-small" data-testid="defect-production" />
         <span v-if="defect.sensitive" class="text-caption text-medium-emphasis d-inline-flex align-center ga-1" data-testid="defect-sensitive">
-          <v-icon icon="mdi-shield-lock-outline" size="16" aria-hidden="true" />{{ t('defect.sensitive') }}
+          <v-icon icon="mdi-shield-lock-outline" size="16" aria-hidden="true" />{{ t(defect.textMayContainPatientData ? 'defect.sensitive' : 'defect.projectNoAi') }}
         </span>
       </div>
     </div>
@@ -149,18 +175,25 @@ onBeforeUnmount(() => {
       </dl>
 
       <v-alert v-if="error" type="warning" variant="tonal" density="compact" class="my-3" data-testid="defect-error">{{ error }}</v-alert>
+      <p v-if="!error && !files.length" class="text-body-2 text-medium-emphasis mt-3 mb-0" data-testid="defect-no-files">{{ t('defect.noFiles') }}</p>
 
       <div v-for="a in ordered" :key="a.id" class="defect__file" data-testid="defect-file" :data-role="a.role">
         <div class="defect__file-head">
-          <span class="text-body-2">{{ t(`defect.role.${a.role}`) }} · {{ a.fileName }}</span>
+          <span class="text-body-2 defect__file-name">{{ t(`defect.role.${a.role}`) }} · {{ a.fileName }}</span>
           <span class="d-flex ga-1">
-            <v-btn v-if="!a.purgedAt" variant="text" size="small" icon="mdi-download" :aria-label="t('defect.download')" data-testid="defect-download" @click="download(a.id, a.fileName)" />
+            <v-btn v-if="!a.purgedAt" variant="text" size="small" icon="mdi-download" :aria-label="t('defect.download')" data-testid="defect-download" @click="save(a)" />
             <v-btn v-if="mayRemove(a)" variant="text" size="small" color="error" icon="mdi-delete-outline" :aria-label="t('defect.remove')" data-testid="defect-remove" @click="askRemove(a)" />
           </span>
         </div>
         <p v-if="a.purgedAt" class="defect__removed text-body-2 text-medium-emphasis" data-testid="defect-removed">{{ t('defect.removed', { when: formatDate(a.purgedAt, locale) }) }}</p>
         <img v-else-if="isImage(a) && urls[a.id]" :src="urls[a.id]" :alt="a.fileName" class="defect__image" />
-        <video v-else-if="isVideo(a) && urls[a.id]" :src="urls[a.id]" controls preload="metadata" class="defect__video" />
+        <p v-else-if="failed[a.id]" class="defect__removed text-body-2 text-medium-emphasis" data-testid="defect-file-failed">
+          {{ t('defect.fileFailed') }} <v-btn variant="text" size="small" data-testid="defect-file-retry" @click="loadFile(a)">{{ t('defect.retry') }}</v-btn>
+        </p>
+        <video v-else-if="isVideo(a) && urls[a.id]" :src="urls[a.id]" controls class="defect__video" />
+        <div v-else-if="isVideo(a)" class="defect__removed">
+          <v-btn variant="tonal" prepend-icon="mdi-play-circle-outline" data-testid="defect-load-video" @click="loadFile(a)">{{ t('defect.loadVideo', { mb: sizeMb(a) }) }}</v-btn>
+        </div>
         <div v-else-if="isLog(a) && logs[a.id]" class="defect__log" data-testid="defect-log">
           <table v-if="a.role === 'console'">
             <tbody>
@@ -216,6 +249,7 @@ onBeforeUnmount(() => {
 .defect__facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .defect__mono { font-family: 'IBM Plex Mono', ui-monospace, monospace; font-size: .8125rem; overflow-wrap: anywhere; }
 .defect__file { margin-top: 16px; border: 1px solid rgba(var(--v-border-color), var(--v-border-opacity)); border-radius: 8px; overflow: hidden; }
+.defect__file-name { min-width: 0; overflow-wrap: anywhere; }
 .defect__file-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 4px 4px 12px; background: rgb(var(--v-theme-surface-light)); }
 .defect__image, .defect__video { display: block; max-width: 100%; max-height: 520px; margin: 0 auto; }
 .defect__removed { padding: 12px; margin: 0; }

@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { FastifyInstance } from 'fastify'
@@ -37,6 +37,16 @@ describe('extension files', () => {
       expect(res.statusCode, f).toBe(404)
     }
     expect(await findExtensionFile([built], '../secret.txt')).toBeNull()
+    // A symlink named like a release file is never followed.
+    symlinkSync(join(root, 'secret.txt'), join(signed, 'yoda-reporter-9.9.8.zip'))
+    expect((await app.inject({ url: '/extension/download/yoda-reporter-9.9.8.zip' })).statusCode).toBe(404)
+  })
+
+  it('both routes answer 404 while the extension is disabled', async () => {
+    writeFileSync(join(built, `yoda-reporter-${VERSION}.zip`), 'zip')
+    app.deps.settings = { get: (k: string) => (k === 'extension.enabled' ? false : undefined) } as never
+    expect((await app.inject({ url: '/extension/latest' })).statusCode).toBe(404)
+    expect((await app.inject({ url: `/extension/download/yoda-reporter-${VERSION}.zip` })).statusCode).toBe(404)
   })
 
   it('serves the zip and the crx with their types; the first directory holding a file wins', async () => {
@@ -48,6 +58,8 @@ describe('extension files', () => {
     expect(zip.body).toBe('signed-zip')
     expect(zip.headers['content-type']).toBe('application/zip')
     expect(zip.headers['x-content-type-options']).toBe('nosniff')
+    expect(zip.headers['content-disposition']).toBe(`attachment; filename="yoda-reporter-${VERSION}.zip"`)
+    expect(zip.headers['content-length']).toBe('10')
     const crx = await app.inject({ url: `/extension/download/yoda-reporter-${VERSION}.crx` })
     expect(crx.headers['content-type']).toBe('application/x-chrome-extension')
   })
