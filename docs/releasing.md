@@ -197,6 +197,12 @@ Dockerfiles, the compose files or `CHANGELOG.md`) runs the same workflow as a dr
   runs `install.sh` twice: as a file next to the signed `SHA256SUMS`, and piped as the one-line install does
   (`cat install.sh | sh -s -- …`, no `--version`: the latest release from a `releases/latest` redirect the local
   server answers like GitHub's, then `SHA256SUMS` and its signature downloaded);
+- runs the README's one-line install on a fresh `ubuntu:24.04` (job **one-line-install**, a privileged container
+  with only curl, ca-certificates and sudo, as a user with sudo): `curl … | sh -s -- --yes` against the dry run's
+  bundle served on the runner. It checks that `install.sh` reports minisign, Docker and Compose missing, installs
+  minisign from apt and Docker from Docker's apt repository (Compose 2.24 or later), stops at the daemon (no
+  systemd); then, with `dockerd` started by hand, that it verifies the release, creates `/srv/yoda` with sudo for
+  that user and unpacks it, and stops at the image pull, because a dry run's images are never pushed;
 - checks that the newest `CHANGELOG.md` section extracts as notes;
 - creates no release and no image tag. Its only artifacts are the four one-line digest files, kept for a day;
   no build record is uploaded (`DOCKER_BUILD_RECORD_UPLOAD=false`).
@@ -233,6 +239,7 @@ Everything a release build pulls is pinned, so a moved upstream tag cannot chang
 | BuildKit | `release.yml`, `setup-buildx-action` `driver-opts` | `moby/buildkit:<tag>@sha256:…` |
 | Registry (dry run only, the throwaway registry of **manifest-dry**) | `release.yml`, `services.registry.image` | `registry:<exact tag>@sha256:…` |
 | Base images | `apps/core/Dockerfile`, `apps/portal/Dockerfile`, `apps/runner/Dockerfile`, `ops/backup/Dockerfile` | `FROM <image>:<exact tag>@sha256:…` |
+| Ubuntu (dry run only, the fresh host of **one-line-install**) | `release.yml`, job `one-line-install`, `UBUNTU_IMAGE` | `ubuntu:24.04@sha256:…` (the multi-platform index; look it up with `curl -fsSL https://hub.docker.com/v2/repositories/library/ubuntu/tags/24.04` and read `.digest`) |
 | Caddy (the optional built-in HTTPS proxy, [runbook 4b](operations.md#4b-built-in-https-proxy-optional)) | `docker-compose.prod.yml`, service `proxy`, `image` | `caddy:<exact tag>@sha256:…` (the multi-platform index) |
 
 The tag stays next to each digest for reading; the digest is what is pulled. To bump one, pick the new exact tag,

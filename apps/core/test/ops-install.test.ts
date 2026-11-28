@@ -1455,6 +1455,7 @@ describe.skipIf(!posix || (!ci && !has('shellcheck')))('shellcheck', () => {
     'ops/install/bundle.sh',
     'ops/install/release-notes.sh',
     'ops/install/check-release.sh',
+    '.github/scripts/one-line-install-e2e.sh',
     'ops/deploy/deploy.sh',
     'ops/backup/backup.sh',
     'ops/backup/restore.sh',

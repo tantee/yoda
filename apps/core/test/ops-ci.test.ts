@@ -569,6 +569,7 @@ type WfJob = {
   needs?: string | string[]
   permissions?: Record<string, string>
   env?: Record<string, string>
+  outputs?: Record<string, string>
   'runs-on'?: string
   strategy?: {
     matrix?: {
@@ -627,7 +628,7 @@ describe('.github/workflows/release.yml (GitHub Releases + GHCR)', () => {
   })
 
   it('orders the jobs: images by digest, then the bundle pinning them is signed and verified, then tags, then the release', () => {
-    expect(Object.keys(jobs).sort()).toEqual(['bundle', 'images', 'images-dry', 'manifest', 'manifest-dry', 'meta', 'release', 'tag'])
+    expect(Object.keys(jobs).sort()).toEqual(['bundle', 'images', 'images-dry', 'manifest', 'manifest-dry', 'meta', 'one-line-install', 'release', 'tag'])
     expect(jobs['images-dry']!.needs).toBe('meta')
     expect(jobs['images-dry']!.if).toBe(DRY)
     expect(jobs.images!.needs).toBe('meta')
@@ -638,6 +639,9 @@ describe('.github/workflows/release.yml (GitHub Releases + GHCR)', () => {
     expect(jobs.manifest!.if).toBe(REAL)
     expect(jobs.bundle!.needs).toEqual(['meta', 'manifest-dry', 'manifest'])
     expect(jobs.bundle!.if).toBe('${{ !cancelled() && !failure() }}')
+    // Dry runs only, after the bundle: the one-line install of the dry run's bundle on a fresh Ubuntu.
+    expect(jobs['one-line-install']!.needs).toEqual(['meta', 'bundle'])
+    expect(jobs['one-line-install']!.if).toBe("${{ !cancelled() && !failure() && needs.meta.outputs.real != 'true' && needs.bundle.result == 'success' }}")
     expect(jobs.tag!.needs).toEqual(['meta', 'bundle'])
     expect(jobs.tag!.if).toBe("${{ !cancelled() && !failure() && needs.meta.outputs.real == 'true' && needs.bundle.result == 'success' }}")
     expect(jobs.release!.needs).toEqual(['meta', 'bundle', 'tag'])
@@ -688,12 +692,16 @@ describe('.github/workflows/release.yml (GitHub Releases + GHCR)', () => {
 
   it('runs every job of a release and of a dry run, by GitHub\'s rules (simulated: neither path publishes in CI)', () => {
     expect(simulate(true)).toEqual(['bundle', 'images', 'manifest', 'meta', 'release', 'tag'])
-    expect(simulate(false)).toEqual(['bundle', 'images-dry', 'manifest-dry', 'meta'])
+    expect(simulate(false)).toEqual(['bundle', 'images-dry', 'manifest-dry', 'meta', 'one-line-install'])
     // A failure anywhere stops what follows: nothing is tagged or released past a failed job.
     expect(simulate(true, ['manifest'])).toEqual(['images', 'manifest', 'meta'])
     expect(simulate(true, ['bundle'])).toEqual(['bundle', 'images', 'manifest', 'meta'])
     expect(simulate(true, ['tag'])).toEqual(['bundle', 'images', 'manifest', 'meta', 'tag'])
     expect(simulate(false, ['images-dry'])).toEqual(['images-dry', 'meta'])
+    expect(simulate(false, ['bundle'])).toEqual(['bundle', 'images-dry', 'manifest-dry', 'meta'])
+    // one-line-install never runs on a release, also when everything before it succeeded or it lost its dry-run term.
+    expect(simulate(true)).not.toContain('one-line-install')
+    expect(simulate(true, [], { 'one-line-install': "${{ !cancelled() && !failure() && needs.bundle.result == 'success' }}" })).toContain('one-line-install')
     // The conditions v1.1.0's first run had: tag and release skipped behind the skipped manifest-dry.
     const before = { tag: REAL, release: REAL }
     expect(simulate(true, [], before)).toEqual(['bundle', 'images', 'manifest', 'meta'])
@@ -717,6 +725,7 @@ describe('.github/workflows/release.yml (GitHub Releases + GHCR)', () => {
     expect(jobs['images-dry']!.permissions).toEqual({ contents: 'read' })
     expect(jobs['manifest-dry']!.permissions).toEqual({ contents: 'read' })
     expect(jobs.bundle!.permissions).toEqual({ contents: 'read' })
+    expect(jobs['one-line-install']!.permissions).toEqual({ contents: 'read' })
     expect(jobs.images!.permissions).toEqual({ contents: 'read', packages: 'write' })
     expect(jobs.manifest!.permissions).toEqual({ contents: 'read', packages: 'write' })
     expect(jobs.tag!.permissions).toEqual({ contents: 'read', packages: 'write' })
@@ -726,7 +735,7 @@ describe('.github/workflows/release.yml (GitHub Releases + GHCR)', () => {
   it('runs the signing and publishing jobs in the `release` environment (v* tags only); a dry run in none', () => {
     for (const j of ['images', 'manifest', 'tag', 'release']) expect(jobs[j]!.environment, j).toBe('release')
     expect(jobs.bundle!.environment).toBe("${{ needs.meta.outputs.real == 'true' && 'release' || '' }}")
-    for (const j of ['meta', 'images-dry', 'manifest-dry']) expect(jobs[j]!.environment, j).toBeUndefined()
+    for (const j of ['meta', 'images-dry', 'manifest-dry', 'one-line-install']) expect(jobs[j]!.environment, j).toBeUndefined()
   })
 
   it('pins every action by full commit SHA, and the BuildKit and registry images by digest', () => {
@@ -882,12 +891,57 @@ describe('.github/workflows/release.yml (GitHub Releases + GHCR)', () => {
     expect(verify.if).toBeUndefined()
     expect(verify.env).toEqual({ YODA_RELEASE_PUBKEY: '${{ steps.ephemeral.outputs.pubkey }}' })
     expect(verify.run).toContain('sh ops/install/check-release.sh "$VERSION" "$DIST" "$IMAGE_PREFIX" "$RUNNER_TEMP/digests.txt"')
-    // Only a real release keeps the bundle.
-    const upload = step('bundle', (s) => !!s.uses?.startsWith('actions/upload-artifact@'))
+    // Only a real release keeps the bundle for publishing; a dry run keeps its own for a day, for one-line-install.
+    const upload = step('bundle', (s) => s.name === 'keep the signed bundle for the release job')
     expect(upload.if).toBe(REAL)
+    expect(upload.with!.name).toBe('release-bundle')
+    const dry = step('bundle', (s) => s.name === 'keep the dry-run bundle for one-line-install')
+    expect(dry.if).toBe(DRY)
+    expect(dry.with).toMatchObject({ name: 'dry-run-bundle', 'retention-days': 1, 'if-no-files-found': 'error' })
+    expect(jobs.bundle!.outputs).toEqual({ pubkey: '${{ steps.ephemeral.outputs.pubkey }}' })
     const order = jobs.bundle!.steps.map((s) => s.name ?? s.id)
     expect(order.indexOf('check the release key against install.sh')).toBeLessThan(order.indexOf('verify end to end with install.sh'))
     expect(order.indexOf('verify end to end with install.sh')).toBeLessThan(order.indexOf('keep the signed bundle for the release job'))
+  })
+
+  it('runs the README one-liner with --yes on a fresh, pinned ubuntu:24.04 on dry runs only, with a timeout', () => {
+    const job = jobs['one-line-install']!
+    expect(job['timeout-minutes']).toBe(20)
+    expect(job['runs-on']).toBe('ubuntu-24.04')
+    expect(job.env).toEqual({
+      VERSION: '${{ needs.meta.outputs.version }}',
+      IMAGE_PREFIX: '${{ needs.meta.outputs.prefix }}',
+      YODA_RELEASE_PUBKEY: '${{ needs.bundle.outputs.pubkey }}',
+      UBUNTU_IMAGE: expect.stringMatching(/^ubuntu:24\.04@sha256:[0-9a-f]{64}$/),
+    })
+    const get = step('one-line-install', (s) => !!s.uses?.startsWith('actions/download-artifact@'))
+    expect(get.with).toEqual({ name: 'dry-run-bundle', path: '${{ runner.temp }}/release' })
+    const run = step('one-line-install', (s) => s.name === 'the one-line install on a fresh Ubuntu').run!
+    expect(run).toBe('sh .github/scripts/one-line-install-e2e.sh "$VERSION" "$RUNNER_TEMP/release" "$IMAGE_PREFIX"')
+    const sh = read('.github/scripts/one-line-install-e2e.sh')
+    // The README's one-liner exactly (piped, --yes), from the release layout GitHub serves, as a user with sudo.
+    expect(read('README.md')).toContain('curl -fsSL https://github.com/tantee/yoda/releases/latest/download/install.sh | sh\n')
+    expect(sh).toContain(`oneliner="curl -fsSL $origin/releases/latest/download/install.sh | sh -s -- --yes --base-url '$origin/releases/{version}/'"`)
+    expect(sh).toContain('docker exec -u deploy ')
+    expect(sh).toContain('docker run -d --privileged --network host')
+    expect(sh).toContain('"$image" sleep infinity')
+    expect(sh).toContain('--no-install-recommends curl ca-certificates sudo')
+    expect(sh).toContain("dockerd > /tmp/dockerd.log 2>&1")
+    // What it proves: the report, the installs from apt and Docker's repository, compose 2.24+, then the release
+    // verified and unpacked into /srv/yoda (sudo mkdir + chown), stopping at the pull of images never pushed.
+    for (const line of [
+      '  - minisign: not found (checks the release signature)',
+      '  - Docker Engine: not found, needs 24 or later',
+      '  - Docker Compose plugin: not found, needs v2.24 or later',
+      'https://download.docker.com/linux/ubuntu noble stable',
+      'Docker Compose $compose is older than 2.24',
+      'install: signature and checksum verified',
+      'install: Create /srv/yoda with sudo and give it to deploy? yes (--yes)',
+      'deploy: pulling the images of $version failed',
+      '/srv/yoda is not owned by deploy',
+    ]) expect(sh, line).toContain(line)
+    // Never a real release: no secret, no environment, no write permission.
+    expect(JSON.stringify(job)).not.toMatch(/secrets\./)
   })
 
   it('tags exactly the digests of the signed bundle, after checking its signature again', () => {
