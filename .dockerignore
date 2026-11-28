@@ -11,3 +11,8 @@ docs
 *.log
 # dev-only seed scripts (apps/core/scripts): never in an image
 apps/core/scripts
+# Yoda Reporter outputs: the image builds its own zip
+apps/extension/release
+apps/extension/dist-e2e
+apps/extension/test-results
+apps/extension/playwright-report

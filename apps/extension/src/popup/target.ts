@@ -1,5 +1,6 @@
-/** Marks the e2e-only code below; check-dist refuses a release build that still contains it. */
-export const E2E_TAB_TARGET = 'yoda-e2e-tab-target'
+import { E2E_TAB_TARGET } from './e2e-marker'
+
+export { E2E_TAB_TARGET }
 
 type Active = () => Promise<chrome.tabs.Tab>
 

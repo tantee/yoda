@@ -16,18 +16,29 @@ there by default. An internal mirror is optional ([below](#internal-mirror)).
 
 ## What a release is
 
-A git tag `v<version>` on a commit of `main` (`v1.1.0`, `v1.2.0-rc.1`). The version without the `v` is the
-release: `YODA_VERSION=1.1.0` on a host, the image tag, the `version` in `package.json` and
-`apps/core/package.json`, and the `## 1.1.0 — <date>` section in `CHANGELOG.md`.
+A git tag `v<version>` on a commit of `main` (`v1.1.0`, `v1.2.0-rc.1`). The version is a final `x.y.z` or a
+release candidate `x.y.z-rc.N` (N from 1 to 999, each of x, y and z at most 65535); nothing else is released,
+because the Reporter extension's Chrome version is derived from it (`1.2.0-rc.3` is `1.2.0.3`, and the final
+`1.2.0` is `1.2.0.1000`, newer than every candidate). The version without the `v` is the release:
+`YODA_VERSION=1.1.0` on a host, the image tag, the `version` in `package.json`, `apps/core/package.json` and
+`apps/extension/package.json`, and the `## 1.1.0 — <date>` section in `CHANGELOG.md`.
+
+**The Reporter extension ships inside the core image.** The image's `extension` stage builds the release zip
+(`pnpm --filter @yoda/extension build:zip`), checks it (`check:dist`: the manifest permissions, no e2e-only code,
+no `eval` or remote code, no private key, the version) and copies it to `/app/extension/`, where the Help page's
+download serves it. Its manifest `key` is the public key [`keys/yoda-reporter.pub`](../keys/yoda-reporter.pub),
+which fixes the extension ID `hcnhkfonaflhcknbhcphbfgpdfmgmibm` (`OFFICIAL_EXTENSION_ID` in `packages/shared`; a
+test keeps the two equal). The owner holds the matching private key, which no build reads; it is needed only to
+sign a `.crx` for managed installs.
 
 Only a pushed `v*` tag publishes anything. A pull request or a manual run (**Actions → Release → Run workflow**,
 which has no options) is always a [dry run](#dry-runs).
 
 The tag starts [`.github/workflows/release.yml`](../.github/workflows/release.yml):
 
-1. **meta** checks the tag (`v<x.y.z>` or `v<x.y.z>-<suffix>`), that the tagged commit is on `origin/main`, that
+1. **meta** checks the tag (`v<x.y.z>` or `v<x.y.z>-rc.<N>`), that the tagged commit is on `origin/main`, that
    `CHANGELOG.md` has a section for the version whose heading carries a date (not `unreleased`), and that
-   `package.json` and `apps/core/package.json` both say that version. It fails before anything is built if any
+   `package.json`, `apps/core/package.json` and `apps/extension/package.json` all say that version. It fails before anything is built if any
    of these is wrong.
 2. **images** builds each of the four images once per architecture, each on its own native runner
    (`ubuntu-24.04` for `linux/amd64`, `ubuntu-24.04-arm` for `linux/arm64`; no QEMU, whose emulated arm64
@@ -129,8 +140,9 @@ move them into the `release` environment. Steps 4 and 5 remain as well.
      version yet) or `## <version> — unreleased`; in this commit rename it to `## <version> — <date>` (the
      workflow refuses a tag whose version has no section, so an `## Unreleased` section is never published, and a
      heading that still says `unreleased`), and start a new `## Unreleased` above it later.
-   - `version` in `package.json` and `apps/core/package.json` (core reports it on `/health`): both must equal the
-     tag without the `v`, including a suffix (`1.1.0-rc.1`); the workflow refuses a mismatch.
+   - `version` in `package.json`, `apps/core/package.json` (core reports it on `/health`) and
+     `apps/extension/package.json`: all must equal the tag without the `v`, including an `-rc.N` suffix
+     (`1.1.0-rc.1`); the workflow refuses a mismatch.
 
    Merge it.
 2. **Tag** the merge commit on `main` (the workflow refuses a commit that is not on `origin/main`) and push the

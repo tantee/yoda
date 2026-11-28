@@ -8,8 +8,8 @@
     "dev": "tsx scripts/build.ts e2e",
     "build": "tsx scripts/build.ts release",
     "build:e2e": "tsx scripts/build.ts e2e",
-    "build:zip": "tsx scripts/build.ts release --zip",
-    "check:dist": "tsx scripts/check-dist.ts dist",
+    "build:zip": "rm -rf dist && tsx scripts/build.ts release --zip",
+    "check:dist": "tsx scripts/check-dist.ts",
     "typecheck": "vue-tsc --noEmit -p tsconfig.json",
     "e2e": "playwright test",
     "demo": "DEMO=1 playwright test"

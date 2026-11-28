@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
@@ -556,6 +557,20 @@ describe('docker-compose.yml (dev) keeps its throwaway credentials', () => {
   })
 })
 
+describe('apps/core/Dockerfile', () => {
+  it('carries the extension zip in /app/extension, built and checked in its own stage', () => {
+    const docker = read('apps/core/Dockerfile')
+    const stage = docker.slice(docker.indexOf(' AS extension'), docker.indexOf(' AS build'))
+    expect(stage).toContain('pnpm install --frozen-lockfile --ignore-scripts --filter @yoda/extension...')
+    expect(stage).toContain('pnpm --filter @yoda/extension build:zip && pnpm --filter @yoda/extension check:dist')
+    expect(docker).toContain('COPY --from=extension /repo/apps/extension/release/ /app/extension/')
+    // Where the core looks for it (apps/core/src/extension/files.ts).
+    expect(read('apps/core/src/extension/files.ts')).toContain("'/app/extension'")
+    // The image builds its own zip: a stale local one never enters the context.
+    expect(read('.dockerignore')).toMatch(/^apps\/extension\/release$/m)
+  })
+})
+
 describe('.github/workflows/ci.yml', () => {
   const gh = parse(read('.github/workflows/ci.yml')) as { jobs: Record<string, { steps: { run?: string }[] }> }
 
@@ -585,6 +600,16 @@ describe('.github/workflows/ci.yml', () => {
     expect(upload?.if).toBe('failure()')
     expect(upload?.with?.path).toContain('apps/extension/test-results/')
     expect((gh.jobs.build as unknown as { needs: string[] }).needs).toContain('extension')
+  })
+
+  it('builds and checks the extension zip, and scans the release output with gitleaks', () => {
+    const runs = (gh.jobs.extension as unknown as { steps: { run?: string }[] }).steps.map((s) => s.run ?? '')
+    const zip = runs.findIndex((r) => /@yoda\/extension build:zip && pnpm --filter @yoda\/extension check:dist/.test(r))
+    const scan = runs.findIndex((r) => r.includes('zricethezav/gitleaks:v8.30.1 detect --no-git'))
+    expect(zip).toBeGreaterThan(-1)
+    expect(scan).toBeGreaterThan(zip)
+    expect(runs[scan]).toContain('--source /repo/apps/extension/dist')
+    expect(runs[scan]).toContain('--config /repo/.gitleaks.toml')
   })
 })
 
@@ -630,7 +655,7 @@ describe('.github/workflows/release.yml (GitHub Releases + GHCR)', () => {
     expect(Object.keys(wf.on).sort()).toEqual(['pull_request', 'push', 'workflow_dispatch'])
     expect(wf.on.push).toEqual({ tags: ['v*'] })
     const paths: string[] = wf.on.pull_request.paths
-    for (const p of ['.github/workflows/release.yml', 'ops/install/**', 'apps/*/Dockerfile', 'ops/backup/**', 'docker-compose.prod.yml', 'CHANGELOG.md']) expect(paths).toContain(p)
+    for (const p of ['.github/workflows/release.yml', 'ops/install/**', 'apps/*/Dockerfile', 'apps/extension/**', 'keys/**', 'ops/backup/**', 'docker-compose.prod.yml', 'CHANGELOG.md']) expect(paths).toContain(p)
     // No dry_run switch: a manual run can never publish.
     expect(wf.on.workflow_dispatch ?? null).toBeNull()
     expect(text).not.toMatch(/inputs\./)
@@ -647,9 +672,23 @@ describe('.github/workflows/release.yml (GitHub Releases + GHCR)', () => {
     expect(run).toContain('git merge-base --is-ancestor "$GITHUB_SHA" origin/main ||')
     expect(run).toContain('sh ops/install/release-notes.sh "$version" > /dev/null ||')
     expect(run).toMatch(/\*\[Uu\]nreleased\*\) echo "::error::CHANGELOG\.md still says/)
-    expect(run).toContain('for f in package.json apps/core/package.json; do')
+    expect(run).toContain('for f in package.json apps/core/package.json apps/extension/package.json; do')
     expect(run).toMatch(/\[ "\$pkg" = "\$version" \] \|\|\n\s*\{ echo "::error::\$f says version \$pkg, the tag says \$version[^\n]*exit 1; \}/)
     expect(run).not.toContain('::warning::')
+  })
+
+  it('the release meta step accepts only x.y.z and x.y.z-rc.N, and checks the extension version', () => {
+    const run = meta()
+    const re = /grep -Eqx '([^']+)' \|\|/.exec(run)?.[1]
+    expect(re).toBeTruthy()
+    const accepts = (v: string) => spawnSync('sh', ['-c', `printf '%s\\n' "$1" | grep -Eqx '${re}'`, 'sh', v]).status === 0
+    for (const v of ['1.2.0', '0.0.1', '10.20.30', '1.2.0-rc.1', '1.2.0-rc.999', '65535.0.0']) expect(accepts(v), v).toBe(true)
+    for (const v of ['1.2', '1.2.0.1', '01.2.0', '1.2.0-rc.0', '1.2.0-rc.1000', '1.2.0-beta.1', '1.2.0-rc1', 'v1.2.0', '1.2.0-dryrun.4'])
+      expect(accepts(v), v).toBe(false)
+    // The part ceiling is a loop over the numeric parts.
+    expect(run).toContain('[ "$part" -le 65535 ] ||')
+    expect(run.indexOf('grep -Eqx')).toBeLessThan(run.indexOf('git merge-base'))
+    expect(run).toContain('apps/extension/package.json')
   })
 
   it('orders the jobs: images by digest, then the bundle pinning them is signed and verified, then tags, then the release', () => {
