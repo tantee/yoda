@@ -29,9 +29,13 @@ The tag starts [`.github/workflows/release.yml`](../.github/workflows/release.ym
    `CHANGELOG.md` has a section for the version whose heading carries a date (not `unreleased`), and that
    `package.json` and `apps/core/package.json` both say that version. It fails before anything is built if any
    of these is wrong.
-2. **images** builds the four images for `linux/amd64` and `linux/arm64` (QEMU; the portal's Nuxt build runs once
-   on the runner's own platform, its output being plain JavaScript), without any build cache, and
-   pushes them to ghcr.io **by digest only**: no tag yet. Each image's manifest digest is kept for the next job.
+2. **images** builds each of the four images once per architecture, each on its own native runner
+   (`ubuntu-24.04` for `linux/amd64`, `ubuntu-24.04-arm` for `linux/arm64`; no QEMU, whose emulated arm64
+   builds hung the first v1.0.0 runs), without any build cache, and pushes them to ghcr.io **by digest only**: no
+   tag yet. **manifest** then merges the two digests of each image into its multi-platform index
+   (`.github/scripts/merge-image.sh`: `docker buildx imagetools create`), pushes that index by its digest only,
+   reads it back and checks it lists exactly `linux/amd64` and `linux/arm64`. Each index digest is kept for the
+   next job.
 3. **bundle** runs `ops/install/bundle.sh`, which builds `yoda-<version>.tar.gz` (compose files, `deploy.sh`,
    `install.sh`, the built-in proxy's `ops/proxy/Caddyfile`, `.env.example`, `CHANGELOG.md`, the runbook and `bundle.env` with
    `YODA_IMAGE_PREFIX=ghcr.io/tantee/yoda`, `YODA_VERSION` and the four image digests), `install.sh` and
@@ -55,7 +59,7 @@ never referenced.
 **Never delete untagged versions of the ghcr.io packages** (no "delete untagged" cleanup, by hand, by a retention
 policy or by an action). Hosts pull by digest: a version whose tag later moved, or a re-run's earlier digest, can
 still be pinned in some host's `release.env`, and deleting it breaks that host's next pull, restart or restore. The jobs that sign or publish (**images**,
-**bundle** on a release, **tag**, **release**) run in the `release` environment.
+**manifest**, **bundle** on a release, **tag**, **release**) run in the `release` environment.
 
 A host runs exactly the signed images: `deploy.sh` pins the bundle's digests in `release.env`
 (`YODA_<NAME>_DIGEST`), and compose runs `<prefix>/<name>:<version>@<digest>`. Moving a tag later changes nothing
@@ -168,7 +172,8 @@ move them into the `release` environment. Steps 4 and 5 remain as well.
   digests: see above).
 - **An image job ran out of time** (45 minutes, `timeout-minutes`): a build that slow is stuck, not busy; the
   images normally build in minutes. Re-running does not help: find the slow step in the job log, fix it through a
-  pull request (whose dry run builds arm64 too, so it shows there), then move the tag as above.
+  pull request (whose dry run builds both architectures on the same native runners, so it shows there), then
+  move the tag as above.
 - **Only the release job failed after the images were tagged**: re-run failed jobs. If you must re-tag instead,
   the next run tags its own new digests, and installs pin whatever their bundle signed.
 
@@ -178,9 +183,11 @@ A pull request that touches the release files (the workflow, `ops/install`, `ops
 Dockerfiles, the compose files or `CHANGELOG.md`) runs the same workflow as a dry run, and so does
 **Actions → Release → Run workflow**. A dry run:
 
-- builds the four images for `linux/amd64` and `linux/arm64`, like a release, in the **images-dry** job, which has
-  no `packages` permission,
-  no registry login and pushes nothing; it may use the GitHub Actions build cache, which a release never reads;
+- builds the four images for `linux/amd64` and `linux/arm64` on the same native runners as a release, in the
+  **images-dry** job, which has no `packages` permission, no registry login and pushes nothing; it may use the
+  GitHub Actions build cache, which a release never reads. **manifest-dry** copies each image's two OCI archives
+  into a throwaway registry on its own runner (checking their digests did not change) and merges them with the
+  same script a release uses;
 - builds the bundle as version `0.0.0-dryrun.<run number>` with those images' digests and signs it with a
   throwaway key made inside the job (never stored or uploaded), so it needs no secret, no environment, and
   works from forks;
@@ -220,7 +227,7 @@ Everything a release build pulls is pinned, so a moved upstream tag cannot chang
 | --- | --- | --- |
 | GitHub Actions | `.github/workflows/release.yml` | full commit SHA, `# v<x.y.z>` comment |
 | BuildKit | `release.yml`, `setup-buildx-action` `driver-opts` | `moby/buildkit:<tag>@sha256:…` |
-| QEMU binfmt | `release.yml`, `setup-qemu-action` `image` | `tonistiigi/binfmt:<tag>@sha256:…` |
+| Registry (dry run only, the throwaway registry of **manifest-dry**) | `release.yml`, `services.registry.image` | `registry:<exact tag>@sha256:…` |
 | Base images | `apps/core/Dockerfile`, `apps/portal/Dockerfile`, `apps/runner/Dockerfile`, `ops/backup/Dockerfile` | `FROM <image>:<exact tag>@sha256:…` |
 | Caddy (the optional built-in HTTPS proxy, [runbook 4b](operations.md#4b-built-in-https-proxy-optional)) | `docker-compose.prod.yml`, service `proxy`, `image` | `caddy:<exact tag>@sha256:…` (the multi-platform index) |
 
