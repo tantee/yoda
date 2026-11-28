@@ -412,7 +412,8 @@ useLiveEvents((e) => {
           <v-card class="mb-4" data-testid="side-details">
             <div class="wi-card-head"><h2 class="text-subtitle-2">{{ t('workItems.side.details') }}</h2></div>
             <div class="wi-card-body">
-              <p v-if="item.description" class="text-body-2 mb-4 wi-description" data-testid="description">{{ item.description }}</p>
+              <!-- A defect's text is on its card (the description holds the same text, or the withheld marker). -->
+              <p v-if="item.description && !item.defect" class="text-body-2 mb-4 wi-description" data-testid="description">{{ item.description }}</p>
               <dl class="wi-facts">
                 <dt>{{ t('workItems.owner') }}</dt>
                 <dd data-testid="owner-chip">{{ item.ownerName }}</dd>
