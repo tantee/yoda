@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import type { ExtensionMappings, ExtensionTokenResponse, Repo } from '@yoda/shared'
 import type { FastifyInstance } from 'fastify'
+import { eq } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { deployEnvironments } from '../src/db/schema.js'
+import { deployEnvironments, projects } from '../src/db/schema.js'
 import { productionRulesForPerson } from '../src/extension/mappings.js'
 import { GitLabClient } from '../src/gitlab/client.js'
 import { externalUrlPattern, syncEnvironments } from '../src/gitlab/environments.js'
@@ -50,7 +51,7 @@ beforeEach(async () => {
       name: 'production',
       external_url: 'https://opd.example.org',
       tier: 'production',
-      last_deployment: { ref: 'main', sha: SHA2, status: 'success', created_at: '2026-11-27T01:00:00Z', finished_at: '2026-11-27T01:05:00Z' },
+      last_deployment: { ref: 'main', sha: SHA2, status: 'success', created_at: '2026-11-27T01:00:00Z', updated_at: '2026-11-27T01:06:00Z', deployable: { finished_at: '2026-11-27T01:05:00Z' } },
     },
     { id: 2, name: 'review/opd-12', external_url: 'https://review-12.example.org/opd', tier: 'development', last_deployment: null },
     { id: 3, name: 'no-url', external_url: null, tier: 'testing', last_deployment: null },
@@ -135,6 +136,25 @@ describe('environments', () => {
     expect(await envRows()).toHaveLength(3)
   })
 
+  it('a sync never moves a deployment back, but takes the current URL; stopped environments are pruned', async () => {
+    await jobs.drain()
+    // A newer webhook than the API's last deployment for production.
+    await handleWebhook(app.deps, randomUUID(), deployment({ environment: 'production', environment_tier: 'production', environment_external_url: 'https://opd.example.org', status_changed_at: '2026-11-28 10:00:00 +0700' }), null)
+    // GitLab: the production URL changed (no new deployment), and review/opd-12 was stopped.
+    fake.environments.set(11, [{ ...fake.environments.get(11)![0]!, external_url: 'https://opd2.example.org' }, fake.environments.get(11)![2]!])
+    await syncEnvironments(app.deps, repo.id)
+    const rows = await envRows()
+    expect(rows.map((r) => r.name)).toEqual(['no-url', 'production'])
+    expect(rows[1]).toMatchObject({ sha: SHA, externalUrl: 'https://opd2.example.org' })
+  })
+
+  it('reads every page of environments', async () => {
+    await jobs.drain()
+    fake.environments.set(11, Array.from({ length: 230 }, (_, i) => ({ id: 100 + i, name: `review/${i}`, external_url: `https://r${i}.example.org`, tier: 'development', last_deployment: null })))
+    expect(await syncEnvironments(app.deps, repo.id)).toBe(230)
+    expect(await envRows()).toHaveLength(230)
+  })
+
   it('the nightly job syncs every linked repo', async () => {
     await jobs.drain()
     await (await testDb()).delete(deployEnvironments)
@@ -182,6 +202,19 @@ describe('GET /extension/mappings', () => {
     // The PM is a member of both projects: the Lab rule is theirs, never QC's.
     const pmBody = (await mappings(await connectExtension(app, pm))).json() as ExtensionMappings
     expect(pmBody.rules.map((r) => r.pattern)).toContain('https://lab.example.org/*')
+  })
+
+  it('leaves out archived projects and other projects\' environments', async () => {
+    const other = await makeProject(app, admin, 'Lab', [[pm, ['PM']]])
+    fake.addProject('dept/lab-web', 12)
+    fake.environments.set(12, [{ id: 9, name: 'production', external_url: 'https://lab.example.org', tier: 'production', last_deployment: null }])
+    expect((await app.inject({ method: 'POST', url: `/projects/${other}/repos`, headers: auth(pm), payload: { path: 'dept/lab-web' } })).statusCode).toBe(201)
+    await jobs.drain()
+    expect(((await mappings(tokens)).json() as ExtensionMappings).rules.map((r) => r.pattern)).not.toContain('https://lab.example.org/*')
+    const pmTokens = await connectExtension(app, pm)
+    expect(((await mappings(pmTokens)).json() as ExtensionMappings).rules.map((r) => r.pattern)).toContain('https://lab.example.org/*')
+    await (await testDb()).update(projects).set({ status: 'archived' }).where(eq(projects.id, other))
+    expect(((await mappings(pmTokens)).json() as ExtensionMappings).rules.map((r) => r.pattern)).not.toContain('https://lab.example.org/*')
   })
 
   it('needs an extension token', async () => {

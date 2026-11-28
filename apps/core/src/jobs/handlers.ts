@@ -29,7 +29,7 @@ export async function registerJobHandlers(deps: Pick<AppDeps, 'db' | 'ai' | 'bus
   await deps.jobs.work('weekly-summary', () => fanOutWeeklySummaries(deps))
   await deps.jobs.work('weekly-summary-project', (run) => weeklySummaryJob(deps, run))
   await deps.jobs.work('notify-deliver', (run) => deliver(deps, run.id, run))
-  await deps.jobs.work('gitlab-env-sync', (run) => syncEnvironmentsJob(deps, run.id))
+  await deps.jobs.work('gitlab-env-sync', (run) => syncEnvironmentsJob(deps, run.id, run.signal))
   await deps.jobs.work('defect-retention', async () => {
     const r = await purgeExpired(deps, new Date())
     if (r.media || r.logs) console.info(`defect-retention: purged ${r.media} media and ${r.logs} log files`)

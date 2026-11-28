@@ -1,8 +1,8 @@
 import { parseMatchPattern, type MappingRule } from '@yoda/shared'
-import { and, asc, eq, inArray, isNotNull, sql } from 'drizzle-orm'
+import { and, asc, eq, inArray, isNotNull, notInArray, sql } from 'drizzle-orm'
 import type { Db, Tx } from '../db/client.js'
 import { deployEnvironments, projectRepos } from '../db/schema.js'
-import type { GitLabClient } from './client.js'
+import { GitLabError, type GitLabClient } from './client.js'
 
 type Conn = Db | Tx
 
@@ -36,69 +36,95 @@ export function externalUrlPattern(url: string | null | undefined): string | nul
 }
 
 /**
- * Records a deployment or an environment's state. A deployment older than the stored one is ignored (webhook
- * deliveries can arrive out of order); a state without a deployment (`deployedAt` null) only updates the URL
- * and tier. True when the row changed.
+ * Records a deployment or an environment's state. The deployment fields (ref, sha, status, time) never go back
+ * in time: a deployment older than the stored one is ignored (webhook deliveries arrive out of order), and an
+ * absent ref keeps the stored one. The URL and tier follow the deployment from a webhook, and always take the
+ * current value from a sync (the Environments API is the current state). True when the row changed.
  */
-export async function upsertDeployment(db: Conn, repoId: string, d: Deployment): Promise<boolean> {
-  const base = { externalUrl: d.externalUrl, tier: d.tier, updatedAt: sql`now()` }
-  if (!d.deployedAt) {
-    const rows = await db
-      .insert(deployEnvironments)
-      .values({ repoId, name: d.name, externalUrl: d.externalUrl, tier: d.tier })
-      .onConflictDoUpdate({ target: [deployEnvironments.repoId, deployEnvironments.name], set: base })
-      .returning({ name: deployEnvironments.name })
-    return rows.length > 0
-  }
+export async function upsertDeployment(db: Conn, repoId: string, d: Deployment, source: 'webhook' | 'sync' = 'webhook'): Promise<boolean> {
+  const newer = d.deployedAt
+    ? sql`(${deployEnvironments.deployedAt} is null or ${deployEnvironments.deployedAt} <= ${d.deployedAt.toISOString()}::timestamptz)`
+    : sql`false`
+  const keep = <T>(col: T, value: unknown) => sql`case when ${newer} then ${value} else ${col} end`
+  const url = source === 'sync' ? { externalUrl: d.externalUrl, tier: d.tier } : { externalUrl: keep(deployEnvironments.externalUrl, d.externalUrl), tier: keep(deployEnvironments.tier, d.tier) }
   const rows = await db
     .insert(deployEnvironments)
     .values({ repoId, name: d.name, externalUrl: d.externalUrl, tier: d.tier, ref: d.ref, sha: d.sha, status: d.status, deployedAt: d.deployedAt })
     .onConflictDoUpdate({
       target: [deployEnvironments.repoId, deployEnvironments.name],
-      set: { ...base, ref: d.ref, sha: d.sha, status: d.status, deployedAt: d.deployedAt },
-      setWhere: sql`${deployEnvironments.deployedAt} is null or ${deployEnvironments.deployedAt} <= ${d.deployedAt.toISOString()}::timestamptz`,
+      set: {
+        ...url,
+        ref: keep(deployEnvironments.ref, sql`coalesce(${d.ref}, ${deployEnvironments.ref})`),
+        sha: keep(deployEnvironments.sha, d.sha),
+        status: keep(deployEnvironments.status, d.status),
+        deployedAt: keep(deployEnvironments.deployedAt, d.deployedAt?.toISOString() ?? null),
+        updatedAt: sql`now()`,
+      },
     })
     .returning({ name: deployEnvironments.name })
   return rows.length > 0
 }
 
-/** Reads a linked repo's environments and their last deployments from GitLab. Returns how many were stored. */
-export async function syncEnvironments(deps: { db: Db; gitlab: GitLabClient | null }, repoId: string): Promise<number> {
+/**
+ * Reads a linked repo's environments and their last deployments from GitLab; environments no longer listed
+ * (stopped or deleted) are removed, but only after a complete listing. Returns how many are stored.
+ */
+export async function syncEnvironments(deps: { db: Db; gitlab: GitLabClient | null }, repoId: string, signal?: AbortSignal): Promise<number> {
   const { db, gitlab } = deps
   if (!gitlab) return 0
   const [repo] = await db.select().from(projectRepos).where(eq(projectRepos.id, repoId))
   if (!repo) return 0
-  let n = 0
-  for (const env of await gitlab.listEnvironments(repo.gitlabProjectId)) {
+  const envs = await gitlab.listEnvironments(repo.gitlabProjectId)
+  for (const env of envs ?? []) {
+    if (signal?.aborted) throw new Error('aborted')
     const last = await gitlab.lastDeployment(repo.gitlabProjectId, env.id)
-    await upsertDeployment(db, repoId, {
-      name: env.name,
-      externalUrl: env.external_url ?? null,
-      tier: env.tier ?? null,
-      ref: last?.ref ?? null,
-      sha: last?.sha ?? null,
-      status: last?.status ?? null,
-      deployedAt: last?.deployedAt ?? null,
-    })
-    n++
+    await upsertDeployment(
+      db,
+      repoId,
+      {
+        name: env.name,
+        externalUrl: env.external_url ?? null,
+        tier: env.tier ?? null,
+        ref: last?.ref ?? null,
+        sha: last?.sha ?? null,
+        status: last?.status ?? null,
+        deployedAt: last?.deployedAt ?? null,
+      },
+      'sync',
+    )
   }
-  return n
+  if (envs === null) {
+    console.warn(`gitlab-env-sync: repo ${repoId} has more environments than one sync reads; none were pruned`)
+    return (await db.select({ n: sql<number>`count(*)::int` }).from(deployEnvironments).where(eq(deployEnvironments.repoId, repoId)))[0]!.n
+  }
+  const names = envs.map((e) => e.name)
+  await db
+    .delete(deployEnvironments)
+    .where(and(eq(deployEnvironments.repoId, repoId), names.length ? notInArray(deployEnvironments.name, names) : undefined))
+  return envs.length
 }
 
-/** Job `gitlab-env-sync`: one repo (`id` = repo id, on link), or every linked repo (the nightly run). */
-export async function syncEnvironmentsJob(deps: { db: Db; gitlab: GitLabClient | null }, id: string): Promise<void> {
+/**
+ * Job `gitlab-env-sync`: one repo (`id` = repo id, on link), or every linked repo (the nightly run). The sweep
+ * stops at the first unreachable-GitLab error and when the job is aborted; it fails when no repo synced.
+ */
+export async function syncEnvironmentsJob(deps: { db: Db; gitlab: GitLabClient | null }, id: string, signal?: AbortSignal): Promise<void> {
   if (!deps.gitlab) return
   const ids = id === 'scheduled' ? (await deps.db.select({ id: projectRepos.id }).from(projectRepos).orderBy(asc(projectRepos.id))).map((r) => r.id) : [id]
-  const failed: string[] = []
+  let failed = 0
+  let done = 0
   for (const repoId of ids) {
+    if (signal?.aborted) break
     try {
-      await syncEnvironments(deps, repoId)
+      await syncEnvironments(deps, repoId, signal)
+      done++
     } catch (err) {
-      failed.push(repoId)
-      console.warn(`gitlab-env-sync: repo ${repoId} failed: ${(err as Error).message}`)
+      failed++
+      if (err instanceof GitLabError && err.code === 'unavailable') break
     }
   }
-  if (failed.length && id !== 'scheduled') throw new Error(`gitlab-env-sync failed for repo ${id}`)
+  if (failed) console.warn(`gitlab-env-sync: ${failed} of ${ids.length} repo(s) failed, ${done} synced`)
+  if (failed && done === 0) throw new Error(`gitlab-env-sync failed for ${failed} repo(s)`)
 }
 
 /** The GitLab mapping rules of these projects: environments with an external URL. */

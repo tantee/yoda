@@ -11,7 +11,7 @@ export type FakeEnvironment = {
   name: string
   external_url: string | null
   tier: string | null
-  last_deployment: { ref: string; sha: string; status: string; created_at: string; finished_at: string | null } | null
+  last_deployment: { ref: string; sha: string; status: string; created_at: string; updated_at: string; deployable: { finished_at: string | null } | null } | null
 }
 export type FakeMergeRequest = { project_id: number; iid: number; title: string; web_url: string; state: string; source_branch: string; description: string }
 
@@ -159,7 +159,12 @@ export class FakeGitLab {
     if (parts[2] === 'merge_requests' && parts.length === 3) return this.handleMergeRequests(project, method, rawUrl, body, send)
     if (parts[2] === 'environments' && method === 'GET') {
       const envs = this.environments.get(project.id) ?? []
-      if (parts.length === 3) return send(200, envs.map(({ last_deployment: _, ...e }) => e))
+      if (parts.length === 3) {
+        const params = new URL(rawUrl, 'http://x').searchParams
+        const per = Number(params.get('per_page') ?? 20)
+        const page = Number(params.get('page') ?? 1)
+        return send(200, envs.slice((page - 1) * per, page * per).map(({ last_deployment: _, ...e }) => e))
+      }
       const env = envs.find((e) => String(e.id) === parts[3])
       return env ? send(200, env) : send(404, { message: '404 Environment Not Found' })
     }

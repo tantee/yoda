@@ -1,6 +1,8 @@
 import type { AppUrl } from '@yoda/shared'
 import type { FastifyInstance } from 'fastify'
+import { eq } from 'drizzle-orm'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { projects } from '../src/db/schema.js'
 import { appUrlRules } from '../src/projects/app-urls.js'
 import { productionRulesForPerson } from '../src/extension/mappings.js'
 import { makeProject } from './defect-fixtures.js'
@@ -115,7 +117,7 @@ describe('project application URLs', () => {
     expect(await productionRulesForPerson(await testDb(), qc.id)).toEqual(['https://opd.example.org/*'])
     expect(await productionRulesForPerson(await testDb(), outsider.id)).toEqual([])
     // An archived project's production sites still refuse video.
-    await app.inject({ method: 'PATCH', url: `/projects/${other}`, headers: auth(admin), payload: { status: 'archived' } })
+    await (await testDb()).update(projects).set({ status: 'archived' }).where(eq(projects.id, other))
     expect((await productionRulesForPerson(await testDb(), pm.id)).sort()).toEqual(['https://lab.example.org/*', 'https://opd.example.org/*'])
   })
 })

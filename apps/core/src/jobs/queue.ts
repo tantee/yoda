@@ -72,8 +72,12 @@ export const POLICY: Partial<Record<JobName, 'exclusive' | 'stately'>> = {
   'weekly-summary': 'exclusive',
   'weekly-summary-project': 'exclusive',
   'notify-deliver': 'exclusive',
+  // One environment sync per repo (or one nightly sweep) at a time: a retry never runs beside a slow run.
+  'gitlab-env-sync': 'exclusive',
+  'defect-retention': 'exclusive',
+  'defect-orphan-sweep': 'exclusive',
 }
-export const SINGLETON: readonly JobName[] = ['draft-task', 'discussion-brief', 'gitlab-issue-sync', 'gitlab-mr-reconcile', 'weekly-summary-project', 'notify-deliver']
+export const SINGLETON: readonly JobName[] = ['draft-task', 'discussion-brief', 'gitlab-issue-sync', 'gitlab-mr-reconcile', 'weekly-summary-project', 'notify-deliver', 'gitlab-env-sync']
 
 /** Retries of an outside-channel delivery: about 30 s, doubling up to about 16 minutes (roughly 30 min in all). */
 export const NOTIFY_RETRY_LIMIT = 6

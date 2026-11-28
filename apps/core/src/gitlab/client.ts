@@ -131,19 +131,29 @@ export class GitLabClient {
     return this.request('GET', `/projects/${this.proj(pathOrId)}`)
   }
 
-  /** Available environments (Yoda Reporter URL mapping), up to 100. */
-  listEnvironments(projectId: number): Promise<{ id: number; name: string; external_url: string | null; tier: string | null }[]> {
-    return this.request('GET', `/projects/${this.proj(projectId)}/environments?states=available&per_page=100`)
+  /**
+   * Every available environment (Yoda Reporter URL mapping), page by page. Null when the list is cut off at
+   * `maxPages` (the caller then must not treat it as complete).
+   */
+  async listEnvironments(projectId: number, maxPages = 20): Promise<{ id: number; name: string; external_url: string | null; tier: string | null }[] | null> {
+    type Env = { id: number; name: string; external_url: string | null; tier: string | null }
+    const out: Env[] = []
+    for (let page = 1; page <= maxPages; page++) {
+      const batch = await this.request<Env[]>('GET', `/projects/${this.proj(projectId)}/environments?states=available&per_page=100&page=${page}`)
+      out.push(...batch)
+      if (batch.length < 100) return out
+    }
+    return null
   }
 
   /** An environment's last deployment, when it has one. */
   async lastDeployment(projectId: number, envId: number): Promise<{ ref: string; sha: string; status: string; deployedAt: Date } | null> {
     const env = await this.request<{
-      last_deployment?: { ref: string; sha: string; status: string; created_at: string; finished_at?: string | null; updated_at?: string | null } | null
+      last_deployment?: { ref: string; sha: string; status: string; created_at: string; updated_at?: string | null; deployable?: { finished_at?: string | null } | null } | null
     }>('GET', `/projects/${this.proj(projectId)}/environments/${encodeURIComponent(String(envId))}`)
     const d = env.last_deployment
     if (!d) return null
-    const at = new Date(d.finished_at ?? d.updated_at ?? d.created_at)
+    const at = new Date(d.deployable?.finished_at ?? d.updated_at ?? d.created_at)
     return { ref: d.ref, sha: d.sha, status: d.status, deployedAt: Number.isNaN(at.getTime()) ? new Date(d.created_at) : at }
   }
 
