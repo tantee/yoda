@@ -22,6 +22,9 @@ const attach = ref({ console: true, network: true })
 const busy = ref('')
 const error = ref('')
 const reachable = ref(true)
+/** The mapping for this page (sw/rules.ts): the profile and project it picks, and whether it is production. */
+const resolved = ref<{ production: boolean; profileId: string | null; projectId: string | null; via: 'rule' | 'repo' | null } | null>(null)
+const production = computed(() => resolved.value?.production === true)
 
 const profile = computed(() => list.value.find((p) => p.id === profileId.value) ?? null)
 const version = computed(() => (session.value ? checkVersion(session.value, chrome.runtime.getManifest().version_name ?? '0.0.0') : 'ok'))
@@ -38,6 +41,15 @@ async function load() {
   } catch {
     tabUrl.value = ''
   }
+  if (webPage.value) {
+    // Opening the popup refreshes the Yoda mappings (their ttl otherwise).
+    const r = (await chrome.runtime.sendMessage({ type: 'mapping.resolve', tabId: tabId.value, refresh: true })) as { ok: boolean; resolved?: typeof resolved.value }
+    resolved.value = r?.ok ? (r.resolved ?? null) : null
+    const mapped = list.value.find((p) => p.id === resolved.value?.profileId)
+    if (mapped) profileId.value = mapped.id
+    // On production, logs go only when the tester turns them on for this report.
+    if (production.value) attach.value = { console: false, network: false }
+  }
   await Promise.all([loadSession(), refreshCapture()])
 }
 
@@ -53,7 +65,8 @@ async function loadSession() {
   }
   session.value = ExtensionSession.parse(r.session)
   const last = (await chrome.storage.local.get(`popup.project.${profile.value.id}`))[`popup.project.${profile.value.id}`] as string | undefined
-  projectId.value = session.value.projects.find((p) => p.id === last)?.id ?? session.value.projects[0]?.id ?? null
+  const mappedProject = resolved.value?.profileId === profile.value.id ? resolved.value.projectId : null
+  projectId.value = session.value.projects.find((p) => p.id === mappedProject)?.id ?? session.value.projects.find((p) => p.id === last)?.id ?? session.value.projects[0]?.id ?? null
 }
 
 async function refreshCapture() {
@@ -69,7 +82,8 @@ watch(profileId, (id) => {
 watch(projectId, (id) => {
   if (id && profile.value) void chrome.storage.local.set({ [`popup.project.${profile.value.id}`]: id })
 })
-watch(attach, (a) => void chrome.storage.local.set({ 'popup.attach': a }), { deep: true })
+// The production default (logs off) is not remembered as the tester's choice.
+watch(attach, (a) => !production.value && void chrome.storage.local.set({ 'popup.attach': a }), { deep: true })
 
 async function arm() {
   if (tabId.value === null) return
@@ -149,6 +163,8 @@ onMounted(load)
           <v-alert v-else-if="!reachable" type="warning" variant="tonal" density="compact" class="mx-3 mb-2" data-testid="popup-unreachable">{{ t('popup.unreachable') }}</v-alert>
           <v-alert v-if="version === 'update_available'" type="info" variant="tonal" density="compact" class="mx-3 mb-2" data-testid="popup-update">{{ t('popup.update', { v: session?.latestExtension?.version ?? '' }) }}</v-alert>
           <v-alert v-if="version === 'api_too_new'" type="error" variant="tonal" density="compact" class="mx-3 mb-2" data-testid="popup-too-old">{{ t('popup.tooOld') }}</v-alert>
+
+          <v-alert v-if="production" type="error" variant="tonal" density="compact" class="mx-3 mb-2" data-testid="popup-production">{{ t('review.production') }}</v-alert>
 
           <div class="popup__section">
             <v-select v-model="projectId" :items="session?.projects ?? []" item-title="name" item-value="id" :label="t('report.project')" hide-details :disabled="!session" data-testid="popup-project" />

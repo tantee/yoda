@@ -2,6 +2,8 @@ import { captureFullPage, captureVisible } from '../capture/screenshot'
 import type { PageMetadata } from '../capture/metadata'
 import { newDraft, purgeOldDrafts, putDraft } from '../drafts/db'
 import { entries } from './capture-session'
+import { allRules } from './rules'
+import { isProduction } from '../rules/match'
 
 /** Reads the page's metadata in its ISOLATED world (the reader is injected first when capture is not armed). */
 export async function pageMetadata(tabId: number): Promise<PageMetadata | null> {
@@ -29,6 +31,8 @@ export async function startReport(o: { tabId: number; profileId: string; kind: '
   await purgeOldDrafts(Date.now())
   const tab = await chrome.tabs.get(o.tabId)
   const draft = newDraft({ profileId: o.profileId, tabId: o.tabId, tabUrl: tab.url ?? '' })
+  // Decided here, from the worker's rules, not by the page that asks: the editor cannot unmark it.
+  draft.production = isProduction(draft.tabUrl, await allRules().catch(() => []))
   let extra: { truncated?: boolean; fallback?: boolean } = {}
   // The screenshot first: metadata and logs must not change what was on screen.
   if (o.kind === 'screenshot') draft.images.push({ role: 'screenshot', blob: await captureVisible(o.tabId) })
@@ -44,7 +48,7 @@ export async function startReport(o: { tabId: number; profileId: string; kind: '
   // The popup's choices become the form's starting point.
   draft.form = {
     ...(o.projectId ? { projectId: o.projectId } : {}),
-    attach: { screenshot: true, video: true, buffer: true, console: o.attach?.console ?? true, network: o.attach?.network ?? true },
+    attach: { screenshot: true, video: true, buffer: true, console: o.attach?.console ?? !draft.production, network: o.attach?.network ?? !draft.production },
   }
   await putDraft(draft)
   await chrome.tabs.create({ url: chrome.runtime.getURL(`src/editor/index.html?draft=${draft.id}`) })

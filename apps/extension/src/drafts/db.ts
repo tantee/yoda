@@ -25,6 +25,8 @@ export type Draft = {
   form?: Record<string, unknown>
   /** Fixed at creation: every send of this draft uses it, so a retry never files twice. */
   idempotencyKey: string
+  /** The page is a production site (a policy or Yoda rule says so, decision 3): no video, logs off by default. */
+  production?: boolean
 }
 
 const DB = 'yoda-drafts'

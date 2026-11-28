@@ -44,8 +44,8 @@ const form = ref<ReportForm>({
 watch(form, (f) => (props.draft.form = { ...f, confirmedNoPatientData: false }), { deep: true })
 
 const project = computed(() => session.value?.projects.find((p) => p.id === form.value.projectId) ?? null)
-// URL mapping (production rules) arrives with PR C; until then no page is treated as production.
-const production = ref(false)
+// Set by the worker from the mapping rules when the report started (a production site: no video).
+const production = computed(() => props.draft.production === true)
 const severities = DefectSeverity.options
 const buildText = ref(detected.value ? [detected.value.repo, detected.value.branch, detected.value.commit].filter(Boolean).join(' · ') : '')
 

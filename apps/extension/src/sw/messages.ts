@@ -20,6 +20,8 @@ export const Msg = z.discriminatedUnion('type', [
     // Validated again, entry by entry, when stored (sanitizeEntries): page data is untrusted.
     entries: z.array(z.unknown()).max(1000),
   }),
+  z.object({ type: z.literal('mapping.resolve'), tabId: z.number().int(), refresh: z.boolean().optional() }),
+  z.object({ type: z.literal('mapping.test'), url: z.string().max(2048) }),
   z.object({ type: z.literal('draft.get'), id }),
   z.object({ type: z.literal('draft.delete'), id }),
 ])

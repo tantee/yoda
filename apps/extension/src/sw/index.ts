@@ -4,7 +4,9 @@ import { appendEntries, armTab, captureState, entries, nonceFor, onTabRemoved, o
 import { purgeOldDrafts } from '../drafts/db'
 import { TabChangedError } from '../capture/screenshot'
 import { injectCapture } from './inject'
-import { startReport } from './report-start'
+import { pageMetadata, startReport } from './report-start'
+import { allRules, repoOf, resolveUrl } from './rules'
+import { pickRule } from '../rules/match'
 import { onMessage } from './messages'
 import { exchangeProfile, removeProfile } from './profiles'
 import { initSecrets } from './secrets'
@@ -72,6 +74,18 @@ onMessage(async (m, { sender }) => {
         if (e instanceof TabChangedError) return { ok: false, error: 'tab_changed' }
         throw e
       }
+    }
+    case 'mapping.resolve': {
+      const tab = await chrome.tabs.get(m.tabId)
+      const url = tab.url ?? ''
+      if (!/^https?:/i.test(url)) return { ok: true, resolved: null }
+      const resolved = await resolveUrl(url, { refresh: m.refresh, readBuild: async () => repoOf(await pageMetadata(m.tabId)) })
+      return { ok: true, resolved }
+    }
+    case 'mapping.test': {
+      // The options page's URL tester: the rules as they stand (no refresh), the winner and why.
+      const picked = pickRule(m.url, await allRules())
+      return { ok: true, picked }
     }
     case 'capture.state':
       return { ok: true, state: await captureState(m.tabId), counts: countsOf(await entries(m.tabId)) }
