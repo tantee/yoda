@@ -15,8 +15,11 @@ A one-line installer, which checks and installs its own dependencies and handles
   options. Piping trusts GitHub's TLS for `install.sh` itself; everything it downloads is signature-checked. The
   long form (download `install.sh`, `SHA256SUMS` and the signature, check them, then run it) still works, and
   `install.sh` then uses the `SHA256SUMS` next to it and checks its own checksum against it.
-- Without `--version`, `install.sh` installs the latest release, looked up from the `releases/latest` redirect
-  (then the GitHub API; no `jq`). An internal mirror (`--base-url`) has no "latest" and needs `--version`.
+- Without `--version`, the published `install.sh` installs its own release (`RELEASE_VERSION`, set when the bundle
+  is built), so the one-liner of release N never installs N+1. Only the repository's copy, or `--version latest`,
+  looks up the latest release, from the `releases/latest` redirect (then the GitHub API; no `jq`); a mirror
+  (`--base-url`) has no "latest", so that lookup needs `--version`. An existing Docker apt source or
+  `docker-ce.repo` is used as it is, and a failed Docker setup removes only the files the run added.
 - When piped, it downloads `SHA256SUMS` and `SHA256SUMS.minisig` for the release, checks the signature with the
   key built into the script, checks that the trusted comment is exactly `yoda release <version>`, then the
   bundle's checksum, and only then unpacks anything. Any verification error stops it.

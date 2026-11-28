@@ -388,9 +388,10 @@ in your shell overrides `release.env`, so leave it unset.
    Each command runs only when the one before it passed: the signature, then that the signed trusted comment
    names this release (`Trusted comment: yoda release 1.2.0`), then the checksum of `install.sh`. Run that way,
    `install.sh` uses the `SHA256SUMS` next to it and checks its own checksum against it. From an
-   internal mirror add `--version`, `--base-url 'https://files.example.org/yoda/releases/{version}/'` and
-   `--image-prefix registry.example.org/group/yoda` (`{version}` becomes the version; a mirror has no "latest";
-   section 5, "Internal mirror").
+   internal mirror add `--base-url 'https://files.example.org/yoda/releases/{version}/'` and
+   `--image-prefix registry.example.org/group/yoda` (`{version}` becomes the version; the mirror's `install.sh`
+   installs its own release, and only the repository's copy or `--version latest` would look up a "latest",
+   which a mirror does not have, so pass `--version` then; section 5, "Internal mirror").
 
    `install.sh` is functions called from its last line, so a download cut short runs nothing. It checks its
    dependencies first (curl, tar, sha256sum or shasum, minisign, Docker Engine 24+, Compose v2.24+, openssl for
@@ -400,12 +401,16 @@ in your shell overrides `release.env`, so leave it unset.
    docker-compose-plugin`); the RHEL family (exactly RHEL, CentOS, Rocky, AlmaLinux, Fedora and Oracle Linux) with
    dnf (minisign from EPEL, Docker's dnf repository). It prints every command behind its one question first
    (universe, EPEL, dnf-plugins-core, Docker's key and repository file, `systemctl enable --now docker`,
-   `usermod -aG docker`: that group is root-equivalent), also with `--yes`. Before writing anything for Docker
-   it checks that Docker's repository has this release (`DEBIAN_CODENAME`, `UBUNTU_CODENAME`, then
-   `VERSION_CODENAME`; none for kali-rolling, for example: manual steps), that no other Docker source is
-   configured (a second one breaks apt: it explains and stops), and that the key is a PGP key with Docker's
-   fingerprint (when `gpg` is there). A failed `apt-get update` or install removes `docker.list` and
-   `docker.asc` again (dnf: the repository file). It uses sudo when not root, stops clearly without it, and
+   `usermod -aG docker`: that group is root-equivalent), also with `--yes`. An enabled download.docker.com apt
+   source that is already there (the usual case on an upgrade; deb822 stanzas with `Enabled: no` do not count),
+   or an existing `docker-ce.repo`, is used as it is: no second entry, nothing of it changed. Otherwise, before
+   writing anything for Docker, it checks that Docker's repository has this release (`DEBIAN_CODENAME`,
+   `UBUNTU_CODENAME`, then `VERSION_CODENAME`; none for kali-rolling, for example: manual steps) and that the
+   key (downloaded, or an existing `keyrings/docker.asc`, which is never replaced) is a PGP key with Docker's
+   fingerprint (when `gpg` is there); a `docker.list` without a Docker entry is never overwritten. dnf 5 adds
+   the repository with `config-manager addrepo --from-repofile=`, dnf 4 with `config-manager --add-repo`. A
+   failed `apt-get update` or install removes only the files this run added (a failed package install may still
+   leave packages partly installed). It uses sudo when not root, stops clearly without it, and
    stops when sudo needs a password and there is no terminal; an old `docker.io` / `docker-compose-v2` (or a snap
    Docker, or the RHEL family's moby-engine) is explained, never replaced; any other system gets the manual
    steps and exit 1. A user who may not run docker

@@ -79,8 +79,9 @@ It asks **once** for all of that, after printing every command the yes stands fo
 `epel-release` and `dnf-plugins-core` (RHEL family), downloading and installing Docker's GPG key (its
 fingerprint checked when `gpg` is there) and repository file, `systemctl enable --now docker`, and
 `usermod -aG docker` (the `docker` group is root-equivalent: whoever is in it controls the host). Before writing
-anything Docker-related it checks that Docker's repository has a release for your system and that no other
-Docker source is configured; if the Docker setup fails, it removes its repository file and key again. The
+anything Docker-related it checks that Docker's repository has a release for your system; an existing Docker
+source (apt or `docker-ce.repo`, as on an upgrade) is used as it is, never doubled or changed, and if the Docker
+setup fails it removes only the files that run added (packages may still be partly installed). The
 question is asked on the terminal (also when piped: it reads and writes `/dev/tty`). `--yes` answers yes (the
 plan is still printed). With no terminal and no `--yes` it stops and names the flag; it never assumes yes. sudo
 that needs a password with no terminal to type it stops it too. The same goes for two more questions:
@@ -166,8 +167,9 @@ or started.
 
 Options: `--version`, `--dir`, `--yes`, `--base-url` (another file server), `--image-prefix` (another registry
 path), `--no-login`. **Internal mirror:** a host that cannot reach GitHub installs from a copy inside the network with
-`--version 1.2.0 --base-url 'https://files.example.org/yoda/releases/{version}/' --image-prefix registry.example.org/group/yoda`
-(a mirror has no "latest": `--version` is required)
+`--base-url 'https://files.example.org/yoda/releases/{version}/' --image-prefix registry.example.org/group/yoda`
+(the mirror's `install.sh` installs its own release; with the repository's copy, which names none, add
+`--version 1.2.0`: a mirror has no "latest")
 (a registry mirror of the images; `install.sh` asks for a `docker login` to it), see
 [releasing, internal mirror](../releasing.md#internal-mirror). Nothing is required in `.env` for a standard install. To use an external Postgres or S3, or to fix settings from outside the
 UI, see the runbook ([section 4, "Advanced"](../operations.md#4-first-install)).
