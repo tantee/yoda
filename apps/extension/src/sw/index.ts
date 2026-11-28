@@ -3,10 +3,14 @@ import { accessToken, yodaFetch } from './api'
 import { appendEntries, armTab, captureState, entries, nonceFor, onTabRemoved, onTabUpdated } from './capture-session'
 import { purgeOldDrafts } from '../drafts/db'
 import { TabChangedError } from '../capture/screenshot'
+import { deleteClip, getClip, purgeClips } from '../drafts/clips'
+import { clearStaleClip, endClip, jobs, onClipTabNavigated, startClip, stopClip } from './offscreen'
 import { injectCapture } from './inject'
-import { startReport } from './report-start'
+import { pageMetadata, startReport } from './report-start'
+import { allRules, deleteMineRule, repoOf, resolveUrl, saveMineRule } from './rules'
+import { pickRule } from '../rules/match'
 import { onMessage } from './messages'
-import { exchangeProfile, removeProfile } from './profiles'
+import { exchangeProfile, removeProfile, updateProfileSettings } from './profiles'
 import { initSecrets } from './secrets'
 import { getProfile } from './store'
 
@@ -14,7 +18,11 @@ import { getProfile } from './store'
 // Content scripts never read storage (TRUSTED_CONTEXTS), set before anything is written.
 const ready = initSecrets()
 // Drafts hold the unredacted capture: anything past its 24 hours goes whenever the worker starts.
-const purge = () => void purgeOldDrafts(Date.now()).catch(() => 0)
+const purge = () => {
+  void purgeOldDrafts(Date.now()).catch(() => 0)
+  // A clip is taken into a draft at once; one left behind (a crash in between) goes after an hour.
+  void purgeClips(Date.now(), 3600_000).catch(() => 0)
+}
 purge()
 chrome.runtime.onStartup?.addListener(() => {
   void initSecrets()
@@ -73,6 +81,52 @@ onMessage(async (m, { sender }) => {
         throw e
       }
     }
+    case 'video.start':
+      return startClip(m)
+    case 'video.stop':
+      await stopClip()
+      return { ok: true }
+    case 'video.state':
+      await clearStaleClip()
+      return { ok: true, clip: (await jobs()).clip ?? null }
+    case 'video.failed':
+      // The offscreen document could not store the clip: end the job so the next one is not refused as busy.
+      await endClip()
+      return { ok: true }
+    case 'video.done': {
+      const job = await endClip()
+      const clip = await getClip(m.clipId)
+      if (!job || !clip || job.tabId !== m.tabId) {
+        await deleteClip(m.clipId)
+        return { ok: false, error: 'unknown_clip' }
+      }
+      const r = await startReport({ tabId: job.tabId, profileId: job.profileId, kind: 'video', projectId: job.projectId, attach: job.attach, video: clip.blob, url: job.url, tainted: job.tainted })
+      // Only once the draft holds it (or has discarded it).
+      await deleteClip(m.clipId)
+      return { ok: true, ...r }
+    }
+    case 'mapping.resolve': {
+      const tab = await chrome.tabs.get(m.tabId)
+      const url = tab.url ?? ''
+      if (!/^https?:/i.test(url)) return { ok: true, resolved: null }
+      const resolved = await resolveUrl(url, { refresh: m.refresh, readBuild: async () => repoOf(await pageMetadata(m.tabId)) })
+      return { ok: true, resolved }
+    }
+    case 'rules.list':
+      return { ok: true, rules: await allRules({ refresh: m.refresh }) }
+    case 'rules.saveMine': {
+      const r = await saveMineRule(m.rule)
+      return r.ok ? r : { ok: false, error: 'invalid', errors: r.errors }
+    }
+    case 'rules.deleteMine':
+      return deleteMineRule(m.id)
+    case 'profile.update':
+      return updateProfileSettings(m.profileId, m)
+    case 'mapping.test': {
+      // The options page's URL tester: the rules as they stand (no refresh), the winner and why.
+      const picked = pickRule(m.url, await allRules())
+      return { ok: true, picked }
+    }
     case 'capture.state':
       return { ok: true, state: await captureState(m.tabId), counts: countsOf(await entries(m.tabId)) }
     default:
@@ -82,5 +136,9 @@ onMessage(async (m, { sender }) => {
 
 const countsOf = (e: Awaited<ReturnType<typeof entries>>) => ({ console: e.console.length, errors: e.console.filter((c) => c.level === 'error' || c.level === 'exception' || c.level === 'rejection').length, failedRequests: e.network.filter((n) => n.failed).length })
 
-chrome.tabs.onUpdated.addListener((tabId, change, tab) => void onTabUpdated(tabId, change, tab, injectCapture).catch(() => {}))
+chrome.tabs.onUpdated.addListener((tabId, change, tab) => {
+  void onTabUpdated(tabId, change, tab, injectCapture).catch(() => {})
+  // A clip records across navigation: each new page is checked (onClipTabNavigated).
+  if (change.status === 'loading' || change.url) void onClipTabNavigated(tabId, change.url ?? tab.url).catch(() => {})
+})
 chrome.tabs.onRemoved.addListener((tabId) => void onTabRemoved(tabId).catch(() => {}))

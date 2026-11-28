@@ -92,6 +92,18 @@ describe('buildReport', () => {
     expect(report.attachments.map((a) => a.role)).toEqual(['console'])
   })
 
+  it('a video with unapplied regions cannot be sent', () => {
+    const pending = draft({ videoRegions: [{ id: 'r1', rect: { x: 0, y: 0, w: 40, h: 40 }, fromMs: 1000, toMs: 3000, block: 12 }] })
+    expect(() => buildReport(pending, form(), ctx())).toThrow('mosaic_not_applied')
+    // Without the video, or on production (no video goes), the rest can be sent.
+    const noVideo = buildReport(pending, form({ attach: { screenshot: true, video: false, buffer: true, console: true, network: true } }), ctx())
+    expect(noVideo.report.attachments.map((a) => a.role)).not.toContain('video')
+    expect(() => buildReport(pending, form(), ctx({ production: true }))).not.toThrow()
+    // Applied: the regions are burned into draft.video and none is pending.
+    const applied = buildReport(draft({ videoRegions: [], videoMosaicApplied: true }), form(), ctx())
+    expect(applied.report.attachments.map((a) => a.role)).toContain('video')
+  })
+
   it('a build the tester edited wins, as manual', () => {
     const { report } = buildReport(draft(), form({ build: { commit: 'fff0000', branch: 'main' } }), ctx())
     expect(report.build).toEqual({ commit: 'fff0000', branch: 'main', source: 'manual' })

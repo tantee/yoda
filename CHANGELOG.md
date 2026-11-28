@@ -23,6 +23,12 @@ as a GitHub Release, and the version without the `v` is the image tag a host run
   box, all burned into the uploaded image. Reports carry the page, browser and build details, the console and
   failed requests, and pass a check-before-sending step. The zip ships in the core image and the Help page
   offers it; a release tag is now `v<x.y.z>` or `v<x.y.z>-rc.<N>` only.
+- **Yoda Reporter: video and URL mapping.** Record the tab for up to 30 seconds (no sound); mosaic regions on
+  the clip with a time range are burned in before sending, and a clip with unapplied regions is never sent. The
+  extension picks the project from the page address, using each project's application URLs and GitLab
+  environments in Yoda or the tester's own rules, with a URL tester in the new settings page. Production sites get
+  no video and logs off by default; a clip that reaches a production page, or one the extension cannot check, is
+  discarded.
 
 ## 1.2.0 — 2026-11-28
 

@@ -44,6 +44,8 @@ export function buildReport(
 
   if (form.attach.screenshot) for (const img of ctx.images) add(img.role, img.role === 'screenshot_full' ? 'screenshot-full.png' : 'screenshot.png', 'image/png', img.blob)
   if (!ctx.production) {
+    // A video with mosaic regions is never sent with those regions unapplied (decision 1).
+    if (form.attach.video && draft.video && draft.videoRegions?.length) throw new Error('mosaic_not_applied')
     if (form.attach.video && draft.video) add('video', 'video.webm', 'video/webm', draft.video)
     if (form.attach.buffer) draft.buffer?.forEach((b, i) => add('buffer', `buffer-${i + 1}.webm`, 'video/webm', b))
   }

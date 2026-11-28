@@ -1,10 +1,11 @@
 import { ExtensionTokenResponse, PublicConfig } from '@yoda/shared'
 import type { Msg } from './messages'
-import { setAccess, setRefresh } from './secrets'
+import { getRefresh, setAccess, setRefresh } from './secrets'
 import { deleteProfile, getProfile, profiles, saveProfile, updateProfile, type Profile } from './store'
 import { normaliseYodaUrl } from '../connect/connect'
-import { yodaFetch } from './api'
+import { withTokenMove, yodaFetch } from './api'
 import { deleteDraftsOf } from '../drafts/db'
+import { forgetYodaRules } from './rules'
 
 const COLOURS = ['#1F5FBF', '#1D6B3A', '#7A4F00', '#4A3FA0', '#B3261E']
 
@@ -62,8 +63,34 @@ export async function removeProfile(id: string): Promise<void> {
   await deleteProfile(id)
   // Its drafts (captures not yet sent) go with it.
   await deleteDraftsOf(id).catch(() => 0)
+  await forgetYodaRules(id)
   // No other profile uses this origin (one per origin): its host permission goes too.
   await chrome.permissions.remove({ origins: [`${p.url}/*`] }).catch(() => false)
+}
+
+/**
+ * The options page's per-profile settings. "Sign out when the browser closes" moves the refresh token between
+ * storage.local and storage.session; a managed (policy) profile keeps the policy's settings.
+ */
+export async function updateProfileSettings(id: string, patch: { colour?: string; isDefault?: boolean; sessionOnly?: boolean }): Promise<{ ok: true } | { ok: false; error: 'unknown' | 'managed' | 'invalid' }> {
+  const p = await getProfile(id)
+  if (!p) return { ok: false, error: 'unknown' }
+  if (patch.colour !== undefined && !/^#[0-9a-f]{6}$/i.test(patch.colour)) return { ok: false, error: 'invalid' }
+  if (patch.sessionOnly !== undefined && p.managed) return { ok: false, error: 'managed' }
+  if (patch.sessionOnly !== undefined && patch.sessionOnly !== p.sessionOnly) {
+    const sessionOnly = patch.sessionOnly
+    await withTokenMove(id, async () => {
+      const current = (await getProfile(id)) ?? p
+      const token = await getRefresh(current)
+      const next = await updateProfile(id, { sessionOnly })
+      if (next) await setRefresh(next, token)
+    })
+  }
+  const rest: Partial<Profile> = {}
+  if (patch.colour !== undefined) rest.colour = patch.colour.toLowerCase()
+  if (patch.isDefault) rest.isDefault = true
+  if (Object.keys(rest).length) await updateProfile(id, rest)
+  return { ok: true }
 }
 
 export async function setDefault(id: string): Promise<void> {

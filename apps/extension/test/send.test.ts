@@ -91,3 +91,32 @@ describe('sendReport', () => {
     expect(await getDraft(draftId)).not.toBeNull()
   })
 })
+
+describe('the stored draft gates a video', () => {
+  const clip = (bytes: number[]) => new Blob([new Uint8Array(bytes)], { type: 'video/webm' })
+  const videoFile = (b: Blob) => [{ part: 'file1', name: 'video.webm', type: 'video/webm', data: b }]
+
+  it('refuses when the stored draft has mosaic regions not yet applied (another editor tab added them)', async () => {
+    const d = (await getDraft(draftId))!
+    const v = clip([1, 2, 3])
+    await putDraft({ ...d, video: v, videoRegions: [{ id: 'r', rect: { x: 0, y: 0, w: 10, h: 10 }, fromMs: 0, toMs: 1000, block: 8 }] })
+    const dp = deps([json(201, created)])
+    expect(await sendReport(draftId, report, videoFile(v), dp)).toEqual({ ok: false, error: 'mosaic_not_applied' })
+    expect(dp.calls).toHaveLength(0)
+  })
+
+  it('refuses a video that is not the stored one (an older tab sending the original after a mosaic was applied)', async () => {
+    const d = (await getDraft(draftId))!
+    await putDraft({ ...d, video: clip([9, 9, 9, 9]) })
+    const dp = deps([json(201, created)])
+    expect(await sendReport(draftId, report, videoFile(clip([1, 2, 3])), dp)).toEqual({ ok: false, error: 'mosaic_not_applied' })
+    expect(dp.calls).toHaveLength(0)
+  })
+
+  it('sends the stored video', async () => {
+    const d = (await getDraft(draftId))!
+    await putDraft({ ...d, video: clip([9, 9, 9, 9]) })
+    const dp = deps([json(201, created)])
+    expect((await sendReport(draftId, report, videoFile(clip([9, 9, 9, 9])), dp)).ok).toBe(true)
+  })
+})

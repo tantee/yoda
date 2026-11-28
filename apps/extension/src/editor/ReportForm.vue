@@ -11,7 +11,7 @@ import { getProfile, type Profile } from '../sw/store'
 import ReviewPanel, { type ReviewFile } from './ReviewPanel.vue'
 
 /** The report beside the screenshot: what happened, where, the build, the check before sending, and Send. */
-const props = defineProps<{ draft: Draft; flatten: () => Promise<Blob | null> }>()
+const props = defineProps<{ draft: Draft; flatten: () => Promise<Blob | null>; save?: () => Promise<void> }>()
 const emit = defineEmits<{ sent: [DefectReportCreated] }>()
 const { t } = useI18n()
 
@@ -44,8 +44,8 @@ const form = ref<ReportForm>({
 watch(form, (f) => (props.draft.form = { ...f, confirmedNoPatientData: false }), { deep: true })
 
 const project = computed(() => session.value?.projects.find((p) => p.id === form.value.projectId) ?? null)
-// URL mapping (production rules) arrives with PR C; until then no page is treated as production.
-const production = ref(false)
+// Set by the worker from the mapping rules when the report started (a production site: no video).
+const production = computed(() => props.draft.production === true)
 const severities = DefectSeverity.options
 const buildText = ref(detected.value ? [detected.value.repo, detected.value.branch, detected.value.commit].filter(Boolean).join(' · ') : '')
 
@@ -88,13 +88,18 @@ function doReconnect() {
   })
 }
 
-const canSend = computed(() => !!form.value.title.trim() && !!form.value.projectId && form.value.confirmedNoPatientData && !sending.value && !reconnect.value)
+/** Mosaic regions on the video that no apply has burned in yet: the video cannot go until they are (decision 1). */
+const mosaicPending = computed(() => !production.value && form.value.attach.video && !!props.draft.video && !!props.draft.videoRegions?.length)
+const canSend = computed(
+  () => !!form.value.title.trim() && !!form.value.projectId && form.value.confirmedNoPatientData && !mosaicPending.value && !sending.value && !reconnect.value,
+)
 
 async function send() {
   if (!canSend.value) return
   sending.value = true
   error.value = ''
   try {
+    await props.save?.()
     const image = await props.flatten()
     const edited = buildText.value.trim() && detected.value && buildText.value !== [detected.value.repo, detected.value.branch, detected.value.commit].filter(Boolean).join(' · ')
     const f: ReportForm = { ...form.value, build: edited || (buildText.value.trim() && !detected.value) ? { commit: buildText.value.trim() } : null }
@@ -110,7 +115,7 @@ async function send() {
     } else if (r.error === 'reconnect') reconnect.value = true
     else error.value = errorText(r)
   } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e)
+    error.value = e instanceof Error && e.message === 'mosaic_not_applied' ? t('report.error.mosaicNotApplied') : e instanceof Error ? e.message : String(e)
   } finally {
     sending.value = false
   }
@@ -122,6 +127,7 @@ function errorText(r: { error: string; reason?: string; retryAfter?: number }): 
   if (r.reason === 'video_on_production') return t('report.error.videoOnProduction')
   if (r.error === 'rate_limited') return t('report.error.rateLimited', { s: r.retryAfter ?? 60 })
   if (r.error === 'network') return t('report.error.network')
+  if (r.error === 'mosaic_not_applied') return t('report.error.mosaicNotApplied')
   return t('report.error.other')
 }
 
@@ -179,6 +185,7 @@ onMounted(load)
         :no-ai="!!project?.noAi"
         :production="production"
       />
+      <v-alert v-if="mosaicPending" type="warning" variant="tonal" density="compact" class="mt-3" data-testid="report-mosaic-pending">{{ t('report.error.mosaicNotApplied') }}</v-alert>
       <v-alert v-if="error" type="error" variant="tonal" class="mt-3" data-testid="report-error">{{ error }}</v-alert>
       <v-btn block color="primary" size="large" class="mt-4" :disabled="!canSend" :loading="sending" data-testid="report-send" @click="send">{{ t('report.send') }}</v-btn>
     </template>

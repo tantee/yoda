@@ -20,6 +20,29 @@ export const Msg = z.discriminatedUnion('type', [
     // Validated again, entry by entry, when stored (sanitizeEntries): page data is untrusted.
     entries: z.array(z.unknown()).max(1000),
   }),
+  z.object({
+    type: z.literal('video.start'),
+    tabId: z.number().int(),
+    profileId: id,
+    projectId: id.optional(),
+    attach: z.object({ console: z.boolean(), network: z.boolean() }).optional(),
+    // The Yoda setting allows 5 to 60 s.
+    maxSeconds: z.number().int().min(1).max(60),
+  }),
+  z.object({ type: z.literal('video.stop') }),
+  z.object({ type: z.literal('video.state') }),
+  // From the offscreen document: a clip is stored (drafts/clips.ts) under clipId.
+  z.object({ type: z.literal('video.failed'), tabId: z.number().int() }),
+  z.object({ type: z.literal('video.done'), clipId: id, tabId: z.number().int(), durationMs: z.number(), reason: z.enum(['max', 'stopped', 'ended']) }),
+  z.object({ type: z.literal('mapping.resolve'), tabId: z.number().int(), refresh: z.boolean().optional() }),
+  z.object({ type: z.literal('mapping.test'), url: z.string().max(2048) }),
+  z.object({ type: z.literal('rules.list'), refresh: z.boolean().optional() }),
+  z.object({
+    type: z.literal('rules.saveMine'),
+    rule: z.object({ id: id.optional(), pattern: z.string().max(500), profileId: id, projectId: id.nullable(), environment: z.string().max(100).nullable() }),
+  }),
+  z.object({ type: z.literal('rules.deleteMine'), id }),
+  z.object({ type: z.literal('profile.update'), profileId: id, colour: z.string().max(7).optional(), isDefault: z.boolean().optional(), sessionOnly: z.boolean().optional() }),
   z.object({ type: z.literal('draft.get'), id }),
   z.object({ type: z.literal('draft.delete'), id }),
 ])

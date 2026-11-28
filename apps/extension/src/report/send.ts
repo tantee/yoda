@@ -33,6 +33,10 @@ export function defaultDeps(profileId: string): SendDeps {
 export async function sendReport(draftId: string, report: DefectReportCreate, files: ReportFile[], deps: SendDeps): Promise<SendResult> {
   const draft = await getDraft(draftId)
   if (!draft) return { ok: false, error: 'draft_missing' }
+  // The stored draft is the truth, not this tab's copy: another editor tab may have added mosaic regions, or
+  // applied them (then this tab's video is the unmosaicked original).
+  const video = files.find((f) => f.name === 'video.webm')
+  if (video && (draft.videoRegions?.length || !draft.video || !(await sameBytes(video.data, draft.video)))) return { ok: false, error: 'mosaic_not_applied' }
   let t = await deps.token(false)
   if (!t.ok) return { ok: false, error: 'reconnect' }
   let renewed = false
@@ -75,4 +79,11 @@ export async function sendReport(draftId: string, report: DefectReportCreate, fi
     if (res.status === 429) return { ok: false, error: 'rate_limited', retryAfter: body.retryAfter }
     return { ok: false, error: body.error ?? `http_${res.status}`, reason: body.reason }
   }
+}
+
+async function sameBytes(a: Blob, b: Blob): Promise<boolean> {
+  if (a.size !== b.size) return false
+  const [x, y] = await Promise.all([a.arrayBuffer(), b.arrayBuffer()]).then(([p, q]) => [new Uint8Array(p), new Uint8Array(q)])
+  for (let i = 0; i < x.length; i++) if (x[i] !== y[i]) return false
+  return true
 }

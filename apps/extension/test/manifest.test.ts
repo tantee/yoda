@@ -32,11 +32,13 @@ describe('buildManifest', () => {
     expect(release).not.toHaveProperty('storage')
   })
 
-  it('e2e manifest differs only by host_permissions', () => {
+  it('e2e manifest differs only by host_permissions and a required tabCapture', () => {
     const e2e = buildManifest({ yodaVersion: '1.2.0', publicKey: null, target: 'e2e' }) as Record<string, unknown>
-    const { host_permissions, ...rest } = e2e
+    const { host_permissions, permissions, ...rest } = e2e
     expect(host_permissions).toEqual(['<all_urls>'])
-    expect(rest).toEqual(release)
+    expect(permissions).toEqual([...(release.permissions as string[]), 'tabCapture'])
+    const { permissions: _p, ...releaseRest } = release as Record<string, unknown>
+    expect(rest).toEqual(releaseRest)
   })
 
   it('version follows manifestVersion and package.json equals the root version', () => {

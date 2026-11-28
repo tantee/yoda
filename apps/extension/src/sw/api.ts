@@ -18,7 +18,26 @@ async function endGrant(profileId: string): Promise<void> {
   await updateProfile(profileId, { needsReconnect: true })
 }
 
+/** A refresh token being moved between storage areas ("sign out when the browser closes"): refreshes wait for it. */
+const moving = new Map<string, Promise<unknown>>()
+
+/**
+ * Runs `fn` (a move of the refresh token) once no refresh of the profile runs, and holds new refreshes until it is
+ * done: a refresh racing the move would write the rotated token into the old area.
+ */
+export async function withTokenMove<T>(profileId: string, fn: () => Promise<T>): Promise<T> {
+  await inflight.get(profileId)?.catch(() => false)
+  const run = fn()
+  moving.set(profileId, run.catch(() => undefined))
+  try {
+    return await run
+  } finally {
+    moving.delete(profileId)
+  }
+}
+
 async function doRefresh(profileId: string): Promise<boolean> {
+  await moving.get(profileId)
   const p = await getProfile(profileId)
   if (!p) return false
   const refreshToken = await getRefresh(p)
@@ -38,7 +57,8 @@ async function doRefresh(profileId: string): Promise<boolean> {
     // Removed while the refresh ran: never bring it back or store its tokens.
     const still = await getProfile(profileId)
     if (!still) return false
-    await setRefresh(p, t.refreshToken)
+    // `still`, not `p`: the profile may have switched storage areas meanwhile.
+    await setRefresh(still, t.refreshToken)
     await setAccess(profileId, { token: t.accessToken, expiresAt: Date.now() + t.expiresIn * 1000 })
     await updateProfile(profileId, { needsReconnect: false, grantId: t.grantId, person: t.person })
     return true

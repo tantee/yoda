@@ -13,8 +13,8 @@ export type BuildTarget = 'release' | 'e2e'
 
 /**
  * The extension's manifest.json. `publicKey` (base64 SPKI, keys/yoda-reporter.pub) fixes the extension ID; without
- * it a local build gets a path-derived ID an admin allowlists. The e2e build alone adds `<all_urls>`, because
- * Playwright cannot click the toolbar button that grants activeTab.
+ * it a local build gets a path-derived ID an admin allowlists. The e2e build alone adds `<all_urls>` and a required
+ * `tabCapture`, because Playwright can neither click the toolbar button that grants activeTab nor answer a prompt.
  */
 export function buildManifest(opts: { yodaVersion: string; publicKey: string | null; target: BuildTarget }): chrome.runtime.ManifestV3 {
   const { version, versionName } = manifestVersion(opts.yodaVersion)
@@ -37,6 +37,10 @@ export function buildManifest(opts: { yodaVersion: string; publicKey: string | n
     commands: { _execute_action: { suggested_key: { default: 'Alt+Shift+Y' } } },
   }
   if (opts.publicKey) manifest.key = opts.publicKey
-  if (opts.target === 'e2e') (manifest as Record<string, unknown>).host_permissions = ['<all_urls>']
+  if (opts.target === 'e2e') {
+    // Playwright can neither click the toolbar button (activeTab) nor answer a permission prompt.
+    ;(manifest as Record<string, unknown>).host_permissions = ['<all_urls>']
+    manifest.permissions = [...manifest.permissions!, 'tabCapture']
+  }
   return manifest
 }
