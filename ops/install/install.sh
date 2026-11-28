@@ -17,9 +17,10 @@
 #    explained, never replaced. A user who may not run docker is added to the docker group (asked the same way);
 #    this run then uses the group through `sg docker` (a `docker` wrapper first on PATH, for deploy.sh too), new
 #    logins get it by themselves. Any other system: the manual steps, and exit 1;
-# 2. the release: --version, else the one a signed SHA256SUMS next to install.sh names (sh install.sh in the
-#    directory of the downloaded assets), else the latest GitHub release (the releases/latest redirect, then the
-#    GitHub API; no jq). An internal mirror (--base-url) has no "latest": it needs --version;
+# 2. the release: --version; else the one this published install.sh belongs to (RELEASE_VERSION, set by bundle.sh:
+#    the one-liner installs the release it downloaded, also from a mirror); else the one a signed SHA256SUMS next
+#    to it names; else (the repository's copy, or --version latest) the latest GitHub release (the releases/latest
+#    redirect, then the GitHub API; no jq). A mirror (--base-url) has no "latest": that lookup needs --version;
 # 3. downloads <base>{SHA256SUMS,SHA256SUMS.minisig} (unless they are next to install.sh; always when piped), where
 #    <base> is the release's directory: by default the GitHub Release assets,
 #    https://github.com/tantee/yoda/releases/download/v<version>/; an internal mirror passes --base-url (a
@@ -339,31 +340,48 @@ docker_apt_release() {
     exit 1
   }
 }
-# An apt source for download.docker.com that is not install.sh's own docker.list: a second one makes apt fail
-# ("Conflicting values set for option Signed-By"), so install.sh stops instead of adding it.
-docker_apt_existing() {
-  for f in "$apt_dir/sources.list" "$apt_dir"/sources.list.d/*.list "$apt_dir"/sources.list.d/*.sources; do
-    [ -f "$f" ] && [ "$f" != "$apt_dir/sources.list.d/docker.list" ] || continue
-    if grep -v '^[[:space:]]*#' "$f" | grep -q 'download\.docker\.com'; then
-      if grep -v '^[[:space:]]*#' "$f" | grep -qi 'signed-by'; then
-        how_signed='with its own signed-by key'
-      else
-        how_signed='without signed-by (trusted through the old apt-key keyring)'
-      fi
-      say "Docker's apt repository is already configured in $f, $how_signed. install.sh does not add a second"
-      say "entry (apt refuses two with different keys). Install Docker from that entry yourself (sudo apt-get install $DOCKER_PACKAGES),"
-      say "or remove it and run install.sh again: it then adds $apt_dir/sources.list.d/docker.list with the key in $apt_dir/keyrings/docker.asc."
-      exit 1
-    fi
-  done
+# An enabled apt source for download.docker.com, in any file (docker.list included): on an upgrade it is normal,
+# and a second entry would break apt ("Conflicting values set for option Signed-By"), so it is used as it is.
+# Sets apt_source (the file, or empty) and apt_source_signed (signed-by, or the old apt-key keyring). deb822
+# stanzas with "Enabled: no" and commented lines do not count.
+docker_apt_entry() {
+  case "$1" in
+    *.sources)
+      grep -v '^[[:space:]]*#' "$1" | awk 'BEGIN { RS = "" }
+        { r = tolower($0) }
+        r ~ /download\.docker\.com/ && r !~ /enabled:[ \t]*no/ { print (r ~ /signed-by:/ ? "signed" : "unsigned"); exit }'
+      ;;
+    *)
+      line=$(grep -v '^[[:space:]]*#' "$1" | grep 'download\.docker\.com' | head -n 1) || :
+      [ -z "$line" ] || case "$line" in *signed-by=*) echo signed ;; *) echo unsigned ;; esac
+      ;;
+  esac
 }
-# Docker's key: a PGP public key, and with gpg here exactly Docker's fingerprint.
+docker_apt_existing() {
+  apt_source=''
+  apt_source_signed=''
+  for f in "$apt_dir/sources.list" "$apt_dir"/sources.list.d/*.list "$apt_dir"/sources.list.d/*.sources; do
+    [ -f "$f" ] || continue
+    e=$(docker_apt_entry "$f")
+    [ -n "$e" ] || continue
+    apt_source=$f
+    if [ "$e" = signed ]; then apt_source_signed='with its own signed-by key'; else apt_source_signed='without signed-by (the old apt-key keyring)'; fi
+    return 0
+  done
+  # install.sh never overwrites a docker.list it did not write, also one without an enabled Docker entry.
+  [ ! -e "$apt_dir/sources.list.d/docker.list" ] || {
+    say "$apt_dir/sources.list.d/docker.list exists, without an enabled download.docker.com entry: install.sh does not overwrite it."
+    say "Remove it (or put Docker's entry in it yourself), then run install.sh again."
+    exit 1
+  }
+}
+# Docker's key: a PGP public key, and with gpg here exactly Docker's fingerprint. $2 names it in messages.
 docker_key_check() {
-  grep -q -- '-----BEGIN PGP PUBLIC KEY BLOCK-----' "$1" || die "the downloaded Docker repository key ($DOCKER_REPO/$dist/gpg) is not a PGP public key: nothing was changed"
+  grep -q -- '-----BEGIN PGP PUBLIC KEY BLOCK-----' "$1" || die "$2 is not a PGP public key: install.sh changed nothing (an existing key is never replaced: remove it, then run install.sh again)"
   if have gpg; then
     fprs=$(gpg --batch --show-keys --with-colons "$1" 2>/dev/null | awk -F: '$1 == "fpr" { print $10 }')
     printf '%s\n' "$fprs" | grep -qx "$DOCKER_KEY_FPR" ||
-      die "the downloaded Docker repository key is not Docker's (fingerprint $DOCKER_KEY_FPR; got: $(printf '%s' "$fprs" | tr '\n' ' ')): nothing was changed"
+      die "$2 is not Docker's (fingerprint $DOCKER_KEY_FPR; got: $(printf '%s' "$fprs" | tr '\n' ' ')): install.sh changed nothing (an existing key is never replaced: remove it, then run install.sh again)"
     say "Docker's repository key: fingerprint $DOCKER_KEY_FPR (checked with gpg)"
   else
     say "warning: gpg is not here, so the Docker repository key's fingerprint is not checked (it came over https from download.docker.com; apt checks the repository with it)"
@@ -382,21 +400,31 @@ plan() {
         ;;
     esac
     [ -z "$pkgs" ] || say "  ${r}apt-get install -y $pkgs"
-    if [ "$docker_repo" = yes ]; then
-      say "  Docker's apt repository ($DOCKER_REPO/$(docker_distro), release $(docker_codename)): download its GPG key"
-      say "    ($DOCKER_REPO/$(docker_distro)/gpg; fingerprint $DOCKER_KEY_FPR, checked when gpg is here) into $apt_dir/keyrings/docker.asc,"
+    if [ "$docker_repo" = yes ] && [ -n "$apt_source" ]; then
+      say "  Docker's apt repository as already configured in $apt_source ($apt_source_signed), used as it is:"
+      say "    ${r}apt-get update, ${r}apt-get install -y $DOCKER_PACKAGES   (no second entry, nothing of it changed)"
+    elif [ "$docker_repo" = yes ]; then
+      if [ -e "$apt_dir/keyrings/docker.asc" ]; then
+        say "  Docker's apt repository ($DOCKER_REPO/$(docker_distro), release $(docker_codename)), with the key already in"
+        say "    $apt_dir/keyrings/docker.asc (checked, never replaced; fingerprint $DOCKER_KEY_FPR when gpg is here),"
+      else
+        say "  Docker's apt repository ($DOCKER_REPO/$(docker_distro), release $(docker_codename)): download its GPG key"
+        say "    ($DOCKER_REPO/$(docker_distro)/gpg; fingerprint $DOCKER_KEY_FPR, checked when gpg is here) into $apt_dir/keyrings/docker.asc,"
+      fi
       say "    write $apt_dir/sources.list.d/docker.list, ${r}apt-get update, ${r}apt-get install -y $DOCKER_PACKAGES"
-      say "    (if that fails, both files are removed again)"
+      say "    (if that fails, the files this run added are removed again)"
     fi
   else
     case " $pkgs " in
       *' minisign '*) say "  if dnf does not know minisign: ${r}$dnf install -y epel-release (EPEL)" ;;
     esac
     [ -z "$pkgs" ] || say "  ${r}$dnf install -y $pkgs"
-    if [ "$docker_repo" = yes ]; then
-      say "  ${r}$dnf install -y dnf-plugins-core, then ${r}$dnf config-manager --add-repo $DOCKER_REPO/$(docker_distro)/docker-ce.repo"
+    if [ "$docker_repo" = yes ] && [ -f "$yum_repos/docker-ce.repo" ]; then
+      say "  Docker's dnf repository as already in $yum_repos/docker-ce.repo, used as it is: ${r}$dnf install -y $DOCKER_PACKAGES"
+    elif [ "$docker_repo" = yes ]; then
+      say "  ${r}$dnf install -y dnf-plugins-core, then ${r}$(dnf_addrepo_text)"
       say "    (Docker's repository; dnf imports its GPG key at the install), ${r}$dnf install -y $DOCKER_PACKAGES"
-      say "    (if that fails, the repository file is removed again)"
+      say "    (if that fails, the repository file this run added is removed again)"
     fi
   fi
   if [ "$docker_repo" = yes ]; then
@@ -442,7 +470,7 @@ install_deps() {
   if [ "$family" = debian ] && [ "$docker_repo" = yes ]; then
     docker_apt_existing
     # Without curl yet, the release is checked after apt installed it, still before anything Docker is written.
-    ! have curl || docker_apt_release
+    [ -n "$apt_source" ] || ! have curl || docker_apt_release
   fi
   how='sudo'
   ! is_root || how=''
@@ -464,11 +492,17 @@ install_deps() {
 }
 
 apt_get() { as_root env DEBIAN_FRONTEND=noninteractive apt-get "$@"; }
-# Takes Docker's apt source and key away again, so a failed setup never leaves apt broken.
+# Takes away again only what this run added to apt's configuration ($added), never a file that was there before.
 docker_apt_undo() {
-  as_root rm -f "$apt_dir/sources.list.d/docker.list" "$apt_dir/keyrings/docker.asc" || :
-  as_root env DEBIAN_FRONTEND=noninteractive apt-get update >/dev/null 2>&1 || :
-  die "$1: removed $apt_dir/sources.list.d/docker.list and $apt_dir/keyrings/docker.asc again, so apt is as before"
+  # shellcheck disable=SC2086 # a list of paths without spaces (apt_dir is checked in main)
+  if [ -n "$added" ]; then
+    as_root rm -f $added || :
+    as_root env DEBIAN_FRONTEND=noninteractive apt-get update >/dev/null 2>&1 || :
+    done_what="removed what this run added ($(printf '%s' "$added" | sed 's/^ //'))"
+  else
+    done_what='this run added nothing to apt'"'"'s configuration'
+  fi
+  die "$1: $done_what. A failed package install may have left packages partly installed: check with sudo apt-get -f install"
 }
 install_debian() {
   apt_get update || die 'apt-get update failed'
@@ -486,23 +520,56 @@ install_debian() {
   # shellcheck disable=SC2086 # a list of package names
   [ -z "$pkgs" ] || apt_get install -y $pkgs || die "apt-get install $pkgs failed"
   [ "$docker_repo" = yes ] || return 0
-  docker_apt_release
-  arch=$(dpkg --print-architecture) || die 'dpkg --print-architecture failed'
-  curl -fsSL --proto '=https' --proto-redir '=https' "$DOCKER_REPO/$dist/gpg" -o "$tmp/docker.asc" ||
-    die "cannot download Docker's repository key ($DOCKER_REPO/$dist/gpg): nothing was changed"
-  docker_key_check "$tmp/docker.asc"
-  printf 'deb [arch=%s signed-by=/etc/apt/keyrings/docker.asc] %s/%s %s stable\n' "$arch" "$DOCKER_REPO" "$dist" "$codename" > "$tmp/docker.list"
-  as_root install -m 0755 -d "$apt_dir/keyrings" || die "cannot create $apt_dir/keyrings"
-  as_root install -m 0644 "$tmp/docker.asc" "$apt_dir/keyrings/docker.asc" || docker_apt_undo "cannot install $apt_dir/keyrings/docker.asc"
-  as_root install -m 0644 "$tmp/docker.list" "$apt_dir/sources.list.d/docker.list" || docker_apt_undo "cannot write $apt_dir/sources.list.d/docker.list"
+  added=''
+  if [ -n "$apt_source" ]; then
+    say "using Docker's apt repository as already configured in $apt_source ($apt_source_signed): no second entry"
+  else
+    docker_apt_release
+    arch=$(dpkg --print-architecture) || die 'dpkg --print-architecture failed'
+    key="$apt_dir/keyrings/docker.asc"
+    if [ -e "$key" ]; then
+      docker_key_check "$key" "the existing $key"
+      say "using the key already in $key (not replaced)"
+    else
+      curl -fsSL --proto '=https' --proto-redir '=https' "$DOCKER_REPO/$dist/gpg" -o "$tmp/docker.asc" ||
+        die "cannot download Docker's repository key ($DOCKER_REPO/$dist/gpg): nothing was changed"
+      docker_key_check "$tmp/docker.asc" "the downloaded Docker repository key ($DOCKER_REPO/$dist/gpg)"
+      as_root install -m 0755 -d "$apt_dir/keyrings" || die "cannot create $apt_dir/keyrings"
+      as_root install -m 0644 "$tmp/docker.asc" "$key" || die "cannot install $key"
+      added="$added $key"
+    fi
+    printf 'deb [arch=%s signed-by=/etc/apt/keyrings/docker.asc] %s/%s %s stable\n' "$arch" "$DOCKER_REPO" "$dist" "$codename" > "$tmp/docker.list"
+    as_root install -m 0644 "$tmp/docker.list" "$apt_dir/sources.list.d/docker.list" || docker_apt_undo "cannot write $apt_dir/sources.list.d/docker.list"
+    added="$added $apt_dir/sources.list.d/docker.list"
+  fi
   apt_get update || docker_apt_undo "apt-get update failed with Docker's repository"
   # shellcheck disable=SC2086 # a list of package names
   apt_get install -y $DOCKER_PACKAGES || docker_apt_undo "apt-get install $DOCKER_PACKAGES failed"
 }
 
+# dnf 5 (Fedora 41+) adds a repository file with `config-manager addrepo --from-repofile=`, dnf 4 (and yum) with
+# `config-manager --add-repo`.
+dnf5() {
+  case "$("$dnf" --version 2>/dev/null | head -n 1)" in
+    dnf5* | 5.*) return 0 ;;
+  esac
+  return 1
+}
+dnf_addrepo_text() {
+  if dnf5; then
+    echo "$dnf config-manager addrepo --from-repofile=$DOCKER_REPO/$(docker_distro)/docker-ce.repo"
+  else
+    echo "$dnf config-manager --add-repo $DOCKER_REPO/$(docker_distro)/docker-ce.repo"
+  fi
+}
 docker_dnf_undo() {
-  as_root rm -f "$yum_repos/docker-ce.repo" || :
-  die "$1: removed $yum_repos/docker-ce.repo again, so dnf is as before"
+  if [ "$added_repo" = yes ]; then
+    as_root rm -f "$yum_repos/docker-ce.repo" || :
+    done_what="removed $yum_repos/docker-ce.repo, which this run added"
+  else
+    done_what='this run added no repository file'
+  fi
+  die "$1: $done_what. A failed package install may have left packages partly installed: check with sudo $dnf check"
 }
 install_rhel() {
   case " $pkgs " in
@@ -514,11 +581,19 @@ install_rhel() {
   # shellcheck disable=SC2086 # a list of package names
   [ -z "$pkgs" ] || as_root "$dnf" install -y $pkgs || die "$dnf install $pkgs failed"
   [ "$docker_repo" = yes ] || return 0
-  repo="$DOCKER_REPO/$(docker_distro)/docker-ce.repo"
-  as_root "$dnf" install -y dnf-plugins-core || die "$dnf install dnf-plugins-core failed"
-  # dnf 4, then dnf 5's syntax.
-  as_root "$dnf" config-manager --add-repo "$repo" 2>/dev/null || as_root "$dnf" config-manager addrepo --from-repofile="$repo" ||
-    docker_dnf_undo "cannot add Docker's repository ($repo)"
+  added_repo=no
+  if [ -f "$yum_repos/docker-ce.repo" ]; then
+    say "using Docker's dnf repository as already in $yum_repos/docker-ce.repo (not added again, not changed)"
+  else
+    repo="$DOCKER_REPO/$(docker_distro)/docker-ce.repo"
+    as_root "$dnf" install -y dnf-plugins-core || die "$dnf install dnf-plugins-core failed"
+    if dnf5; then
+      as_root "$dnf" config-manager addrepo --from-repofile="$repo" || { [ ! -f "$yum_repos/docker-ce.repo" ] || added_repo=yes; docker_dnf_undo "cannot add Docker's repository ($repo)"; }
+    else
+      as_root "$dnf" config-manager --add-repo "$repo" || { [ ! -f "$yum_repos/docker-ce.repo" ] || added_repo=yes; docker_dnf_undo "cannot add Docker's repository ($repo)"; }
+    fi
+    added_repo=yes
+  fi
   # shellcheck disable=SC2086 # a list of package names
   as_root "$dnf" install -y $DOCKER_PACKAGES || docker_dnf_undo "$dnf install $DOCKER_PACKAGES failed"
 }
@@ -911,6 +986,10 @@ main() {
   releases_api=${YODA_RELEASES_API:-}
   # Tests only: a directory standing for / (apt's and dnf's configuration under it).
   sysroot=${YODA_SYSROOT:-}
+  case "$sysroot" in
+    *[!A-Za-z0-9._/-]*) die "YODA_SYSROOT may hold only A-Z a-z 0-9 . _ - /: $sysroot" ;;
+  esac
+  apt_source=''
   apt_dir="$sysroot/etc/apt"
   yum_repos="$sysroot/etc/yum.repos.d"
   want_latest=no

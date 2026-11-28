@@ -1206,6 +1206,7 @@ esac`)
       // A package manager that "installs" what it is asked for: the tools appear on PATH.
       const pm = `echo "$(basename "$0") $*" >> "$FAKE/sys-calls"
 case "$1" in
+  --version) if [ -n "\${FAKE_DNF5:-}" ]; then echo 'dnf5 version 5.2.5.0'; else echo '4.18.0'; fi; exit 0 ;;
   info | show) exit "\${FAKE_NO_MINISIGN_PKG:-0}" ;;
   install) ;;
   *) exit 0 ;;
@@ -1285,7 +1286,7 @@ install:   sudo apt-get install -y ca-certificates curl minisign
 install:   Docker's apt repository (https://download.docker.com/linux/ubuntu, release noble): download its GPG key
 install:     (https://download.docker.com/linux/ubuntu/gpg; fingerprint 9DC858229FC7DD38854AE2D88D81803C0EBFCD88, checked when gpg is here) into ${apt}/keyrings/docker.asc,
 install:     write ${apt}/sources.list.d/docker.list, sudo apt-get update, sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-install:     (if that fails, both files are removed again)
+install:     (if that fails, the files this run added are removed again)
 install:   sudo usermod -aG docker tester   (the docker group is root-equivalent: whoever is in it controls this host;`)
       expect(r.out).toContain('Install them now? There is no terminal to ask on (piped without one, or unattended), and install.sh never assumes yes: run it again with --yes')
       // Nothing changed; only the release file of Docker's repository was looked at (curl is here).
@@ -1416,7 +1417,7 @@ install:   sudo usermod -aG docker tester   (the docker group is root-equivalent
         const bad = host({ os: UBUNTU, env: { FAKE_KEY: '<html>not a key</html>' } })
         let r = await bad.go(['--yes'])
         expect(r.code).toBe(1)
-        expect(r.out).toContain('is not a PGP public key: nothing was changed')
+        expect(r.out).toContain('the downloaded Docker repository key (https://download.docker.com/linux/ubuntu/gpg) is not a PGP public key: install.sh changed nothing')
         expect(bad.log('sudo-calls')).not.toContain('docker.asc')
         clean(bad)
         done(bad)
@@ -1429,27 +1430,88 @@ install:   sudo usermod -aG docker tester   (the docker group is root-equivalent
             expect(r.out).toContain("Docker's repository key: fingerprint 9DC858229FC7DD38854AE2D88D81803C0EBFCD88 (checked with gpg)")
           } else {
             expect(r.code).toBe(1)
-            expect(r.out).toContain("the downloaded Docker repository key is not Docker's (fingerprint 9DC858229FC7DD38854AE2D88D81803C0EBFCD88; got: 0000000000000000000000000000000000000000): nothing was changed")
+            expect(r.out).toContain("the downloaded Docker repository key (https://download.docker.com/linux/ubuntu/gpg) is not Docker's (fingerprint 9DC858229FC7DD38854AE2D88D81803C0EBFCD88; got: 0000000000000000000000000000000000000000): install.sh changed nothing (an existing key is never replaced")
             clean(h)
           }
           expect(h.log('sys-calls')).toMatch(/gpg --batch --show-keys --with-colons \S+\/docker\.asc/)
           done(h)
         }
-      })
+      }, 30_000)
 
       it.each([
-        ['a .list without signed-by (the old apt-key way)', 'sources.list.d/docker-old.list', 'deb [arch=amd64] https://download.docker.com/linux/ubuntu noble stable\n', /without signed-by/],
-        ['a deb822 .sources with its own Signed-By', 'sources.list.d/docker.sources', 'Types: deb\nURIs: https://download.docker.com/linux/ubuntu\nSuites: noble\nComponents: stable\nSigned-By: /usr/share/keyrings/docker.gpg\n', /with its own signed-by key/],
-      ])('never adds a second Docker source next to %s: it explains and stops', async (_name, file, content, how) => {
+        ['a .list without signed-by (the old apt-key way)', 'sources.list.d/docker-old.list', 'deb [arch=amd64] https://download.docker.com/linux/ubuntu noble stable\n', 'without signed-by (the old apt-key keyring)'],
+        ['a deb822 .sources with its own Signed-By', 'sources.list.d/docker.sources', 'Types: deb\nURIs: https://download.docker.com/linux/ubuntu\nSuites: noble\nComponents: stable\nSigned-By: /usr/share/keyrings/docker.gpg\n', 'with its own signed-by key'],
+        ['a docker.list of older Docker docs (signed-by=…/docker.gpg)', 'sources.list.d/docker.list', 'deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu noble stable\n', 'with its own signed-by key'],
+      ])('uses %s as it is (the upgrade path): no second entry, nothing of it changed', async (_name, file, content, how) => {
         const h = host({ os: UBUNTU })
         writeFileSync(join(apt(h), file), content)
         const r = await h.go(['--yes'])
+        expect(r.code, r.out).toBe(0)
+        expect(r.out).toContain(`Docker's apt repository as already configured in ${join(apt(h), file)} (${how}), used as it is:`)
+        expect(r.out).toContain(`using Docker's apt repository as already configured in ${join(apt(h), file)} (${how}): no second entry`)
+        expect(readFileSync(join(apt(h), file), 'utf8')).toBe(content)
+        if (!file.endsWith('docker.list')) expect(existsSync(join(apt(h), 'sources.list.d/docker.list'))).toBe(false)
+        expect(existsSync(join(apt(h), 'keyrings/docker.asc'))).toBe(false)
+        // No key download, no Release check, nothing installed into apt's configuration.
+        expect(h.log('sys-calls')).not.toContain('download.docker.com')
+        expect(h.log('sudo-calls')).not.toMatch(/^install /m)
+        expect(h.log('sudo-calls')).toContain('apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin')
+        done(h)
+      })
+
+      it('a deb822 stanza with Enabled: no does not count: install.sh adds its own docker.list', async () => {
+        const h = host({ os: UBUNTU })
+        const off = 'Types: deb\nURIs: https://download.docker.com/linux/ubuntu\nSuites: noble\nComponents: stable\nEnabled: no\n'
+        writeFileSync(join(apt(h), 'sources.list.d/docker.sources'), off)
+        const r = await h.go(['--yes'])
+        expect(r.code, r.out).toBe(0)
+        expect(existsSync(join(apt(h), 'sources.list.d/docker.list'))).toBe(true)
+        expect(readFileSync(join(apt(h), 'sources.list.d/docker.sources'), 'utf8')).toBe(off)
+        done(h)
+      })
+
+      it('never overwrites a docker.list without an enabled Docker entry', async () => {
+        const h = host({ os: UBUNTU })
+        writeFileSync(join(apt(h), 'sources.list.d/docker.list'), '# deb https://download.docker.com/linux/ubuntu noble stable\n')
+        const r = await h.go(['--yes'])
         expect(r.code).toBe(1)
-        expect(r.out).toContain(`Docker's apt repository is already configured in ${join(apt(h), file)}`)
-        expect(r.out).toMatch(how)
-        expect(r.out).toContain('install.sh does not add a second')
+        expect(r.out).toContain('docker.list exists, without an enabled download.docker.com entry: install.sh does not overwrite it.')
+        expect(readFileSync(join(apt(h), 'sources.list.d/docker.list'), 'utf8')).toBe('# deb https://download.docker.com/linux/ubuntu noble stable\n')
         expect(h.log('sudo-calls')).toBe('')
+        done(h)
+      })
+
+      it('a failure leaves an existing Docker source exactly as it was (it removes only what the run added)', async () => {
+        const h = host({ os: UBUNTU })
+        const own = 'deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu noble stable\n'
+        writeFileSync(join(apt(h), 'sources.list.d/docker.list'), own)
+        stub(h.s.dir, 'apt-get', `echo "apt-get $*" >> "$FAKE/sys-calls"
+case " $* " in *" docker-ce "*) exit 100 ;; esac
+[ "$1" = install ] || exit 0
+for p; do case "$p" in minisign) ln -sf '${realMinisign}' "$FAKE/bin/minisign" ;; esac; done`)
+        const r = await h.go(['--yes'])
+        expect(r.code).toBe(1)
+        expect(r.out).toContain("apt-get install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin failed: this run added nothing to apt's configuration. A failed package install may have left packages partly installed: check with sudo apt-get -f install")
+        expect(readFileSync(join(apt(h), 'sources.list.d/docker.list'), 'utf8')).toBe(own)
+        expect(h.log('sudo-calls')).not.toMatch(/^rm /m)
+        done(h)
+      })
+
+      it('keeps an existing keyrings/docker.asc (checked, never replaced), and on a failure removes only its own docker.list', async () => {
+        const h = host({ os: UBUNTU })
+        const key = '-----BEGIN PGP PUBLIC KEY BLOCK-----\nthe one that was there\n'
+        writeFileSync(join(apt(h), 'keyrings/docker.asc'), key)
+        stub(h.s.dir, 'apt-get', `echo "apt-get $*" >> "$FAKE/sys-calls"
+if [ -f "$YODA_SYSROOT/etc/apt/sources.list.d/docker.list" ] && [ "$1" = update ]; then exit 100; fi
+[ "$1" = install ] || exit 0
+for p; do case "$p" in minisign) ln -sf '${realMinisign}' "$FAKE/bin/minisign" ;; esac; done`)
+        const r = await h.go(['--yes'])
+        expect(r.code).toBe(1)
+        expect(r.out).toContain(`using the key already in ${join(apt(h), 'keyrings/docker.asc')} (not replaced)`)
+        expect(r.out).toContain(`removed what this run added (${join(apt(h), 'sources.list.d/docker.list')})`)
+        expect(readFileSync(join(apt(h), 'keyrings/docker.asc'), 'utf8')).toBe(key)
         expect(existsSync(join(apt(h), 'sources.list.d/docker.list'))).toBe(false)
+        expect(h.log('sys-calls')).not.toContain('/gpg -o ')
         done(h)
       })
 
@@ -1475,8 +1537,8 @@ fi
 for p; do case "$p" in minisign) ln -sf '${realMinisign}' "$FAKE/bin/minisign" ;; esac; done`)
         const r = await h.go(['--yes'])
         expect(r.code).toBe(1)
-        expect(r.out).toContain(`removed ${join(apt(h), 'sources.list.d/docker.list')} and ${join(apt(h), 'keyrings/docker.asc')} again, so apt is as before`)
-        expect(h.log('sudo-calls')).toContain(`rm -f ${join(apt(h), 'sources.list.d/docker.list')} ${join(apt(h), 'keyrings/docker.asc')}`)
+        expect(r.out).toContain(`removed what this run added (${join(apt(h), 'keyrings/docker.asc')} ${join(apt(h), 'sources.list.d/docker.list')}). A failed package install may have left packages partly installed`)
+        expect(h.log('sudo-calls')).toContain(`rm -f ${join(apt(h), 'keyrings/docker.asc')} ${join(apt(h), 'sources.list.d/docker.list')}`)
         clean(h)
         done(h)
       })
@@ -1493,8 +1555,40 @@ exit 0`)
         const r = await h.go(['--yes'])
         expect(r.code).toBe(1)
         const repo = join(h.s.dir, 'root/etc/yum.repos.d/docker-ce.repo')
-        expect(r.out).toContain(`removed ${repo} again, so dnf is as before`)
+        expect(r.out).toContain(`removed ${repo}, which this run added. A failed package install may have left packages partly installed`)
         expect(existsSync(repo)).toBe(false)
+        done(h)
+      })
+
+      it('uses an existing docker-ce.repo as it is: not added again, not deleted on a failure', async () => {
+        const h = host({ os: ROCKY })
+        const repo = join(h.s.dir, 'root/etc/yum.repos.d/docker-ce.repo')
+        writeFileSync(repo, '[docker-ce-stable]\nbaseurl=https://download.docker.com/linux/centos/$releasever/$basearch/stable\n')
+        stub(h.s.dir, 'dnf', `echo "dnf $*" >> "$FAKE/sys-calls"
+case "$*" in
+  *docker-ce*) exit 1 ;;
+  'install -y '*minisign*) ln -sf '${realMinisign}' "$FAKE/bin/minisign" ;;
+esac
+exit 0`)
+        const r = await h.go(['--yes'])
+        expect(r.code).toBe(1)
+        expect(r.out).toContain(`Docker's dnf repository as already in ${repo}, used as it is`)
+        expect(r.out).toContain('this run added no repository file')
+        expect(readFileSync(repo, 'utf8')).toContain('[docker-ce-stable]')
+        expect(h.log('sudo-calls')).not.toContain('config-manager')
+        expect(h.log('sudo-calls')).not.toContain('dnf-plugins-core')
+        done(h)
+      })
+
+      it.each([
+        ['dnf 4', {}, 'dnf config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo'],
+        ['dnf 5 (Fedora 41+)', { FAKE_DNF5: '1' }, 'dnf config-manager addrepo --from-repofile=https://download.docker.com/linux/centos/docker-ce.repo'],
+      ])('adds the repository with %s syntax, in the plan and in what it runs', async (_name, env, cmd) => {
+        const h = host({ os: ROCKY, env })
+        const r = await h.go(['--yes'])
+        expect(r.code, r.out).toBe(0)
+        expect(r.out).toContain(`then sudo ${cmd}`)
+        expect(h.log('sudo-calls').split('\n')).toContain(cmd)
         done(h)
       })
 
@@ -1518,7 +1612,7 @@ install:   if dnf does not know minisign: sudo dnf install -y epel-release (EPEL
 install:   sudo dnf install -y ca-certificates curl minisign
 install:   sudo dnf install -y dnf-plugins-core, then sudo dnf config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
 install:     (Docker's repository; dnf imports its GPG key at the install), sudo dnf install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-install:     (if that fails, the repository file is removed again)
+install:     (if that fails, the repository file this run added is removed again)
 install:   sudo usermod -aG docker tester   (the docker group is root-equivalent`)
         done(h)
       })
