@@ -169,6 +169,13 @@
       "when": 1795704181254,
       "tag": "0023_break_glass",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1795837709968,
+      "tag": "0024_extension_grants",
+      "breakpoints": true
     }
   ]
 }

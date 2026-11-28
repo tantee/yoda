@@ -29,4 +29,25 @@ describe('RateLimiter', () => {
     now = 3_600_000 + 60_001 * 6
     expect(rl.take('a')).toEqual({ ok: true })
   })
+
+  it('check reports the wait without consuming', () => {
+    let now = 0
+    const rl = new RateLimiter([{ max: 2, windowMs: 60_000 }], () => now)
+    for (let i = 0; i < 5; i++) expect(rl.check('a')).toEqual({ ok: true })
+    expect(rl.take('a')).toEqual({ ok: true })
+    expect(rl.take('a')).toEqual({ ok: true })
+    now = 10_000
+    expect(rl.check('a')).toEqual({ ok: false, retryAfter: 50 })
+    expect(rl.check('b')).toEqual({ ok: true })
+    now = 60_001
+    expect(rl.check('a')).toEqual({ ok: true })
+  })
+
+  it('check after take sees the take', () => {
+    const rl = new RateLimiter([{ max: 1, windowMs: 60_000 }], () => 0)
+    expect(rl.check('a')).toEqual({ ok: true })
+    expect(rl.take('a')).toEqual({ ok: true })
+    expect(rl.check('a')).toEqual({ ok: false, retryAfter: 60 })
+    expect(rl.take('a')).toEqual({ ok: false, retryAfter: 60 })
+  })
 })

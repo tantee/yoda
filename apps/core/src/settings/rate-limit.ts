@@ -18,12 +18,8 @@ export class RateLimiter {
   /** Counts one call for `key`, or says how many seconds until the next one is allowed. */
   take(key: string): { ok: true } | { ok: false; retryAfter: number } {
     const now = this.now()
-    const kept = (this.hits.get(key) ?? []).filter((t) => t > now - this.longest)
-    let wait = 0
-    for (const l of this.limits) {
-      const inWindow = kept.filter((t) => t > now - l.windowMs)
-      if (inWindow.length >= l.max) wait = Math.max(wait, inWindow[inWindow.length - l.max]! + l.windowMs - now)
-    }
+    const kept = this.kept(key, now)
+    const wait = this.wait(kept, now)
     if (wait > 0) {
       this.hits.set(key, kept)
       return { ok: false, retryAfter: Math.max(1, Math.ceil(wait / 1000)) }
@@ -33,5 +29,25 @@ export class RateLimiter {
     // Keeps the map small: drop keys with nothing left in any window.
     if (this.hits.size > 1000) for (const [k, ts] of this.hits) if (!ts.some((t) => t > now - this.longest)) this.hits.delete(k)
     return { ok: true }
+  }
+
+  /** As `take`, but never records a call: for limits that count only failures, checked before the attempt. */
+  check(key: string): { ok: true } | { ok: false; retryAfter: number } {
+    const now = this.now()
+    const wait = this.wait(this.kept(key, now), now)
+    return wait > 0 ? { ok: false, retryAfter: Math.max(1, Math.ceil(wait / 1000)) } : { ok: true }
+  }
+
+  private kept(key: string, now: number): number[] {
+    return (this.hits.get(key) ?? []).filter((t) => t > now - this.longest)
+  }
+
+  private wait(kept: number[], now: number): number {
+    let wait = 0
+    for (const l of this.limits) {
+      const inWindow = kept.filter((t) => t > now - l.windowMs)
+      if (inWindow.length >= l.max) wait = Math.max(wait, inWindow[inWindow.length - l.max]! + l.windowMs - now)
+    }
+    return wait
   }
 }
