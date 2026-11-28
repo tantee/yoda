@@ -569,7 +569,16 @@ type WfJob = {
   needs?: string | string[]
   permissions?: Record<string, string>
   env?: Record<string, string>
-  strategy?: { matrix?: { include?: { name: string; file: string; context: string }[] } }
+  'runs-on'?: string
+  strategy?: {
+    matrix?: {
+      include?: { name: string; file: string; context: string }[]
+      image?: { name: string; file: string; context: string }[]
+      arch?: { name: string; platform: string; runner: string }[]
+      name?: string[]
+    }
+  }
+  services?: Record<string, { image: string; ports?: string[] }>
   steps: Step[]
 }
 
@@ -618,12 +627,16 @@ describe('.github/workflows/release.yml (GitHub Releases + GHCR)', () => {
   })
 
   it('orders the jobs: images by digest, then the bundle pinning them is signed and verified, then tags, then the release', () => {
-    expect(Object.keys(jobs).sort()).toEqual(['bundle', 'images', 'images-dry', 'meta', 'release', 'tag'])
+    expect(Object.keys(jobs).sort()).toEqual(['bundle', 'images', 'images-dry', 'manifest', 'manifest-dry', 'meta', 'release', 'tag'])
     expect(jobs['images-dry']!.needs).toBe('meta')
     expect(jobs['images-dry']!.if).toBe(DRY)
     expect(jobs.images!.needs).toBe('meta')
     expect(jobs.images!.if).toBe(REAL)
-    expect(jobs.bundle!.needs).toEqual(['meta', 'images-dry', 'images'])
+    expect(jobs['manifest-dry']!.needs).toEqual(['meta', 'images-dry'])
+    expect(jobs['manifest-dry']!.if).toBe(DRY)
+    expect(jobs.manifest!.needs).toEqual(['meta', 'images'])
+    expect(jobs.manifest!.if).toBe(REAL)
+    expect(jobs.bundle!.needs).toEqual(['meta', 'manifest-dry', 'manifest'])
     expect(jobs.bundle!.if).toBe('${{ !cancelled() && !failure() }}')
     expect(jobs.tag!.needs).toEqual(['meta', 'bundle'])
     expect(jobs.tag!.if).toBe(REAL)
@@ -635,29 +648,30 @@ describe('.github/workflows/release.yml (GitHub Releases + GHCR)', () => {
     expect(wf.permissions).toEqual({})
     expect(jobs.meta!.permissions).toEqual({ contents: 'read' })
     expect(jobs['images-dry']!.permissions).toEqual({ contents: 'read' })
+    expect(jobs['manifest-dry']!.permissions).toEqual({ contents: 'read' })
     expect(jobs.bundle!.permissions).toEqual({ contents: 'read' })
     expect(jobs.images!.permissions).toEqual({ contents: 'read', packages: 'write' })
+    expect(jobs.manifest!.permissions).toEqual({ contents: 'read', packages: 'write' })
     expect(jobs.tag!.permissions).toEqual({ contents: 'read', packages: 'write' })
     expect(jobs.release!.permissions).toEqual({ contents: 'write' })
   })
 
   it('runs the signing and publishing jobs in the `release` environment (v* tags only); a dry run in none', () => {
-    for (const j of ['images', 'tag', 'release']) expect(jobs[j]!.environment, j).toBe('release')
+    for (const j of ['images', 'manifest', 'tag', 'release']) expect(jobs[j]!.environment, j).toBe('release')
     expect(jobs.bundle!.environment).toBe("${{ needs.meta.outputs.real == 'true' && 'release' || '' }}")
-    for (const j of ['meta', 'images-dry']) expect(jobs[j]!.environment, j).toBeUndefined()
+    for (const j of ['meta', 'images-dry', 'manifest-dry']) expect(jobs[j]!.environment, j).toBeUndefined()
   })
 
-  it('pins every action by full commit SHA, and BuildKit and binfmt by digest', () => {
+  it('pins every action by full commit SHA, and the BuildKit and registry images by digest', () => {
     const uses = Object.values(jobs).flatMap((j) => j.steps.map((s) => s.uses).filter(Boolean)) as string[]
     expect(uses.length).toBeGreaterThan(6)
     for (const u of uses) expect(u).toMatch(/^[\w-]+\/[\w-]+@[0-9a-f]{40}$/)
     for (const line of text.split('\n').filter((l) => /uses: /.test(l))) expect(line).toMatch(/@[0-9a-f]{40} # v\d+\.\d+\.\d+$/)
-    for (const j of ['images-dry', 'images']) {
+    for (const j of ['images-dry', 'images', 'manifest-dry', 'manifest']) {
       const buildx = step(j, (s) => !!s.uses?.startsWith('docker/setup-buildx-action@'))
       expect(String(buildx.with!['driver-opts'])).toMatch(/^image=moby\/buildkit:v\d+\.\d+\.\d+@sha256:[0-9a-f]{64}$/)
     }
-    const qemu = step('images', (s) => !!s.uses?.startsWith('docker/setup-qemu-action@'))
-    expect(String(qemu.with!.image)).toMatch(/^tonistiigi\/binfmt:qemu-v\d+\.\d+\.\d+@sha256:[0-9a-f]{64}$/)
+    expect(jobs['manifest-dry']!.services!.registry!.image).toMatch(/^registry:\d+\.\d+\.\d+@sha256:[0-9a-f]{64}$/)
   })
 
   it('keeps secrets out of the file and out of run scripts (they reach scripts as env only)', () => {
@@ -668,44 +682,91 @@ describe('.github/workflows/release.yml (GitHub Releases + GHCR)', () => {
     expect(text).not.toMatch(/\b\d{1,3}(\.\d{1,3}){3}\b/)
   })
 
-  it('builds the four images for amd64 and arm64: a release pushed by digest, without cache; a dry run never pushed', () => {
+  it('builds each of the four images natively per architecture (no QEMU): a release pushed by digest, without cache; a dry run never pushed', () => {
+    // v1.0.0: arm64 builds under QEMU hung (the portal's Nuxt build, then core's pnpm install); never emulate again.
+    expect(text).not.toMatch(/setup-qemu-action|binfmt/)
+    expect(text).not.toMatch(/outputs\.platforms/)
     for (const j of ['images-dry', 'images']) {
-      // A stuck build (v1.0.0: the arm64 portal under QEMU) fails well before GitHub's 6-hour job limit.
+      // A stuck build fails well before GitHub's 6-hour job limit.
       expect(jobs[j]!['timeout-minutes'], j).toBe(45)
-      const qemuStep = step(j, (s) => !!s.uses?.startsWith('docker/setup-qemu-action@'))
-      expect(qemuStep.with!.platforms, j).toBe('arm64')
-      const matrix = jobs[j]!.strategy!.matrix!.include!
-      expect(matrix.map((m) => m.name), j).toEqual(images)
-      expect(matrix.find((m) => m.name === 'backup')).toMatchObject({ file: 'ops/backup/Dockerfile', context: 'ops/backup' })
+      expect(jobs[j]!['runs-on'], j).toBe('${{ matrix.arch.runner }}')
+      const matrix = jobs[j]!.strategy!.matrix!
+      expect(matrix.image!.map((m) => m.name), j).toEqual(images)
+      expect(matrix.image!.find((m) => m.name === 'backup')).toMatchObject({ file: 'ops/backup/Dockerfile', context: 'ops/backup' })
+      expect(matrix.arch, j).toEqual([
+        { name: 'amd64', platform: 'linux/amd64', runner: 'ubuntu-24.04' },
+        { name: 'arm64', platform: 'linux/arm64', runner: 'ubuntu-24.04-arm' },
+      ])
       const build = step(j, (s) => !!s.uses?.startsWith('docker/build-push-action@'))
-      expect(build.with!.platforms).toBe('${{ needs.meta.outputs.platforms }}')
+      expect(build.with!.platforms, j).toBe('${{ matrix.arch.platform }}')
       expect(build.with!.push, j).toBeUndefined()
       expect(build.with!.tags, j).toBeUndefined()
       expect(String(build.with!.labels)).toContain('org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}')
-      const push = j === 'images' ? 'true' : 'false'
-      expect(build.with!.outputs).toBe(`type=image,name=\${{ needs.meta.outputs.prefix }}/\${{ matrix.name }},push-by-digest=true,name-canonical=true,push=${push}`)
-      const keep = step(j, (s) => s.name === 'keep the digest')
-      expect(keep.env).toEqual({ NAME: '${{ matrix.name }}', DIGEST: '${{ steps.build.outputs.digest }}' })
+      expect(String(build.with!.labels)).toContain('org.opencontainers.image.title=yoda-${{ matrix.image.name }}')
+      const keep = step(j, (s) => s.name === 'keep the ${{ matrix.arch.name }} digest')
+      expect(keep.env).toEqual({ NAME: '${{ matrix.image.name }}', ARCH: '${{ matrix.arch.name }}', DIGEST: '${{ steps.build.outputs.digest }}' })
       expect(keep.run).toContain("grep -Eqx 'sha256:[0-9a-f]{64}'")
-      expect(step(j, (s) => !!s.uses?.startsWith('actions/upload-artifact@')).with!.name).toBe('digest-${{ matrix.name }}')
+      // Per-architecture digests never match the bundle's digest-* pattern.
+      const up = jobs[j]!.steps.filter((s) => s.uses?.startsWith('actions/upload-artifact@')).map((s) => String(s.with!.name))
+      expect(up[0]).toBe('arch-digest-${{ matrix.image.name }}-${{ matrix.arch.name }}')
+      for (const n of up) expect(n).not.toMatch(/^digest-/)
     }
+    expect(step('images', (s) => !!s.uses?.startsWith('docker/build-push-action@')).with!.outputs).toBe(
+      'type=image,name=${{ needs.meta.outputs.prefix }}/${{ matrix.image.name }},push-by-digest=true,name-canonical=true,push=true',
+    )
+    // The dry run exports an OCI archive per architecture for manifest-dry; it pushes nowhere.
+    const dryBuild = step('images-dry', (s) => !!s.uses?.startsWith('docker/build-push-action@'))
+    expect(dryBuild.with!.outputs).toBe('type=oci,dest=${{ runner.temp }}/image.tar,name=${{ needs.meta.outputs.prefix }}/${{ matrix.image.name }}')
     // A release never reads the cache pull requests write.
     const real = step('images', (s) => !!s.uses?.startsWith('docker/build-push-action@'))
     expect(real.with!['no-cache']).toBe(true)
     expect(real.with!['cache-from']).toBeUndefined()
     expect(real.with!['cache-to']).toBeUndefined()
-    expect(step('images-dry', (s) => !!s.uses?.startsWith('docker/build-push-action@')).with!['cache-from']).toBe('type=gha,scope=${{ matrix.name }}')
-    // The dry run has no registry login.
-    expect(jobs['images-dry']!.steps.some((s) => s.uses?.startsWith('docker/login-action@'))).toBe(false)
-    const login = step('images', (s) => !!s.uses?.startsWith('docker/login-action@'))
-    expect(login.with).toMatchObject({ registry: 'ghcr.io', password: '${{ secrets.GITHUB_TOKEN }}' })
+    expect(dryBuild.with!['cache-from']).toBe('type=gha,scope=${{ matrix.image.name }}-${{ matrix.arch.name }}')
+    // The dry jobs have no registry login.
+    for (const j of ['images-dry', 'manifest-dry']) expect(jobs[j]!.steps.some((s) => s.uses?.startsWith('docker/login-action@')), j).toBe(false)
+    for (const j of ['images', 'manifest']) {
+      const login = step(j, (s) => !!s.uses?.startsWith('docker/login-action@'))
+      expect(login.with).toMatchObject({ registry: 'ghcr.io', password: '${{ secrets.GITHUB_TOKEN }}' })
+    }
     expect(wf.env).toEqual({ DOCKER_BUILD_RECORD_UPLOAD: 'false' })
-    // A dry run builds arm64 too, so an arm64-only problem shows on the pull request, not on the tag.
-    expect(meta().match(/^\s*platforms=.*$/gm)!.map((l) => l.trim())).toEqual(['platforms=linux/amd64,linux/arm64'])
     // The image prefix and tags match what install.sh and release.env use: ghcr.io/<owner>/yoda, version without v.
     expect(meta()).toContain(`echo "prefix=ghcr.io/$(printf '%s' "$REPO" | tr '[:upper:]' '[:lower:]')"`)
     expect(meta()).toContain('echo "tag=v$version"')
     expect(read('ops/install/install.sh')).toContain("DEFAULT_IMAGE_PREFIX='ghcr.io/tantee/yoda'")
+  })
+
+  it('merges the two architectures of each image by digest only (untagged), the same script in a release and a dry run', () => {
+    for (const j of ['manifest', 'manifest-dry']) {
+      expect(jobs[j]!.strategy!.matrix!.name, j).toEqual(images)
+      expect(jobs[j]!['runs-on'], j).toBe('ubuntu-24.04')
+      expect(jobs[j]!['timeout-minutes'], j).toBe(20)
+      const dl = jobs[j]!.steps.filter((s) => s.uses?.startsWith('actions/download-artifact@')).map((s) => s.with!.pattern)
+      expect(dl, j).toContain('arch-digest-${{ matrix.name }}-*')
+      const merge = step(j, (s) => s.id === 'merge')
+      expect(merge.env, j).toEqual({ NAME: '${{ matrix.name }}', REPO: '${{ env.MERGE_PREFIX }}/${{ matrix.name }}' })
+      expect(merge.run).toContain('digest=$(sh .github/scripts/merge-image.sh "$REPO" "$amd64" "$arm64")')
+      const keep = step(j, (s) => s.name === 'keep the digest')
+      expect(keep.env).toEqual({ NAME: '${{ matrix.name }}', DIGEST: '${{ steps.merge.outputs.digest }}' })
+      expect(step(j, (s) => !!s.uses?.startsWith('actions/upload-artifact@')).with!.name).toBe('digest-${{ matrix.name }}')
+    }
+    expect(jobs.manifest!.env).toEqual({ MERGE_PREFIX: '${{ needs.meta.outputs.prefix }}' })
+    // The dry run merges in a registry on its own runner, after checking the archives kept their build digests.
+    expect(jobs['manifest-dry']!.env).toEqual({ MERGE_PREFIX: 'localhost:5000/yoda' })
+    expect(jobs['manifest-dry']!.services!.registry!.ports).toEqual(['5000:5000'])
+    const copy = step('manifest-dry', (s) => /local registry/.test(s.name ?? ''))
+    expect(copy.run).toContain('skopeo copy --all --preserve-digests')
+    expect(copy.run).toMatch(/\[ "\$got" = "\$want" \] \|\|/)
+    expect(wf.on.pull_request.paths).toContain('.github/scripts/**')
+
+    const sh = read('.github/scripts/merge-image.sh')
+    expect(sh).toMatch(/^set -eu$/m)
+    expect(sh).toContain('docker buildx imagetools create --dry-run "$repo@$amd64" "$repo@$arm64"')
+    // Pushed to its own digest, never a tag; then read back and checked.
+    expect(sh).toContain('docker buildx imagetools create --tag "$repo@$digest" "$repo@$amd64" "$repo@$arm64"')
+    expect(sh).not.toMatch(/--tag "\$repo:/)
+    expect(sh).toContain('docker buildx imagetools inspect --raw "$repo@$digest"')
+    expect(sh).toContain('[ "$platforms" = "linux/amd64,linux/arm64" ]')
   })
 
   it('writes the pushed digests into the bundle before signing it', () => {

@@ -2,20 +2,21 @@
 # release bundle as the GitHub Release's assets, the files install.sh downloads by default.
 #
 # - Only a pushed `v<version>` tag (e.g. v1.0.0, v1.1.0-rc.1) on a commit of main is a real release: images for
-#   linux/amd64 and linux/arm64 pushed by digest, untagged; the bundle pins those digests (bundle.env) and is
+#   linux/amd64 and linux/arm64, each built on its native runner (no QEMU) and merged into one index per image,
+#   all pushed by digest, untagged; the bundle pins those digests (bundle.env) and is
 #   signed with the MINISIGN_SECRET_KEY secret of the `release` environment (the job fails without it), then
 #   checked against the public key embedded in install.sh; only then the images get their tags, <version> (no
 #   `v`, the YODA_VERSION a host pins) and sha-<short sha>, and the GitHub Release is created with the
 #   CHANGELOG.md section of that version as its notes. The jobs that sign or publish run in the `release`
 #   environment, which only v* tags may use (docs/releasing.md, one-time setup).
 # - A pull request touching the release files, or a manual run (it has no inputs), is always a dry run: the same
-#   builds for linux/amd64 and linux/arm64, nothing pushed, no packages permission, the bundle signed with a throwaway key
-#   made in the job (never stored or uploaded), and install.sh verifying it end to end against a local HTTP server.
+#   builds for linux/amd64 and linux/arm64 on native runners, merged in a registry local to the job, nothing
+#   pushed, no packages permission, the bundle signed with a throwaway key made in the job (never stored or uploaded), and install.sh verifying it end to end against a local HTTP server.
 #
 # A tag that cannot be signed publishes no tag and no release (the untagged image digests it pushed are unused).
 # A failed real run is recovered with "Re-run failed jobs", which reuses the signed bundle and the digests.
 # An internal mirror (the GitLab pipeline, .gitlab-ci.yml) stays possible: install.sh --base-url / --image-prefix.
-# Actions are pinned by full commit SHA (the comment names the release), BuildKit and binfmt images by digest
+# Actions are pinned by full commit SHA (the comment names the release), the BuildKit and registry images by digest
 # (the comment or tag names the version); bump them deliberately (docs/releasing.md, "Pinned build inputs").
 name: Release
 
@@ -25,6 +26,7 @@ on:
   pull_request:
     paths:
       - .github/workflows/release.yml
+      - .github/scripts/**
       - ops/install/**
       - ops/deploy/**
       - ops/backup/**
@@ -58,7 +60,6 @@ jobs:
       prerelease: ${{ steps.meta.outputs.prerelease }}
       prefix: ${{ steps.meta.outputs.prefix }}
       sha_tag: ${{ steps.meta.outputs.sha_tag }}
-      platforms: ${{ steps.meta.outputs.platforms }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -110,9 +111,6 @@ jobs:
             latest=$(sed -n 's/^## \([0-9][0-9A-Za-z.-]*\).*$/\1/p' CHANGELOG.md | head -n 1)
             sh ops/install/release-notes.sh "$latest" > /dev/null
           fi
-          # A dry run builds what a release builds, arm64 included, so a slow or broken arm64 build shows up on the
-          # pull request and not on the tag.
-          platforms=linux/amd64,linux/arm64
           {
             echo "real=$real"
             echo "version=$version"
@@ -120,15 +118,15 @@ jobs:
             echo "prerelease=$prerelease"
             echo "prefix=ghcr.io/$(printf '%s' "$REPO" | tr '[:upper:]' '[:lower:]')"
             echo "sha_tag=sha-$(printf '%s' "$GITHUB_SHA" | cut -c1-7)"
-            echo "platforms=$platforms"
           } | tee -a "$GITHUB_OUTPUT"
 
-  # Dry runs only: no packages permission, nothing pushed. The digests (from BuildKit, of the images it would push)
-  # exercise the same pinning path as a release.
+  # Dry runs only: no packages permission, nothing pushed to ghcr.io. Each image is built natively per architecture,
+  # exported as an OCI archive, and merged (manifest-dry) in a registry local to that job: the same merge script and
+  # the same digests as a release.
   images-dry:
     if: needs.meta.outputs.real != 'true'
     needs: meta
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.arch.runner }}
     # A build normally takes minutes; fail long before the 6-hour job limit.
     timeout-minutes: 45
     permissions:
@@ -136,44 +134,131 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
+        image:
           - { name: core, file: apps/core/Dockerfile, context: . }
           - { name: portal, file: apps/portal/Dockerfile, context: . }
           - { name: runner, file: apps/runner/Dockerfile, context: . }
           - { name: backup, file: ops/backup/Dockerfile, context: ops/backup }
+        # Each architecture on its own native runner: no QEMU (v1.0.0: the arm64 builds under emulation hung).
+        arch:
+          - { name: amd64, platform: linux/amd64, runner: ubuntu-24.04 }
+          - { name: arm64, platform: linux/arm64, runner: ubuntu-24.04-arm }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: QEMU (linux/arm64)
-        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
-        with:
-          image: tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
-          platforms: arm64
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
           driver-opts: image=moby/buildkit:v0.35.1@sha256:baf6138eb8c37644800c7c913fba051e840ebb9ba13eaf92d92ef9a1712d0b4c
       - id: build
-        name: build ${{ matrix.name }}
+        name: build ${{ matrix.image.name }} for ${{ matrix.arch.platform }}
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
-          context: ${{ matrix.context }}
-          file: ${{ matrix.file }}
-          platforms: ${{ needs.meta.outputs.platforms }}
-          outputs: type=image,name=${{ needs.meta.outputs.prefix }}/${{ matrix.name }},push-by-digest=true,name-canonical=true,push=false
+          context: ${{ matrix.image.context }}
+          file: ${{ matrix.image.file }}
+          platforms: ${{ matrix.arch.platform }}
+          outputs: type=oci,dest=${{ runner.temp }}/image.tar,name=${{ needs.meta.outputs.prefix }}/${{ matrix.image.name }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.title=yoda-${{ matrix.name }}
+            org.opencontainers.image.title=yoda-${{ matrix.image.name }}
             org.opencontainers.image.version=${{ needs.meta.outputs.version }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.licenses=Apache-2.0
           # Pull requests share this cache; a real release never reads it.
-          cache-from: type=gha,scope=${{ matrix.name }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+          cache-from: type=gha,scope=${{ matrix.image.name }}-${{ matrix.arch.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image.name }}-${{ matrix.arch.name }}
+      - name: keep the ${{ matrix.arch.name }} digest
+        env:
+          NAME: ${{ matrix.image.name }}
+          ARCH: ${{ matrix.arch.name }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -eu
+          printf '%s\n' "$DIGEST" | grep -Eqx 'sha256:[0-9a-f]{64}' || { echo "::error::No image digest for $NAME ($ARCH): $DIGEST"; exit 1; }
+          mkdir -p "$RUNNER_TEMP/arch-digests"
+          printf '%s\n' "$DIGEST" > "$RUNNER_TEMP/arch-digests/$NAME-$ARCH"
+      - name: keep the OCI archive
+        env:
+          NAME: ${{ matrix.image.name }}
+          ARCH: ${{ matrix.arch.name }}
+        run: mkdir -p "$RUNNER_TEMP/oci" && mv "$RUNNER_TEMP/image.tar" "$RUNNER_TEMP/oci/$NAME-$ARCH.tar"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: arch-digest-${{ matrix.image.name }}-${{ matrix.arch.name }}
+          path: ${{ runner.temp }}/arch-digests/${{ matrix.image.name }}-${{ matrix.arch.name }}
+          if-no-files-found: error
+          retention-days: 1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: oci-${{ matrix.image.name }}-${{ matrix.arch.name }}
+          path: ${{ runner.temp }}/oci/${{ matrix.image.name }}-${{ matrix.arch.name }}.tar
+          if-no-files-found: error
+          retention-days: 1
+
+  # Dry runs only: the two architectures of each image, copied with their digests into a throwaway registry on this
+  # runner, merged by the same script a release uses.
+  manifest-dry:
+    if: needs.meta.outputs.real != 'true'
+    needs: [meta, images-dry]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        name: [core, portal, runner, backup]
+    services:
+      registry:
+        image: registry:3.1.2@sha256:82f6ff4a7f982960c8aa51617fea3aabc485df6e55cce80d22deb1de36f1bc3c
+        ports: ['5000:5000']
+    env:
+      MERGE_PREFIX: localhost:5000/yoda
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          driver-opts: image=moby/buildkit:v0.35.1@sha256:baf6138eb8c37644800c7c913fba051e840ebb9ba13eaf92d92ef9a1712d0b4c
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: oci-${{ matrix.name }}-*
+          path: ${{ runner.temp }}/oci
+          merge-multiple: true
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: arch-digest-${{ matrix.name }}-*
+          path: ${{ runner.temp }}/arch-digests
+          merge-multiple: true
+      - name: copy both architectures into the local registry, digests unchanged
+        env:
+          NAME: ${{ matrix.name }}
+        run: |
+          set -eu
+          command -v skopeo > /dev/null || { sudo apt-get update && sudo apt-get install -y --no-install-recommends skopeo; }
+          for arch in amd64 arm64; do
+            want=$(cat "$RUNNER_TEMP/arch-digests/$NAME-$arch")
+            skopeo copy --all --preserve-digests --dest-tls-verify=false \
+              "oci-archive:$RUNNER_TEMP/oci/$NAME-$arch.tar" "docker://$MERGE_PREFIX/$NAME:$arch"
+            got="sha256:$(skopeo inspect --raw --tls-verify=false "docker://$MERGE_PREFIX/$NAME:$arch" | sha256sum | cut -d' ' -f1)"
+            [ "$got" = "$want" ] || { echo "::error::$NAME $arch: the local registry has $got, the build said $want"; exit 1; }
+          done
+      - id: merge
+        name: merge ${{ matrix.name }} (linux/amd64 + linux/arm64) by digest
+        env:
+          NAME: ${{ matrix.name }}
+          REPO: ${{ env.MERGE_PREFIX }}/${{ matrix.name }}
+        run: |
+          set -eu
+          amd64=$(cat "$RUNNER_TEMP/arch-digests/$NAME-amd64")
+          arm64=$(cat "$RUNNER_TEMP/arch-digests/$NAME-arm64")
+          digest=$(sh .github/scripts/merge-image.sh "$REPO" "$amd64" "$arm64")
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
       - name: keep the digest
         env:
           NAME: ${{ matrix.name }}
-          DIGEST: ${{ steps.build.outputs.digest }}
+          DIGEST: ${{ steps.merge.outputs.digest }}
         run: |
           set -eu
           printf '%s\n' "$DIGEST" | grep -Eqx 'sha256:[0-9a-f]{64}' || { echo "::error::No image digest for $NAME: $DIGEST"; exit 1; }
@@ -186,12 +271,13 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # Real releases: pushed by digest only, untagged; the tags come after the bundle pinning these digests is signed.
-  # No build cache: a release never reads what pull requests wrote.
+  # Real releases: each architecture built on its native runner and pushed by digest only, untagged; the tags come
+  # after the bundle pinning the merged digests is signed. No build cache: a release never reads what pull requests
+  # wrote.
   images:
     if: needs.meta.outputs.real == 'true'
     needs: meta
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.arch.runner }}
     # A build normally takes minutes; fail long before the 6-hour job limit (re-run failed jobs after a fix).
     timeout-minutes: 45
     environment: release
@@ -201,20 +287,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
+        image:
           - { name: core, file: apps/core/Dockerfile, context: . }
           - { name: portal, file: apps/portal/Dockerfile, context: . }
           - { name: runner, file: apps/runner/Dockerfile, context: . }
           - { name: backup, file: ops/backup/Dockerfile, context: ops/backup }
+        # Each architecture on its own native runner: no QEMU (v1.0.0: the arm64 builds under emulation hung).
+        arch:
+          - { name: amd64, platform: linux/amd64, runner: ubuntu-24.04 }
+          - { name: arm64, platform: linux/arm64, runner: ubuntu-24.04-arm }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: QEMU (linux/arm64)
-        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
-        with:
-          image: tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
-          platforms: arm64
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
           driver-opts: image=moby/buildkit:v0.35.1@sha256:baf6138eb8c37644800c7c913fba051e840ebb9ba13eaf92d92ef9a1712d0b4c
@@ -225,25 +310,87 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - id: build
-        name: build and push ${{ matrix.name }} by digest
+        name: build and push ${{ matrix.image.name }} for ${{ matrix.arch.platform }} by digest
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
-          context: ${{ matrix.context }}
-          file: ${{ matrix.file }}
-          platforms: ${{ needs.meta.outputs.platforms }}
-          outputs: type=image,name=${{ needs.meta.outputs.prefix }}/${{ matrix.name }},push-by-digest=true,name-canonical=true,push=true
+          context: ${{ matrix.image.context }}
+          file: ${{ matrix.image.file }}
+          platforms: ${{ matrix.arch.platform }}
+          outputs: type=image,name=${{ needs.meta.outputs.prefix }}/${{ matrix.image.name }},push-by-digest=true,name-canonical=true,push=true
           # The source label links the package to this repository on GitHub.
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.title=yoda-${{ matrix.name }}
+            org.opencontainers.image.title=yoda-${{ matrix.image.name }}
             org.opencontainers.image.version=${{ needs.meta.outputs.version }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.licenses=Apache-2.0
           no-cache: true
+      - name: keep the ${{ matrix.arch.name }} digest
+        env:
+          NAME: ${{ matrix.image.name }}
+          ARCH: ${{ matrix.arch.name }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -eu
+          printf '%s\n' "$DIGEST" | grep -Eqx 'sha256:[0-9a-f]{64}' || { echo "::error::No image digest for $NAME ($ARCH): $DIGEST"; exit 1; }
+          mkdir -p "$RUNNER_TEMP/arch-digests"
+          printf '%s\n' "$DIGEST" > "$RUNNER_TEMP/arch-digests/$NAME-$ARCH"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: arch-digest-${{ matrix.image.name }}-${{ matrix.arch.name }}
+          path: ${{ runner.temp }}/arch-digests/${{ matrix.image.name }}-${{ matrix.arch.name }}
+          if-no-files-found: error
+          retention-days: 7
+
+  # Real releases: the multi-arch index of each image, pushed by digest only (untagged), from the two digests above.
+  manifest:
+    if: needs.meta.outputs.real == 'true'
+    needs: [meta, images]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: release
+    permissions:
+      contents: read
+      packages: write # push the index to ghcr.io
+    strategy:
+      fail-fast: false
+      matrix:
+        name: [core, portal, runner, backup]
+    env:
+      MERGE_PREFIX: ${{ needs.meta.outputs.prefix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          driver-opts: image=moby/buildkit:v0.35.1@sha256:baf6138eb8c37644800c7c913fba051e840ebb9ba13eaf92d92ef9a1712d0b4c
+      - name: log in to ghcr.io
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: arch-digest-${{ matrix.name }}-*
+          path: ${{ runner.temp }}/arch-digests
+          merge-multiple: true
+      - id: merge
+        name: merge ${{ matrix.name }} (linux/amd64 + linux/arm64) by digest
+        env:
+          NAME: ${{ matrix.name }}
+          REPO: ${{ env.MERGE_PREFIX }}/${{ matrix.name }}
+        run: |
+          set -eu
+          amd64=$(cat "$RUNNER_TEMP/arch-digests/$NAME-amd64")
+          arm64=$(cat "$RUNNER_TEMP/arch-digests/$NAME-arm64")
+          digest=$(sh .github/scripts/merge-image.sh "$REPO" "$amd64" "$arm64")
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
       - name: keep the digest
         env:
           NAME: ${{ matrix.name }}
-          DIGEST: ${{ steps.build.outputs.digest }}
+          DIGEST: ${{ steps.merge.outputs.digest }}
         run: |
           set -eu
           printf '%s\n' "$DIGEST" | grep -Eqx 'sha256:[0-9a-f]{64}' || { echo "::error::No image digest for $NAME: $DIGEST"; exit 1; }
@@ -257,9 +404,9 @@ jobs:
           retention-days: 7
 
   bundle:
-    # After whichever image job ran (the other one is skipped).
+    # After whichever merge job ran (the other one is skipped).
     if: ${{ !cancelled() && !failure() }}
-    needs: [meta, images-dry, images]
+    needs: [meta, manifest-dry, manifest]
     runs-on: ubuntu-24.04
     # The signing secrets live in the `release` environment, which only v* tags may use; a dry run uses none.
     environment: ${{ needs.meta.outputs.real == 'true' && 'release' || '' }}
