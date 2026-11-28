@@ -25,5 +25,7 @@ export function filterGrants(list: ExtensionGrant[], q: string): ExtensionGrant[
   return needle ? list.filter((g) => g.person.displayName.toLowerCase().includes(needle)) : list
 }
 
-/** The typed confirmation "Revoke all" asks for. */
+/** The typed confirmation "Revoke all" asks for (any case). */
 export const REVOKE_ALL_WORD = 'REVOKE'
+
+export const revokeAllTyped = (typed: string) => typed.trim().toUpperCase() === REVOKE_ALL_WORD

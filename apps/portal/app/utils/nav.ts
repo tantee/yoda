@@ -79,7 +79,7 @@ export function navCount(i: NavItem, counts: MeCounts | null): string | null {
   return capCount((counts as Record<string, number>)[i.count] ?? 0)
 }
 
-const STAFF_PREFIXES = ['/todo', '/discussions', '/agendas', '/status', '/projects', '/work-items', '/runners', '/admin', '/extension']
+const STAFF_PREFIXES = ['/todo', '/discussions', '/agendas', '/status', '/projects', '/work-items', '/runners', '/admin']
 
 export function isStaffPath(path: string): boolean {
   // A single task page (/todo/<id>) is also reached by requesters, from notifications and "answers".

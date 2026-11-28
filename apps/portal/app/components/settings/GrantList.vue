@@ -10,11 +10,14 @@ const api = useApi()
 const now = ref(new Date())
 const rows = computed(() => sortGrants(props.grants, now.value))
 const revoking = ref<ExtensionGrant | null>(null)
+/** Kept while the dialog closes, so its text never flashes empty. */
+const revokingLabel = ref('')
 const busy = ref(false)
 const error = ref('')
 
 function ask(g: ExtensionGrant) {
   error.value = ''
+  revokingLabel.value = g.browserLabel
   revoking.value = g
 }
 
@@ -28,6 +31,8 @@ async function revoke() {
     emit('changed')
   } catch (e) {
     error.value = t(errorKey(e))
+    // It may be gone already (revoked elsewhere): show the list as it is now.
+    emit('changed')
   } finally {
     busy.value = false
   }
@@ -58,7 +63,7 @@ async function revoke() {
     <ConfirmDialog
       :model-value="!!revoking"
       :title="t('grants.revokeTitle')"
-      :text="t('grants.revokeText', { browser: revoking?.browserLabel ?? '' })"
+      :text="t('grants.revokeText', { browser: revokingLabel })"
       :confirm-label="t('grants.revoke')"
       destructive
       :busy="busy"

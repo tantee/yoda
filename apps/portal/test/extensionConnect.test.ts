@@ -51,13 +51,17 @@ describe('the approve page', () => {
     const cfg = readFileSync(new URL('../nuxt.config.ts', import.meta.url), 'utf8')
     expect(cfg).toMatch(/'\/extension\/\*\*':\s*\{\s*headers:\s*\{[^}]*'Content-Security-Policy':\s*"frame-ancestors 'none'"[^}]*'X-Frame-Options':\s*'DENY'/)
   })
-  it('/extension is a staff path', () => {
-    expect(isStaffPath('/extension/connect')).toBe(true)
-    expect(forbiddenFor({ id: 'x', username: 'n', displayName: 'n', email: null, isStaff: false, isAdmin: false }, '/extension/connect')).toBe('staff')
+  it('every path refuses framing, not only /extension (case variants included)', () => {
+    const cfg = readFileSync(new URL('../nuxt.config.ts', import.meta.url), 'utf8')
+    expect(cfg).toMatch(/'\/\*\*':\s*\{\s*headers:\s*\{[^}]*"frame-ancestors 'none'"[^}]*'X-Frame-Options':\s*'DENY'/)
+  })
+  it('/extension/connect is not behind the staff guard: a requester gets the page and its own message', () => {
+    expect(isStaffPath('/extension/connect')).toBe(false)
+    expect(forbiddenFor({ id: 'x', username: 'n', displayName: 'n', email: null, isStaff: false, isAdmin: false }, '/extension/connect')).toBeNull()
   })
   it.each(['th.json', 'en.json'])('%s has the connect keys', (f) => {
     const l = load(f)
-    for (const k of ['title', 'intro', 'origin', 'extensionId', 'browser', 'mayDo', 'mayReport', 'mayListProjects', 'onlyAfterConnect', 'approve', 'cancel', 'notAllowed', 'notStaff', 'badQuery', 'failed', 'done']) {
+    for (const k of ['title', 'intro', 'origin', 'extensionId', 'browser', 'mayDo', 'mayReport', 'mayListProjects', 'onlyAfterConnect', 'approve', 'cancel', 'notAllowed', 'notStaff', 'badQuery', 'failed', 'done', 'signedInAs', 'backToExtension', 'rateLimited', 'disabled', 'framed', 'mayReadRules']) {
       expect(typeof lookup(l, `extension.connect.${k}`), k).toBe('string')
     }
   })
@@ -66,5 +70,7 @@ describe('the approve page', () => {
     for (const id of ['connect-approve', 'connect-cancel', 'connect-error']) expect(page).toContain(`data-testid="${id}"`)
     expect(page).not.toContain('v-html')
     expect(page).toContain('location.replace')
+    expect(page).toContain('window.top !== window.self')
+    expect(page).toContain('redirectTo.startsWith(')
   })
 })

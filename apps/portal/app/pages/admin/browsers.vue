@@ -1,17 +1,19 @@
 <script setup lang="ts">
 import type { ExtensionGrant } from '@yoda/shared'
-import { filterGrants, REVOKE_ALL_WORD } from '~/utils/grants'
+import { filterGrants, REVOKE_ALL_WORD, revokeAllTyped } from '~/utils/grants'
 
 /** Everyone's connected browsers (admins): filter by person, revoke one, or revoke all behind a typed confirm. */
-definePageMeta({ crumbs: [{ key: 'grants.adminTitle' }] })
 const { t } = useI18n()
 const api = useApi()
 const grants = ref<ExtensionGrant[]>([])
 const loaded = ref(false)
+const loading = ref(false)
 const loadFailure = ref<unknown>(null)
 const q = ref('')
 const activeOnly = ref(true)
 const shown = computed(() => filterGrants(grants.value, q.value))
+/** Something is filtered out, so "none" means "none match", not "none connected". */
+const filtered = computed(() => !!q.value?.trim() || activeOnly.value)
 
 const allOpen = ref(false)
 const typed = ref('')
@@ -19,15 +21,28 @@ const busy = ref(false)
 const allError = ref('')
 const notice = ref('')
 
+let seq = 0
 async function load() {
+  const mine = ++seq
+  loading.value = true
   try {
-    grants.value = await api<ExtensionGrant[]>(`/admin/extension-grants${activeOnly.value ? '?active=1' : ''}`)
+    const list = await api<ExtensionGrant[]>(`/admin/extension-grants${activeOnly.value ? '?active=1' : ''}`)
+    if (mine !== seq) return
+    grants.value = list
     loadFailure.value = null
   } catch (e) {
-    loadFailure.value = e
+    if (mine === seq) loadFailure.value = e
   } finally {
-    loaded.value = true
+    if (mine === seq) {
+      loaded.value = true
+      loading.value = false
+    }
   }
+}
+
+function clearFilters() {
+  q.value = ''
+  activeOnly.value = false
 }
 watch(activeOnly, load)
 
@@ -38,7 +53,7 @@ function openAll() {
 }
 
 async function revokeAll() {
-  if (typed.value.trim() !== REVOKE_ALL_WORD || busy.value) return
+  if (!revokeAllTyped(typed.value) || busy.value) return
   busy.value = true
   try {
     const { revoked } = await api<{ revoked: number }>('/admin/extension-grants/revoke-all', { method: 'POST' })
@@ -69,8 +84,11 @@ onMounted(load)
     </div>
     <ErrorState v-if="loadFailure" :error="loadFailure" @retry="load" />
     <SkeletonList v-else-if="!loaded" />
+    <EmptyState v-else-if="!shown.length && filtered" :title="t('grants.filterEmpty')" icon="mdi-filter-off-outline" data-testid="grants-filter-empty">
+      <v-btn variant="tonal" data-testid="grants-clear-filters" @click="clearFilters">{{ t('grants.clearFilters') }}</v-btn>
+    </EmptyState>
     <EmptyState v-else-if="!shown.length" :title="t('grants.empty')" icon="mdi-puzzle-outline" data-testid="grants-empty" />
-    <v-card v-else>
+    <v-card v-else :loading="loading">
       <SettingsGrantList :grants="shown" show-person :revoke-path="(g) => `/admin/extension-grants/${g.id}`" @changed="load" />
     </v-card>
 
@@ -82,7 +100,7 @@ onMounted(load)
       destructive
       :busy="busy"
       :dirty="!!typed"
-      :disabled="typed.trim() !== REVOKE_ALL_WORD"
+      :disabled="!revokeAllTyped(typed)"
       :error="allError"
       confirm-testid="grants-revoke-all-ok"
       cancel-testid="grants-revoke-all-keep"

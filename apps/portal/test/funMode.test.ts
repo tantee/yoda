@@ -218,6 +218,7 @@ describe('the gimmick stays on its own surfaces', () => {
       'app/pages/todo/index.vue todo-filter-empty': 'none',
       'app/pages/admin/people.vue people-empty': 'none',
       'app/pages/settings/browsers.vue grants-empty': 'none',
+      'app/pages/admin/browsers.vue grants-filter-empty': 'none',
       'app/pages/admin/browsers.vue grants-empty': 'none',
       'app/components/project/WorkItemsTab.vue items-empty': 'none',
       'app/components/project/WorkItemsTab.vue items-filter-empty': 'none',

@@ -2670,7 +2670,7 @@
       "extensionId": "Extension ID",
       "browser": "Browser",
       "mayDo": "Once approved, the extension can only",
-      "mayReport": "report defects in projects you are a member of",
+      "mayReport": "report defects, with attachments, in projects you are a member of",
       "mayListProjects": "list your projects",
       "onlyAfterConnect": "Approve only right after you clicked \"Connect\" in the extension yourself. If you did not, choose Cancel.",
       "approve": "Approve",
@@ -2679,7 +2679,13 @@
       "notStaff": "Only staff can connect the extension.",
       "badQuery": "This connect link is not valid. Start again from \"Connect\" in the extension.",
       "failed": "Could not connect. Please try again.",
-      "done": "Approved. Returning to the extension…"
+      "done": "Approved. Returning to the extension…",
+      "signedInAs": "Signed in as",
+      "backToExtension": "Back to the extension",
+      "rateLimited": "Too many attempts. Wait {s} seconds and try again.",
+      "disabled": "The extension is turned off in this Yoda. Contact your administrator.",
+      "framed": "This page cannot open inside another site. Start again from \"Connect\" in the extension.",
+      "mayReadRules": "read the URL rules of those projects, to pick the project for you"
     }
   },
   "grants": {
@@ -2701,7 +2707,7 @@
     "revokedAll": "{n} revoked",
     "filterPerson": "Filter by name",
     "activeOnly": "Active only",
-    "revokedReason": "Revoked {when}: {reason}",
+    "revokedReason": "Revoked {when} ({reason})",
     "reason": {
       "user": "by its owner",
       "admin": "by an admin",
@@ -2709,6 +2715,8 @@
       "reuse_detected": "token reuse detected",
       "extension_not_allowed": "extension no longer allowed",
       "not_staff": "no longer staff"
-    }
+    },
+    "filterEmpty": "No browsers match the filters",
+    "clearFilters": "Clear filters"
   }
 }

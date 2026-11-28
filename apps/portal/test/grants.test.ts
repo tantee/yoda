@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import type { ExtensionGrant } from '@yoda/shared'
 import { describe, expect, it } from 'vitest'
-import { filterGrants, grantStatus, sortGrants } from '../app/utils/grants'
+import { filterGrants, grantStatus, revokeAllTyped, sortGrants } from '../app/utils/grants'
 import { navItemsFor } from '../app/utils/nav'
 
 const NOW = new Date('2026-11-28T12:00:00Z')
@@ -39,6 +39,14 @@ describe('sortGrants', () => {
   })
 })
 
+describe('revokeAllTyped', () => {
+  it('needs the word, in any case', () => {
+    expect(revokeAllTyped(' revoke ')).toBe(true)
+    expect(revokeAllTyped('REVOKE')).toBe(true)
+    expect(revokeAllTyped('REVOK')).toBe(false)
+  })
+})
+
 describe('filterGrants', () => {
   it('filters by person name', () => {
     const a = grant({ person: { id: 'a', displayName: 'Somchai' } })
@@ -65,7 +73,7 @@ describe('navigation and strings', () => {
       'shell.connectedBrowsers',
       'grants.title', 'grants.adminTitle', 'grants.intro', 'grants.adminIntro', 'grants.empty', 'grants.created', 'grants.lastUsed', 'grants.never',
       'grants.revoke', 'grants.revokeTitle', 'grants.revokeText', 'grants.revokeAll', 'grants.revokeAllTitle', 'grants.revokeAllText',
-      'grants.revokeAllType', 'grants.revokedAll', 'grants.filterPerson', 'grants.activeOnly', 'grants.revokedReason',
+      'grants.revokeAllType', 'grants.revokedAll', 'grants.filterEmpty', 'grants.clearFilters', 'grants.filterPerson', 'grants.activeOnly', 'grants.revokedReason',
       'grants.reason.user', 'grants.reason.admin', 'grants.reason.admin_all', 'grants.reason.reuse_detected', 'grants.reason.extension_not_allowed', 'grants.reason.not_staff',
       'chip.grant.active', 'chip.grant.idle', 'chip.grant.revoked',
     ]
