@@ -16,7 +16,9 @@ import { extensionGrants, projectMembers, projectRepos, projects } from '../db/s
 import { exchangeCode, GrantError, issueAuthCode, listGrants, refreshFamily, refreshGrant, revokeAllGrants, revokeGrant } from '../extension/grants.js'
 import { extensionSetting, grantSettings } from '../extension/hook.js'
 import { extensionLimits, type ExtensionLimits } from '../extension/limits.js'
+import type { RateLimiter } from '../settings/rate-limit.js'
 import { VERSION } from '../version.js'
+import { extensionDefectRoutes } from './extension-defects.js'
 
 /** Every kind a staff member may file; "bug-fix request" is optional for the tester (D1). */
 const KINDS: DefectKind[] = ['defect', 'bug_fix_request']
@@ -27,11 +29,11 @@ const AdminListQuery = z.object({ active: z.string().optional() })
 const rateLimited = (retryAfter: number) => new HttpError(429, { error: 'rate_limited', retryAfter })
 const tokenRefused = (reason: GrantError['reason']) => new HttpError(401, { error: 'unauthorized', reason })
 
-function take(limiter: ExtensionLimits[keyof ExtensionLimits], key: string): void {
+function take(limiter: RateLimiter, key: string): void {
   const r = limiter.take(key)
   if (!r.ok) throw rateLimited(r.retryAfter)
 }
-function check(limiter: ExtensionLimits[keyof ExtensionLimits], key: string): void {
+function check(limiter: RateLimiter, key: string): void {
   const r = limiter.check(key)
   if (!r.ok) throw rateLimited(r.retryAfter)
 }
@@ -53,6 +55,8 @@ export function extensionRoutes(app: FastifyInstance, limits: ExtensionLimits = 
     if (!request.extension) throw new HttpError(401, { error: 'unauthorized' })
     return request.extension
   }
+  extensionDefectRoutes(app, limits)
+
   /** Grants whose last refresh asked for a portal sign-in, to log the refresh that follows it. */
   const awaitingReauth = new Set<string>()
 
