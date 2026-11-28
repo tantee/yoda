@@ -602,6 +602,15 @@ describe('.github/workflows/ci.yml', () => {
     expect((gh.jobs.build as unknown as { needs: string[] }).needs).toContain('extension')
   })
 
+  it('gitleaks allows the extension public key (the manifest key of every build) by its exact value only', () => {
+    const key = read('keys/yoda-reporter.pub').trim()
+    const toml = read('.gitleaks.toml')
+    const allowed = [...toml.matchAll(/'''([^']+)'''/g)].map((m) => m[1]!)
+    expect(allowed.some((re) => new RegExp(`^${re}$`).test(key))).toBe(true)
+    // Not a broad pattern: the allowed regex matches nothing but the key.
+    expect(allowed.some((re) => new RegExp(re).test('MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAzzzz'))).toBe(false)
+  })
+
   it('builds and checks the extension zip, and scans the release output with gitleaks', () => {
     const runs = (gh.jobs.extension as unknown as { steps: { run?: string }[] }).steps.map((s) => s.run ?? '')
     const zip = runs.findIndex((r) => /@yoda\/extension build:zip && pnpm --filter @yoda\/extension check:dist/.test(r))
