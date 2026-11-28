@@ -61,7 +61,8 @@ export async function createS3Storage(
       do {
         const res = await client.send(new ListObjectsV2Command({ Bucket, Prefix: k(prefix), ContinuationToken }))
         for (const o of res.Contents ?? []) {
-          if (o.Key && o.Key.startsWith(base)) yield { key: o.Key.slice(base.length), lastModified: o.LastModified ?? new Date(0) }
+          // An object without a time is never old enough to sweep.
+          if (o.Key && o.LastModified && o.Key.startsWith(base)) yield { key: o.Key.slice(base.length), lastModified: o.LastModified }
         }
         ContinuationToken = res.IsTruncated ? res.NextContinuationToken : undefined
       } while (ContinuationToken)

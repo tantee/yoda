@@ -176,6 +176,28 @@ describe('retention', () => {
     expect(await purgeExpired(deps, new Date('2026-11-28T00:00:00Z'))).toEqual({ media: 0, logs: 0 })
   })
 
+  it('an item closed, reopened and closed again counts from its last close', async () => {
+    const d = await defect()
+    await close(d.id, 'work_item.done', new Date('2020-01-01T00:00:00Z'))
+    await close(d.id, 'work_item.done', new Date('2026-11-01T00:00:00Z'))
+    expect(await purgeExpired(deps, new Date('2026-11-28T00:00:00Z'))).toEqual({ media: 0, logs: 0 })
+  })
+
+  it('one failing object never stops the run; the run still fails at the end', async () => {
+    const a = await defect()
+    const b = await defect()
+    for (const d of [a, b]) await close(d.id, 'work_item.done', new Date('2020-01-01T00:00:00Z'))
+    const badKey = (await row(a.shot)).storageKey
+    const remove = deps.storage.remove.bind(deps.storage)
+    deps.storage.remove = async (k) => {
+      if (k === badKey) throw new Error('403')
+      return remove(k)
+    }
+    await expect(purgeExpired(deps, new Date('2026-11-28T00:00:00Z'))).rejects.toThrow(/1 file/)
+    expect((await row(a.shot)).purgedAt).toBeNull()
+    for (const id of [a.log, b.shot, b.log]) expect((await row(id)).purgedAt).not.toBeNull()
+  })
+
   it('a cancelled item counts from its cancel event', async () => {
     const d = await defect()
     const cancelled = new Date('2026-03-01T00:00:00Z')
@@ -190,7 +212,20 @@ describe('retention', () => {
     await (deps.jobs as unknown as { runScheduled: (n: string) => Promise<void> }).runScheduled('defect-retention')
     expect((await row(d.shot)).purgedAt).not.toBeNull()
     expect((await row(d.log)).purgedAt).not.toBeNull()
+    const lost = `projects/${projectId}/defects/${crypto.randomUUID()}/file1/lost.png`
+    clock = new Date(clock.getTime() - 3 * DAY)
+    await deps.storage.put(lost, Buffer.from('x'), 'image/png')
     await (deps.jobs as unknown as { runScheduled: (n: string) => Promise<void> }).runScheduled('defect-orphan-sweep')
+    expect(await exists(lost)).toBe(false)
+  })
+
+  it('an uploader who left the project, a requester and a non-member cannot remove', async () => {
+    const d = await defect()
+    const del = (who: Who) => app.inject({ method: 'DELETE', url: `/attachments/${d.shot}`, headers: auth(who), payload: { reason: 'x' } })
+    expect((await del(await login(app, 'nurse'))).statusCode).toBe(403)
+    expect((await del(await login(app, 'stranger', { staff: true }))).statusCode).toBe(404)
+    expect((await app.inject({ method: 'DELETE', url: `/projects/${projectId}/members/${qc.id}`, headers: auth(admin) })).statusCode).toBe(204)
+    expect((await del(qc)).statusCode).toBe(404)
   })
 })
 

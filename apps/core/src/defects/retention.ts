@@ -1,7 +1,7 @@
 import { LOG_ROLES, MEDIA_ROLES, SETTINGS } from '@yoda/shared'
-import { and, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm'
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm'
 import type { AppDeps } from '../app.js'
-import { attachments, workItems } from '../db/schema.js'
+import { attachments, projects, workItems } from '../db/schema.js'
 import { recordEvent, runWork } from '../work/context.js'
 
 export type RetentionDeps = Pick<AppDeps, 'db' | 'storage' | 'settings' | 'bus' | 'jobs' | 'config'>
@@ -23,6 +23,7 @@ const days = (deps: RetentionDeps, key: 'extension.mediaRetentionDays' | 'extens
  */
 export async function purgeExpired(deps: RetentionDeps, now: Date): Promise<{ media: number; logs: number }> {
   const out = { media: 0, logs: 0 }
+  let failed = 0
   const groups = [
     { roles: MEDIA_ROLES as readonly string[], days: days(deps, 'extension.mediaRetentionDays'), count: 'media' as const },
     { roles: LOG_ROLES as readonly string[], days: days(deps, 'extension.logRetentionDays'), count: 'logs' as const },
@@ -32,7 +33,7 @@ export async function purgeExpired(deps: RetentionDeps, now: Date): Promise<{ me
     const cutoff = new Date(now.getTime() - g.days * DAY_MS)
     const closedAt = sql`(select max(e.created_at) from events e where e.work_item_id = ${workItems.id} and e.type in ('work_item.done', 'work_item.cancelled'))`
     const due = await deps.db
-      .select({ id: attachments.id })
+      .select({ id: attachments.id, workItemId: attachments.workItemId })
       .from(attachments)
       .innerJoin(workItems, eq(workItems.id, attachments.workItemId))
       .where(
@@ -43,8 +44,18 @@ export async function purgeExpired(deps: RetentionDeps, now: Date): Promise<{ me
           sql`${closedAt} <= ${cutoff.toISOString()}::timestamptz`,
         ),
       )
-    for (const { id } of due) if (await purgeOne(deps, id, { kind: 'retention' })) out[g.count]++
+      .orderBy(attachments.id)
+    // One bad object never stops the rest: each failure is logged, and the run fails at the end.
+    for (const { id } of due) {
+      try {
+        if (await purgeOne(deps, id, { kind: 'retention', cutoff })) out[g.count]++
+      } catch (err) {
+        failed++
+        console.warn(`defect-retention: attachment ${id} failed: ${(err as Error).message}`)
+      }
+    }
   }
+  if (failed) throw new Error(`defect-retention: ${failed} file(s) could not be purged (purged ${out.media} media, ${out.logs} logs)`)
   return out
 }
 
@@ -56,15 +67,24 @@ export async function purgeExpired(deps: RetentionDeps, now: Date): Promise<{ me
 export async function purgeOne(
   deps: RetentionDeps,
   attachmentId: string,
-  by: { kind: 'retention' } | { kind: 'person'; personId: string; reason: string },
+  by: { kind: 'retention'; cutoff: Date } | { kind: 'person'; personId: string; reason: string },
 ): Promise<boolean> {
   const actor = by.kind === 'person' ? { id: by.personId, kind: 'person' as const } : { id: null, kind: 'system' as const }
   return runWork(deps, actor, async (ctx) => {
     const [row] = await ctx.tx.select().from(attachments).where(eq(attachments.id, attachmentId)).for('update')
     if (!row || !row.role || row.purgedAt || !row.projectId) return false
-    if (by.kind === 'retention' && row.workItemId) {
-      const [w] = await ctx.tx.select({ state: workItems.state }).from(workItems).where(eq(workItems.id, row.workItemId))
-      if (!w || w.state === 'active') return false
+    if (by.kind === 'retention') {
+      // Re-checked under locks: the item may have been reopened (and closed again) since it was found due.
+      if (!row.workItemId) return false
+      const [w] = await ctx.tx
+        .select({
+          state: workItems.state,
+          due: sql<boolean>`coalesce((select max(e.created_at) from events e where e.work_item_id = ${row.workItemId}::uuid and e.type in ('work_item.done', 'work_item.cancelled')) <= ${by.cutoff.toISOString()}::timestamptz, false)`,
+        })
+        .from(workItems)
+        .where(eq(workItems.id, row.workItemId))
+        .for('share')
+      if (!w || w.state === 'active' || !w.due) return false
     }
     await deps.storage.remove(row.storageKey)
     await ctx.tx.update(attachments).set({ purgedAt: sql`now()` }).where(eq(attachments.id, attachmentId))
@@ -81,27 +101,35 @@ export async function purgeOne(
 
 /**
  * Removes objects under `projects/<id>/defects/` that no attachment row names and that are older than a day:
- * left behind by a crash between a defect upload's puts and its rollback. Returns how many were removed.
+ * left behind by a crash between a defect upload's puts and its commit. Lists each existing project's defect
+ * folder only, never ordinary uploads. Returns how many were removed; one failing key never stops it.
  */
 export async function sweepOrphans(deps: Pick<AppDeps, 'db' | 'storage'>, now: Date): Promise<number> {
   const before = now.getTime() - ORPHAN_AGE_MS
-  const candidates: string[] = []
-  for await (const o of deps.storage.list('projects/')) {
-    if (DEFECT_KEY.test(o.key) && o.lastModified.getTime() < before) candidates.push(o.key)
-  }
+  const projectIds = (await deps.db.select({ id: projects.id }).from(projects)).map((p) => p.id)
   let removed = 0
-  for (let i = 0; i < candidates.length; i += 500) {
-    const batch = candidates.slice(i, i + 500)
-    const known = await deps.db
-      .select({ key: attachments.storageKey })
-      .from(attachments)
-      .where(and(inArray(attachments.storageKey, batch), isNotNull(attachments.storageKey)))
-    const named = new Set(known.map((k) => k.key))
-    for (const key of batch) {
-      if (named.has(key)) continue
-      await deps.storage.remove(key)
-      removed++
+  let failed = 0
+  for (const id of projectIds) {
+    const candidates: string[] = []
+    for await (const o of deps.storage.list(`projects/${id}/defects/`)) {
+      if (DEFECT_KEY.test(o.key) && o.lastModified.getTime() < before) candidates.push(o.key)
+    }
+    for (let i = 0; i < candidates.length; i += 500) {
+      const batch = candidates.slice(i, i + 500)
+      const known = await deps.db.select({ key: attachments.storageKey }).from(attachments).where(inArray(attachments.storageKey, batch))
+      const named = new Set(known.map((k) => k.key))
+      for (const key of batch) {
+        if (named.has(key)) continue
+        try {
+          await deps.storage.remove(key)
+          removed++
+        } catch (err) {
+          failed++
+          console.warn(`defect-orphan-sweep: ${key} failed: ${(err as Error).message}`)
+        }
+      }
     }
   }
+  if (failed) throw new Error(`defect-orphan-sweep: ${failed} object(s) could not be removed (${removed} removed)`)
   return removed
 }

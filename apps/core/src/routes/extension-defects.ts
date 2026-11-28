@@ -142,7 +142,14 @@ export function extensionDefectRoutes(app: FastifyInstance, limits: ExtensionLim
       } catch (err) {
         // Either the same key from another grant of this person won the race (a unique violation), or our report
         // committed and something after the commit failed (runWork publishes and queues after it).
-        const winner = await storedFor(db(), me.id, key).catch(() => null)
+        let winner: Awaited<ReturnType<typeof storedFor>>
+        try {
+          winner = await storedFor(db(), me.id, key)
+        } catch {
+          // Unknown whether the report committed: keep the objects (the orphan sweep removes them if not).
+          committed = true
+          throw err
+        }
         if (!winner) throw err
         if (winner.grantId === grantId) {
           committed = true

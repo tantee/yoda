@@ -84,7 +84,9 @@ export function attachmentRoutes(app: FastifyInstance, opts: { onStored: Attachm
     }
   }
 
+  /** Every download path: a removed or expired defect file is 404 `purged` (the row stays, the bytes are gone). */
   async function sendFile(reply: FastifyReply, row: typeof attachments.$inferSelect) {
+    if (row.purgedAt) throw new HttpError(404, { error: 'not_found', reason: 'purged' })
     const stream = await storage().get(row.storageKey)
     return reply
       .header('Content-Type', row.contentType)
@@ -173,8 +175,6 @@ export function attachmentRoutes(app: FastifyInstance, opts: { onStored: Attachm
     const { id } = IdParams.parse(request.params)
     const [row] = await db().select().from(attachments).where(eq(attachments.id, id))
     if (!row?.projectId || !(await canSeeProject(db(), request.me, row.projectId))) throw notFound()
-    // A removed or expired defect file: the row stays (the card shows "removed"), the bytes are gone.
-    if (row.purgedAt) throw new HttpError(404, { error: 'not_found', reason: 'purged' })
     return sendFile(reply, row)
   })
 

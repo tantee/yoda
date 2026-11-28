@@ -25,7 +25,7 @@ export function createMemoryStorage(now: () => Date = () => new Date()): Storage
       objects.delete(key)
     },
     async *list(prefix) {
-      for (const [key, o] of [...objects].sort(([a], [b]) => a.localeCompare(b))) if (key.startsWith(prefix)) yield { key, lastModified: o.at }
+      for (const [key, o] of [...objects].sort(([a], [b]) => Buffer.compare(Buffer.from(a), Buffer.from(b)))) if (key.startsWith(prefix)) yield { key, lastModified: o.at }
     },
     async ping() {},
   }
