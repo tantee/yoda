@@ -1,4 +1,37 @@
 {
-  "app": { "name": "Yoda แจ้งปัญหา", "language": "ภาษา", "loading": "กำลังโหลด…" },
-  "common": { "cancel": "ยกเลิก", "close": "ปิด", "retry": "ลองใหม่", "save": "บันทึก", "remove": "ลบ" }
+  "app": {
+    "name": "Yoda แจ้งปัญหา",
+    "language": "ภาษา",
+    "loading": "กำลังโหลด…"
+  },
+  "common": {
+    "cancel": "ยกเลิก",
+    "close": "ปิด",
+    "retry": "ลองใหม่",
+    "save": "บันทึก",
+    "remove": "ลบ"
+  },
+  "connect": {
+    "title": "เชื่อมต่อกับ Yoda",
+    "intro": "วางที่อยู่ของ Yoda ที่แสดงในหน้าความช่วยเหลือของ Yoda แล้วกดเชื่อมต่อ จากนั้นกดอนุญาตในหน้าที่เปิดขึ้น",
+    "address": "ที่อยู่ของ Yoda",
+    "willOpen": "จะเชื่อมต่อกับ",
+    "submit": "เชื่อมต่อ",
+    "reconnect": "เชื่อมต่อใหม่",
+    "error": {
+      "invalid": "ที่อยู่ไม่ถูกต้อง",
+      "insecure": "ต้องเป็น https (หรือ http://localhost สำหรับทดสอบ)",
+      "permission_needed": "ต้องอนุญาตให้ส่วนขยายเข้าถึง Yoda นี้ก่อน",
+      "not_yoda": "ที่อยู่นี้ไม่ใช่ Yoda",
+      "extension_disabled": "Yoda แห่งนี้ปิดการใช้ส่วนขยายไว้",
+      "cancelled": "ยกเลิกการเชื่อมต่อแล้ว",
+      "state_mismatch": "การเชื่อมต่อไม่ตรงกับที่ขอไว้ โปรดลองใหม่",
+      "exchange_failed": "เชื่อมต่อไม่สำเร็จ โปรดลองใหม่",
+      "unreachable": "ติดต่อ Yoda ไม่ได้ ตรวจสอบที่อยู่หรือเครือข่าย"
+    }
+  },
+  "options": {
+    "profiles": "Yoda ที่เชื่อมต่อไว้",
+    "needsReconnect": "ต้องเชื่อมต่อใหม่"
+  }
 }

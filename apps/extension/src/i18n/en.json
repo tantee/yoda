@@ -1,4 +1,37 @@
 {
-  "app": { "name": "Yoda Reporter", "language": "Language", "loading": "Loading…" },
-  "common": { "cancel": "Cancel", "close": "Close", "retry": "Retry", "save": "Save", "remove": "Remove" }
+  "app": {
+    "name": "Yoda Reporter",
+    "language": "Language",
+    "loading": "Loading…"
+  },
+  "common": {
+    "cancel": "Cancel",
+    "close": "Close",
+    "retry": "Retry",
+    "save": "Save",
+    "remove": "Remove"
+  },
+  "connect": {
+    "title": "Connect to Yoda",
+    "intro": "Paste the Yoda address shown on Yoda's Help page and press Connect, then approve on the page that opens.",
+    "address": "Yoda address",
+    "willOpen": "You will connect to",
+    "submit": "Connect",
+    "reconnect": "Reconnect",
+    "error": {
+      "invalid": "Not a valid address",
+      "insecure": "It must be https (or http://localhost for testing)",
+      "permission_needed": "Allow the extension to reach this Yoda first",
+      "not_yoda": "This address is not a Yoda",
+      "extension_disabled": "The extension is turned off in this Yoda",
+      "cancelled": "Connection cancelled",
+      "state_mismatch": "The connection did not match the request; try again",
+      "exchange_failed": "Could not connect; try again",
+      "unreachable": "Cannot reach Yoda; check the address or the network"
+    }
+  },
+  "options": {
+    "profiles": "Connected Yodas",
+    "needsReconnect": "Reconnect needed"
+  }
 }
