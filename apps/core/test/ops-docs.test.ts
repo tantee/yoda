@@ -216,9 +216,9 @@ describe('release docs (GitHub Releases + GHCR, D1)', () => {
   it('installs from the GitHub Release assets, pinned and verified, in the README and the install guide', () => {
     for (const [name, text] of [['README', readme], ['install guide', guide]] as const) {
       for (const f of ['install.sh', 'SHA256SUMS', 'SHA256SUMS.minisig']) {
-        expect(text, `${name} ${f}`).toContain(`curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.0.0/${f}\n`)
+        expect(text, `${name} ${f}`).toContain(`curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.1.0/${f}\n`)
       }
-      expect(text, name).toContain('sh install.sh --version 1.0.0 --dir /srv/yoda')
+      expect(text, name).toContain('sh install.sh --version 1.1.0 --dir /srv/yoda')
       expect(text, name).toMatch(/latest release/)
       expect(text, name).toContain('--image-prefix')
       expect(text, name).not.toMatch(/curl[^\n`]*\|\s*(ba)?sh\b/)
@@ -260,7 +260,7 @@ describe('release docs (GitHub Releases + GHCR, D1)', () => {
     }
     // The rollback unpacks the target release's bundle (its compose files and digest pins) before deploying it.
     const rollback = runbook.slice(runbook.indexOf('**Rollback.**'))
-    expect(rollback.slice(0, 1200)).toMatch(/tar -xzf yoda-1\.0\.0\.tar\.gz --no-same-owner &&\n[\s\S]*YODA_VERSION=1\.0\.0 sh ops\/deploy\/deploy\.sh/)
+    expect(rollback.slice(0, 1200)).toMatch(/tar -xzf yoda-1\.1\.0\.tar\.gz --no-same-owner &&\n[\s\S]*YODA_VERSION=1\.1\.0 sh ops\/deploy\/deploy\.sh/)
   })
 
   it('documents the digest pins: mirrors keep them, the opt-out, and never deleting untagged versions', () => {
@@ -285,17 +285,21 @@ describe('release docs (GitHub Releases + GHCR, D1)', () => {
       'docker buildx imagetools inspect',
       '## <version> — unreleased',
       'Change visibility → Public',
-      'git tag -s v1.0.0',
-      'git push origin v1.0.0',
+      'git tag -s v1.1.0',
+      'git push origin v1.1.0',
       '## Verifying releases',
       'C73EF0AF404BAE84',
       'keys/yoda-release.pub',
       "--base-url 'https://files.example.org/yoda/releases/{version}/'",
     ]) expect(releasing, s).toContain(s)
     for (const text of [readme, guide]) expect(text).toContain('C73EF0AF404BAE84')
-    // 1.0.0 is dated for its release; the release workflow refuses an undated heading.
-    expect(read('CHANGELOG.md')).toMatch(/^## 1\.0\.0 — 2026-11-27$/m)
-    expect(read('CHANGELOG.md')).not.toMatch(/^## 1\.0\.0 — unreleased$/m)
+    // 1.1.0, the first public release, is dated; the release workflow refuses an undated heading. 1.0.0 was never
+    // published: it has no section of its own, only a line in 1.1.0's.
+    expect(read('CHANGELOG.md')).toMatch(/^## 1\.1\.0 — 2026-11-28$/m)
+    expect(read('CHANGELOG.md')).not.toMatch(/^## 1\.0\.0\b/m)
+    expect(read('CHANGELOG.md')).toContain('Version 1.0.0\nwas tagged but never published')
+    for (const f of ['package.json', 'apps/core/package.json', 'apps/portal/package.json', 'apps/runner/package.json', 'packages/shared/package.json'])
+      expect(JSON.parse(read(f)).version, f).toBe('1.1.0')
     // Work in progress sits under "## Unreleased", above the released sections; it is never a release's notes.
     const changelog = read('CHANGELOG.md')
     const headings = [...changelog.matchAll(/^## (.+)$/gm)].map((m) => m[1]!)
@@ -332,12 +336,11 @@ describe('the built-in HTTPS proxy docs (docs/operations.md, section 4b)', () =>
     expect(guide).toContain('--with-proxy --domain portal.example.org')
     expect(guide).toContain('../images/setup-proxy.webp')
     expect(releasing).toMatch(/\| Caddy .*\| `docker-compose\.prod\.yml`, service `proxy`/)
-    // The entry itself, wherever its section heading is (Unreleased now, the release's version once it is cut).
+    // The entry itself, in the 1.1.0 notes (the release that brings it).
     const changelog = read('CHANGELOG.md')
     const entry = changelog.indexOf('### Built-in HTTPS proxy (optional)')
-    expect(entry).toBeGreaterThan(-1)
-    expect(entry).toBeLessThan(changelog.indexOf('\n## 1.0.0'))
-    expect(changelog.slice(entry, changelog.indexOf('\n## 1.0.0'))).toContain('install.sh --with-proxy')
+    expect(entry).toBeGreaterThan(changelog.indexOf('\n## 1.1.0 — '))
+    expect(changelog.slice(entry, changelog.indexOf('\n### ', entry + 1))).toContain('install.sh --with-proxy')
   })
 
   it('says which release brings it, and how to turn it on for an older install (upgrade first)', () => {
@@ -377,16 +380,19 @@ describe('the built-in HTTPS proxy docs (docs/operations.md, section 4b)', () =>
     ]) expect(runbook, s).toContain(s)
   })
 
-  it.skipIf(process.platform === 'win32')('keeps the Unreleased section out of the release notes and the dry run', () => {
-    const notes = spawnSync('sh', ['ops/install/release-notes.sh', '1.0.0'], { cwd: root, encoding: 'utf8' })
+  it.skipIf(process.platform === 'win32')('gives 1.1.0 one set of notes, the proxy included; an Unreleased section never is', () => {
+    const notes = spawnSync('sh', ['ops/install/release-notes.sh', '1.1.0'], { cwd: root, encoding: 'utf8' })
     expect(notes.status, notes.stderr).toBe(0)
-    expect(notes.stdout).not.toContain('Built-in HTTPS proxy')
-    expect(notes.stdout).toMatch(/^The first release/)
+    expect(notes.stdout).toMatch(/^The first public release/)
+    expect(notes.stdout).toContain('### Built-in HTTPS proxy (optional)')
+    expect(notes.stdout).toContain('### Releases on GitHub')
+    expect(notes.stdout).toContain('### Status and release (plan 8)')
+    expect(spawnSync('sh', ['ops/install/release-notes.sh', '1.0.0'], { cwd: root }).status).not.toBe(0)
     // A tag never matches it: it is not a version (the release workflow then refuses the tag).
     expect(spawnSync('sh', ['ops/install/release-notes.sh', 'Unreleased'], { cwd: root }).status).not.toBe(0)
     // The dry run's "newest released section" skips it too (the same sed as release.yml).
     const latest = spawnSync('sh', ['-c', "sed -n 's/^## \\([0-9][0-9A-Za-z.-]*\\).*$/\\1/p' CHANGELOG.md | head -n 1"], { cwd: root, encoding: 'utf8' })
-    expect(latest.stdout.trim()).toBe('1.0.0')
+    expect(latest.stdout.trim()).toBe('1.1.0')
     expect(read('.github/workflows/release.yml')).toContain("latest=$(sed -n 's/^## \\([0-9][0-9A-Za-z.-]*\\).*$/\\1/p' CHANGELOG.md | head -n 1)")
   })
 

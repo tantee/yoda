@@ -1,7 +1,7 @@
 # Publishes a Yoda release on GitHub (docs/releasing.md): the images on ghcr.io/<owner>/yoda/<name> and the signed
 # release bundle as the GitHub Release's assets, the files install.sh downloads by default.
 #
-# - Only a pushed `v<version>` tag (e.g. v1.0.0, v1.1.0-rc.1) on a commit of main is a real release: images for
+# - Only a pushed `v<version>` tag (e.g. v1.1.0, v1.2.0-rc.1) on a commit of main is a real release: images for
 #   linux/amd64 and linux/arm64, each built on its native runner (no QEMU) and merged into one index per image,
 #   all pushed by digest, untagged; the bundle pins those digests (bundle.env) and is
 #   signed with the MINISIGN_SECRET_KEY secret of the `release` environment (the job fails without it), then
@@ -87,7 +87,7 @@ jobs:
             version="0.0.0-dryrun.$RUN_NUMBER"
           fi
           printf '%s\n' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$' ||
-            { echo "::error::Not a release version: $version (tags are v<x.y.z>, e.g. v1.0.0 or v1.1.0-rc.1)."; exit 1; }
+            { echo "::error::Not a release version: $version (tags are v<x.y.z>, e.g. v1.1.0 or v1.2.0-rc.1)."; exit 1; }
           case "$version" in
             *-*) prerelease=true ;;
             *) prerelease=false ;;

@@ -169,7 +169,7 @@ Bootstrap only: release and host (compose reads them before any container exists
 | Variable | Purpose | Required | Example |
 | --- | --- | --- | --- |
 | `YODA_IMAGE_PREFIX` | Registry path of the images; compose uses `<prefix>/<name>:<version>`. `install.sh` pins it in `release.env` (from the bundle); `deploy.sh` uses `ghcr.io/tantee/yoda` when it is set nowhere (never Docker Hub) | optional (`ghcr.io/tantee/yoda`) | `registry.example.org/group/yoda` |
-| `YODA_VERSION` | Release tag to run; `deploy.sh` pins it in `release.env`, never in `.env` (compose refuses to start without it) | yes, in `release.env` | `1.0.0` |
+| `YODA_VERSION` | Release tag to run; `deploy.sh` pins it in `release.env`, never in `.env` (compose refuses to start without it) | yes, in `release.env` | `1.1.0` |
 | `YODA_CORE_DIGEST` | Manifest digest of the core image; compose then runs `<prefix>/core:<version>@<digest>`. `deploy.sh` pins it in `release.env` from the signed `bundle.env` of the same release (any prefix: a digest names content), else empty (the tag); never set it by hand | no (`deploy.sh`) | `sha256:4f…` |
 | `YODA_PORTAL_DIGEST` | Manifest digest of the portal image; compose then runs `<prefix>/portal:<version>@<digest>`. `deploy.sh` pins it in `release.env` from the signed `bundle.env` of the same release (any prefix: a digest names content), else empty (the tag); never set it by hand | no (`deploy.sh`) | `sha256:4f…` |
 | `YODA_RUNNER_DIGEST` | Manifest digest of the runner image; compose then runs `<prefix>/runner:<version>@<digest>`. `deploy.sh` pins it in `release.env` from the signed `bundle.env` of the same release (any prefix: a digest names content), else empty (the tag); never set it by hand | no (`deploy.sh`) | `sha256:4f…` |
@@ -708,8 +708,8 @@ without the userland proxy (rootful Docker with its iptables rules on, `"userlan
 
 ## 5. Upgrade and rollback
 
-Releases are git tags `v<version>` (`v1.0.0`, `v1.0.1`, …, see `CHANGELOG.md`); the version without the `v` is
-what a host runs (`YODA_VERSION=1.0.0`). The GitHub release workflow (`.github/workflows/release.yml`) publishes
+Releases are git tags `v<version>` (`v1.1.0`, `v1.1.1`, …, see `CHANGELOG.md`); the version without the `v` is
+what a host runs (`YODA_VERSION=1.1.0`). The GitHub release workflow (`.github/workflows/release.yml`) publishes
 each one: the images `core`, `portal`, `runner` and `backup` on `ghcr.io/tantee/yoda/<name>` (linux/amd64 and
 linux/arm64, tagged `<version>` and `sha-<short commit>`, their digests pinned in the bundle) and the signed release bundle as the GitHub Release's
 assets, which `install.sh` downloads. How to cut a release, the signing key and the repository secrets:
@@ -864,18 +864,18 @@ Simpler, when the mirror only needs to copy what GitHub publishes: put the GitHu
   sees a proxy in front of the portal while the value is `1`.
 
 **Rollback.** On the host, in `/srv/yoda`: always unpack the bundle of the release you go back to, so the compose
-files, `deploy.sh` and the image digests in `bundle.env` are that release's (`1.0.0` stands for it):
+files, `deploy.sh` and the image digests in `bundle.env` are that release's (`1.1.0` stands for it):
 
 ```bash
-curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.0.0/yoda-1.0.0.tar.gz
-curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.0.0/SHA256SUMS
-curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.0.0/SHA256SUMS.minisig
+curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.1.0/yoda-1.1.0.tar.gz
+curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.1.0/SHA256SUMS
+curl -fsSLO https://github.com/tantee/yoda/releases/download/v1.1.0/SHA256SUMS.minisig
 out=$(minisign -Vm SHA256SUMS -P RWSErktAr/A+x5Gvgr0x29wiu41FmYEVlJYoXyB6oJk4kvwQLOZs9O9j) &&
-  printf '%s\n' "$out" | grep -Fx 'Trusted comment: yoda release 1.0.0' &&
+  printf '%s\n' "$out" | grep -Fx 'Trusted comment: yoda release 1.1.0' &&
   sha256sum --check --ignore-missing SHA256SUMS &&
-  tar -xzf yoda-1.0.0.tar.gz --no-same-owner &&
-  rm yoda-1.0.0.tar.gz SHA256SUMS SHA256SUMS.minisig &&
-  YODA_VERSION=1.0.0 sh ops/deploy/deploy.sh
+  tar -xzf yoda-1.1.0.tar.gz --no-same-owner &&
+  rm yoda-1.1.0.tar.gz SHA256SUMS SHA256SUMS.minisig &&
+  YODA_VERSION=1.1.0 sh ops/deploy/deploy.sh
 ```
 
 Each command runs only when the one before it passed, as in step 3; `deploy.sh` then pins that release's
