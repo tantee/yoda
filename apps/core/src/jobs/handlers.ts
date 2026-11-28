@@ -11,6 +11,7 @@ import { secretaryChat } from '../secretary/chat.js'
 import { secretaryEvent } from '../secretary/events.js'
 import { secretarySweep } from '../secretary/sweep.js'
 import { fanOutWeeklySummaries, weeklySummaryJob } from '../status/weekly.js'
+import { syncEnvironmentsJob } from '../gitlab/environments.js'
 
 /** Registers every job handler on `deps.jobs` (server.ts with pg-boss, tests with InlineJobQueue). */
 export async function registerJobHandlers(deps: Pick<AppDeps, 'db' | 'ai' | 'bus' | 'jobs' | 'config' | 'gitlab' | 'mailTransport'>): Promise<void> {
@@ -27,4 +28,5 @@ export async function registerJobHandlers(deps: Pick<AppDeps, 'db' | 'ai' | 'bus
   await deps.jobs.work('weekly-summary', () => fanOutWeeklySummaries(deps))
   await deps.jobs.work('weekly-summary-project', (run) => weeklySummaryJob(deps, run))
   await deps.jobs.work('notify-deliver', (run) => deliver(deps, run.id, run))
+  await deps.jobs.work('gitlab-env-sync', (run) => syncEnvironmentsJob(deps, run.id))
 }

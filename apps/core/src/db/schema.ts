@@ -1086,3 +1086,22 @@ export const projectAppUrls = pgTable(
   },
   (t) => [unique('project_app_urls_pattern').on(t.projectId, t.pattern)],
 )
+
+/** A linked repo's GitLab environments and their last deployment (Yoda Reporter URL mapping, plan A8). */
+export const deployEnvironments = pgTable(
+  'deploy_environments',
+  {
+    repoId: uuid('repo_id')
+      .notNull()
+      .references(() => projectRepos.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    externalUrl: text('external_url'),
+    tier: text('tier'),
+    ref: text('ref'),
+    sha: text('sha'),
+    status: text('status'),
+    deployedAt: timestamp('deployed_at', { withTimezone: true }),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.repoId, t.name] })],
+)

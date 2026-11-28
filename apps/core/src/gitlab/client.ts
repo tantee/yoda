@@ -131,6 +131,22 @@ export class GitLabClient {
     return this.request('GET', `/projects/${this.proj(pathOrId)}`)
   }
 
+  /** Available environments (Yoda Reporter URL mapping), up to 100. */
+  listEnvironments(projectId: number): Promise<{ id: number; name: string; external_url: string | null; tier: string | null }[]> {
+    return this.request('GET', `/projects/${this.proj(projectId)}/environments?states=available&per_page=100`)
+  }
+
+  /** An environment's last deployment, when it has one. */
+  async lastDeployment(projectId: number, envId: number): Promise<{ ref: string; sha: string; status: string; deployedAt: Date } | null> {
+    const env = await this.request<{
+      last_deployment?: { ref: string; sha: string; status: string; created_at: string; finished_at?: string | null; updated_at?: string | null } | null
+    }>('GET', `/projects/${this.proj(projectId)}/environments/${encodeURIComponent(String(envId))}`)
+    const d = env.last_deployment
+    if (!d) return null
+    const at = new Date(d.finished_at ?? d.updated_at ?? d.created_at)
+    return { ref: d.ref, sha: d.sha, status: d.status, deployedAt: Number.isNaN(at.getTime()) ? new Date(d.created_at) : at }
+  }
+
   createIssue(projectId: number, input: { title: string; description: string }): Promise<{ iid: number; web_url: string; description: string }> {
     return this.request('POST', `/projects/${this.proj(projectId)}/issues`, input)
   }

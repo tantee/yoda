@@ -1,6 +1,7 @@
 import { and, eq } from 'drizzle-orm'
 import type { Db } from '../db/client.js'
 import { projectMembers, projects } from '../db/schema.js'
+import { productionEnvironmentPatterns } from '../gitlab/environments.js'
 import { productionAppUrls } from '../projects/app-urls.js'
 
 /**
@@ -22,5 +23,5 @@ export async function memberProjectIds(db: Db, personId: string, opts: { activeO
  */
 export async function productionRulesForPerson(db: Db, personId: string): Promise<string[]> {
   const ids = await memberProjectIds(db, personId)
-  return [...new Set(await productionAppUrls(db, ids))]
+  return [...new Set([...(await productionAppUrls(db, ids)), ...(await productionEnvironmentPatterns(db, ids))])]
 }

@@ -1012,7 +1012,9 @@ Owner checklist (details in [docs/development.md, "GitLab integration"](developm
 - [ ] A **webhook** on each linked project, or once on the group: URL
       `https://portal.example.org/api/gitlab/webhook`, secret token = the webhook secret (System settings →
       GitLab can generate it, shown once; or `GITLAB_WEBHOOK_SECRET`), triggers
-      **Merge request events**, **Pipeline events** and **Comments**, SSL verification on.
+      **Merge request events**, **Pipeline events**, **Comments** and **Deployment events**, SSL verification on.
+      Deployment events keep the environments current for Yoda Reporter's URL mapping (an environment with tier
+      `production` counts as a production site); a nightly sync at 03:30 also reads them.
 - [ ] System settings → GitLab shows core configured, GitLab reachable, the bot user, and the time of the last webhook.
 
 GitLab does not retry failed deliveries and disables a webhook that keeps failing. After an outage, open the

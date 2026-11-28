@@ -3,6 +3,7 @@ import {
   DEFECT_TYPES,
   EXTENSION_API_VERSION,
   ExtensionAuthorize,
+  ExtensionMappings,
   ExtensionSession,
   ExtensionTokenRequest,
   type DefectKind,
@@ -16,6 +17,9 @@ import { extensionGrants, projectMembers, projectRepos, projects } from '../db/s
 import { exchangeCode, GrantError, issueAuthCode, listGrants, refreshFamily, refreshGrant, revokeAllGrants, revokeGrant } from '../extension/grants.js'
 import { extensionSetting, grantSettings } from '../extension/hook.js'
 import { extensionLimits, type ExtensionLimits } from '../extension/limits.js'
+import { memberProjectIds } from '../extension/mappings.js'
+import { gitlabRules } from '../gitlab/environments.js'
+import { appUrlRules } from '../projects/app-urls.js'
 import type { RateLimiter } from '../settings/rate-limit.js'
 import { VERSION } from '../version.js'
 import { extensionDefectRoutes } from './extension-defects.js'
@@ -156,6 +160,15 @@ export function extensionRoutes(app: FastifyInstance, limits: ExtensionLimits = 
       },
       policy: { videoOnProduction: false, logsOnProductionDefault: false, requireConfirm: true },
     })
+  })
+
+  // URL mapping rules of the person's member projects, matched in the extension (plan decision 3: the extension
+  // never sends every visited URL to Yoda). Cached there for ttlSeconds.
+  app.get('/extension/mappings', { config: { public: true, extension: 'token' } }, async (request) => {
+    const { grant, me } = ext(request)
+    take(limits.session, grant.id)
+    const ids = await memberProjectIds(db(), me.id, { activeOnly: true })
+    return ExtensionMappings.parse({ rules: [...(await appUrlRules(db(), ids)), ...(await gitlabRules(db(), ids))], ttlSeconds: 600 })
   })
 
   // --- Connected browsers (plan A4): Keycloak routes, open while the extension is disabled so grants can still
