@@ -10,15 +10,19 @@ import {
 } from '@yoda/shared'
 import { and, asc, eq, inArray, ne } from 'drizzle-orm'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
-import { HttpError, requireSignedIn } from '../auth/plugin.js'
+import { z } from 'zod'
+import { HttpError, notFound, requireAdmin, requireSignedIn } from '../auth/plugin.js'
 import { extensionGrants, projectMembers, projectRepos, projects } from '../db/schema.js'
-import { exchangeCode, GrantError, issueAuthCode, refreshFamily, refreshGrant, revokeGrant } from '../extension/grants.js'
+import { exchangeCode, GrantError, issueAuthCode, listGrants, refreshFamily, refreshGrant, revokeAllGrants, revokeGrant } from '../extension/grants.js'
 import { extensionSetting, grantSettings } from '../extension/hook.js'
 import { extensionLimits, type ExtensionLimits } from '../extension/limits.js'
 import { VERSION } from '../version.js'
 
 /** Every kind a staff member may file; "bug-fix request" is optional for the tester (D1). */
 const KINDS: DefectKind[] = ['defect', 'bug_fix_request']
+
+const IdParams = z.object({ id: z.string().uuid() })
+const AdminListQuery = z.object({ active: z.string().optional() })
 
 const rateLimited = (retryAfter: number) => new HttpError(429, { error: 'rate_limited', retryAfter })
 const tokenRefused = (reason: GrantError['reason']) => new HttpError(401, { error: 'unauthorized', reason })
@@ -149,5 +153,47 @@ export function extensionRoutes(app: FastifyInstance, limits: ExtensionLimits = 
       policy: { videoOnProduction: false, logsOnProductionDefault: false, requireConfirm: true },
     })
   })
-}
 
+  // --- Connected browsers (plan A4): Keycloak routes, open while the extension is disabled so grants can still
+  // be revoked.
+
+  app.get('/me/extension-grants', async (request) => {
+    requireSignedIn(request)
+    return listGrants(db(), { personId: request.me.id, now: now() })
+  })
+
+  app.delete('/me/extension-grants/:id', async (request, reply) => {
+    requireSignedIn(request)
+    const { id } = IdParams.parse(request.params)
+    const [g] = await db().select({ personId: extensionGrants.personId }).from(extensionGrants).where(eq(extensionGrants.id, id))
+    if (!g || g.personId !== request.me.id) throw notFound()
+    if (await revokeGrant(db(), id, { personId: request.me.id, reason: 'user' })) {
+      request.log.info({ grantId: id, personId: request.me.id }, 'extension grant revoked (user)')
+    }
+    return reply.status(204).send()
+  })
+
+  app.get('/admin/extension-grants', async (request) => {
+    requireAdmin(request)
+    const { active } = AdminListQuery.parse(request.query)
+    return listGrants(db(), { activeOnly: active === '1', now: now() })
+  })
+
+  app.delete('/admin/extension-grants/:id', async (request, reply) => {
+    requireAdmin(request)
+    const { id } = IdParams.parse(request.params)
+    const [g] = await db().select({ personId: extensionGrants.personId }).from(extensionGrants).where(eq(extensionGrants.id, id))
+    if (!g) throw notFound()
+    if (await revokeGrant(db(), id, { personId: request.me.id, reason: 'admin' })) {
+      request.log.info({ grantId: id, personId: g.personId }, 'extension grant revoked (admin)')
+    }
+    return reply.status(204).send()
+  })
+
+  app.post('/admin/extension-grants/revoke-all', async (request) => {
+    requireAdmin(request)
+    const revoked = await revokeAllGrants(db(), { personId: request.me.id, reason: 'admin_all' })
+    request.log.info({ personId: request.me.id, revoked }, 'extension grants revoked (admin_all)')
+    return { revoked }
+  })
+}

@@ -4,12 +4,13 @@ import {
   chromiumappRedirect,
   extensionTokenRe,
   type ExtensionAuthorize,
+  type ExtensionGrant,
   type ExtensionTokenErrorReason,
   type ExtensionTokenResponse,
   type GrantRevokeReason,
   type Me,
 } from '@yoda/shared'
-import { and, eq, gt, isNull, sql } from 'drizzle-orm'
+import { and, desc, eq, gt, isNull, or, sql, type SQL } from 'drizzle-orm'
 import type { Db, Tx } from '../db/client.js'
 import { extensionAuthCodes, extensionGrants, extensionRefreshTokens, people } from '../db/schema.js'
 import { HttpError } from '../auth/plugin.js'
@@ -257,4 +258,34 @@ export async function revokeAllGrants(db: Db | Tx, by: { personId: string | null
     .where(isNull(extensionGrants.revokedAt))
     .returning({ id: extensionGrants.id })
   return rows.length
+}
+
+const iso = (d: Date | null) => (d ? d.toISOString() : null)
+
+/**
+ * Grants as Connected browsers shows them, newest first: never a hash or the token family. `activeOnly` leaves out
+ * revoked grants; otherwise revoked ones stay listed for 30 days.
+ */
+export async function listGrants(db: Db | Tx, opts: { personId?: string; activeOnly?: boolean; now: Date }): Promise<ExtensionGrant[]> {
+  const conds: SQL[] = []
+  if (opts.personId) conds.push(eq(extensionGrants.personId, opts.personId))
+  if (opts.activeOnly) conds.push(isNull(extensionGrants.revokedAt))
+  else conds.push(or(isNull(extensionGrants.revokedAt), gt(extensionGrants.revokedAt, new Date(opts.now.getTime() - 30 * DAY_MS)))!)
+  const rows = await db
+    .select({ g: extensionGrants, name: people.displayName })
+    .from(extensionGrants)
+    .innerJoin(people, eq(people.id, extensionGrants.personId))
+    .where(and(...conds))
+    .orderBy(desc(extensionGrants.createdAt), desc(extensionGrants.id))
+  return rows.map(({ g, name }) => ({
+    id: g.id,
+    extensionId: g.extensionId,
+    browserLabel: g.browserLabel,
+    createdAt: g.createdAt.toISOString(),
+    lastUsedAt: iso(g.lastUsedAt),
+    lastIp: g.lastIp,
+    revokedAt: iso(g.revokedAt),
+    revokeReason: g.revokeReason as ExtensionGrant['revokeReason'],
+    person: { id: g.personId, displayName: name },
+  }))
 }
