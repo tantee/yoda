@@ -35,6 +35,25 @@
     "needsReconnect": "Reconnect needed"
   },
   "editor": {
-    "draftMissing": "This draft is gone: it was sent, or it is older than 24 hours."
+    "draftMissing": "This draft is gone: it was sent, or it is older than 24 hours.",
+    "tools": "Tools",
+    "undo": "Undo",
+    "redo": "Redo",
+    "block": "Mosaic size",
+    "burnedIn": "Blur, mosaic and redact are burned into the image; the original is never sent. Nothing is hidden automatically.",
+    "noImage": "This report has no image",
+    "tool": {
+      "select": "Select",
+      "arrow": "Arrow",
+      "box": "Box",
+      "highlight": "Highlight",
+      "text": "Text",
+      "step": "Step number",
+      "blur": "Blur",
+      "mosaic": "Mosaic (rectangle)",
+      "mosaic-brush": "Mosaic (brush)",
+      "redact": "Redact",
+      "crop": "Crop"
+    }
   }
 }
