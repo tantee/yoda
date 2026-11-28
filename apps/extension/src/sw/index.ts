@@ -1,5 +1,7 @@
 import { ExtensionSession } from '@yoda/shared'
 import { accessToken, yodaFetch } from './api'
+import { appendEntries, armTab, captureState, entries, nonceFor, onTabRemoved, onTabUpdated } from './capture-session'
+import { injectCapture } from './inject'
 import { onMessage } from './messages'
 import { exchangeProfile, removeProfile } from './profiles'
 import { initSecrets } from './secrets'
@@ -11,7 +13,7 @@ const ready = initSecrets()
 chrome.runtime.onStartup?.addListener(() => void initSecrets())
 chrome.runtime.onInstalled?.addListener(() => void initSecrets())
 
-onMessage(async (m) => {
+onMessage(async (m, { sender }) => {
   await ready
   switch (m.type) {
     case 'profile.exchange':
@@ -32,7 +34,28 @@ onMessage(async (m) => {
       if (!res.ok) return { ok: false, error: res.status === 401 ? 'reconnect' : `http_${res.status}` }
       return { ok: true, session: ExtensionSession.parse(await res.json()) }
     }
+    case 'capture.arm': {
+      const tab = await chrome.tabs.get(m.tabId)
+      if (!tab.url) return { ok: false, error: 'no_access' }
+      try {
+        await armTab(m.tabId, tab.url, injectCapture)
+      } catch {
+        return { ok: false, error: 'injection_failed' }
+      }
+      return { ok: true, state: await captureState(m.tabId) }
+    }
+    case 'capture.collected':
+      // Only from the tab's current injection: onMessage checked the sender and the nonce.
+      if (sender.tab?.id !== undefined) await appendEntries(sender.tab.id, m.entries)
+      return { ok: true }
+    case 'capture.state':
+      return { ok: true, state: await captureState(m.tabId), counts: countsOf(await entries(m.tabId)) }
     default:
       return { ok: false, error: 'not_implemented' }
   }
-})
+}, { nonceFor })
+
+const countsOf = (e: Awaited<ReturnType<typeof entries>>) => ({ console: e.console.length, errors: e.console.filter((c) => c.level === 'error' || c.level === 'exception' || c.level === 'rejection').length, failedRequests: e.network.filter((n) => n.failed).length })
+
+chrome.tabs.onUpdated.addListener((tabId, change, tab) => void onTabUpdated(tabId, change, tab, injectCapture))
+chrome.tabs.onRemoved.addListener((tabId) => void onTabRemoved(tabId))
