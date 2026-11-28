@@ -45,7 +45,7 @@ case "$1" in
       *" exec -T proxy caddy reload "*) [ -z "\${FAKE_RELOAD_FAIL:-}" ] || { echo 'Error: loading new config' >&2; exit 1; } ;;
       *" exec -T proxy "*) echo "\${FAKE_PROXY_INFO:-internal portal.example.org 443}" ;;
       *" cp proxy:"*) [ -z "\${FAKE_NO_ROOT:-}" ] || exit 1; for a; do last=$a; done; echo 'PUBLIC ROOT' > "$last" ;;
-      *" version --short "*) echo "\${FAKE_COMPOSE:-2.29.1}" ;;
+      *" version --short "*) [ -z "\${FAKE_NO_COMPOSE:-}" ] || exit 1; echo "\${FAKE_COMPOSE:-2.29.1}" ;;
       *" config --images "*) echo "registry.example.org/group/yoda/core:1.2.0" ;;
       *" exec -T core "*) echo "\${FAKE_SETUP:-required}" ;;
       *" exec -T portal "*) exit "\${FAKE_READY:-0}" ;;
@@ -84,14 +84,20 @@ function stub(dir: string, name: string, body: string) {
   chmodSync(join(dir, 'bin', name), 0o755)
 }
 /** sudo that records what it was asked to run, and runs only mkdir and chown (unlocking a read-only parent first,
- * as root could write there): never apt-get or anything else on the machine running the tests. */
+ * as root could write there), install and rm into the sandbox (YODA_SYSROOT), and the package-manager stubs:
+ * never apt-get or anything else of the machine running the tests. `sudo -n true` fails with FAKE_SUDO_PASSWORD
+ * (a password is needed); `-n` and `-v` go to sudo-checks, not sudo-calls. */
 function writeSudo(dir: string, unlock = '') {
-  stub(dir, 'sudo', `echo "$*" >> "$FAKE/sudo-calls"
+  stub(dir, 'sudo', `case "$1" in
+  -n | -v) echo "$*" >> "$FAKE/sudo-checks"; [ "$1" = -v ] || [ -z "\${FAKE_SUDO_PASSWORD:-}" ]; exit ;;
+esac
+echo "$*" >> "$FAKE/sudo-calls"
+for last; do :; done
 case "$1" in
   mkdir | chown) ${unlock ? `chmod 755 '${unlock}'; ` : ''}exec "$@" ;;
   # the package-manager stubs (never the machine's own: they are not on a test's PATH then)
   env | apt-get | dnf) [ -x "$FAKE/bin/apt-get" ] || exit 0; exec "$@" ;;
-  install) case "$*" in *docker.list) cp "$4" "$FAKE/docker.list" ;; esac ;;
+  install | rm) case "$last" in "$FAKE"/*) exec "$@" ;; esac ;;
 esac
 exit 0`)
 }
@@ -786,11 +792,27 @@ describe.skipIf(!ci && !canInstall)('ops/install/install.sh (fixture bundle, tes
     await refuses(await install(args), /not a pinned release version/)
   })
 
-  it('needs --version with an internal mirror (--base-url has no "latest"), before downloading anything', async () => {
+  it('needs --version with an internal mirror when install.sh names no release (the repository copy), before downloading anything', async () => {
     for (const args of [[], ['--version', 'latest']]) {
       served = {}
-      await refuses(await install(args), /an internal mirror \(--base-url\) has no "latest": pass --version/)
+      requests = []
+      await refuses(await piped(args, {}, pub, sandbox(), true), /an internal mirror \(--base-url\) has no "latest": pass --version/)
+      expect(requests).toEqual([])
     }
+    // The published one names its release: --version latest still asks for the lookup.
+    await refuses(await piped(['--version', 'latest']), /an internal mirror \(--base-url\) has no "latest"/)
+  })
+
+  it('installs the release the published install.sh names (RELEASE_VERSION) without a lookup; --version wins', async () => {
+    expect(good['install.sh']!.toString()).toContain(`\nRELEASE_VERSION='${version}'\n`)
+    expect(readFileSync(join(root, 'ops/install/install.sh'), 'utf8')).toContain("\nRELEASE_VERSION=''\n")
+    const r = await piped([], { YODA_LATEST_URL: `${origin}/latest` })
+    expect(r.code, r.out).toBe(0)
+    expect(r.out).toContain(`install: release ${version} (the one this install.sh belongs to; --version picks another)`)
+    expect(requests).not.toContain('/latest')
+    rmSync(r.dir, { recursive: true, force: true })
+    // Another --version is that one (here not served: the download fails, nothing unpacked).
+    await refuses(await piped(['--version', '1.2.1']), /download failed: .*\/1\.2\.1\/SHA256SUMS/)
   })
 
   it.each([
@@ -842,7 +864,7 @@ describe.skipIf(!ci && !canInstall)('ops/install/install.sh (fixture bundle, tes
     expect(r.code, r.out).toBe(0)
     expect(r.out).toContain(`check-release: ${version} verified end to end`)
     // The one-line install too: piped, the latest release from the local releases/latest redirect.
-    expect(r.out).toContain(`check-release: the piped install (latest: ${version}) verified, unpacked and deployed`)
+    expect(r.out).toContain(`check-release: the piped install (${version}, named by install.sh, and as the latest) verified, unpacked and deployed`)
   }, 30_000)
 
   it.skipIf(!has('python3'))('check-release.sh checks a bundle that pins image digests, and refuses other digests', async () => {
@@ -884,10 +906,12 @@ describe.skipIf(!ci && !canInstall)('ops/install/install.sh (fixture bundle, tes
 
   /** curl ... | sh -s -- ...: install.sh read from a pipe, in the release directory next to a signed SHA256SUMS it
    * cannot see (piped, $0 is the shell): it downloads SHA256SUMS and the signature for the version. */
-  const piped = async (args: string[] = [], env: Record<string, string> = {}, key: string | null = pub, s = sandbox()) => {
+  /** The published install.sh (it names its release), or with `repo` the repository's (no release named: latest). */
+  const piped = async (args: string[] = [], env: Record<string, string> = {}, key: string | null = pub, s = sandbox(), repo = false) => {
     const target = join(s.dir, 'srv', 'yoda')
     requests = []
-    const r = await run('sh', ['-c', 'cat "$0" | sh -s -- "$@"', join(work, 'dist/releases', version, 'install.sh'), '--dir', target, '--base-url', base, ...args], {
+    const script = repo ? join(root, 'ops/install/install.sh') : join(work, 'dist/releases', version, 'install.sh')
+    const r = await run('sh', ['-c', 'cat "$0" | sh -s -- "$@"', script, '--dir', target, '--base-url', base, ...args], {
       env: { ...s.env, ...(key ? { YODA_RELEASE_PUBKEY: key } : {}), ...env },
     })
     served = { ...good }
@@ -908,7 +932,7 @@ describe.skipIf(!ci && !canInstall)('ops/install/install.sh (fixture bundle, tes
     })
 
     it('resolves the latest release from the releases/latest redirect (no --version)', async () => {
-      const r = await piped([], { YODA_LATEST_URL: `${origin}/latest`, YODA_RELEASES_API: `${origin}/api/never` })
+      const r = await piped([], { YODA_LATEST_URL: `${origin}/latest`, YODA_RELEASES_API: `${origin}/api/never` }, pub, sandbox(), true)
       expect(r.code, r.out).toBe(0)
       expect(r.out).toContain(`latest release: ${version}`)
       expect(requests[0]).toBe('/latest')
@@ -926,7 +950,7 @@ describe.skipIf(!ci && !canInstall)('ops/install/install.sh (fixture bundle, tes
     })
 
     it('stops when no latest release can be found, before downloading anything', async () => {
-      const r = await piped([], { YODA_LATEST_URL: `${origin}/gone`, YODA_RELEASES_API: `${origin}/api/gone` })
+      const r = await piped([], { YODA_LATEST_URL: `${origin}/gone`, YODA_RELEASES_API: `${origin}/api/gone` }, pub, sandbox(), true)
       await refuses(r, /cannot find the latest release \(http:\/\/127\.0\.0\.1:\d+\/gone, http:\/\/127\.0\.0\.1:\d+\/api\/gone\): pass --version/)
       expect(requests).toEqual(['/gone', '/api/gone'])
     })
@@ -965,7 +989,9 @@ describe.skipIf(!ci && !canInstall)('ops/install/install.sh (fixture bundle, tes
       writeFileSync(join(s.dir, 'tty'), 'y\n')
       const r = await piped(['--version', version, '--dir', join(locked, 'yoda')], { YODA_TTY: join(s.dir, 'tty') }, pub, s)
       expect(r.code, r.out).toBe(0)
-      expect(r.out).toContain(`Create ${join(locked, 'yoda')} with sudo and give it to`)
+      // The question went to the terminal, the answer came from it.
+      expect(readFileSync(join(s.dir, 'tty'), 'utf8')).toContain(`install: Create ${join(locked, 'yoda')} with sudo and give it to`)
+      expect(r.out).not.toContain('with sudo and give it to')
       expect(existsSync(join(locked, 'yoda/docker-compose.yml'))).toBe(true)
       chmodSync(locked, 0o755)
       rmSync(s.dir, { recursive: true, force: true })
@@ -1000,7 +1026,7 @@ describe.skipIf(!ci && !canInstall)('ops/install/install.sh (fixture bundle, tes
       writeFileSync(join(rel, 'install.sh'), good['install.sh']!)
       const other = await run('sh', [join(rel, 'install.sh'), '--version', '1.2.1', '--dir', join(s.dir, 'srv/yoda')], { env })
       expect(other.code).not.toBe(0)
-      expect(other.out).toContain('SHA256SUMS was not signed for release 1.2.1 (it names 1.2.0)')
+      expect(other.out).toContain(`the SHA256SUMS next to install.sh (${rel}) is signed for release 1.2.0, not 1.2.1: stale files from another download? Run install.sh from a clean directory`)
       expect(existsSync(join(s.dir, 'srv'))).toBe(false)
       rmSync(s.dir, { recursive: true, force: true })
     })
@@ -1120,7 +1146,7 @@ FAKE_IN_GROUP=1 exec /bin/sh -c "$3"`)
   describe('dependencies (a stubbed system: PATH without the tools, YODA_OS_RELEASE, stub sudo and package managers)', () => {
     /** Every command of the machine's PATH but those a fresh host may lack, or that must never run here. */
     let toolbox: string
-    const HIDDEN = ['curl', 'wget', 'minisign', 'docker', 'sudo', 'apt-get', 'apt-cache', 'add-apt-repository', 'dpkg', 'dnf', 'yum', 'rpm', 'id', 'sg', 'usermod', 'systemctl', 'service']
+    const HIDDEN = ['curl', 'wget', 'minisign', 'docker', 'sudo', 'apt-get', 'apt-cache', 'add-apt-repository', 'dpkg', 'dnf', 'yum', 'rpm', 'id', 'sg', 'usermod', 'systemctl', 'service', 'gpg']
     const which = (cmd: string) => spawnSync('sh', ['-c', `command -v ${cmd}`], { encoding: 'utf8' }).stdout.trim()
     const realCurl = which('curl')
     const realMinisign = which('minisign')
@@ -1155,10 +1181,12 @@ FAKE_IN_GROUP=1 exec /bin/sh -c "$3"`)
       }
       rmSync(join(s.dir, 'bin', 'docker'))
       writeFileSync(join(s.dir, 'docker-stub'), DOCKER_STUB)
-      // curl: the real one, except Docker's repository key (never fetched from the internet in a test).
+      // curl: the real one, except Docker's repository (never asked on the internet in a test): its release file
+      // (FAKE_NO_RELEASE: none for this codename) and its key (FAKE_KEY: what it serves).
       writeFileSync(join(s.dir, 'curl-stub'), `#!/bin/sh
 case "$*" in
-  *download.docker.com*) echo "curl $*" >> "$FAKE/sys-calls"; prev=''; for a; do [ "$prev" != -o ] || echo 'DOCKER KEY' > "$a"; prev=$a; done; exit 0 ;;
+  *download.docker.com*/dists/*/Release*) echo "curl $*" >> "$FAKE/sys-calls"; [ -z "\${FAKE_NO_RELEASE:-}" ] || exit 22; exit 0 ;;
+  *download.docker.com*) echo "curl $*" >> "$FAKE/sys-calls"; prev=''; for a; do [ "$prev" != -o ] || printf '%s\\n' "\${FAKE_KEY:------BEGIN PGP PUBLIC KEY BLOCK-----}" > "$a"; prev=$a; done; exit 0 ;;
 esac
 exec '${realCurl}' "$@"
 `)
@@ -1198,7 +1226,9 @@ done`
 esac`)
       if (opts.sudo !== false) writeSudo(s.dir)
       if (opts.os) writeFileSync(join(s.dir, 'os-release'), opts.os)
-      const env = { ...s.env, PATH: `${join(s.dir, 'bin')}:${tools}`, YODA_OS_RELEASE: join(s.dir, opts.os ? 'os-release' : 'none'), YODA_RELEASE_PUBKEY: pub, ...opts.env }
+      // apt's and dnf's configuration under the sandbox (YODA_SYSROOT), as root would write them.
+      for (const d of ['root/etc/apt/sources.list.d', 'root/etc/apt/keyrings', 'root/etc/yum.repos.d']) mkdirSync(join(s.dir, d), { recursive: true })
+      const env = { ...s.env, PATH: `${join(s.dir, 'bin')}:${tools}`, YODA_OS_RELEASE: join(s.dir, opts.os ? 'os-release' : 'none'), YODA_RELEASE_PUBKEY: pub, YODA_SYSROOT: join(s.dir, 'root'), ...opts.env }
       writeFileSync(join(s.dir, 'install.sh'), good['install.sh']!)
       const target = join(s.dir, 'srv/yoda')
       const go = async (args: string[] = [], first: string[] = ['--version', version]) => {
@@ -1217,7 +1247,7 @@ esac`)
       expect(r.code).toBe(1)
       expect(r.out).toContain('missing or too old:\n  - minisign: not found (checks the release signature)\n  - Docker Engine: not found, needs 24 or later\n  - Docker Compose plugin: not found, needs v2.24 or later')
       expect(r.out).not.toContain('curl: not found')
-      expect(r.out).toContain('install.sh can install them on Debian, Ubuntu and the RHEL family only; this system is unknown')
+      expect(r.out).toContain('install.sh can install them on Debian, Ubuntu and the RHEL family (RHEL, CentOS, Rocky, AlmaLinux, Fedora, Oracle Linux) only; this system is unknown')
       expect(r.out).toContain('  - minisign: your package manager, or https://jedisct1.github.io/minisign/')
       expect(r.out).toContain('  - Docker Engine 24 or later with the Compose plugin v2.24 or later: https://docs.docker.com/engine/install/')
       // Before anything else: nothing asked of the network, sudo or a package manager.
@@ -1246,12 +1276,21 @@ esac`)
       const h = host({ os: UBUNTU })
       const r = await h.go()
       expect(r.code).toBe(1)
-      expect(r.out).toContain('install.sh can install them now (sudo):')
-      expect(r.out).toContain('sudo apt-get install ca-certificates curl minisign')
-      expect(r.out).toContain("Docker's apt repository (https://download.docker.com/linux/ubuntu): its key in /etc/apt/keyrings/docker.asc, then sudo apt-get install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin")
-      expect(r.out).toContain('sudo usermod -aG docker tester')
+      // Every command behind the one question.
+      const apt = join(h.s.dir, 'root/etc/apt')
+      expect(r.out).toContain(`install.sh can install them now (sudo), with:
+install:   sudo apt-get update
+install:   if apt does not know minisign then: sudo apt-get install -y software-properties-common (unless add-apt-repository is here), sudo add-apt-repository -y universe, sudo apt-get update
+install:   sudo apt-get install -y ca-certificates curl minisign
+install:   Docker's apt repository (https://download.docker.com/linux/ubuntu, release noble): download its GPG key
+install:     (https://download.docker.com/linux/ubuntu/gpg; fingerprint 9DC858229FC7DD38854AE2D88D81803C0EBFCD88, checked when gpg is here) into ${apt}/keyrings/docker.asc,
+install:     write ${apt}/sources.list.d/docker.list, sudo apt-get update, sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+install:     (if that fails, both files are removed again)
+install:   sudo usermod -aG docker tester   (the docker group is root-equivalent: whoever is in it controls this host;`)
       expect(r.out).toContain('Install them now? There is no terminal to ask on (piped without one, or unattended), and install.sh never assumes yes: run it again with --yes')
-      expect(h.log('sudo-calls') + h.log('sys-calls')).toBe('')
+      // Nothing changed; only the release file of Docker's repository was looked at (curl is here).
+      expect(h.log('sudo-calls')).toBe('')
+      expect(h.log('sys-calls')).toBe('curl -fsI --proto =https --proto-redir =https https://download.docker.com/linux/ubuntu/dists/noble/Release\n')
       done(h)
     })
 
@@ -1260,19 +1299,24 @@ esac`)
       const r = await h.go(['--yes'])
       expect(r.code, r.out).toBe(0)
       expect(r.out).toContain('Install them now? yes (--yes)')
+      const apt = join(h.s.dir, 'root/etc/apt')
       const sudo = h.log('sudo-calls').split('\n').filter(Boolean)
       expect(sudo[0]).toBe('env DEBIAN_FRONTEND=noninteractive apt-get update')
       expect(sudo[1]).toBe('env DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl minisign')
-      expect(sudo[2]).toBe('install -m 0755 -d /etc/apt/keyrings')
-      expect(sudo[3]).toMatch(/^install -m 0644 \S+\/docker\.asc \/etc\/apt\/keyrings\/docker\.asc$/)
-      expect(sudo[4]).toMatch(/^install -m 0644 \S+\/docker\.list \/etc\/apt\/sources\.list\.d\/docker\.list$/)
+      expect(sudo[2]).toBe(`install -m 0755 -d ${apt}/keyrings`)
+      expect(sudo[3]).toMatch(new RegExp(`^install -m 0644 \\S+/docker\\.asc ${apt}/keyrings/docker\\.asc$`))
+      expect(sudo[4]).toMatch(new RegExp(`^install -m 0644 \\S+/docker\\.list ${apt}/sources\\.list\\.d/docker\\.list$`))
       expect(sudo.slice(5)).toEqual([
         'env DEBIAN_FRONTEND=noninteractive apt-get update',
         'env DEBIAN_FRONTEND=noninteractive apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin',
         'usermod -aG docker tester',
       ])
-      expect(h.log('docker.list')).toBe('deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu noble stable\n')
-      expect(h.log('sys-calls')).toContain('curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o ')
+      // sudo was checked once after the yes (no password needed here), never before.
+      expect(h.log('sudo-checks')).toBe('-n true\n-v\n')
+      expect(readFileSync(join(apt, 'sources.list.d/docker.list'), 'utf8')).toBe('deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu noble stable\n')
+      expect(readFileSync(join(apt, 'keyrings/docker.asc'), 'utf8')).toContain('-----BEGIN PGP PUBLIC KEY BLOCK-----')
+      expect(r.out).toContain("warning: gpg is not here, so the Docker repository key's fingerprint is not checked")
+      expect(h.log('sys-calls')).toContain('curl -fsSL --proto =https --proto-redir =https https://download.docker.com/linux/ubuntu/gpg -o ')
       // Then the release, verified, unpacked and deployed in the same run.
       expect(r.out).toContain('signature and checksum verified')
       expect(existsSync(join(r.target, 'docker-compose.yml'))).toBe(true)
@@ -1284,7 +1328,7 @@ esac`)
       const d = host({ os: DEBIAN, have: ['curl', 'minisign'] })
       const r = await d.go(['--yes'])
       expect(r.code, r.out).toBe(0)
-      expect(d.log('docker.list')).toBe('deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian bookworm stable\n')
+      expect(readFileSync(join(d.s.dir, 'root/etc/apt/sources.list.d/docker.list'), 'utf8')).toBe('deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian bookworm stable\n')
       expect(d.log('sudo-calls')).toContain('apt-get install -y ca-certificates curl\n')
       done(d)
       const u = host({ os: UBUNTU, have: ['curl', 'docker'], env: { FAKE_NO_MINISIGN_PKG: '1' } })
@@ -1326,8 +1370,217 @@ esac`)
       const r = await h.go(['--yes'])
       expect(r.code).toBe(1)
       expect(r.out).toContain(line)
-      expect(r.out).toContain("docker.io and docker-compose-v2 packages can be older than Compose v2.24; install.sh does not replace them")
+      expect(r.out).toContain("Docker is installed from the distribution (docker.io, docker-compose-v2), not from Docker's own")
+      expect(r.out).toContain('older than Yoda needs (Engine 24+, Compose v2.24+); install.sh does not replace it.')
       expect(r.out).toContain('sudo apt-get remove docker.io docker-compose-v2 docker-compose docker-doc podman-docker')
+      expect(h.log('sudo-calls') + h.log('sys-calls')).toBe('')
+      done(h)
+    })
+
+    describe("Docker's repository: checked before anything is written, taken away again when it fails", () => {
+      const apt = (h: ReturnType<typeof host>) => join(h.s.dir, 'root/etc/apt')
+      /** Nothing of Docker's repository is left in apt's configuration. */
+      const clean = (h: ReturnType<typeof host>) => {
+        expect(existsSync(join(apt(h), 'sources.list.d/docker.list'))).toBe(false)
+        expect(existsSync(join(apt(h), 'keyrings/docker.asc'))).toBe(false)
+      }
+
+      it.each([
+        ['kali-rolling (no such release in Docker\'s repository)', 'ID=kali\nID_LIKE=debian\nVERSION_CODENAME=kali-rolling\n', { FAKE_NO_RELEASE: '1' }, /Docker's apt repository has no release "kali-rolling" \(https:\/\/download\.docker\.com\/linux\/debian\/dists\/kali-rolling\/\), so install\.sh cannot add it/],
+        ['LMDE (its Debian base, DEBIAN_CODENAME, first; a missing one stops)', 'ID=linuxmint\nID_LIKE=debian\nVERSION_CODENAME=faye\nDEBIAN_CODENAME=bookworm\n', { FAKE_NO_RELEASE: '1' }, /has no release "bookworm"/],
+        ['a release name that is not a plain word', 'ID=debian\nVERSION_CODENAME="book worm"\n', {}, /cannot tell this system's release name \(DEBIAN_CODENAME, UBUNTU_CODENAME or VERSION_CODENAME/],
+      ])('stops with the manual steps for %s, before asking or installing anything', async (_name, os, env, message) => {
+        const h = host({ os, env })
+        const r = await h.go(['--yes'])
+        expect(r.code).toBe(1)
+        expect(r.out).toMatch(message)
+        expect(r.out).toContain('https://docs.docker.com/engine/install/')
+        expect(r.out).not.toContain('Install them now?')
+        expect(h.log('sudo-calls')).toBe('')
+        clean(h)
+        done(h)
+      })
+
+      it('checks the release again after apt installed curl, still before writing anything', async () => {
+        const h = host({ os: 'ID=kali\nID_LIKE=debian\nVERSION_CODENAME=kali-rolling\n', have: [], env: { FAKE_NO_RELEASE: '1' } })
+        const r = await h.go(['--yes'])
+        expect(r.code).toBe(1)
+        expect(r.out).toContain('has no release "kali-rolling"')
+        expect(h.log('sudo-calls')).toContain('apt-get install -y ca-certificates curl minisign')
+        expect(h.log('sudo-calls')).not.toContain('docker')
+        clean(h)
+        done(h)
+      })
+
+      it('refuses a key that is not a PGP public key, or (with gpg) not Docker\'s fingerprint, writing nothing', async () => {
+        const bad = host({ os: UBUNTU, env: { FAKE_KEY: '<html>not a key</html>' } })
+        let r = await bad.go(['--yes'])
+        expect(r.code).toBe(1)
+        expect(r.out).toContain('is not a PGP public key: nothing was changed')
+        expect(bad.log('sudo-calls')).not.toContain('docker.asc')
+        clean(bad)
+        done(bad)
+        for (const [fpr, ok] of [['0000000000000000000000000000000000000000', false], ['9DC858229FC7DD38854AE2D88D81803C0EBFCD88', true]] as const) {
+          const h = host({ os: UBUNTU })
+          stub(h.s.dir, 'gpg', `echo "gpg $*" >> "$FAKE/sys-calls"\necho 'pub:-:4096:1:8D81803C0EBFCD88:1487788586:::-:::scESA::::::23::0:'\necho 'fpr:::::::::${fpr}:'`)
+          r = await h.go(['--yes'])
+          if (ok) {
+            expect(r.code, r.out).toBe(0)
+            expect(r.out).toContain("Docker's repository key: fingerprint 9DC858229FC7DD38854AE2D88D81803C0EBFCD88 (checked with gpg)")
+          } else {
+            expect(r.code).toBe(1)
+            expect(r.out).toContain("the downloaded Docker repository key is not Docker's (fingerprint 9DC858229FC7DD38854AE2D88D81803C0EBFCD88; got: 0000000000000000000000000000000000000000): nothing was changed")
+            clean(h)
+          }
+          expect(h.log('sys-calls')).toMatch(/gpg --batch --show-keys --with-colons \S+\/docker\.asc/)
+          done(h)
+        }
+      })
+
+      it.each([
+        ['a .list without signed-by (the old apt-key way)', 'sources.list.d/docker-old.list', 'deb [arch=amd64] https://download.docker.com/linux/ubuntu noble stable\n', /without signed-by/],
+        ['a deb822 .sources with its own Signed-By', 'sources.list.d/docker.sources', 'Types: deb\nURIs: https://download.docker.com/linux/ubuntu\nSuites: noble\nComponents: stable\nSigned-By: /usr/share/keyrings/docker.gpg\n', /with its own signed-by key/],
+      ])('never adds a second Docker source next to %s: it explains and stops', async (_name, file, content, how) => {
+        const h = host({ os: UBUNTU })
+        writeFileSync(join(apt(h), file), content)
+        const r = await h.go(['--yes'])
+        expect(r.code).toBe(1)
+        expect(r.out).toContain(`Docker's apt repository is already configured in ${join(apt(h), file)}`)
+        expect(r.out).toMatch(how)
+        expect(r.out).toContain('install.sh does not add a second')
+        expect(h.log('sudo-calls')).toBe('')
+        expect(existsSync(join(apt(h), 'sources.list.d/docker.list'))).toBe(false)
+        done(h)
+      })
+
+      it('a commented-out Docker line does not count', async () => {
+        const h = host({ os: UBUNTU })
+        writeFileSync(join(apt(h), 'sources.list'), '# deb https://download.docker.com/linux/ubuntu noble stable\n')
+        const r = await h.go(['--yes'])
+        expect(r.code, r.out).toBe(0)
+        done(h)
+      })
+
+      it.each([
+        ['apt-get update', 'update'],
+        ['apt-get install of the Docker packages', 'docker-ce'],
+      ])('removes docker.list and docker.asc again when %s fails, so apt is as before', async (_name, failing) => {
+        const h = host({ os: UBUNTU })
+        // The second update (with Docker's source), or the Docker install, fails.
+        stub(h.s.dir, 'apt-get', `echo "apt-get $*" >> "$FAKE/sys-calls"
+if [ -f "$YODA_SYSROOT/etc/apt/sources.list.d/docker.list" ]; then
+  case " $* " in *" ${failing} "*) exit 100 ;; esac
+fi
+[ "$1" = install ] || exit 0
+for p; do case "$p" in minisign) ln -sf '${realMinisign}' "$FAKE/bin/minisign" ;; esac; done`)
+        const r = await h.go(['--yes'])
+        expect(r.code).toBe(1)
+        expect(r.out).toContain(`removed ${join(apt(h), 'sources.list.d/docker.list')} and ${join(apt(h), 'keyrings/docker.asc')} again, so apt is as before`)
+        expect(h.log('sudo-calls')).toContain(`rm -f ${join(apt(h), 'sources.list.d/docker.list')} ${join(apt(h), 'keyrings/docker.asc')}`)
+        clean(h)
+        done(h)
+      })
+
+      it('removes the dnf repository file again when the Docker install fails', async () => {
+        const h = host({ os: ROCKY })
+        stub(h.s.dir, 'dnf', `echo "dnf $*" >> "$FAKE/sys-calls"
+case "$*" in
+  'config-manager --add-repo '*) printf '[docker-ce-stable]\\n' > "$YODA_SYSROOT/etc/yum.repos.d/docker-ce.repo" ;;
+  *docker-ce*) exit 1 ;;
+  'install -y '*minisign*) ln -sf '${realMinisign}' "$FAKE/bin/minisign" ;;
+esac
+exit 0`)
+        const r = await h.go(['--yes'])
+        expect(r.code).toBe(1)
+        const repo = join(h.s.dir, 'root/etc/yum.repos.d/docker-ce.repo')
+        expect(r.out).toContain(`removed ${repo} again, so dnf is as before`)
+        expect(existsSync(repo)).toBe(false)
+        done(h)
+      })
+
+      it.each([
+        ['Amazon Linux', 'ID="amzn"\nID_LIKE="centos rhel fedora"\n', 'amzn'],
+        ['an unknown look-alike', 'ID=myos\nID_LIKE="rhel"\n', 'myos'],
+      ])('%s is not the RHEL family install.sh handles: the manual steps', async (_name, os, id) => {
+        const h = host({ os })
+        const r = await h.go(['--yes'])
+        expect(r.code).toBe(1)
+        expect(r.out).toContain(`(RHEL, CentOS, Rocky, AlmaLinux, Fedora, Oracle Linux) only; this system is ${id}`)
+        expect(h.log('sudo-calls') + h.log('sys-calls')).toBe('')
+        done(h)
+      })
+
+      it('shows every RHEL action behind the one question: EPEL, dnf-plugins-core, the repository, the group', async () => {
+        const h = host({ os: ROCKY })
+        const r = await h.go()
+        expect(r.out).toContain(`install.sh can install them now (sudo), with:
+install:   if dnf does not know minisign: sudo dnf install -y epel-release (EPEL)
+install:   sudo dnf install -y ca-certificates curl minisign
+install:   sudo dnf install -y dnf-plugins-core, then sudo dnf config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+install:     (Docker's repository; dnf imports its GPG key at the install), sudo dnf install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+install:     (if that fails, the repository file is removed again)
+install:   sudo usermod -aG docker tester   (the docker group is root-equivalent`)
+        done(h)
+      })
+    })
+
+    it.each([
+      [{ FAKE_NO_COMPOSE: '1' }, "Docker is installed from the distribution, without the Compose plugin. Ubuntu's and Debian's own package", /older than Yoda needs/],
+    ])('only the Compose plugin missing (%j): says so, never "too old"', async (env, says, never) => {
+      const h = host({ os: UBUNTU, have: ['curl', 'minisign', 'docker'], env })
+      // docker compose version fails (FAKE_NO_COMPOSE): no plugin.
+      const r = await h.go(['--yes'])
+      expect(r.code).toBe(1)
+      expect(r.out).toContain('  - Docker Compose plugin: not found (docker compose version failed), needs v2.24 or later')
+      expect(r.out).toContain(says)
+      expect(r.out).toContain('apt-cache policy docker-compose-v2')
+      expect(r.out).not.toMatch(never)
+      done(h)
+    })
+
+    it('a Docker of the RHEL family that is not Docker\'s, and a snap Docker: their own explanations', async () => {
+      const rh = host({ os: ROCKY, have: ['curl', 'minisign', 'docker'], env: { FAKE_ENGINE: '20.10.0' } })
+      stub(rh.s.dir, 'rpm', 'exit 1')
+      let r = await rh.go(['--yes'])
+      expect(r.code).toBe(1)
+      expect(r.out).toContain("Docker here is not from Docker's own repository (the distribution's moby-engine, or podman-docker)")
+      expect(r.out).toContain('sudo dnf remove docker docker-client docker-common podman-docker moby-engine')
+      expect(r.out).not.toContain('docker.io')
+      done(rh)
+      // A docker under a snap directory (/snap/bin/docker on a real host; here one in the sandbox, first on PATH).
+      const snap = host({ os: UBUNTU, have: ['curl', 'minisign'], env: { FAKE_ENGINE: '20.10.0' } })
+      const sb = join(snap.s.dir, 'snap/bin')
+      mkdirSync(sb, { recursive: true })
+      writeFileSync(join(sb, 'docker'), DOCKER_STUB)
+      chmodSync(join(sb, 'docker'), 0o755)
+      const sr = await run('sh', [join(snap.s.dir, 'install.sh'), '--version', version, '--dir', join(snap.s.dir, 'srv/yoda'), '--base-url', base, '--yes'], {
+        env: { ...snap.s.env, PATH: `${sb}:${join(snap.s.dir, 'bin')}:${toolbox}`, YODA_OS_RELEASE: join(snap.s.dir, 'os-release'), YODA_RELEASE_PUBKEY: pub, YODA_SYSROOT: join(snap.s.dir, 'root'), FAKE_ENGINE: '20.10.0' },
+      })
+      expect(sr.code).toBe(1)
+      expect(sr.out).toContain(`Docker here is the snap (${join(sb, 'docker')}): install.sh does not change it.`)
+      expect(sr.out).toContain('sudo snap remove docker')
+      done(snap)
+    })
+
+    it('sudo that needs a password, with --yes and no terminal: stops before running anything as root', async () => {
+      const h = host({ os: UBUNTU, env: { FAKE_SUDO_PASSWORD: '1' } })
+      const r = await h.go(['--yes'])
+      expect(r.code).toBe(1)
+      expect(r.out).toContain('Install them now? yes (--yes)')
+      expect(r.out).toContain('sudo needs a password and there is no terminal (run it in a terminal, or as root)')
+      expect(h.log('sudo-calls')).toBe('')
+      expect(h.log('sudo-checks')).toBe('-n true\n')
+      done(h)
+    })
+
+    it('refuses an existing install before installing any dependency', async () => {
+      const h = host({ os: UBUNTU })
+      mkdirSync(join(h.s.dir, 'srv/yoda'), { recursive: true })
+      writeFileSync(join(h.s.dir, 'srv/yoda/release.env'), 'YODA_VERSION=1.1.0\n')
+      const r = await h.go(['--yes'])
+      expect(r.code).toBe(1)
+      expect(r.out).toContain(`${join(h.s.dir, 'srv/yoda')} already holds an install (release.env); upgrade it with: cd ${join(h.s.dir, 'srv/yoda')} && YODA_VERSION=1.2.0 sh ops/deploy/deploy.sh`)
+      expect(r.out).not.toContain('missing or too old')
       expect(h.log('sudo-calls') + h.log('sys-calls')).toBe('')
       done(h)
     })
@@ -1336,7 +1589,7 @@ esac`)
       const h = host({ os: UBUNTU, have: ['curl', 'minisign', 'docker'], env: { FAKE_COMPOSE: '2.20.3', FAKE_DOCKER_CE: '0' } })
       const r = await h.go()
       expect(r.code).toBe(1)
-      expect(r.out).toContain("Docker's apt repository (https://download.docker.com/linux/ubuntu)")
+      expect(r.out).toContain("Docker's apt repository (https://download.docker.com/linux/ubuntu, release noble)")
       expect(r.out).toContain('run it again with --yes')
       done(h)
     })
@@ -1514,10 +1767,45 @@ esac`)
     expect(r.out).toContain('latest release: 1.4.2')
     expect(r.out).toContain('downloading Yoda 1.4.2 from https://github.com/tantee/yoda/releases/download/v1.4.2/')
     const calls = readFileSync(join(s.dir, 'curl-calls'), 'utf8').split('\n')
-    expect(calls[0]).toBe('-fsSI --retry 2 -o /dev/null -w %{redirect_url} https://github.com/tantee/yoda/releases/latest')
+    // https only, also for the redirect (a downgrade to http is refused by curl itself).
+    expect(calls[0]).toBe('-fsSI --proto =https --retry 2 -o /dev/null -w %{redirect_url} https://github.com/tantee/yoda/releases/latest')
+    expect(calls[1]).toMatch(/^-fsSL --proto =https --proto-redir =https --retry 2 -o /)
     expect(calls[1]).toMatch(/ https:\/\/github\.com\/tantee\/yoda\/releases\/download\/v1\.4\.2\/SHA256SUMS$/)
     rmSync(s.dir, { recursive: true, force: true })
   })
+})
+
+describe.skipIf(!posix)('install.sh: the sg docker wrapper and signals', () => {
+  it('passes every argument intact through sg docker -c: quotes, spaces, $, backslashes, globs', async () => {
+    const s = sandbox()
+    const sh = readFileSync(join(root, 'ops/install/install.sh'), 'utf8')
+    const body = /cat <<'SHIM'\n([\s\S]*?)\nSHIM\n/.exec(sh)?.[1]
+    expect(body).toBeTruthy()
+    // The real docker: one argument per line.
+    stub(s.dir, 'real-docker', 'for a; do printf "[%s]\\n" "$a"; done')
+    stub(s.dir, 'sg', '[ "$1" = docker ] && [ "$2" = -c ] || exit 2\nexec /bin/sh -c "$3"')
+    writeFileSync(join(s.dir, 'shim'), `#!/bin/sh\nreal='${join(s.dir, 'bin', 'real-docker')}'\n${body}\n`)
+    chmodSync(join(s.dir, 'shim'), 0o755)
+    const args = ["it's", "a 'b' c", 'x"y', '$HOME', '`id`', 'back\\slash', '*', '', '{{.Server.Version}}', "''"]
+    const r = await run(join(s.dir, 'shim'), args, { env: s.env })
+    expect(r.code, r.out).toBe(0)
+    expect(r.out).toBe(args.map((a) => `[${a}]\n`).join(''))
+    rmSync(s.dir, { recursive: true, force: true })
+  })
+
+  it('a hang-up (SIGHUP) exits and still removes its temp directory (the EXIT trap, also under dash)', async () => {
+    const s = sandbox()
+    mkdirSync(join(s.dir, 'tmp'))
+    stub(s.dir, 'curl', 'exec sleep 2')
+    const child = execFile('sh', [join(root, 'ops/install/install.sh'), '--version', '1.2.0', '--dir', join(s.dir, 'srv')], { env: { ...s.env, TMPDIR: join(s.dir, 'tmp') } })
+    const code = await new Promise<number | null>((resolve) => {
+      setTimeout(() => child.kill('SIGHUP'), 800)
+      child.on('exit', (c, sig) => resolve(c ?? (sig ? -1 : null)))
+    })
+    expect(code).toBe(129)
+    expect(readdirSync(join(s.dir, 'tmp'))).toEqual([])
+    rmSync(s.dir, { recursive: true, force: true })
+  }, 20_000)
 })
 
 describe.skipIf(!posix)('install.sh cut short (a truncated download runs nothing)', () => {
@@ -1589,7 +1877,7 @@ describe('ops/install/install.sh text', () => {
     // sudo only through as_root (after asking) and need_root's check that it exists; never `sudo docker`.
     const unquoted = code.split('\n').map((l) => l.replace(/"(?:[^"\\]|\\.)*"/g, '""').replace(/'[^']*'/g, "''"))
     const sudo = unquoted.filter((l) => /\bsudo\b/.test(l) && !/\bhave sudo\b/.test(l))
-    expect(sudo.map((l) => l.trim())).toEqual(['if is_root; then ""; else sudo ""; fi'])
+    expect(sudo.map((l) => l.trim())).toEqual(['if is_root; then ""; else sudo ""; fi', 'sudo -n true 2>/dev/null || tty_ok ||', "sudo -v || die ''"])
     // Every URL host is GitHub, Docker's documentation and package repository, or a placeholder.
     const hosts = [...sh.matchAll(/https?:\/\/([a-z0-9][a-z0-9.-]*)/gi)].map((m) => m[1]!)
     expect(hosts.filter((h) => !/(^|\.)example\.org$|^127\.0\.0\.1|^jedisct1\.github\.io$|^(api\.)?github\.com$|^(docs|download)\.docker\.com$|^acme-staging-v02\.api\.letsencrypt\.org$/.test(h))).toEqual([])

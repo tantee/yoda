@@ -56,6 +56,10 @@
 # creating --dir), and as root it needs none.
 set -eu
 
+# The constants are a function too (called first by main), their lines unindented for the tools that read them
+# (bundle.sh sets RELEASE_VERSION; the release workflow reads RELEASE_PUBKEY_EMBEDDED): cut short in the middle of
+# one, a line must never run as a command.
+constants() {
 # The release signing public key (minisign key id C73EF0AF404BAE84, the second line of keys/yoda-release.pub;
 # docs/releasing.md, "Verifying releases"). A fork or mirror with its own key replaces it; a placeholder containing
 # REPLACE-WITH is refused below.
@@ -64,6 +68,9 @@ RELEASE_PUBKEY_EMBEDDED='RWSErktAr/A+x5Gvgr0x29wiu41FmYEVlJYoXyB6oJk4kvwQLOZs9O9
 # An internal mirror overrides both: --base-url / YODA_RELEASE_BASE_URL and --image-prefix / YODA_IMAGE_PREFIX.
 DEFAULT_BASE_URL='https://github.com/tantee/yoda/releases/download/v{version}/'
 DEFAULT_IMAGE_PREFIX='ghcr.io/tantee/yoda'
+# The release this install.sh belongs to: bundle.sh sets it in the published copy (empty in the repository, where
+# the default is the latest release). --version always wins.
+RELEASE_VERSION=''
 # "latest": the redirect of releases/latest to releases/tag/v<version>, else the API's tag_name.
 LATEST_URL='https://github.com/tantee/yoda/releases/latest'
 RELEASES_API='https://api.github.com/repos/tantee/yoda/releases/latest'
@@ -73,7 +80,10 @@ MIN_FREE_KB=10485760
 # Docker Engine from Docker's own repository (https://docs.docker.com/engine/install/).
 DOCKER_REPO='https://download.docker.com/linux'
 DOCKER_PACKAGES='docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin'
+# The fingerprint of Docker's repository signing key (https://docs.docker.com/engine/install/ubuntu/), for apt.
+DOCKER_KEY_FPR='9DC858229FC7DD38854AE2D88D81803C0EBFCD88'
 VERSION_RE='^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'
+}
 
 say() { printf 'install: %s\n' "$*"; }
 die() {
@@ -119,7 +129,7 @@ ask() {
     return 0
   fi
   tty_ok || die "$1 There is no terminal to ask on (piped without one, or unattended), and install.sh never assumes yes: run it again with --yes${2:+, or $2}"
-  printf 'install: %s [y/N] ' "$1" >&2
+  printf 'install: %s [y/N] ' "$1" >>"$tty"
   answer=''
   IFS= read -r answer <"$tty" || :
   case "$answer" in
@@ -136,17 +146,27 @@ need_root() {
 as_root() {
   if is_root; then "$@"; else sudo "$@"; fi
 }
+# After a yes: sudo must work now, not hang on a password nobody can type (piped, --yes, no terminal).
+sudo_ready() {
+  is_root && return 0
+  sudo -n true 2>/dev/null || tty_ok ||
+    die 'sudo needs a password and there is no terminal (run it in a terminal, or as root)'
+  sudo -v || die 'sudo -v failed: this user may not use sudo here'
+}
 
 # --- the system ---------------------------------------------------------------------------------------------------
 os_field() {
   sed -n "s/^$1=//p" "$os_release" 2>/dev/null | tail -n 1 | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\\(.*\\)'\$/\\1/"
 }
-# debian (Debian, Ubuntu and their derivatives), rhel (RHEL, CentOS, Rocky, Alma, Fedora) or unknown.
+# debian (Debian, Ubuntu and their derivatives), rhel (exactly RHEL, CentOS, Rocky, AlmaLinux, Fedora and Oracle
+# Linux: Docker's repository serves those; Amazon Linux and other look-alikes are unknown) or unknown.
 os_family() {
   [ -r "$os_release" ] || { echo unknown; return 0; }
+  case "$(os_field ID)" in
+    rhel | centos | rocky | almalinux | fedora | ol) echo rhel; return 0 ;;
+  esac
   case " $(os_field ID) $(os_field ID_LIKE) " in
     *' debian '* | *' ubuntu '*) echo debian ;;
-    *' rhel '* | *' fedora '* | *' centos '*) echo rhel ;;
     *) echo unknown ;;
   esac
 }
@@ -184,6 +204,8 @@ check_deps() {
   missing=''
   report=''
   docker_state=ok
+  engine_old=no
+  compose_state=ok
   have curl || lack curl 'curl: not found (downloads the release)'
   have tar || lack tar 'tar: not found (unpacks the release)'
   have sha256sum || have shasum || lack sha256sum 'sha256sum or shasum: not found (checks the release checksum)'
@@ -196,18 +218,20 @@ check_deps() {
     return 0
   fi
   if compose=$(docker compose version --short 2>/dev/null) && [ -n "$compose" ]; then
-    ver_ge "$compose" 2 24 || lack compose "Docker Compose: found $compose, needs v$MIN_COMPOSE or later"
+    ver_ge "$compose" 2 24 || { compose_state=old; lack compose "Docker Compose: found $compose, needs v$MIN_COMPOSE or later"; }
   else
+    compose_state=missing
     lack compose "Docker Compose plugin: not found (docker compose version failed), needs v$MIN_COMPOSE or later"
   fi
   probe_engine
   if [ -n "$engine" ]; then
-    ver_ge "$engine" "$MIN_ENGINE" 0 || lack docker "Docker Engine: found $engine, needs $MIN_ENGINE or later"
+    ver_ge "$engine" "$MIN_ENGINE" 0 || { engine_old=yes; lack docker "Docker Engine: found $engine, needs $MIN_ENGINE or later"; }
     return 0
   fi
   # No daemon to ask: the client's version says whether it is too old anyway.
   client=$(docker --version 2>/dev/null | sed -n 's/^Docker version \([0-9][0-9.]*\).*/\1/p')
   if [ -n "$client" ] && ! ver_ge "$client" "$MIN_ENGINE" 0; then
+    engine_old=yes
     lack docker "Docker Engine: found $client (client), needs $MIN_ENGINE or later"
   fi
   case "$docker_err" in
@@ -241,19 +265,147 @@ manual_steps() {
   done
 }
 
-# Docker is there, too old, and not Docker's own packages: explained, never replaced behind the user's back.
+# Docker is there but not usable for Yoda, and not Docker's own packages: explained, never replaced behind the
+# user's back (other containers may run on it).
 explain_distro_docker() {
+  real=$(command -v docker)
+  case "$real" in
+    */snap/*)
+      say "Docker here is the snap ($real): install.sh does not change it. Either make sure it gives Docker Engine"
+      say "$MIN_ENGINE or later with Compose v$MIN_COMPOSE or later yourself, or switch to Docker's packages:"
+      say '  sudo snap remove docker   (its images, containers and volumes go with it: back them up first)'
+      say "  then run install.sh again: it then offers Docker Engine from $DOCKER_REPO ($DOCKER_PACKAGES)."
+      return 0
+      ;;
+  esac
   if [ "$1" = debian ]; then
+    if [ "$engine_old" = no ] && [ "$compose_state" = missing ]; then
+      say "Docker is installed from the distribution, without the Compose plugin. Ubuntu's and Debian's own package"
+      say "for it (docker-compose-v2) can be older than Compose v$MIN_COMPOSE; check before using it:"
+      say "  apt-cache policy docker-compose-v2   (needs $MIN_COMPOSE or later), then: sudo apt-get install docker-compose-v2"
+      say 'Or switch to Docker'"'"'s packages (below).'
+    else
+      say "Docker is installed from the distribution (docker.io, docker-compose-v2), not from Docker's own"
+      say "repository, and it is older than Yoda needs (Engine $MIN_ENGINE+, Compose v$MIN_COMPOSE+); install.sh does not replace it."
+    fi
     remove='sudo apt-get remove docker.io docker-compose-v2 docker-compose docker-doc podman-docker'
   else
+    say "Docker here is not from Docker's own repository (the distribution's moby-engine, or podman-docker), and it"
+    say "is not what Yoda needs (Engine $MIN_ENGINE+ with Compose v$MIN_COMPOSE+); install.sh does not replace it."
     remove='sudo dnf remove docker docker-client docker-common podman-docker moby-engine'
   fi
-  say 'Docker is installed, but not from Docker'"'"'s own repository, and too old for Yoda. Ubuntu'"'"'s and Debian'"'"'s'
-  say "docker.io and docker-compose-v2 packages can be older than Compose v$MIN_COMPOSE; install.sh does not replace them"
-  say 'on its own (other containers may run on them). Either update them yourself, or switch to Docker'"'"'s packages:'
+  say 'To switch to Docker'"'"'s packages:'
   say "  $remove"
   say '  (images, containers and volumes stay in /var/lib/docker), then run install.sh again: it then offers'
   say "  Docker Engine from $DOCKER_REPO ($DOCKER_PACKAGES)."
+}
+
+# The distribution in Docker's repository paths.
+docker_distro() {
+  case " $(os_field ID) $(os_field ID_LIKE) " in
+    *' ubuntu '*) echo ubuntu ;;
+    *' debian '*) echo debian ;;
+    *)
+      case "$(os_field ID)" in
+        fedora) echo fedora ;;
+        rhel) echo rhel ;;
+        *) echo centos ;;
+      esac
+      ;;
+  esac
+}
+# The release name in Docker's apt repository: a derivative's base (DEBIAN_CODENAME, LMDE; UBUNTU_CODENAME, Mint)
+# before its own (VERSION_CODENAME). Empty when there is none or it is not a plain name.
+docker_codename() {
+  for f in DEBIAN_CODENAME UBUNTU_CODENAME VERSION_CODENAME; do
+    c=$(os_field "$f")
+    [ -z "$c" ] || break
+  done
+  printf '%s\n' "$c" | grep -Ex '[a-z0-9-]+' || :
+}
+# Docker's apt repository must have a release for this system (it has none for kali-rolling or LMDE's own names):
+# checked before anything is written.
+docker_apt_release() {
+  dist=$(docker_distro)
+  codename=$(docker_codename)
+  [ -n "$codename" ] || {
+    missing='docker'
+    manual_steps "cannot tell this system's release name (DEBIAN_CODENAME, UBUNTU_CODENAME or VERSION_CODENAME in $os_release) for Docker's repository"
+    exit 1
+  }
+  curl -fsI --proto '=https' --proto-redir '=https' "$DOCKER_REPO/$dist/dists/$codename/Release" >/dev/null 2>&1 || {
+    missing='docker'
+    manual_steps "Docker's apt repository has no release \"$codename\" ($DOCKER_REPO/$dist/dists/$codename/), so install.sh cannot add it"
+    exit 1
+  }
+}
+# An apt source for download.docker.com that is not install.sh's own docker.list: a second one makes apt fail
+# ("Conflicting values set for option Signed-By"), so install.sh stops instead of adding it.
+docker_apt_existing() {
+  for f in "$apt_dir/sources.list" "$apt_dir"/sources.list.d/*.list "$apt_dir"/sources.list.d/*.sources; do
+    [ -f "$f" ] && [ "$f" != "$apt_dir/sources.list.d/docker.list" ] || continue
+    if grep -v '^[[:space:]]*#' "$f" | grep -q 'download\.docker\.com'; then
+      if grep -v '^[[:space:]]*#' "$f" | grep -qi 'signed-by'; then
+        how_signed='with its own signed-by key'
+      else
+        how_signed='without signed-by (trusted through the old apt-key keyring)'
+      fi
+      say "Docker's apt repository is already configured in $f, $how_signed. install.sh does not add a second"
+      say "entry (apt refuses two with different keys). Install Docker from that entry yourself (sudo apt-get install $DOCKER_PACKAGES),"
+      say "or remove it and run install.sh again: it then adds $apt_dir/sources.list.d/docker.list with the key in $apt_dir/keyrings/docker.asc."
+      exit 1
+    fi
+  done
+}
+# Docker's key: a PGP public key, and with gpg here exactly Docker's fingerprint.
+docker_key_check() {
+  grep -q -- '-----BEGIN PGP PUBLIC KEY BLOCK-----' "$1" || die "the downloaded Docker repository key ($DOCKER_REPO/$dist/gpg) is not a PGP public key: nothing was changed"
+  if have gpg; then
+    fprs=$(gpg --batch --show-keys --with-colons "$1" 2>/dev/null | awk -F: '$1 == "fpr" { print $10 }')
+    printf '%s\n' "$fprs" | grep -qx "$DOCKER_KEY_FPR" ||
+      die "the downloaded Docker repository key is not Docker's (fingerprint $DOCKER_KEY_FPR; got: $(printf '%s' "$fprs" | tr '\n' ' ')): nothing was changed"
+    say "Docker's repository key: fingerprint $DOCKER_KEY_FPR (checked with gpg)"
+  else
+    say "warning: gpg is not here, so the Docker repository key's fingerprint is not checked (it came over https from download.docker.com; apt checks the repository with it)"
+  fi
+}
+
+# The plan behind the one question: every command install.sh then runs, as root through sudo when not root.
+plan() {
+  r=${how:+'sudo '}
+  if [ "$family" = debian ]; then
+    say "  ${r}apt-get update"
+    case " $pkgs " in
+      *' minisign '*)
+        [ "$(docker_distro)" != ubuntu ] ||
+          say "  if apt does not know minisign then: ${r}apt-get install -y software-properties-common (unless add-apt-repository is here), ${r}add-apt-repository -y universe, ${r}apt-get update"
+        ;;
+    esac
+    [ -z "$pkgs" ] || say "  ${r}apt-get install -y $pkgs"
+    if [ "$docker_repo" = yes ]; then
+      say "  Docker's apt repository ($DOCKER_REPO/$(docker_distro), release $(docker_codename)): download its GPG key"
+      say "    ($DOCKER_REPO/$(docker_distro)/gpg; fingerprint $DOCKER_KEY_FPR, checked when gpg is here) into $apt_dir/keyrings/docker.asc,"
+      say "    write $apt_dir/sources.list.d/docker.list, ${r}apt-get update, ${r}apt-get install -y $DOCKER_PACKAGES"
+      say "    (if that fails, both files are removed again)"
+    fi
+  else
+    case " $pkgs " in
+      *' minisign '*) say "  if dnf does not know minisign: ${r}$dnf install -y epel-release (EPEL)" ;;
+    esac
+    [ -z "$pkgs" ] || say "  ${r}$dnf install -y $pkgs"
+    if [ "$docker_repo" = yes ]; then
+      say "  ${r}$dnf install -y dnf-plugins-core, then ${r}$dnf config-manager --add-repo $DOCKER_REPO/$(docker_distro)/docker-ce.repo"
+      say "    (Docker's repository; dnf imports its GPG key at the install), ${r}$dnf install -y $DOCKER_PACKAGES"
+      say "    (if that fails, the repository file is removed again)"
+    fi
+  fi
+  if [ "$docker_repo" = yes ]; then
+    have systemctl && [ -d /run/systemd/system ] && say "  ${r}systemctl enable --now docker   (start Docker now and at boot)"
+    if ! is_root; then
+      say "  ${r}usermod -aG docker $user   (the docker group is root-equivalent: whoever is in it controls this host;"
+      say '    this run uses the group through sg docker, new logins get it after logging out and back in)'
+    fi
+  fi
 }
 
 # Installs what check_deps found missing, after asking. Never returns on a system it cannot handle.
@@ -262,7 +414,7 @@ install_deps() {
   osid=$(os_field ID)
   [ -n "$osid" ] || osid=unknown
   if [ "$family" = unknown ]; then
-    manual_steps "install.sh can install them on Debian, Ubuntu and the RHEL family only; this system is $osid ($os_release)"
+    manual_steps "install.sh can install them on Debian, Ubuntu and the RHEL family (RHEL, CentOS, Rocky, AlmaLinux, Fedora, Oracle Linux) only; this system is $osid ($os_release)"
     exit 1
   fi
   pkgs=''
@@ -284,24 +436,21 @@ install_deps() {
   [ -z "$pkgs" ] || pkgs=$(printf '%s\n' $pkgs | awk '!seen[$0]++' | tr '\n' ' ')
   pkgs=${pkgs% }
   user=$(id -un)
+  dnf=dnf
+  [ "$family" = debian ] || have dnf || dnf=yum
   need_root 'installing the missing tools'
-
+  if [ "$family" = debian ] && [ "$docker_repo" = yes ]; then
+    docker_apt_existing
+    # Without curl yet, the release is checked after apt installed it, still before anything Docker is written.
+    ! have curl || docker_apt_release
+  fi
   how='sudo'
   ! is_root || how=''
-  if [ "$family" = debian ]; then
-    say "install.sh can install them now (${how:-as root}):"
-    [ -z "$pkgs" ] || say "  ${how:+sudo }apt-get install $pkgs   (minisign from universe on Ubuntu)"
-    [ "$docker_repo" = no ] || say "  Docker's apt repository ($DOCKER_REPO/$(docker_distro)): its key in /etc/apt/keyrings/docker.asc, then ${how:+sudo }apt-get install $DOCKER_PACKAGES"
-  else
-    say "install.sh can install them now (${how:-as root}):"
-    [ -z "$pkgs" ] || say "  ${how:+sudo }dnf install $pkgs   (minisign from EPEL)"
-    [ "$docker_repo" = no ] || say "  Docker's dnf repository ($DOCKER_REPO/$(docker_distro)/docker-ce.repo), then ${how:+sudo }dnf install $DOCKER_PACKAGES"
-  fi
-  if [ "$docker_repo" = yes ] && ! is_root; then
-    say "  ${how:+sudo }usermod -aG docker $user   (this run uses the group through sg docker; log out and back in for new shells)"
-  fi
+  say "install.sh can install them now (${how:-as root}), with:"
+  plan
   ask 'Install them now?' 'install them yourself (above) and run install.sh again' ||
     die 'nothing was installed: install them yourself (above), then run install.sh again'
+  sudo_ready
   if [ "$family" = debian ]; then install_debian; else install_rhel; fi
   if [ "$docker_repo" = yes ]; then
     if have systemctl && [ -d /run/systemd/system ]; then
@@ -314,28 +463,13 @@ install_deps() {
   fi
 }
 
-# The distribution in Docker's repository paths, and its release name (apt).
-docker_distro() {
-  case " $(os_field ID) $(os_field ID_LIKE) " in
-    *' ubuntu '*) echo ubuntu ;;
-    *' debian '*) echo debian ;;
-    *)
-      case "$(os_field ID)" in
-        fedora) echo fedora ;;
-        rhel) echo rhel ;;
-        *) echo centos ;;
-      esac
-      ;;
-  esac
-}
-docker_codename() {
-  c=''
-  [ "$(docker_distro)" != ubuntu ] || c=$(os_field UBUNTU_CODENAME)
-  [ -n "$c" ] || c=$(os_field VERSION_CODENAME)
-  printf '%s\n' "$c"
-}
-
 apt_get() { as_root env DEBIAN_FRONTEND=noninteractive apt-get "$@"; }
+# Takes Docker's apt source and key away again, so a failed setup never leaves apt broken.
+docker_apt_undo() {
+  as_root rm -f "$apt_dir/sources.list.d/docker.list" "$apt_dir/keyrings/docker.asc" || :
+  as_root env DEBIAN_FRONTEND=noninteractive apt-get update >/dev/null 2>&1 || :
+  die "$1: removed $apt_dir/sources.list.d/docker.list and $apt_dir/keyrings/docker.asc again, so apt is as before"
+}
 install_debian() {
   apt_get update || die 'apt-get update failed'
   case " $pkgs " in
@@ -352,23 +486,25 @@ install_debian() {
   # shellcheck disable=SC2086 # a list of package names
   [ -z "$pkgs" ] || apt_get install -y $pkgs || die "apt-get install $pkgs failed"
   [ "$docker_repo" = yes ] || return 0
-  dist=$(docker_distro)
-  codename=$(docker_codename)
-  [ -n "$codename" ] || die "cannot tell this system's release name (VERSION_CODENAME in $os_release) for Docker's repository"
+  docker_apt_release
   arch=$(dpkg --print-architecture) || die 'dpkg --print-architecture failed'
-  curl -fsSL "$DOCKER_REPO/$dist/gpg" -o "$tmp/docker.asc" || die "cannot download Docker's repository key ($DOCKER_REPO/$dist/gpg)"
+  curl -fsSL --proto '=https' --proto-redir '=https' "$DOCKER_REPO/$dist/gpg" -o "$tmp/docker.asc" ||
+    die "cannot download Docker's repository key ($DOCKER_REPO/$dist/gpg): nothing was changed"
+  docker_key_check "$tmp/docker.asc"
   printf 'deb [arch=%s signed-by=/etc/apt/keyrings/docker.asc] %s/%s %s stable\n' "$arch" "$DOCKER_REPO" "$dist" "$codename" > "$tmp/docker.list"
-  as_root install -m 0755 -d /etc/apt/keyrings || die 'cannot create /etc/apt/keyrings'
-  as_root install -m 0644 "$tmp/docker.asc" /etc/apt/keyrings/docker.asc || die 'cannot install /etc/apt/keyrings/docker.asc'
-  as_root install -m 0644 "$tmp/docker.list" /etc/apt/sources.list.d/docker.list || die 'cannot write /etc/apt/sources.list.d/docker.list'
-  apt_get update || die "apt-get update failed (with Docker's repository)"
+  as_root install -m 0755 -d "$apt_dir/keyrings" || die "cannot create $apt_dir/keyrings"
+  as_root install -m 0644 "$tmp/docker.asc" "$apt_dir/keyrings/docker.asc" || docker_apt_undo "cannot install $apt_dir/keyrings/docker.asc"
+  as_root install -m 0644 "$tmp/docker.list" "$apt_dir/sources.list.d/docker.list" || docker_apt_undo "cannot write $apt_dir/sources.list.d/docker.list"
+  apt_get update || docker_apt_undo "apt-get update failed with Docker's repository"
   # shellcheck disable=SC2086 # a list of package names
-  apt_get install -y $DOCKER_PACKAGES || die "apt-get install $DOCKER_PACKAGES failed"
+  apt_get install -y $DOCKER_PACKAGES || docker_apt_undo "apt-get install $DOCKER_PACKAGES failed"
 }
 
+docker_dnf_undo() {
+  as_root rm -f "$yum_repos/docker-ce.repo" || :
+  die "$1: removed $yum_repos/docker-ce.repo again, so dnf is as before"
+}
 install_rhel() {
-  dnf=dnf
-  have dnf || dnf=yum
   case " $pkgs " in
     *' minisign '*)
       "$dnf" info minisign >/dev/null 2>&1 || as_root "$dnf" install -y epel-release ||
@@ -382,9 +518,9 @@ install_rhel() {
   as_root "$dnf" install -y dnf-plugins-core || die "$dnf install dnf-plugins-core failed"
   # dnf 4, then dnf 5's syntax.
   as_root "$dnf" config-manager --add-repo "$repo" 2>/dev/null || as_root "$dnf" config-manager addrepo --from-repofile="$repo" ||
-    die "cannot add Docker's repository ($repo)"
+    docker_dnf_undo "cannot add Docker's repository ($repo)"
   # shellcheck disable=SC2086 # a list of package names
-  as_root "$dnf" install -y $DOCKER_PACKAGES || die "$dnf install $DOCKER_PACKAGES failed"
+  as_root "$dnf" install -y $DOCKER_PACKAGES || docker_dnf_undo "$dnf install $DOCKER_PACKAGES failed"
 }
 
 # This run uses the docker group although this login does not have it yet: a `docker` first on PATH that runs
@@ -431,9 +567,11 @@ docker_group() {
   user=$(id -un)
   if ! id -nG "$user" | tr ' ' '\n' | grep -qx docker; then
     say "$user may not run docker (not in the docker group): $docker_err"
+    say 'the docker group is root-equivalent: whoever is in it controls this host (that is what running docker means)'
     ask "Add $user to the docker group (sudo usermod -aG docker $user)?" "add it yourself (sudo usermod -aG docker $user, then log out and back in), or run install.sh with sudo" ||
       die "$user may not run docker: sudo usermod -aG docker $user, then log out and back in and run install.sh again, or run install.sh with sudo"
     need_root 'adding you to the docker group'
+    sudo_ready
     as_root usermod -aG docker "$user" || die "could not add $user to the docker group"
     group_added=yes
   fi
@@ -446,6 +584,7 @@ docker_start() {
     ask "cannot talk to the Docker daemon (not running?): start it now (sudo systemctl enable --now docker)?" 'start it yourself: sudo systemctl enable --now docker' ||
       die 'cannot talk to the Docker daemon: start it (sudo systemctl enable --now docker), then run install.sh again'
     need_root 'starting Docker'
+    sudo_ready
     as_root systemctl enable --now docker || die 'systemctl enable --now docker failed'
     probe_engine
     case "$docker_err" in *[Pp]ermission\ denied*) docker_group ;; esac
@@ -466,8 +605,20 @@ ensure_deps() {
 }
 
 # --- the release ------------------------------------------------------------------------------------------------
+# https only (also after redirects), unless the URL itself is http:// (a mirror's --base-url, warned about).
+curl_get() {
+  url=$1
+  shift
+  case "$url" in
+    https://*) curl --proto '=https' --proto-redir '=https' "$@" "$url" ;;
+    *) curl "$@" "$url" ;;
+  esac
+}
 fetch() {
-  curl -fsSL --retry 2 -o "$2" "$1" || die "download failed: $1"
+  case "$1" in
+    https://*) curl -fsSL --proto '=https' --proto-redir '=https' --retry 2 -o "$2" "$1" ;;
+    *) curl -fsSL --retry 2 -o "$2" "$1" ;;
+  esac || die "download failed: $1"
 }
 sha256() {
   if [ "$hasher" = sha256sum ]; then sha256sum "$1" | awk '{ print $1 }'; else shasum -a 256 "$1" | awk '{ print $1 }'; fi
@@ -486,12 +637,12 @@ script_file() {
 # The signature covers SHA256SUMS and its trusted comment, which names the release: an older signed file served
 # for this version is refused too. Sets signed_for.
 verify_sums() {
-  out=$(minisign -V -P "$pubkey" -m "$tmp/SHA256SUMS" -x "$tmp/SHA256SUMS.minisig" 2>&1) ||
+  sigout=$(minisign -V -P "$pubkey" -m "$tmp/SHA256SUMS" -x "$tmp/SHA256SUMS.minisig" 2>&1) ||
     die 'signature check FAILED for SHA256SUMS: refusing to install (wrong key, or the files were changed)'
-  signed_for=$(printf '%s\n' "$out" | sed -n 's/^Trusted comment: yoda release \([0-9A-Za-z.-]*\)$/\1/p' | head -n 1)
+  signed_for=$(printf '%s\n' "$sigout" | sed -n 's/^Trusted comment: yoda release \([0-9A-Za-z.-]*\)$/\1/p' | head -n 1)
 }
 signed_for_version() {
-  printf '%s\n' "$out" | grep -qFx "Trusted comment: yoda release $version" ||
+  printf '%s\n' "$sigout" | grep -qFx "Trusted comment: yoda release $version" ||
     die "signature check FAILED: SHA256SUMS was not signed for release $version${signed_for:+ (it names $signed_for)}"
 }
 
@@ -505,14 +656,17 @@ latest_version() {
   v=''
   if [ -n "$latest_url" ]; then
     say "finding the latest release ($latest_url)"
-    loc=$(curl -fsSI --retry 2 -o /dev/null -w '%{redirect_url}' "$latest_url" 2>/dev/null) || loc=''
+    case "$latest_url" in
+      https://*) loc=$(curl -fsSI --proto '=https' --retry 2 -o /dev/null -w '%{redirect_url}' "$latest_url" 2>/dev/null) || loc='' ;;
+      *) loc=$(curl -fsSI --retry 2 -o /dev/null -w '%{redirect_url}' "$latest_url" 2>/dev/null) || loc='' ;;
+    esac
     case "$loc" in
       */releases/tag/*) v=${loc##*/releases/tag/} ;;
     esac
     v=${v#v}
   fi
   if ! is_version "$v" && [ -n "$releases_api" ]; then
-    v=$(curl -fsSL --retry 2 -H 'Accept: application/vnd.github+json' "$releases_api" 2>/dev/null |
+    v=$(curl_get "$releases_api" -fsSL --retry 2 -H 'Accept: application/vnd.github+json' 2>/dev/null |
       sed -n 's/^[[:space:]]*"tag_name"[[:space:]]*:[[:space:]]*"v\{0,1\}\([^"]*\)".*$/\1/p' | head -n 1) || v=''
   fi
   from=$latest_url
@@ -522,8 +676,14 @@ latest_version() {
   say "latest release: $version"
 }
 
-# The release: --version, the one a signed SHA256SUMS next to install.sh names, or the latest.
+# The release: --version, else the one this install.sh was published with (RELEASE_VERSION, so a published N
+# never resolves N+1), else the one a signed SHA256SUMS next to it names, else the latest (also --version latest).
 resolve_version() {
+  if [ -z "$version" ] && [ "$want_latest" = no ] && [ -n "$RELEASE_VERSION" ]; then
+    is_version "$RELEASE_VERSION" || die "this install.sh names no valid release ($RELEASE_VERSION)"
+    version=$RELEASE_VERSION
+    say "release $version (the one this install.sh belongs to; --version picks another)"
+  fi
   local_dir=''
   if script_file; then
     d=$(dirname "$0")
@@ -539,6 +699,8 @@ resolve_version() {
       is_version "$signed_for" || die 'signature check FAILED: the signed SHA256SUMS names no release'
       version=$signed_for
     fi
+    [ "$signed_for" = "$version" ] ||
+      die "the SHA256SUMS next to install.sh ($local_dir) is signed for release ${signed_for:-(none)}, not $version: stale files from another download? Run install.sh from a clean directory (or with that release's files)"
     signed_for_version
     # This very script must be the release's.
     want=$(listed install.sh)
@@ -597,7 +759,8 @@ parse_args() {
 # Everything that needs no tool and no network: before the dependency check, so a typo costs nothing.
 check_args() {
   case "$version" in
-    '' | latest) version='' ;;
+    '') ;;
+    latest) version='' want_latest=yes ;;
     *) is_version "$version" || die "not a pinned release version: $version (expected x.y.z, or leave --version out for the latest)" ;;
   esac
   case "$dir" in
@@ -607,6 +770,10 @@ check_args() {
   case "$dir" in
     *[!A-Za-z0-9._/-]*) die "--dir may hold only A-Z a-z 0-9 . _ - /: $dir" ;;
   esac
+  # Only files are looked at: before any dependency is installed.
+  for f in docker-compose.yml docker-compose.prod.yml release.env ops; do
+    [ ! -e "$dir/$f" ] || die "$dir already holds an install ($f); upgrade it with: cd $dir && YODA_VERSION=${version:-<version>} sh ops/deploy/deploy.sh"
+  done
   case "$base" in
     https://*) ;;
     http://*) say "warning: $base is not https; the signature check still protects the bundle" ;;
@@ -721,6 +888,7 @@ prepare_dir() {
   ask "Create $dir with sudo and give it to $user?" "create it yourself (sudo mkdir -p $dir && sudo chown $user:$group $dir), or choose another --dir" ||
     die "cannot create $dir: create it yourself (sudo mkdir -p $dir && sudo chown $user:$group $dir), or choose another --dir"
   need_root "creating $dir"
+  sudo_ready
   as_root mkdir -p "$dir" || die "sudo mkdir -p $dir failed"
   as_root chown "$user:$group" "$dir" || die "sudo chown $user:$group $dir failed"
   [ -w "$dir" ] || die "$dir was created, but $user cannot write to it"
@@ -729,6 +897,7 @@ prepare_dir() {
 
 # --- main -------------------------------------------------------------------------------------------------------
 main() {
+  constants
   version="${YODA_VERSION:-}"
   dir="${YODA_DIR:-/srv/yoda}"
   base="${YODA_RELEASE_BASE_URL:-$DEFAULT_BASE_URL}"
@@ -740,6 +909,11 @@ main() {
   os_release=${YODA_OS_RELEASE:-/etc/os-release}
   latest_url=${YODA_LATEST_URL:-}
   releases_api=${YODA_RELEASES_API:-}
+  # Tests only: a directory standing for / (apt's and dnf's configuration under it).
+  sysroot=${YODA_SYSROOT:-}
+  apt_dir="$sysroot/etc/apt"
+  yum_repos="$sysroot/etc/yum.repos.d"
+  want_latest=no
   login=yes
   assume_yes=no
   with_proxy=no
@@ -759,7 +933,10 @@ main() {
 
   tmp=$(mktemp -d)
   trap 'rm -rf "$tmp"' EXIT
-  trap 'exit 130' INT TERM
+  # dash runs the EXIT trap only on exit: every signal exits, so the temp directory always goes.
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
 
   # 1. dependencies, before anything is downloaded.
   ensure_deps
@@ -769,9 +946,6 @@ main() {
   check_proxy_version
   check_cert
   check_space
-  for f in docker-compose.yml docker-compose.prod.yml release.env ops; do
-    [ ! -e "$dir/$f" ] || die "$dir already holds an install ($f); upgrade it with: cd $dir && YODA_VERSION=$version sh ops/deploy/deploy.sh"
-  done
 
   # 3. download and verify.
   # The version is checked (A-Z a-z 0-9 . -): safe in a sed replacement.

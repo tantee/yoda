@@ -10,7 +10,8 @@
 #                          (the optional built-in HTTPS proxy; its Caddy image is pinned by digest in
 #                          docker-compose.prod.yml), .env.example, CHANGELOG.md, docs/operations.md and bundle.env (YODA_IMAGE_PREFIX, YODA_VERSION, and
 #                          with a digests file YODA_<NAME>_DIGEST for core, portal, runner and backup)
-#   install.sh             the installer, also on its own (download it, check it, then run it)
+#   install.sh             the installer, also on its own (download it, check it, then run it), with
+#                          RELEASE_VERSION='<version>' set, so it installs this release by default
 #   SHA256SUMS             both of the above
 # The digests file has one line per image, "<name> sha256:<64 hex>", for all four: the manifest digests the release
 # workflow pushed. They are signed with the bundle, and deploy.sh pins them in release.env, so a host runs exactly
@@ -60,6 +61,11 @@ for f in $files; do
   cp "$f" "$stage/$f"
 done
 printf 'YODA_IMAGE_PREFIX=%s\nYODA_VERSION=%s\n%s' "$prefix" "$version" "$pins" > "$stage/bundle.env"
+# The published install.sh (in the bundle and on its own) names its release: it installs that one by default, so
+# the one-liner of release N never resolves N+1 (the version is checked above: safe in sed).
+sed "s/^RELEASE_VERSION=''\$/RELEASE_VERSION='$version'/" ops/install/install.sh > "$stage/ops/install/install.sh"
+grep -qx "RELEASE_VERSION='$version'" "$stage/ops/install/install.sh" ||
+  { echo "bundle: ops/install/install.sh has no RELEASE_VERSION='' line to set" >&2; exit 1; }
 find "$stage" -type d -exec chmod 0755 {} +
 find "$stage" -type f -exec chmod 0644 {} +
 chmod 0755 "$stage/ops/deploy/deploy.sh" "$stage/ops/install/install.sh"
@@ -78,7 +84,7 @@ else
 fi
 gzip -n -9 "$stage/bundle.tar"
 mv "$stage/bundle.tar.gz" "$dest/yoda-$version.tar.gz"
-cp ops/install/install.sh "$dest/install.sh"
+cp "$stage/ops/install/install.sh" "$dest/install.sh"
 
 cd "$dest"
 if command -v sha256sum >/dev/null 2>&1; then

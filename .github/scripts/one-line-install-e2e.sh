@@ -14,11 +14,11 @@
 #   curl -fsSL <server>/releases/latest/download/install.sh | sh -s -- --yes --base-url '<server>/releases/{version}/'
 #
 # (--base-url and YODA_LATEST_URL point it at the local server instead of GitHub; YODA_RELEASE_PUBKEY at the
-# throwaway key.) Run 1, on the bare host: it must report minisign, Docker Engine and the Compose plugin missing,
+# throwaway key; the published install.sh names its release, RELEASE_VERSION, so nothing is looked up.) Run 1, on the bare host: it must report minisign, Docker Engine and the Compose plugin missing,
 # install minisign from Ubuntu's archive and docker-ce plus the Compose plugin (v2.24 or later) from Docker's apt
 # repository, add `deploy` to the docker group, and stop at the daemon: a container has no systemd to start it.
 # Then dockerd is started by hand inside the container, and run 2 (the same one-liner) must get everything else
-# right: nothing missing, the latest release resolved through the redirect, SHA256SUMS and its signature
+# right: nothing missing, the release install.sh names, SHA256SUMS and its signature
 # downloaded and verified (the trusted comment exactly this release), the bundle's checksum, /srv/yoda created
 # with sudo and given to `deploy`, the bundle unpacked, .env (0600) and release.env written, and deploy.sh started.
 # That is where a dry run ends: its images were never pushed, so deploy.sh's pull fails (exit 3) and install.sh
@@ -126,11 +126,15 @@ expect "$work/run1.log" \
   '  - minisign: not found (checks the release signature)' \
   '  - Docker Engine: not found, needs 24 or later' \
   '  - Docker Compose plugin: not found, needs v2.24 or later' \
-  'install: install.sh can install them now (sudo):' \
-  "install:   Docker's apt repository (https://download.docker.com/linux/ubuntu): its key in /etc/apt/keyrings/docker.asc, then sudo apt-get install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin" \
-  'install:   sudo usermod -aG docker deploy' \
+  'install: install.sh can install them now (sudo), with:' \
+  'install:   sudo apt-get install -y ca-certificates curl minisign' \
+  "install:   Docker's apt repository (https://download.docker.com/linux/ubuntu, release noble): download its GPG key" \
+  'install:     write /etc/apt/sources.list.d/docker.list, sudo apt-get update, sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin' \
+  'install:   sudo usermod -aG docker deploy   (the docker group is root-equivalent' \
   'install: Install them now? yes (--yes)' \
   'install: cannot talk to the Docker daemon'
+grep -qE "^install: (Docker's repository key: fingerprint 9DC858229FC7DD38854AE2D88D81803C0EBFCD88 \(checked with gpg\)|warning: gpg is not here, so the Docker repository key's fingerprint is not checked)" "$work/run1.log" ||
+  fail "run 1 did not check Docker's repository key"
 ! grep -qF 'curl: not found' "$work/run1.log" || fail 'run 1 reported curl missing (the image has it)'
 ! grep -qF 'install: downloading' "$work/run1.log" || fail 'run 1 downloaded the release before its dependencies were there'
 
@@ -175,8 +179,7 @@ cat "$work/run2.log"
 echo "(run 2 exit $rc)"
 [ "$rc" -ne 0 ] || fail 'run 2 succeeded, but the images of a dry run were never pushed: what did it deploy?'
 expect "$work/run2.log" \
-  "install: finding the latest release ($origin/releases/latest)" \
-  "install: latest release: $version" \
+  "install: release $version (the one this install.sh belongs to; --version picks another)" \
   "install: downloading Yoda $version from $origin/releases/$version/" \
   'install: signature and checksum verified' \
   'install: cannot create /srv/yoda as deploy (no write access to /srv)' \
@@ -188,6 +191,7 @@ expect "$work/run2.log" \
   "deploy: pulling the images of $version failed" \
   "install: deploy of $version failed (images $prefix/<name>:$version"
 ! grep -qF 'missing or too old' "$work/run2.log" || fail 'run 2 still found something missing'
+! grep -qF 'finding the latest release' "$work/run2.log" || fail 'run 2 looked up the latest release although install.sh names its own'
 # Nothing past the pull ran.
 ! grep -qF 'run --rm init' "$work/run2.log" || fail 'deploy.sh went past the failed pull'
 

@@ -11,9 +11,9 @@
 # each certificate mode (internal, acme, and files with a throwaway certificate made here; docs/operations.md,
 # section 4b), run with the environment compose gives the proxy service, empty values included. It also runs the
 # one-line install the way the README gives it, piped (`cat install.sh | sh -s -- ...`: no SHA256SUMS next to the
-# script, so it downloads SHA256SUMS and its signature) and without --version (the latest release, from a
-# releases/latest redirect the local server answers like GitHub's). Then it checks that a signature from another
-# key is refused.
+# script, so it downloads SHA256SUMS and its signature): without --version (the release install.sh names,
+# RELEASE_VERSION, which bundle.sh set), and with --version latest (from a releases/latest redirect the local
+# server answers like GitHub's). Then it checks that a signature from another key is refused.
 # The release workflow (.github/workflows/release.yml) runs it on every dry run and on a real release, before the
 # bundle is kept for the release and before any image is tagged:
 #
@@ -36,6 +36,8 @@ real_docker=$(command -v docker || true)
 for f in install.sh "yoda-$version.tar.gz" SHA256SUMS SHA256SUMS.minisig; do
   [ -f "$rel/$f" ] || { echo "check-release: $rel/$f is missing" >&2; exit 1; }
 done
+grep -qx "RELEASE_VERSION='$version'" "$rel/install.sh" ||
+  { echo "check-release: $rel/install.sh does not name its release (RELEASE_VERSION='$version')" >&2; exit 1; }
 
 work=$(mktemp -d)
 pid=''
@@ -207,16 +209,23 @@ else
   echo 'check-release: no docker compose here: skipped the compose image check'
 fi
 
-# Piped, as the one-line install runs it: the latest release, SHA256SUMS and its signature downloaded.
-install_piped --dir "$work/srv/piped" > "$work/piped.log" 2>&1 || {
-  cat "$work/piped.log" >&2
-  fail 'the piped install (cat install.sh | sh -s -- ...) refused the release'
-}
-grep -qFx "install: latest release: $version" "$work/piped.log" || { cat "$work/piped.log" >&2; fail 'the piped install did not resolve the latest release'; }
-grep -qF "install: downloading Yoda $version from $origin/releases/$version/" "$work/piped.log" || fail 'the piped install did not download SHA256SUMS'
-grep -qF 'signature and checksum verified' "$work/piped.log" || fail 'the piped install did not verify the release'
-grep -qx "YODA_VERSION=$version" "$work/srv/piped/release.env" || fail 'the piped install did not pin the release'
-echo "check-release: the piped install (latest: $version) verified, unpacked and deployed"
+# Piped, as the one-line install runs it: SHA256SUMS and its signature downloaded; the release install.sh names,
+# then the latest one looked up.
+for how in named latest; do
+  if [ "$how" = named ]; then
+    install_piped --dir "$work/srv/piped-$how" > "$work/piped.log" 2>&1 || { cat "$work/piped.log" >&2; fail 'the piped install (cat install.sh | sh -s -- ...) refused the release'; }
+    grep -qFx "install: release $version (the one this install.sh belongs to; --version picks another)" "$work/piped.log" ||
+      { cat "$work/piped.log" >&2; fail 'the piped install did not take the release install.sh names'; }
+    ! grep -qF 'finding the latest release' "$work/piped.log" || fail 'the piped install looked up the latest release although install.sh names its own'
+  else
+    install_piped --version latest --dir "$work/srv/piped-$how" > "$work/piped.log" 2>&1 || { cat "$work/piped.log" >&2; fail 'the piped install --version latest refused the release'; }
+    grep -qFx "install: latest release: $version" "$work/piped.log" || { cat "$work/piped.log" >&2; fail 'the piped install did not resolve the latest release'; }
+  fi
+  grep -qF "install: downloading Yoda $version from $origin/releases/$version/" "$work/piped.log" || fail 'the piped install did not download SHA256SUMS'
+  grep -qF 'signature and checksum verified' "$work/piped.log" || fail 'the piped install did not verify the release'
+  grep -qx "YODA_VERSION=$version" "$work/srv/piped-$how/release.env" || fail 'the piped install did not pin the release'
+done
+echo "check-release: the piped install ($version, named by install.sh, and as the latest) verified, unpacked and deployed"
 
 # Digests name content, not a registry: installed with a mirror's prefix, the same digests stay pinned.
 if [ -n "$digests" ]; then
