@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Yoda Reporter: ตั้งค่า</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet"><link href="https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css" rel="stylesheet">
+<style>
+/* Yoda Reporter options page: Yoda profiles, connecting (pairing) and URL mapping. Tokens: portal design refresh. */
+:root {
+  --nav: #0B2545; --nav-hover: #12305A; --nav-active: #173A66; --nav-text: #C3D0E2; --nav-label: #8BA0BF; --nav-accent: #6FA8FF;
+  --primary: #1F5FBF; --primary-hover: #184C99; --primary-soft: #E8F0FB; --on-primary-soft: #1A4F9E;
+  --bg: #F4F6F9; --surface: #FFFFFF; --surface-variant: #EDF1F6; --border: #D8DEE7; --border-strong: #8A95A5;
+  --text: #1A2433; --text-2: #556275; --text-3: #6B7789;
+  --success: #1D6B3A; --success-soft: #E5F3EA; --success-dot: #2F8A4F;
+  --warning: #7A4F00; --warning-soft: #FCF0D7; --warning-dot: #B07800;
+  --error: #B3261E; --error-ink: #A8261D; --error-soft: #FBE8E6; --error-dot: #D0342C;
+  --info: #1A4F9E; --info-soft: #E8F0FB; --info-dot: #2F6FD0;
+  --neutral: #465264; --neutral-soft: #EDF1F6; --neutral-dot: #7A8699;
+  --radius: 8px; --radius-sm: 6px;
+  --font: 'IBM Plex Sans Thai', 'IBM Plex Sans', system-ui, sans-serif;
+  --mono: 'IBM Plex Mono', ui-monospace, monospace;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { font-family: var(--font); font-size: 14px; line-height: 1.6; color: var(--text); background: var(--bg); -webkit-font-smoothing: antialiased; }
+h1, h2, h3, p { margin: 0; }
+.mdi::before { line-height: 1; }
+.mono { font-family: var(--mono); font-size: 12px; }
+.muted { color: var(--text-2); }
+.grow { flex: 1; min-width: 0; }
+.row { display: flex; align-items: center; gap: 8px; }
+
+.app { display: grid; grid-template-columns: 232px 1fr; min-height: 100vh; }
+.rail { background: var(--nav); color: var(--nav-text); padding: 12px; }
+.brand { display: flex; align-items: center; gap: 10px; height: 44px; padding: 0 8px; margin-bottom: 12px; color: #fff; }
+.brand-mark { width: 30px; height: 30px; border-radius: 7px; background: #fff; color: var(--nav); display: grid; place-items: center; font: 700 15px 'IBM Plex Sans', sans-serif; }
+.brand-name { font-weight: 600; font-size: 15px; line-height: 1.2; }
+.brand-sub { font-size: 12px; color: var(--nav-label); line-height: 1.3; }
+.nav-item { display: flex; align-items: center; gap: 12px; height: 40px; padding: 0 12px; border-radius: var(--radius-sm); color: var(--nav-text); font-size: 14px; position: relative; }
+.nav-item .mdi { font-size: 20px; }
+.nav-item.active { background: var(--nav-active); color: #fff; font-weight: 500; }
+.nav-item.active::before { content: ''; position: absolute; left: -12px; top: 8px; bottom: 8px; width: 3px; border-radius: 0 3px 3px 0; background: var(--nav-accent); }
+.rail-foot { margin-top: 24px; padding: 12px; font-size: 12px; color: var(--nav-label); border-top: 1px solid #1E3E6B; }
+
+.topbar { height: 56px; background: var(--surface); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 12px; padding: 0 24px; }
+.crumbs { font-size: 13px; color: var(--text-2); flex: 1; }
+.crumbs b { color: var(--text); font-weight: 500; }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius-sm); background: #fff; overflow: hidden; }
+.seg button { border: 0; background: #fff; height: 30px; padding: 0 10px; font: inherit; font-size: 12px; color: var(--text-2); border-right: 1px solid var(--border); cursor: pointer; }
+.seg button:last-child { border-right: 0; }
+.seg .on { background: var(--primary-soft); color: var(--on-primary-soft); font-weight: 600; }
+.content { padding: 24px; max-width: 1200px; }
+.t-page { font-size: 20px; line-height: 1.4; font-weight: 600; }
+.t-section { font-size: 16px; font-weight: 600; }
+.t-meta { font-size: 13px; color: var(--text-2); }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+.card-head { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--border); min-height: 48px; }
+.card-head .t-section { flex: 1; }
+.card-body { padding: 16px; }
+
+.chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px 0 8px; border-radius: 12px; font-size: 12px; font-weight: 500; white-space: nowrap; line-height: 1; }
+.chip::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.chip.icon::before { display: none; }
+.chip .mdi { font-size: 14px; }
+.chip.success { background: var(--success-soft); color: var(--success); } .chip.success::before { background: var(--success-dot); }
+.chip.warning { background: var(--warning-soft); color: var(--warning); } .chip.warning::before { background: var(--warning-dot); }
+.chip.error { background: var(--error-soft); color: var(--error-ink); } .chip.error::before { background: var(--error-dot); }
+.chip.info { background: var(--info-soft); color: var(--info); } .chip.info::before { background: var(--info-dot); }
+.chip.neutral { background: var(--neutral-soft); color: var(--neutral); } .chip.neutral::before { background: var(--neutral-dot); }
+.chip.outline { background: #fff; border: 1px solid var(--border); color: var(--text-2); } .chip.outline::before { display: none; }
+
+.btn { height: 36px; padding: 0 16px; border-radius: var(--radius-sm); border: 1px solid transparent; font: inherit; font-size: 14px; font-weight: 500; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.btn .mdi { font-size: 18px; }
+.btn-primary { background: var(--primary); color: #fff; }
+.btn-outline { background: #fff; color: var(--text); border-color: var(--border); }
+.btn-text { background: transparent; color: var(--primary); padding: 0 8px; }
+.btn-danger-text { background: transparent; color: var(--error); padding: 0 8px; }
+.btn-sm { height: 32px; padding: 0 12px; font-size: 13px; }
+
+.prof { border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; display: grid; grid-template-columns: 12px 1fr auto; gap: 12px; align-items: start; }
+.prof + .prof { margin-top: 10px; }
+.prof .sw { width: 12px; height: 12px; border-radius: 50%; margin-top: 6px; }
+.prof .name { font-weight: 600; }
+.prof .url { font-family: var(--mono); font-size: 12px; color: var(--text-2); }
+.prof .facts { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; font-size: 12px; margin-top: 8px; color: var(--text-2); }
+.prof .facts b { color: var(--text); font-weight: 500; }
+.prof .acts { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+
+.steps { display: grid; gap: 14px; }
+.step { display: grid; grid-template-columns: 28px 1fr; gap: 10px; }
+.step .n { width: 28px; height: 28px; border-radius: 50%; background: var(--primary-soft); color: var(--on-primary-soft); font: 600 13px/28px 'IBM Plex Sans', sans-serif; text-align: center; }
+.step.done .n { background: var(--success-soft); color: var(--success); }
+.step .h { font-weight: 600; font-size: 14px; }
+.step .d { font-size: 12px; color: var(--text-2); }
+.field { height: 36px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); display: flex; align-items: center; padding: 0 10px; gap: 8px; font-size: 14px; background: #fff; margin-top: 6px; }
+.field .mdi { color: var(--success-dot); font-size: 18px; }
+.chrome-prompt { margin-top: 6px; border: 1px solid #C9CED6; border-radius: 8px; background: #fff; box-shadow: 0 4px 12px rgba(0,0,0,.08); padding: 10px 12px; font-size: 12px; font-family: 'IBM Plex Sans', system-ui, sans-serif; }
+.chrome-prompt b { font-weight: 600; }
+.approve { margin-top: 6px; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.approve .bar { background: var(--nav); color: #fff; height: 34px; display: flex; align-items: center; gap: 8px; padding: 0 10px; font-size: 12px; }
+.approve .bar .m { width: 20px; height: 20px; border-radius: 5px; background: #fff; color: var(--nav); font: 700 11px/20px 'IBM Plex Sans', sans-serif; text-align: center; }
+.approve .body { padding: 12px; font-size: 13px; }
+.approve ul { margin: 6px 0 0; padding-left: 18px; font-size: 12px; color: var(--text-2); }
+.approve .who { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; font-size: 12px; margin-top: 8px; padding: 8px 10px; background: var(--bg); border-radius: var(--radius-sm); }
+.approve .who span:nth-child(odd) { color: var(--text-2); }
+
+.table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13px; }
+.table th { text-align: left; font-weight: 500; font-size: 12px; color: var(--text-2); height: 36px; padding: 0 12px; background: var(--bg); border-bottom: 1px solid var(--border); white-space: nowrap; }
+.table td { height: 44px; padding: 6px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.table tr:last-child td { border-bottom: 0; }
+.table tr.hit td { background: #F3F8FF; }
+.table tr.hit td:first-child { box-shadow: inset 3px 0 0 var(--primary); }
+.prod { color: var(--error-ink); font-weight: 600; display: inline-flex; gap: 4px; align-items: center; font-size: 12px; }
+.tester { display: flex; gap: 10px; align-items: center; padding: 12px 16px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+.tester .field { margin: 0; flex: 1; min-width: 320px; font-family: var(--mono); font-size: 12px; }
+.tester .res { font-size: 13px; display: flex; gap: 6px; align-items: center; }
+.tester .res .mdi { color: var(--success-dot); font-size: 18px; }
+.alert { display: flex; gap: 12px; padding: 12px 16px; border-radius: var(--radius); border: 1px solid; font-size: 13px; background: var(--info-soft); border-color: #C9DAF3; margin-top: 16px; }
+.alert > .mdi { font-size: 20px; color: var(--info-dot); line-height: 1.2; }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="rail">
+    <div class="brand"><div class="brand-mark">Y</div><div><div class="brand-name">Yoda Reporter</div><div class="brand-sub" data-en="Settings">ตั้งค่าส่วนขยาย</div></div></div>
+    <div class="nav-item active"><span class="mdi mdi-account-multiple-outline"></span><span data-en="Yoda profiles">โปรไฟล์ Yoda</span></div>
+    <div class="nav-item"><span class="mdi mdi-link-variant"></span><span data-en="URL mapping">จับคู่ URL</span></div>
+    <div class="nav-item"><span class="mdi mdi-shield-lock-outline"></span><span data-en="Privacy">ความเป็นส่วนตัว</span></div>
+    <div class="nav-item"><span class="mdi mdi-keyboard-outline"></span><span data-en="Shortcuts">ปุ่มลัด</span></div>
+    <div class="nav-item"><span class="mdi mdi-information-outline"></span><span data-en="About">เกี่ยวกับ</span></div>
+    <div class="rail-foot">v1.2.0 · <span data-en="managed by your organisation">จัดการโดยองค์กร</span></div>
+  </aside>
+
+  <div>
+    <header class="topbar">
+      <div class="crumbs">Yoda Reporter <span class="mdi mdi-chevron-right"></span> <b data-en="Yoda profiles and URL mapping">โปรไฟล์ Yoda และการจับคู่ URL</b></div>
+      <div class="seg lang-toggle" role="group" aria-label="Language"><button data-lang="th" class="on">ไทย</button><button data-lang="en">EN</button></div>
+    </header>
+
+    <div class="content">
+      <h1 class="t-page" data-en="Yoda profiles">โปรไฟล์ Yoda</h1>
+      <p class="t-meta" data-en="Each profile is one Yoda instance you are signed in to. Reports go to the profile and project that the page's URL matches.">แต่ละโปรไฟล์คือ Yoda หนึ่งระบบที่คุณเชื่อมต่อไว้ รายงานจะไปยังโปรไฟล์และโครงการที่ตรงกับ URL ของหน้าที่เปิดอยู่</p>
+
+      <div class="grid2">
+        <div class="card">
+          <div class="card-head"><span class="t-section" data-en="Connected">เชื่อมต่อแล้ว</span><span class="btn btn-outline btn-sm"><span class="mdi mdi-plus"></span><span data-en="Add Yoda">เพิ่ม Yoda</span></span></div>
+          <div class="card-body">
+            <div class="prof">
+              <span class="sw" style="background:#6FA8FF"></span>
+              <div>
+                <div class="row"><span class="name">Yoda</span><span class="chip info" data-en="Default">ค่าเริ่มต้น</span><span class="chip outline icon"><span class="mdi mdi-lock-outline"></span><span data-en="Policy">นโยบาย</span></span></div>
+                <div class="url">https://yoda.example.org</div>
+                <div class="facts">
+                  <span data-en="Signed in as">ผู้ใช้</span><b data-en="Somchai J. (QC)">สมชาย ใ. (QC)</b>
+                  <span data-en="Access">สิทธิ์</span><b data-en="Report defects to my projects">แจ้งข้อบกพร่องเข้าโครงการของฉัน</b>
+                  <span data-en="Session">เซสชัน</span><b data-en="renews itself · ends if unused for 30 days">ต่ออายุอัตโนมัติ · หมดอายุถ้าไม่ใช้ 30 วัน</b>
+                </div>
+              </div>
+              <div class="acts"><span class="chip success" data-en="Connected">เชื่อมต่อแล้ว</span><span class="btn-danger-text" style="font-size:13px" data-en="Disconnect">ตัดการเชื่อมต่อ</span></div>
+            </div>
+            <div class="prof">
+              <span class="sw" style="background:#F5B400"></span>
+              <div>
+                <div class="row"><span class="name" data-en="Yoda (test)">Yoda (ทดสอบ)</span></div>
+                <div class="url">https://yoda-test.example.org</div>
+                <div class="facts"><span data-en="Status">สถานะ</span><b data-en="Signed out: session revoked in Yoda on 27/11">ออกจากระบบ: ถูกเพิกถอนใน Yoda เมื่อ 27/11</b></div>
+              </div>
+              <div class="acts"><span class="chip neutral" data-en="Not connected">ยังไม่เชื่อมต่อ</span><span class="btn btn-primary btn-sm" data-en="Connect">เชื่อมต่อ</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><span class="t-section" data-en="Add Yoda: three steps">เพิ่ม Yoda: 3 ขั้นตอน</span><span class="chip outline icon"><span class="mdi mdi-key-remove"></span><span data-en="No password or key in the extension">ไม่มีรหัสผ่านหรือคีย์ในส่วนขยาย</span></span></div>
+          <div class="card-body steps">
+            <div class="step done"><div class="n"><span class="mdi mdi-check"></span></div><div>
+              <div class="h" data-en="Yoda address">ที่อยู่ Yoda</div>
+              <div class="field"><span class="grow mono">https://yoda-test.example.org</span><span class="mdi mdi-check-circle"></span></div>
+              <div class="d" data-en="Checked: it answers as Yoda 1.4 (HTTPS, /api/public-config).">ตรวจแล้ว: ตอบกลับเป็น Yoda 1.4 (HTTPS, /api/public-config)</div>
+            </div></div>
+            <div class="step done"><div class="n"><span class="mdi mdi-check"></span></div><div>
+              <div class="h" data-en="Allow this site only">อนุญาตเฉพาะไซต์นี้</div>
+              <div class="chrome-prompt"><b>Yoda Reporter</b> <span data-en="wants to: Read and change your data on yoda-test.example.org">ขอสิทธิ์: อ่านและเปลี่ยนข้อมูลของคุณบน yoda-test.example.org</span></div>
+            </div></div>
+            <div class="step"><div class="n">3</div><div>
+              <div class="h" data-en="Sign in and approve in Yoda">ลงชื่อเข้าใช้และกดอนุมัติใน Yoda</div>
+              <div class="approve">
+                <div class="bar"><span class="m">Y</span><span data-en="yoda-test.example.org · Connect Yoda Reporter">yoda-test.example.org · เชื่อมต่อ Yoda Reporter</span></div>
+                <div class="body">
+                  <div data-en="&lt;b&gt;Yoda Reporter&lt;/b&gt; on this browser asks to:"><b>Yoda Reporter</b> บนเบราว์เซอร์นี้ขอสิทธิ์:</div>
+                  <ul>
+                    <li data-en="Report defects, with attachments, to projects you are a member of">แจ้งข้อบกพร่องพร้อมไฟล์แนบ เข้าโครงการที่คุณเป็นสมาชิก</li>
+                    <li data-en="Read your project list and the URL rules of those projects">อ่านรายชื่อโครงการและกฎ URL ของโครงการเหล่านั้น</li>
+                  </ul>
+                  <div class="who"><span data-en="Extension">ส่วนขยาย</span><span class="mono">official · id ahfg…qmnp</span><span data-en="Browser">เบราว์เซอร์</span><span>Chrome 131 · Windows 11</span></div>
+                  <div class="row" style="margin-top:10px;justify-content:flex-end"><span class="btn btn-outline btn-sm" data-en="Deny">ปฏิเสธ</span><span class="btn btn-primary btn-sm" data-en="Approve">อนุมัติ</span></div>
+                </div>
+              </div>
+              <div class="d" style="margin-top:6px" data-en="Opens in a Chrome sign-in window. You can revoke it any time in Yoda: Settings → Connected browsers.">เปิดในหน้าต่างลงชื่อเข้าใช้ของ Chrome เพิกถอนได้ทุกเมื่อใน Yoda: ตั้งค่า → เบราว์เซอร์ที่เชื่อมต่อ</div>
+            </div></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:16px">
+        <div class="card-head"><span class="t-section" data-en="URL mapping">จับคู่ URL</span><span class="t-meta" data-en="The most specific match wins">กฎที่เจาะจงที่สุดชนะ</span><span class="grow"></span><span class="btn btn-outline btn-sm"><span class="mdi mdi-plus"></span><span data-en="Add rule">เพิ่มกฎ</span></span></div>
+        <div class="tester">
+          <span class="t-meta" data-en="Try a URL">ทดสอบ URL</span>
+          <div class="field"><span class="grow">https://appt-uat.example.org/opd/queue?clinic=med</span></div>
+          <div class="res"><span class="mdi mdi-check-circle"></span><span data-en="Yoda · OPD Appointments · UAT (rule 2)">Yoda · ระบบนัดหมาย OPD · UAT (กฎที่ 2)</span></div>
+        </div>
+        <table class="table">
+          <thead><tr><th>#</th><th data-en="Site pattern">รูปแบบไซต์</th><th>Yoda</th><th data-en="Project">โครงการ</th><th data-en="Environment">สภาพแวดล้อม</th><th data-en="Source">ที่มา</th><th></th></tr></thead>
+          <tbody>
+            <tr><td>1</td><td class="mono">https://appt.example.org/*</td><td>Yoda</td><td data-en="OPD Appointments">ระบบนัดหมาย OPD</td><td><span class="prod"><span class="mdi mdi-alert-octagon-outline"></span><span data-en="Production: no video, stricter checks">ใช้งานจริง: ไม่อัดวิดีโอ ตรวจเข้มขึ้น</span></span></td><td><span class="chip info" data-en="From Yoda">จาก Yoda</span></td><td class="muted"><span class="mdi mdi-lock-outline"></span></td></tr>
+            <tr class="hit"><td>2</td><td class="mono">https://appt-uat.example.org/*</td><td>Yoda</td><td data-en="OPD Appointments">ระบบนัดหมาย OPD</td><td>UAT · <span class="mono">feature/opd-queue</span></td><td><span class="chip info" data-en="From Yoda (GitLab environment)">จาก Yoda (GitLab environment)</span></td><td class="muted"><span class="mdi mdi-lock-outline"></span></td></tr>
+            <tr><td>3</td><td class="mono">https://*.review.example.org/*</td><td>Yoda</td><td data-en="(from the page's yoda-build tag)">(อ่านจาก yoda-build ของหน้า)</td><td>Review apps</td><td><span class="chip neutral" data-en="Policy">นโยบาย</span></td><td class="muted"><span class="mdi mdi-lock-outline"></span></td></tr>
+            <tr><td>4</td><td class="mono">http://localhost:3000/*</td><td data-en="Yoda (test)">Yoda (ทดสอบ)</td><td data-en="Lab system (dev)">ระบบแล็บ (dev)</td><td>Dev</td><td><span class="chip outline" data-en="Mine">ฉันเพิ่มเอง</span></td><td><span class="btn-text" style="font-size:13px" data-en="Edit">แก้ไข</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="alert"><span class="mdi mdi-information-outline"></span><div data-en="Rules marked &quot;From Yoda&quot; come from each project's application URLs and GitLab environments, refreshed when the popup opens. &quot;Policy&quot; rules are pushed by IT through Chrome or Edge policy and cannot be edited here.">กฎ "จาก Yoda" มาจาก URL ของแอปพลิเคชันในแต่ละโครงการและ GitLab environment อัปเดตทุกครั้งที่เปิดป๊อปอัป กฎ "นโยบาย" ส่งมาจากฝ่าย IT ผ่านนโยบาย Chrome หรือ Edge และแก้ไขที่นี่ไม่ได้</div></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// Thai is the default; each element keeps its Thai HTML and swaps in data-en. ?lang=en opens in English.
+(function () {
+  const els = [...document.querySelectorAll('[data-en]')]
+  els.forEach((el) => { el.dataset.th = el.innerHTML })
+  function set(lang) {
+    document.documentElement.lang = lang
+    els.forEach((el) => { el.innerHTML = lang === 'en' ? el.dataset.en : el.dataset.th })
+    document.querySelectorAll('.lang-toggle button').forEach((b) => b.classList.toggle('on', b.dataset.lang === lang))
+  }
+  document.querySelectorAll('.lang-toggle button').forEach((b) => b.addEventListener('click', () => set(b.dataset.lang)))
+  if (new URLSearchParams(location.search).get('lang') === 'en') set('en')
+})()
+</script>
+</body>
+</html>

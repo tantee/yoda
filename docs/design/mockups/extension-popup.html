@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Yoda Reporter: ป๊อปอัป</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet"><link href="https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css" rel="stylesheet">
+<style>
+/* Yoda Reporter (Chrome extension) mockup. Tokens mirror the portal design refresh (docs/design/portal-design-refresh.md). */
+:root {
+  --nav: #0B2545; --nav-hover: #12305A; --nav-active: #173A66; --nav-text: #C3D0E2; --nav-label: #8BA0BF; --nav-accent: #6FA8FF;
+  --primary: #1F5FBF; --primary-hover: #184C99; --primary-soft: #E8F0FB; --on-primary-soft: #1A4F9E;
+  --bg: #F4F6F9; --surface: #FFFFFF; --surface-variant: #EDF1F6; --border: #D8DEE7; --border-strong: #8A95A5;
+  --text: #1A2433; --text-2: #556275; --text-3: #6B7789;
+  --success: #1D6B3A; --success-soft: #E5F3EA; --success-dot: #2F8A4F;
+  --warning: #7A4F00; --warning-soft: #FCF0D7; --warning-dot: #B07800;
+  --error: #B3261E; --error-ink: #A8261D; --error-soft: #FBE8E6; --error-dot: #D0342C;
+  --info: #1A4F9E; --info-soft: #E8F0FB; --info-dot: #2F6FD0;
+  --neutral: #465264; --neutral-soft: #EDF1F6; --neutral-dot: #7A8699;
+  --radius: 8px; --radius-sm: 6px;
+  --font: 'IBM Plex Sans Thai', 'IBM Plex Sans', system-ui, sans-serif;
+  --mono: 'IBM Plex Mono', ui-monospace, monospace;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { font-family: var(--font); font-size: 14px; line-height: 1.6; color: var(--text); background: #C9D2DE; -webkit-font-smoothing: antialiased; }
+h1, h2, h3, p { margin: 0; }
+.mdi::before { line-height: 1; }
+.mono { font-family: var(--mono); font-size: 12px; }
+.muted { color: var(--text-2); }
+
+/* mockup frame */
+.stage { padding: 48px 24px 24px; display: grid; grid-template-columns: 1fr 340px; gap: 24px; align-items: start; max-width: 1440px; margin: 0 auto; }
+.lang-toggle { position: fixed; top: 10px; right: 12px; z-index: 50; display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; background: #fff; font-size: 12px; }
+.lang-toggle button { border: 0; background: #fff; padding: 4px 10px; font: inherit; cursor: pointer; color: var(--text-2); }
+.lang-toggle button.on { background: var(--primary-soft); color: var(--on-primary-soft); font-weight: 600; }
+
+/* browser chrome */
+.browser { background: #fff; border-radius: 10px; overflow: hidden; box-shadow: 0 12px 32px rgba(11,37,69,.18); border: 1px solid #B9C3D0; position: relative; }
+.tabstrip { height: 38px; background: #DEE3EA; display: flex; align-items: flex-end; padding: 0 10px; gap: 6px; }
+.dots { display: flex; gap: 6px; align-self: center; margin-right: 10px; }
+.dots i { width: 11px; height: 11px; border-radius: 50%; background: #F26B5E; } .dots i:nth-child(2) { background: #F5BE4F; } .dots i:nth-child(3) { background: #5DC264; }
+.btab { height: 30px; background: #fff; border-radius: 8px 8px 0 0; padding: 0 14px; display: flex; align-items: center; gap: 8px; font-size: 12px; width: 240px; }
+.btab .mdi { color: var(--primary); }
+.btab.off { background: transparent; color: var(--text-2); }
+.omnibar { height: 44px; display: flex; align-items: center; gap: 10px; padding: 0 12px; border-bottom: 1px solid var(--border); }
+.omnibar .mdi { font-size: 18px; color: var(--text-2); }
+.url { flex: 1; height: 30px; border-radius: 15px; background: #EEF1F5; display: flex; align-items: center; gap: 8px; padding: 0 12px; font-size: 13px; color: var(--text); }
+.url .mdi { font-size: 15px; }
+.ext-btn { width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; position: relative; }
+.ext-btn.active { background: var(--primary-soft); }
+.ext-btn .mark { width: 20px; height: 20px; border-radius: 5px; background: var(--nav); color: #fff; font: 700 12px/20px 'IBM Plex Sans', sans-serif; text-align: center; }
+.ext-btn .rec { position: absolute; right: 2px; top: 3px; width: 8px; height: 8px; border-radius: 50%; background: var(--error-dot); border: 1.5px solid #fff; }
+
+/* the app under test (fictional, synthetic data) */
+.app { display: grid; grid-template-columns: 200px 1fr; min-height: 800px; }
+.app-side { background: #224B3A; color: #D7E8DF; padding: 16px 12px; font-size: 13px; }
+.app-side .logo { font-weight: 700; color: #fff; margin-bottom: 18px; }
+.app-side div.i { padding: 7px 10px; border-radius: 6px; } .app-side div.i.on { background: #2F6450; color: #fff; }
+.app-main { padding: 20px 24px; background: #F7F8F6; }
+.app-main h2 { font-size: 18px; margin-bottom: 4px; }
+.uat-band { display: inline-block; background: #FDE68A; color: #6B4E00; font-size: 11px; font-weight: 700; padding: 1px 8px; border-radius: 4px; margin-left: 8px; vertical-align: 2px; }
+.app-form { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 16px 0; }
+.app-form label { font-size: 12px; color: #4B5563; display: block; margin-bottom: 4px; }
+.app-input { height: 34px; border: 1px solid #C7CDD4; border-radius: 4px; background: #fff; display: flex; align-items: center; padding: 0 8px; font-size: 13px; }
+.masked { background: repeating-linear-gradient(45deg, #2A3546, #2A3546 6px, #344156 6px, #344156 12px); color: transparent; border-color: #2A3546; position: relative; }
+.masked::after { content: 'masked'; position: absolute; right: 6px; top: 7px; font-size: 10px; color: #C3D0E2; font-family: 'IBM Plex Sans', sans-serif; letter-spacing: .04em; }
+.app-table { width: 100%; border-collapse: collapse; font-size: 13px; background: #fff; border: 1px solid #DDE1E5; }
+.app-table th { background: #EEF1EE; text-align: left; padding: 8px; font-weight: 600; font-size: 12px; }
+.app-table td { padding: 8px; border-top: 1px solid #E5E7EB; }
+.app-err { margin-top: 14px; background: #FEE2E2; border: 1px solid #FCA5A5; color: #991B1B; padding: 10px 12px; border-radius: 4px; font-size: 13px; }
+.app-btn { display: inline-block; background: #2F6450; color: #fff; padding: 7px 14px; border-radius: 4px; font-size: 13px; margin-top: 14px; }
+
+/* popup: 400 px wide, as Chrome renders an action popup */
+.popup { position: absolute; top: 76px; right: 10px; width: 400px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 16px 40px rgba(11,37,69,.28); overflow: hidden; z-index: 5; }
+.pop-head { height: 52px; display: flex; align-items: center; gap: 10px; padding: 0 12px 0 14px; background: var(--nav); color: #fff; }
+.pop-head .mark { width: 26px; height: 26px; border-radius: 6px; background: #fff; color: var(--nav); font: 700 14px/26px 'IBM Plex Sans', sans-serif; text-align: center; }
+.pop-head .t { font-weight: 600; font-size: 15px; flex: 1; white-space: nowrap; }
+.profile { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 8px 0 6px; border-radius: 15px; background: var(--nav-active); color: var(--nav-text); font-size: 12px; }
+.profile .sw { width: 10px; height: 10px; border-radius: 50%; background: #6FA8FF; }
+.pop-head .icon { color: var(--nav-text); font-size: 20px; }
+.pop-body { padding: 12px 14px 14px; }
+.match { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: var(--radius); background: var(--info-soft); border: 1px solid #C9DAF3; font-size: 13px; }
+.match .mdi { color: var(--info-dot); font-size: 18px; line-height: 1.3; }
+.match b { font-weight: 600; }
+.match .rule { font-size: 12px; color: var(--text-2); }
+.field-label { font-size: 12px; color: var(--text-2); font-weight: 500; margin: 12px 0 6px; display: flex; align-items: center; gap: 6px; }
+.select { height: 36px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); display: flex; align-items: center; padding: 0 10px; gap: 8px; font-size: 14px; background: #fff; }
+.select .grow { flex: 1; }
+.select .mdi { color: var(--text-2); font-size: 18px; }
+.caps { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.cap { border: 1px solid var(--border); border-radius: var(--radius); padding: 10px; display: flex; gap: 10px; align-items: flex-start; background: #fff; }
+.cap .mdi { font-size: 22px; color: var(--primary); line-height: 1.1; }
+.cap .n { font-weight: 600; font-size: 13px; line-height: 1.35; }
+.cap .d { font-size: 11px; color: var(--text-2); line-height: 1.4; margin-top: 2px; }
+.cap.primary { border-color: var(--primary); box-shadow: inset 0 0 0 1px var(--primary); background: #F7FAFE; }
+.cap.live .mdi { color: var(--error-dot); }
+.kbdh { font-family: 'IBM Plex Sans', sans-serif; font-size: 10px; border: 1px solid var(--border); border-radius: 3px; padding: 0 4px; color: var(--text-2); }
+.meta { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.meta-row { display: grid; grid-template-columns: 74px 1fr auto; gap: 8px; align-items: center; padding: 5px 10px; font-size: 12px; border-top: 1px solid var(--border); }
+.meta-row:first-child { border-top: 0; }
+.meta-row .k { color: var(--text-2); }
+.meta-row .v { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.src { font-size: 10px; color: var(--text-3); background: var(--surface-variant); border-radius: 8px; padding: 0 6px; white-space: nowrap; }
+.src.ok { background: var(--success-soft); color: var(--success); }
+.chip { display: inline-flex; align-items: center; gap: 5px; height: 20px; padding: 0 8px 0 6px; border-radius: 10px; font-size: 11px; font-weight: 500; white-space: nowrap; }
+.chip::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.chip.error { background: var(--error-soft); color: var(--error-ink); } .chip.error::before { background: var(--error-dot); }
+.chip.warning { background: var(--warning-soft); color: var(--warning); } .chip.warning::before { background: var(--warning-dot); }
+.chip.success { background: var(--success-soft); color: var(--success); } .chip.success::before { background: var(--success-dot); }
+.toggles { margin-top: 10px; display: grid; gap: 6px; }
+.tg { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+.tg .sw { width: 32px; height: 18px; border-radius: 9px; background: var(--border-strong); position: relative; flex: none; }
+.tg .sw::after { content: ''; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff; }
+.tg .sw.on { background: var(--primary); } .tg .sw.on::after { left: 16px; }
+.tg .sw.locked { background: var(--primary); opacity: .55; } .tg .sw.locked::after { left: 16px; }
+.tg .grow { flex: 1; }
+.tg .note { font-size: 11px; color: var(--text-3); }
+.pop-foot { display: flex; gap: 8px; padding: 12px 14px; border-top: 1px solid var(--border); background: var(--bg); align-items: center; }
+.btn { height: 36px; padding: 0 14px; border-radius: var(--radius-sm); border: 1px solid transparent; font: inherit; font-size: 14px; font-weight: 500; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; white-space: nowrap; }
+.btn .mdi { font-size: 18px; }
+.btn-primary { background: var(--primary); color: #fff; }
+.btn-outline { background: #fff; color: var(--text); border-color: var(--border); }
+.btn-text { background: transparent; color: var(--primary); padding: 0 8px; }
+.grow { flex: 1; min-width: 0; }
+
+/* side notes */
+.notes { display: grid; gap: 16px; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+.card-head { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--border); font-weight: 600; }
+.card-body { padding: 12px 16px; font-size: 13px; }
+.card-body ol, .card-body ul { margin: 0; padding-left: 18px; }
+.card-body li + li { margin-top: 6px; }
+.success-pop { padding: 14px; }
+.success-pop .big { display: flex; gap: 10px; align-items: center; font-weight: 600; font-size: 15px; }
+.success-pop .big .mdi { color: var(--success-dot); font-size: 28px; }
+.wi { margin-top: 10px; border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; }
+.wi .id { font-size: 12px; color: var(--text-2); }
+.wi .t { font-weight: 500; }
+</style>
+</head>
+<body>
+<div class="lang-toggle" role="group" aria-label="Language"><button data-lang="th" class="on">ไทย</button><button data-lang="en">EN</button></div>
+
+<div class="stage">
+  <div class="browser">
+    <div class="tabstrip">
+      <div class="dots"><i></i><i></i><i></i></div>
+      <div class="btab"><span class="mdi mdi-hospital-box-outline"></span><span data-en="Outpatient appointments (UAT)">นัดหมายผู้ป่วยนอก (UAT)</span></div>
+      <div class="btab off"><span class="mdi mdi-view-dashboard-outline"></span>Yoda</div>
+    </div>
+    <div class="omnibar">
+      <span class="mdi mdi-arrow-left"></span><span class="mdi mdi-arrow-right"></span><span class="mdi mdi-refresh"></span>
+      <div class="url"><span class="mdi mdi-lock-outline"></span>appt-uat.example.org/opd/queue?clinic=med</div>
+      <span class="mdi mdi-puzzle-outline"></span>
+      <div class="ext-btn active"><div class="mark">Y</div><span class="rec" title="buffer on"></span></div>
+    </div>
+
+    <div class="app">
+      <div class="app-side">
+        <div class="logo">OPD Appointments</div>
+        <div class="i" data-en="Today">วันนี้</div>
+        <div class="i on" data-en="Clinic queue">คิวคลินิก</div>
+        <div class="i" data-en="Book">จองนัด</div>
+        <div class="i" data-en="Reports">รายงาน</div>
+      </div>
+      <div class="app-main">
+        <h2><span data-en="Clinic queue: Medicine">คิวคลินิกอายุรกรรม</span><span class="uat-band">UAT</span></h2>
+        <div style="font-size:12px;color:#6B7280" data-en="Synthetic test data">ข้อมูลทดสอบ (สังเคราะห์)</div>
+        <div class="app-form">
+          <div><label>HN</label><div class="app-input masked">00-000000</div></div>
+          <div><label data-en="Patient name">ชื่อผู้ป่วย</label><div class="app-input masked">ทดสอบ ระบบ</div></div>
+          <div><label data-en="Appointment date">วันที่นัด</label><div class="app-input">28/11/2569</div></div>
+        </div>
+        <table class="app-table">
+          <thead><tr><th>#</th><th data-en="Time">เวลา</th><th data-en="Doctor">แพทย์</th><th data-en="Status">สถานะ</th></tr></thead>
+          <tbody>
+            <tr><td>1</td><td>09:00</td><td>พญ. ตัวอย่าง</td><td data-en="Waiting">รอตรวจ</td></tr>
+            <tr><td>2</td><td>09:15</td><td>นพ. ทดลอง</td><td data-en="Waiting">รอตรวจ</td></tr>
+            <tr><td>3</td><td>09:30</td><td>—</td><td>—</td></tr>
+          </tbody>
+        </table>
+        <div class="app-err">Error 500: <span data-en="Could not move the queue. Please try again.">ไม่สามารถเลื่อนคิวได้ กรุณาลองใหม่</span></div>
+        <span class="app-btn" data-en="Move queue">เลื่อนคิว</span>
+      </div>
+    </div>
+
+    <!-- the extension popup -->
+    <div class="popup" role="dialog" aria-label="Yoda Reporter">
+      <div class="pop-head">
+        <div class="mark">Y</div>
+        <div class="t" data-en="Report a problem">แจ้งปัญหา</div>
+        <div class="profile"><span class="sw"></span>Yoda · yoda.example.org<span class="mdi mdi-chevron-down"></span></div>
+        <span class="mdi mdi-cog-outline icon"></span>
+      </div>
+      <div class="pop-body">
+        <div class="match">
+          <span class="mdi mdi-link-variant"></span>
+          <div>
+            <div data-en="Matched: &lt;b&gt;OPD Appointments&lt;/b&gt; · environment UAT"><span>ตรงกับโครงการ <b>ระบบนัดหมาย OPD</b> · สภาพแวดล้อม UAT</span></div>
+            <div class="rule mono">https://appt-uat.example.org/*</div>
+          </div>
+        </div>
+
+        <div class="field-label"><span data-en="Report as">ส่งเป็น</span></div>
+        <div class="select"><span class="mdi mdi-bug-outline"></span><span class="grow" data-en="Defect (QC)">ข้อบกพร่อง (Defect)</span><span class="mdi mdi-menu-down"></span></div>
+
+        <div class="field-label"><span data-en="Capture">บันทึกหน้าจอ</span></div>
+        <div class="caps">
+          <div class="cap primary"><span class="mdi mdi-monitor-screenshot"></span><div><div class="n" data-en="Visible area">ส่วนที่เห็น</div><div class="d"><span data-en="Screenshot of the tab">ภาพหน้าจอแท็บนี้</span> · <span class="kbdh">Alt+Shift+Y</span></div></div></div>
+          <div class="cap"><span class="mdi mdi-arrow-expand-vertical"></span><div><div class="n" data-en="Full page">ทั้งหน้า</div><div class="d" data-en="Scrolls and stitches">เลื่อนและต่อภาพ</div></div></div>
+          <div class="cap"><span class="mdi mdi-record-circle-outline"></span><div><div class="n" data-en="Record video">อัดวิดีโอ</div><div class="d" data-en="Up to 30 s, this tab only">ไม่เกิน 30 วินาที เฉพาะแท็บนี้</div></div></div>
+          <div class="cap live"><span class="mdi mdi-history"></span><div><div class="n" data-en="Save last 30 s">เก็บ 30 วินาทีล่าสุด</div><div class="d" data-en="Buffer on · kept in memory only">เปิดบัฟเฟอร์อยู่ · เก็บในหน่วยความจำเท่านั้น</div></div></div>
+        </div>
+
+        <div class="field-label"><span data-en="Collected automatically">ข้อมูลที่เก็บอัตโนมัติ</span><span class="grow"></span><span class="btn-text" style="font-size:12px;padding:0" data-en="Show all">ดูทั้งหมด</span></div>
+        <div class="meta">
+          <div class="meta-row"><span class="k" data-en="Page">หน้า</span><span class="v mono">/opd/queue</span><span class="src" data-en="query hidden">ซ่อน query</span></div>
+          <div class="meta-row"><span class="k" data-en="Build">บิลด์</span><span class="v mono">feature/opd-queue · 3f9c2e1</span><span class="src ok">meta yoda-build</span></div>
+          <div class="meta-row"><span class="k" data-en="Browser">เบราว์เซอร์</span><span class="v">Chrome 131 · Windows 11 · 1536×864</span><span class="src">auto</span></div>
+          <div class="meta-row"><span class="k">Console</span><span class="v"><span class="chip error">3 errors</span> <span class="chip warning">1 warning</span></span><span class="src" data-en="since load">ตั้งแต่โหลด</span></div>
+          <div class="meta-row"><span class="k">Network</span><span class="v"><span class="chip error">POST /api/queue/move 500</span></span><span class="src">+1</span></div>
+        </div>
+
+        <div class="toggles">
+          <div class="tg"><span class="sw on"></span><span class="grow" data-en="Attach console log">แนบ console log</span><span class="note" data-en="masked: ID, HN, phone, email">ปิดบัง เลขบัตร HN โทร อีเมล</span></div>
+          <div class="tg"><span class="sw on"></span><span class="grow" data-en="Attach failed network requests">แนบคำขอเครือข่ายที่ผิดพลาด</span><span class="note" data-en="no bodies, no headers">ไม่มี body / header</span></div>
+          <div class="tg"><span class="sw locked"></span><span class="grow" data-en="Mask form fields before capture">ปิดบังช่องกรอกข้อมูลก่อนจับภาพ</span><span class="note"><span class="mdi mdi-lock-outline"></span> <span data-en="set by Yoda">กำหนดโดย Yoda</span></span></div>
+        </div>
+      </div>
+      <div class="pop-foot">
+        <span class="btn-text" style="font-size:13px"><span class="mdi mdi-text-box-plus-outline"></span> <span data-en="Text only">ส่งข้อความอย่างเดียว</span></span>
+        <span class="grow"></span>
+        <span class="btn btn-primary"><span class="mdi mdi-camera-outline"></span><span data-en="Capture and annotate">จับภาพและวาด</span></span>
+      </div>
+    </div>
+  </div>
+
+  <div class="notes">
+    <div class="card">
+      <div class="card-head"><span class="mdi mdi-information-outline" style="color:var(--info-dot)"></span><span data-en="What this shows">ภาพนี้แสดงอะไร</span></div>
+      <div class="card-body">
+        <ol>
+          <li data-en="The popup opens from the toolbar button (or Alt+Shift+Y). The red dot means the 30-second buffer is recording this tab.">ป๊อปอัปเปิดจากปุ่มบนแถบเครื่องมือ (หรือ Alt+Shift+Y) จุดแดงคือบัฟเฟอร์ 30 วินาทีกำลังบันทึกแท็บนี้</li>
+          <li data-en="The URL matched a rule, so the Yoda instance and project are already chosen.">URL ตรงกับกฎ จึงเลือก Yoda และโครงการให้แล้ว</li>
+          <li data-en="Build comes from the page's yoda-build meta tag; the query string is hidden by default.">บิลด์อ่านจาก meta tag <span class="mono">yoda-build</span> ของหน้า ส่วน query string ซ่อนไว้โดยค่าเริ่มต้น</li>
+          <li data-en="Form fields (HN, name) are already masked on the page before the capture is taken.">ช่องกรอก (HN, ชื่อ) ถูกปิดบังบนหน้าก่อนจับภาพ</li>
+        </ol>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-head"><span class="mdi mdi-check-decagram-outline" style="color:var(--success-dot)"></span><span data-en="After sending">หลังส่ง</span></div>
+      <div class="success-pop">
+        <div class="big"><span class="mdi mdi-check-circle"></span><span data-en="Report sent">ส่งรายงานแล้ว</span></div>
+        <div class="wi">
+          <div class="id"><span data-en="OPD Appointments · Defect · Triage">ระบบนัดหมาย OPD · ข้อบกพร่อง · คัดกรอง</span></div>
+          <div class="t" data-en="Move queue returns error 500">เลื่อนคิวแล้วขึ้น Error 500</div>
+          <div class="muted" style="font-size:12px;margin-top:4px"><span data-en="3 attachments · not sent to AI">แนบ 3 ไฟล์ · ไม่ส่งให้ AI</span></div>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <span class="btn btn-outline" style="height:32px;font-size:13px"><span class="mdi mdi-open-in-new"></span><span data-en="Open in Yoda">เปิดใน Yoda</span></span>
+          <span class="btn-text" style="font-size:13px;display:inline-flex;align-items:center" data-en="Report another">แจ้งอีกเรื่อง</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// Thai is the default; each element keeps its Thai HTML and swaps in data-en. ?lang=en opens in English.
+(function () {
+  const els = [...document.querySelectorAll('[data-en]')]
+  els.forEach((el) => { el.dataset.th = el.innerHTML })
+  function set(lang) {
+    document.documentElement.lang = lang
+    els.forEach((el) => { el.innerHTML = lang === 'en' ? el.dataset.en.replace(/&lt;/g, '<').replace(/&gt;/g, '>') : el.dataset.th })
+    document.querySelectorAll('.lang-toggle button').forEach((b) => b.classList.toggle('on', b.dataset.lang === lang))
+  }
+  document.querySelectorAll('.lang-toggle button').forEach((b) => b.addEventListener('click', () => set(b.dataset.lang)))
+  if (new URLSearchParams(location.search).get('lang') === 'en') set('en')
+})()
+</script>
+</body>
+</html>
