@@ -183,6 +183,13 @@
       "when": 1795845584767,
       "tag": "0025_defect_reports",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1795847763485,
+      "tag": "0026_project_app_urls",
+      "breakpoints": true
     }
   ]
 }

@@ -1069,3 +1069,20 @@ export const defectReports = pgTable(
     unique('defect_reports_idempotency').on(t.reportedBy, t.idempotencyKey),
   ],
 )
+
+/** Where a project's application runs (Yoda Reporter URL mapping, plan A7); production rows get stricter rules. */
+export const projectAppUrls = pgTable(
+  'project_app_urls',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    pattern: text('pattern').notNull(),
+    environment: text('environment'),
+    production: boolean('production').notNull().default(false),
+    createdBy: uuid('created_by').references(() => people.id, { onDelete: 'set null' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [unique('project_app_urls_pattern').on(t.projectId, t.pattern)],
+)

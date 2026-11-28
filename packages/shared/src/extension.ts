@@ -2,7 +2,7 @@ import { z } from 'zod'
 import { Attachment } from './knowledge.js'
 import type { Priority } from './work.js'
 import { isExtensionId } from './extension-id.js'
-import { parseMatchPattern } from './match-pattern.js'
+import { isTooBroadPattern, normalizeMatchPattern, parseMatchPattern } from './match-pattern.js'
 
 export * from './extension-id.js'
 export * from './match-pattern.js'
@@ -236,8 +236,25 @@ export type AppUrl = z.infer<typeof AppUrl>
 
 export const AppUrlsPut = z.object({
   urls: z
-    .array(z.object({ pattern, environment: z.string().trim().min(1).max(100).nullable().default(null), production: z.boolean() }))
-    .max(50),
+    .array(
+      z.object({
+        pattern: z
+          .string()
+          .max(500)
+          .transform(normalizeMatchPattern)
+          .pipe(pattern.refine((p) => !isTooBroadPattern(p), 'matches every site')),
+        environment: z.string().trim().min(1).max(100).nullable().default(null),
+        production: z.boolean(),
+      }),
+    )
+    .max(50)
+    .superRefine((urls, ctx) => {
+      const seen = new Set<string>()
+      urls.forEach((u, i) => {
+        if (seen.has(u.pattern)) ctx.addIssue({ code: 'custom', path: [i, 'pattern'], message: 'duplicate pattern' })
+        seen.add(u.pattern)
+      })
+    }),
 })
 export type AppUrlsPut = z.infer<typeof AppUrlsPut>
 

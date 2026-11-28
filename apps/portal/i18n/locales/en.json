@@ -64,7 +64,8 @@
       "knowledge": "Knowledge",
       "ai": "AI budget",
       "repos": "Repository",
-      "status": "Status"
+      "status": "Status",
+      "appUrls": "App URLs"
     },
     "list": {
       "active": "Active",
@@ -1481,6 +1482,10 @@
       "missing": "Missing",
       "malformed": "Malformed",
       "mismatch": "Mismatch"
+    },
+    "appUrl": {
+      "production": "Production",
+      "test": "Test"
     }
   },
   "stateView": {
@@ -2630,5 +2635,24 @@
       "acmeRenew": "Caddy renews this certificate from Let's Encrypt itself; the host must stay reachable on ports 80 and 443.",
       "filesRenew": "The organisation's own certificate: replace the files in time, then reload the proxy. They live on the host in"
     }
+  },
+  "appUrls": {
+    "title": "Application URLs",
+    "intro": "Where this project's application runs. Yoda Reporter uses these to pick the project when a tester reports a defect; production sites get stricter rules (no video, logs off by default).",
+    "empty": "No application URLs yet",
+    "pattern": "URL pattern",
+    "patternHint": "A Chrome match pattern, e.g. https://opd.example.org/* or https://*.review.example.org/*",
+    "environment": "Environment",
+    "production": "Production site",
+    "productionHint": "No video or recording buffer, and logs are off by default",
+    "add": "Add URL",
+    "addTitle": "Add an application URL",
+    "remove": "Remove",
+    "invalid": "Not a valid URL pattern",
+    "tooBroad": "This pattern matches every site; name the host",
+    "duplicate": "This pattern is already in the list",
+    "removeTitle": "Remove this URL?",
+    "removeText": "Yoda Reporter will no longer use it to pick the project.",
+    "removeProductionText": "This is a production site. Once removed, Yoda no longer knows it is production and stops refusing video from it."
   }
 }

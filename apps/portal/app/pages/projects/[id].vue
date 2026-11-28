@@ -23,7 +23,7 @@ const statusError = ref('')
 const knowledgeTotal = ref<number | null>(null)
 /** Bumped by the overdue KPI: the work items tab turns its overdue filter on. */
 const overdueRequest = ref(0)
-const TABS = ['status', 'items', 'overview', 'repos', 'knowledge', 'ai'] as const
+const TABS = ['status', 'items', 'overview', 'repos', 'appUrls', 'knowledge', 'ai'] as const
 // Only staff reach project pages (a staff path), so the status tab is the default.
 const tab = ref<string>(TABS.includes(route.query.tab as never) ? (route.query.tab as string) : 'status')
 const statusTab = ref<{ onLive: (e: LiveEvent) => void } | null>(null)
@@ -167,6 +167,7 @@ useLiveEvents((e) => {
             <v-tab value="repos" data-testid="tab-repos">
               {{ t('projects.tabs.repos') }}<span v-if="status" class="count-pill ml-2">{{ status.repos.length }}</span>
             </v-tab>
+            <v-tab value="appUrls" data-testid="tab-app-urls">{{ t('projects.tabs.appUrls') }}</v-tab>
             <v-tab value="knowledge" data-testid="tab-knowledge">
               {{ t('projects.tabs.knowledge') }}<span v-if="knowledgeTotal !== null" class="count-pill ml-2">{{ knowledgeTotal }}</span>
             </v-tab>
@@ -207,6 +208,9 @@ useLiveEvents((e) => {
         </v-window-item>
         <v-window-item value="repos">
           <ProjectReposTab :project-id="id" :can-manage="canManage" :can-import="canCreate" @changed="loadStatusSoon" />
+        </v-window-item>
+        <v-window-item value="appUrls">
+          <ProjectAppUrlsTab :project-id="id" :can-manage="canManage" />
         </v-window-item>
         <v-window-item value="knowledge">
           <ProjectKnowledgeTab :project-id="id" :is-member="isMember" @changed="loadKnowledgeTotal" />

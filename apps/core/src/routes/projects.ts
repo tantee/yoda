@@ -1,5 +1,5 @@
 import type { Me } from '@yoda/shared'
-import { MemberRolesPut, Project, ProjectCreate, ProjectDetail, ProjectListItem, ProjectPatch } from '@yoda/shared'
+import { AppUrlsPut, MemberRolesPut, Project, ProjectCreate, ProjectDetail, ProjectListItem, ProjectPatch } from '@yoda/shared'
 import { and, asc, eq, sql } from 'drizzle-orm'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
@@ -7,6 +7,8 @@ import { forbidden, lastPm, notStaff, notFound, requireAdmin, requireStaff } fro
 import type { Db, Tx } from '../db/client.js'
 import { people, projectMembers, projects } from '../db/schema.js'
 import { canManageProject, lockProject } from '../projects/access.js'
+import { listAppUrls, replaceAppUrls } from '../projects/app-urls.js'
+import { canSeeProject } from '../work/queries.js'
 import { runWork } from '../work/context.js'
 import { resumeProjectAi, unassignMemberTasks } from '../work/engine.js'
 
@@ -243,6 +245,31 @@ export function projectRoutes(app: FastifyInstance): void {
       const detail = await loadDetail(tx, id)
       if (!detail) throw notFound()
       return detail
+    })
+  })
+
+  // Application URLs (Yoda Reporter URL mapping, plan A7): members read, the PM or an admin replaces the list.
+  const visibleProject = async (me: Me, id: string) => {
+    const [p] = await db().select({ id: projects.id }).from(projects).where(eq(projects.id, id))
+    if (!p || !(await canSeeProject(db(), me, id))) throw notFound()
+  }
+
+  app.get('/projects/:id/app-urls', async (request) => {
+    requireStaff(request)
+    const { id } = ProjectParams.parse(request.params)
+    await visibleProject(request.me, id)
+    return listAppUrls(db(), id)
+  })
+
+  app.put('/projects/:id/app-urls', async (request) => {
+    requireStaff(request)
+    const { id } = ProjectParams.parse(request.params)
+    await visibleProject(request.me, id)
+    const body = AppUrlsPut.parse(request.body)
+    return runWork(app.deps, { id: request.me.id, kind: 'person' }, async ({ tx }) => {
+      await lockProject(tx, id)
+      if (!(await canManageProject(tx, request.me, id))) throw forbidden()
+      return replaceAppUrls(tx, id, body, request.me.id)
     })
   })
 

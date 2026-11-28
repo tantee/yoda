@@ -319,6 +319,17 @@ describe('access and rules', () => {
     expect(ok.statusCode).toBe(201)
   })
 
+  it('video whose URL matches a production rule of another of the person\'s projects is 422 video_on_production', async () => {
+    const other = await makeProject(app, admin, 'Other', [[qc, ['QC']]])
+    const put = await app.inject({ method: 'PUT', url: `/projects/${other}/app-urls`, headers: auth(admin), payload: { urls: [{ pattern: 'https://app.example.org/*', production: true }] } })
+    expect(put.statusCode, put.body).toBe(200)
+    // The report is for OPD and its page (https://app.example.org/opd?visit=12) is not flagged production by the tester.
+    const res = await held(reportWith([[clip, 'video']]), [clip])
+    expect(res.statusCode).toBe(422)
+    expect(res.json()).toEqual({ error: 'invalid_state', reason: 'video_on_production' })
+    expect((await post(reportWith([[shot, 'screenshot']]), [shot])).statusCode).toBe(201)
+  })
+
   it('a non-member gets 404; a revoked grant 401', async () => {
     const other = await makeProject(app, admin, 'Other', [])
     const res = await post(sampleReport(other), [])

@@ -65,3 +65,16 @@ export function patternSpecificity(p: string): [hostScore: number, pathLength: n
   const hostScore = host === '*' ? 0 : host.startsWith('*.') ? host.length - 2 : 1000 + host.length
   return [hostScore, pattern.path.replace(/\*/g, '').length]
 }
+
+/** A pattern whose host is a bare `*` (it matches every site): never a project's application URL. */
+export function isTooBroadPattern(p: string): boolean {
+  const pattern = parseMatchPattern(p)
+  return !!pattern && pattern.host.split(':')[0] === '*'
+}
+
+/** The pattern with its scheme and host lowercased (they match case-insensitively), the path as written. */
+export function normalizeMatchPattern(p: string): string {
+  const raw = p.trim().replace(/^[a-z*]+:\/\//i, (scheme) => scheme.toLowerCase())
+  const pattern = parseMatchPattern(raw)
+  return pattern ? `${pattern.scheme}://${pattern.host}${pattern.path}` : raw
+}
