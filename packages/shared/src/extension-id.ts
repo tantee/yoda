@@ -1,10 +1,10 @@
 /**
  * The Yoda Reporter extension ID (plan decision 10). Chrome derives an ID from the extension's public key: SHA-256
  * of the SPKI DER, the first 16 bytes, each nibble written as a letter a–p. The official ID is the one of the
- * committed `keys/yoda-reporter.pub`; it stays null until the owner commits that key, and until then an admin
- * allowlists a local build's ID in `extension.allowedIds`.
+ * committed `keys/yoda-reporter.pub` (the owner's key pair, 2026-11-28; the private half never enters the repository).
+ * A local build with another key needs its ID in `extension.allowedIds`.
  */
-export const OFFICIAL_EXTENSION_ID: string | null = null
+export const OFFICIAL_EXTENSION_ID: string | null = 'hcnhkfonaflhcknbhcphbfgpdfmgmibm'
 
 const ID_RE = /^[a-p]{32}$/
 

@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
   Attachment,
@@ -96,6 +97,13 @@ describe('extension IDs', () => {
     expect(isExtensionId('A'.repeat(32))).toBe(false)
     expect(chromiumappRedirect(TEST_ID)).toBe(`https://${TEST_ID}.chromiumapp.org/`)
     expect(OFFICIAL_EXTENSION_ID === null || isExtensionId(OFFICIAL_EXTENSION_ID)).toBe(true)
+  })
+
+  it('derives the official ID from the committed public key (keys/yoda-reporter.pub)', async () => {
+    const b64 = readFileSync(new URL('../../../keys/yoda-reporter.pub', import.meta.url), 'utf8').trim()
+    expect(b64).toMatch(/^MIIBIjAN[A-Za-z0-9+/]+=*$/) // 2048-bit RSA SPKI, public half only
+    expect(await extensionIdFromPublicKey(Buffer.from(b64, 'base64'))).toBe(OFFICIAL_EXTENSION_ID)
+    expect(OFFICIAL_EXTENSION_ID).toBe('hcnhkfonaflhcknbhcphbfgpdfmgmibm')
   })
 })
 
