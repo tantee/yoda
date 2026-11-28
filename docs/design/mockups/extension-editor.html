@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Yoda Reporter: ตัวแก้ไขภาพและรายงาน</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet"><link href="https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css" rel="stylesheet">
+<style>
+/* Yoda Reporter annotation editor + report form (an extension page in its own tab). Tokens: portal design refresh. */
+:root {
+  --nav: #0B2545; --nav-active: #173A66; --nav-text: #C3D0E2;
+  --primary: #1F5FBF; --primary-hover: #184C99; --primary-soft: #E8F0FB; --on-primary-soft: #1A4F9E;
+  --bg: #F4F6F9; --surface: #FFFFFF; --surface-variant: #EDF1F6; --border: #D8DEE7; --border-strong: #8A95A5;
+  --text: #1A2433; --text-2: #556275; --text-3: #6B7789;
+  --success: #1D6B3A; --success-soft: #E5F3EA; --success-dot: #2F8A4F;
+  --warning: #7A4F00; --warning-soft: #FCF0D7; --warning-dot: #B07800;
+  --error: #B3261E; --error-ink: #A8261D; --error-soft: #FBE8E6; --error-dot: #D0342C;
+  --info: #1A4F9E; --info-soft: #E8F0FB; --info-dot: #2F6FD0;
+  --neutral: #465264; --neutral-soft: #EDF1F6; --neutral-dot: #7A8699;
+  --ai: #4A3FA0; --ai-soft: #EFEDFB; --ai-dot: #6A5CD6;
+  --radius: 8px; --radius-sm: 6px;
+  --font: 'IBM Plex Sans Thai', 'IBM Plex Sans', system-ui, sans-serif;
+  --mono: 'IBM Plex Mono', ui-monospace, monospace;
+  --ann: #E5372C;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { font-family: var(--font); font-size: 14px; line-height: 1.6; color: var(--text); background: var(--bg); -webkit-font-smoothing: antialiased; }
+h1, h2, h3, p { margin: 0; }
+.mdi::before { line-height: 1; }
+.mono { font-family: var(--mono); font-size: 12px; }
+.muted { color: var(--text-2); }
+.grow { flex: 1; min-width: 0; }
+
+.topbar { height: 56px; background: var(--surface); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 12px; padding: 0 20px; position: sticky; top: 0; z-index: 4; }
+.mark { width: 30px; height: 30px; border-radius: 7px; background: var(--nav); color: #fff; font: 700 15px/30px 'IBM Plex Sans', sans-serif; text-align: center; }
+.tb-title { font-weight: 600; font-size: 16px; }
+.tb-sub { font-size: 13px; color: var(--text-2); }
+.profile { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px 0 8px; border-radius: 16px; border: 1px solid var(--border); font-size: 13px; color: var(--text-2); }
+.profile .sw { width: 10px; height: 10px; border-radius: 50%; background: #6FA8FF; }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius-sm); background: #fff; overflow: hidden; }
+.seg button, .seg span { border: 0; background: #fff; height: 30px; padding: 0 10px; display: flex; align-items: center; gap: 6px; font: inherit; font-size: 12px; color: var(--text-2); border-right: 1px solid var(--border); white-space: nowrap; cursor: pointer; }
+.seg > :last-child { border-right: 0; }
+.seg .on { background: var(--primary-soft); color: var(--on-primary-soft); font-weight: 600; }
+
+.layout { display: grid; grid-template-columns: 56px 1fr 460px; min-height: calc(100vh - 56px); }
+.tools { background: var(--surface); border-right: 1px solid var(--border); padding: 10px 8px; display: flex; flex-direction: column; gap: 4px; align-items: center; }
+.tool { width: 40px; height: 40px; border-radius: var(--radius-sm); display: grid; place-items: center; color: var(--text-2); font-size: 22px; position: relative; }
+.tool.on { background: var(--primary-soft); color: var(--on-primary-soft); }
+.tool .tip { position: absolute; left: 46px; top: 8px; background: var(--nav); color: #fff; font-size: 12px; padding: 2px 8px; border-radius: 4px; white-space: nowrap; }
+.tools hr { width: 28px; border: 0; border-top: 1px solid var(--border); margin: 6px 0; }
+.swatches { display: grid; gap: 6px; margin-top: 6px; }
+.swatches i { width: 20px; height: 20px; border-radius: 50%; display: block; border: 2px solid #fff; box-shadow: 0 0 0 1px var(--border); }
+.swatches i.on { box-shadow: 0 0 0 2px var(--primary); }
+
+.canvas-col { padding: 16px 20px; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+.canvas-bar { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--text-2); }
+.canvas-wrap { background: #E3E8EF; border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; display: grid; place-items: center; }
+.shot { position: relative; width: 100%; max-width: 820px; aspect-ratio: 16 / 10; background: #F7F8F6; box-shadow: 0 4px 14px rgba(11,37,69,.15); overflow: hidden; }
+/* the captured page (fictional, synthetic data) */
+.s-side { position: absolute; left: 0; top: 0; bottom: 0; width: 17%; background: #224B3A; color: #D7E8DF; font-size: 11px; padding: 12px 8px; }
+.s-side b { color: #fff; display: block; margin-bottom: 12px; }
+.s-side div { padding: 4px 8px; border-radius: 4px; } .s-side div.on { background: #2F6450; color: #fff; }
+.s-main { position: absolute; left: 17%; right: 0; top: 0; bottom: 0; padding: 16px 20px; font-size: 12px; }
+.s-main h4 { margin: 0 0 2px; font-size: 15px; }
+.s-form { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 12px 0; }
+.s-form small { display: block; font-size: 10px; color: #4B5563; }
+.s-in { height: 26px; border: 1px solid #C7CDD4; background: #fff; border-radius: 3px; padding: 0 6px; display: flex; align-items: center; font-size: 11px; }
+.s-in.masked { background: #2A3546; border-color: #2A3546; }
+.s-table { width: 100%; border-collapse: collapse; background: #fff; font-size: 11px; border: 1px solid #DDE1E5; }
+.s-table th { background: #EEF1EE; text-align: left; padding: 6px; font-size: 10px; }
+.s-table td { padding: 6px; border-top: 1px solid #E5E7EB; }
+.s-err { margin-top: 10px; background: #FEE2E2; border: 1px solid #FCA5A5; color: #991B1B; padding: 7px 10px; border-radius: 3px; font-size: 11px; }
+.s-btn { display: inline-block; margin-top: 10px; background: #2F6450; color: #fff; padding: 5px 12px; border-radius: 3px; font-size: 11px; }
+/* annotations */
+.a-box { position: absolute; border: 3px solid var(--ann); border-radius: 4px; }
+.a-hl { position: absolute; background: rgba(255, 214, 0, .38); }
+.a-pix { position: absolute; background-color: #8E9AA8; background-image: linear-gradient(90deg, rgba(255,255,255,.18) 50%, transparent 50%), linear-gradient(rgba(0,0,0,.12) 50%, transparent 50%); background-size: 12px 12px; }
+.a-text { position: absolute; background: var(--ann); color: #fff; font-size: 12px; font-weight: 600; padding: 3px 8px; border-radius: 4px; white-space: nowrap; }
+.a-num { position: absolute; width: 22px; height: 22px; border-radius: 50%; background: var(--ann); color: #fff; font: 700 12px/22px 'IBM Plex Sans', sans-serif; text-align: center; border: 2px solid #fff; }
+.a-sel { position: absolute; border: 1px dashed var(--primary); }
+.a-sel i { position: absolute; width: 8px; height: 8px; background: #fff; border: 1px solid var(--primary); }
+svg.arrows { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+
+.files { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+.file { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 10px; display: flex; gap: 10px; align-items: center; font-size: 12px; }
+.file.on { border-color: var(--primary); box-shadow: inset 0 0 0 1px var(--primary); }
+.thumb { width: 44px; height: 32px; border-radius: 4px; background: #DDE3EA; display: grid; place-items: center; color: var(--text-2); font-size: 18px; flex: none; }
+.thumb.img { background: linear-gradient(135deg, #224B3A 0 18%, #F7F8F6 18%); }
+.file .n { font-weight: 500; font-size: 12px; line-height: 1.35; }
+.file .d { font-size: 11px; color: var(--text-2); line-height: 1.35; }
+.noai { display: inline-flex; align-items: center; gap: 3px; font-size: 10px; color: var(--neutral); background: var(--neutral-soft); border-radius: 8px; padding: 0 6px; }
+
+.form-col { background: var(--surface); border-left: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; }
+.form-scroll { padding: 16px 20px; display: grid; gap: 12px; }
+.fl { font-size: 12px; color: var(--text-2); font-weight: 500; margin-bottom: 4px; display: flex; gap: 6px; align-items: center; }
+.fl .req { color: var(--error); }
+.in { min-height: 36px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 7px 10px; font-size: 14px; background: #fff; line-height: 1.5; }
+.in.area { min-height: 64px; font-size: 13px; }
+.in ol { margin: 0; padding-left: 18px; }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.sev { display: grid; grid-template-columns: repeat(5, 1fr); border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; }
+.sev span { height: 34px; display: flex; align-items: center; justify-content: center; gap: 4px; font-size: 12px; color: var(--text-2); border-right: 1px solid var(--border); white-space: nowrap; }
+.sev span:last-child { border-right: 0; }
+.sev span.on { background: var(--warning-soft); color: var(--warning); font-weight: 600; box-shadow: inset 0 -2px 0 var(--warning-dot); }
+.hint { font-size: 11px; color: var(--text-3); margin-top: 3px; }
+.env { border: 1px solid var(--border); border-radius: var(--radius); font-size: 12px; }
+.env div { display: grid; grid-template-columns: 82px 1fr auto; gap: 8px; padding: 5px 10px; border-top: 1px solid var(--border); align-items: center; }
+.env div:first-child { border-top: 0; }
+.env .k { color: var(--text-2); }
+.src { font-size: 10px; color: var(--text-3); background: var(--surface-variant); border-radius: 8px; padding: 0 6px; white-space: nowrap; }
+.src.ok { background: var(--success-soft); color: var(--success); }
+.review { border: 1px solid #EFD9A8; background: #FFFBF2; border-radius: var(--radius); padding: 12px; }
+.review h3 { font-size: 14px; display: flex; gap: 8px; align-items: center; }
+.review h3 .mdi { color: var(--warning-dot); font-size: 20px; }
+.inc { margin-top: 8px; display: grid; gap: 4px; font-size: 13px; }
+.inc div { display: flex; gap: 8px; align-items: center; }
+.cb { width: 18px; height: 18px; border-radius: 4px; border: 2px solid var(--border-strong); display: grid; place-items: center; flex: none; background: #fff; }
+.cb.on { background: var(--primary); border-color: var(--primary); color: #fff; font-size: 14px; }
+.inc .sz { margin-left: auto; font-size: 12px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.confirm { display: flex; gap: 10px; align-items: flex-start; margin-top: 10px; padding-top: 10px; border-top: 1px solid #EFD9A8; font-size: 13px; }
+.ai-line { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--text-2); }
+.chip { display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 9px 0 7px; border-radius: 11px; font-size: 11px; font-weight: 500; white-space: nowrap; }
+.chip.neutral { background: var(--neutral-soft); color: var(--neutral); }
+.form-foot { margin-top: auto; display: flex; align-items: center; gap: 8px; padding: 12px 20px; border-top: 1px solid var(--border); background: var(--bg); position: sticky; bottom: 0; }
+.btn { height: 36px; padding: 0 16px; border-radius: var(--radius-sm); border: 1px solid transparent; font: inherit; font-size: 14px; font-weight: 500; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.btn .mdi { font-size: 18px; }
+.btn-primary { background: var(--primary); color: #fff; }
+.btn-outline { background: #fff; color: var(--text); border-color: var(--border); }
+.btn-text { background: transparent; color: var(--primary); padding: 0 8px; }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="mark">Y</div>
+  <div>
+    <div class="tb-title" data-en="Report a problem">แจ้งปัญหา</div>
+  </div>
+  <div class="tb-sub" data-en="→ OPD Appointments (UAT) · Defect">→ ระบบนัดหมาย OPD (UAT) · ข้อบกพร่อง</div>
+  <span class="grow"></span>
+  <div class="profile"><span class="sw"></span>Yoda · yoda.example.org</div>
+  <div class="seg lang-toggle" role="group" aria-label="Language"><button data-lang="th" class="on">ไทย</button><button data-lang="en">EN</button></div>
+</header>
+
+<div class="layout">
+  <nav class="tools" aria-label="Annotation tools">
+    <div class="tool"><span class="mdi mdi-cursor-default-outline"></span></div>
+    <div class="tool on"><span class="mdi mdi-arrow-top-right"></span><span class="tip" data-en="Arrow (A)">ลูกศร (A)</span></div>
+    <div class="tool"><span class="mdi mdi-rectangle-outline"></span></div>
+    <div class="tool"><span class="mdi mdi-marker"></span></div>
+    <div class="tool"><span class="mdi mdi-format-text"></span></div>
+    <div class="tool"><span class="mdi mdi-numeric-1-circle-outline"></span></div>
+    <hr>
+    <div class="tool"><span class="mdi mdi-blur"></span></div>
+    <div class="tool"><span class="mdi mdi-square"></span></div>
+    <div class="tool"><span class="mdi mdi-crop"></span></div>
+    <hr>
+    <div class="tool"><span class="mdi mdi-undo"></span></div>
+    <div class="tool"><span class="mdi mdi-redo"></span></div>
+    <div class="swatches"><i class="on" style="background:#E5372C"></i><i style="background:#F5B400"></i><i style="background:#1F5FBF"></i><i style="background:#1A2433"></i></div>
+  </nav>
+
+  <main class="canvas-col">
+    <div class="canvas-bar">
+      <span class="mdi mdi-monitor-screenshot" style="font-size:18px"></span>
+      <span data-en="Visible area · 1536 × 864 · form fields masked before capture">ส่วนที่เห็น · 1536 × 864 · ปิดบังช่องกรอกก่อนจับภาพแล้ว</span>
+      <span class="grow"></span>
+      <span data-en="Pixelate and redact are burned in; the original is never uploaded">การเบลอและทึบถูกฝังในภาพ ไม่ส่งภาพต้นฉบับ</span>
+      <span class="mdi mdi-shield-check-outline" style="color:var(--success-dot);font-size:18px"></span>
+    </div>
+    <div class="canvas-wrap">
+      <div class="shot">
+        <div class="s-side"><b>OPD Appointments</b><div data-en="Today">วันนี้</div><div class="on" data-en="Clinic queue">คิวคลินิก</div><div data-en="Book">จองนัด</div><div data-en="Reports">รายงาน</div></div>
+        <div class="s-main">
+          <h4 data-en="Clinic queue: Medicine">คิวคลินิกอายุรกรรม</h4>
+          <div style="font-size:10px;color:#6B7280" data-en="Synthetic test data">ข้อมูลทดสอบ (สังเคราะห์)</div>
+          <div class="s-form">
+            <div><small>HN</small><div class="s-in masked"></div></div>
+            <div><small data-en="Patient name">ชื่อผู้ป่วย</small><div class="s-in masked"></div></div>
+            <div><small data-en="Appointment date">วันที่นัด</small><div class="s-in">28/11/2569</div></div>
+          </div>
+          <table class="s-table">
+            <thead><tr><th>#</th><th data-en="Time">เวลา</th><th data-en="Doctor">แพทย์</th><th data-en="Note">หมายเหตุ</th><th data-en="Status">สถานะ</th></tr></thead>
+            <tbody>
+              <tr><td>1</td><td>09:00</td><td>พญ. ตัวอย่าง</td><td>—</td><td data-en="Waiting">รอตรวจ</td></tr>
+              <tr><td>2</td><td>09:15</td><td>นพ. ทดลอง</td><td>—</td><td data-en="Waiting">รอตรวจ</td></tr>
+              <tr><td>3</td><td>09:30</td><td>—</td><td>—</td><td>—</td></tr>
+            </tbody>
+          </table>
+          <div class="s-err">Error 500: <span data-en="Could not move the queue. Please try again.">ไม่สามารถเลื่อนคิวได้ กรุณาลองใหม่</span></div>
+          <span class="s-btn" data-en="Move queue">เลื่อนคิว</span>
+        </div>
+        <!-- annotations -->
+        <div class="a-hl" style="left:19%;top:41.6%;width:78.6%;height:6%"></div>
+        <div class="a-pix" style="left:39.5%;top:29.5%;width:12%;height:12%"></div>
+        <div class="a-box" style="left:18.6%;top:48.8%;width:79.4%;height:8.4%"></div>
+        <div class="a-box" style="left:18.6%;top:57.6%;width:8.6%;height:7.6%"></div>
+        <div class="a-num" style="left:17.2%;top:46%">1</div>
+        <div class="a-num" style="left:25.8%;top:55%">2</div>
+        <svg class="arrows" viewBox="0 0 820 512" preserveAspectRatio="none" aria-hidden="true">
+          <defs><marker id="h" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path d="M0 0L10 5L0 10z" fill="#E5372C"/></marker></defs>
+          <path d="M470 362 C 400 362, 330 350, 250 335" stroke="#E5372C" stroke-width="5" fill="none" marker-end="url(#h)" stroke-linecap="round"/>
+        </svg>
+        <div class="a-text" style="left:58%;top:67.5%" data-en="Clicked Move queue → 500">กดเลื่อนคิว → ขึ้น 500</div>
+        <div class="a-sel" style="left:57.4%;top:66.8%;width:17.6%;height:6.6%"><i style="left:-4px;top:-4px"></i><i style="right:-4px;top:-4px"></i><i style="left:-4px;bottom:-4px"></i><i style="right:-4px;bottom:-4px"></i></div>
+      </div>
+    </div>
+    <div class="files">
+      <div class="file on"><div class="thumb img"></div><div class="grow"><div class="n" data-en="Screenshot (annotated)">ภาพหน้าจอ (วาดแล้ว)</div><div class="d">PNG · 412 KB</div></div></div>
+      <div class="file"><div class="thumb"><span class="mdi mdi-play-circle-outline"></span></div><div class="grow"><div class="n" data-en="Last 30 s video">วิดีโอ 30 วิ ล่าสุด</div><div class="d">WebM · 0:28 · 4.6 MB</div></div></div>
+      <div class="file"><div class="thumb"><span class="mdi mdi-console"></span></div><div class="grow"><div class="n">console.json</div><div class="d"><span data-en="38 entries · 2 masked">38 รายการ · ปิดบัง 2</span></div></div></div>
+      <div class="file"><div class="thumb"><span class="mdi mdi-lan-disconnect"></span></div><div class="grow"><div class="n">network.json</div><div class="d"><span data-en="2 failed requests">คำขอผิดพลาด 2</span></div></div></div>
+    </div>
+  </main>
+
+  <aside class="form-col">
+    <div class="form-scroll">
+      <div>
+        <div class="fl"><span data-en="Title">หัวข้อ</span><span class="req">*</span></div>
+        <div class="in" data-en="Move queue returns error 500">เลื่อนคิวแล้วขึ้น Error 500</div>
+      </div>
+      <div>
+        <div class="fl" data-en="Severity">ความรุนแรง</div>
+        <div class="sev"><span data-en="Blocker">หยุดงาน</span><span data-en="Critical">วิกฤต</span><span class="on" data-en="Major">มาก</span><span data-en="Minor">น้อย</span><span data-en="Trivial">เล็กน้อย</span></div>
+        <div class="hint" data-en="Suggests priority High. The PM can change it in Yoda.">แนะนำความสำคัญ "สูง" ผู้จัดการโครงการปรับได้ใน Yoda</div>
+      </div>
+      <div>
+        <div class="fl"><span data-en="Steps to reproduce">ขั้นตอนทำซ้ำ</span><span class="req">*</span></div>
+        <div class="in area"><ol>
+          <li data-en="Open Clinic queue, Medicine">เปิดหน้าคิวคลินิกอายุรกรรม</li>
+          <li data-en="Pick the 09:30 slot">เลือกช่วงเวลา 09:30</li>
+          <li data-en="Click Move queue">กดปุ่ม "เลื่อนคิว"</li>
+        </ol></div>
+      </div>
+      <div class="two">
+        <div><div class="fl" data-en="Expected">ผลที่คาดหวัง</div><div class="in area" data-en="The patient moves to the next slot">ผู้ป่วยถูกเลื่อนไปช่วงถัดไป</div></div>
+        <div><div class="fl" data-en="Actual">ผลที่เกิดขึ้นจริง</div><div class="in area" data-en="Error 500, the queue does not change">ขึ้น Error 500 คิวไม่เปลี่ยน</div></div>
+      </div>
+      <div>
+        <div class="fl" data-en="Environment">สภาพแวดล้อม</div>
+        <div class="env">
+          <div><span class="k" data-en="Build">บิลด์</span><span class="mono">feature/opd-queue · 3f9c2e1</span><span class="src ok">meta</span></div>
+          <div><span class="k" data-en="Backend">แบ็กเอนด์</span><span class="mono">develop · 9a01b77</span><span class="src ok">X-Yoda-Build</span></div>
+          <div><span class="k" data-en="Page">หน้า</span><span class="mono">appt-uat.example.org/opd/queue</span><span class="src" data-en="query hidden">ซ่อน query</span></div>
+          <div><span class="k" data-en="Browser">เบราว์เซอร์</span><span>Chrome 131 · Windows 11 · 1536×864</span><span class="src">auto</span></div>
+        </div>
+      </div>
+
+      <div class="review">
+        <h3><span class="mdi mdi-shield-alert-outline"></span><span data-en="Check before sending">ตรวจสอบก่อนส่ง</span></h3>
+        <div style="font-size:12px;color:var(--text-2);margin-top:4px" data-en="Screens and logs from hospital systems can show patient data. Send only what the fix needs.">ภาพและ log จากระบบโรงพยาบาลอาจมีข้อมูลผู้ป่วย ส่งเฉพาะที่จำเป็นต่อการแก้ไข</div>
+        <div class="inc">
+          <div><span class="cb on"><span class="mdi mdi-check"></span></span><span data-en="Screenshot (annotated)">ภาพหน้าจอ (วาดแล้ว)</span><span class="sz">412 KB</span></div>
+          <div><span class="cb on"><span class="mdi mdi-check"></span></span><span data-en="Video, last 30 s">วิดีโอ 30 วินาทีล่าสุด</span><span class="sz">4.6 MB</span></div>
+          <div><span class="cb on"><span class="mdi mdi-check"></span></span><span data-en="Console log (masked)">Console log (ปิดบังแล้ว)</span><span class="sz">9 KB</span></div>
+          <div><span class="cb on"><span class="mdi mdi-check"></span></span><span data-en="Failed network requests">คำขอเครือข่ายที่ผิดพลาด</span><span class="sz">2 KB</span></div>
+        </div>
+        <div class="confirm"><span class="cb on"><span class="mdi mdi-check"></span></span><span data-en="I checked the screenshot and video: there is no patient data, or it is redacted.">ฉันตรวจภาพและวิดีโอแล้ว ไม่มีข้อมูลผู้ป่วย หรือปิดบังแล้ว</span></div>
+      </div>
+      <div class="ai-line"><span class="chip neutral"><span class="mdi mdi-robot-off-outline"></span><span data-en="Not sent to AI">ไม่ส่งให้ AI</span></span><span data-en="This project is set to &quot;do not send to AI&quot;.">โครงการนี้ตั้งค่า "ห้ามส่งให้ AI"</span></div>
+    </div>
+    <div class="form-foot">
+      <span class="btn-text"><span class="mdi mdi-content-save-outline"></span> <span data-en="Keep draft">เก็บร่าง</span></span>
+      <span class="grow"></span>
+      <span class="btn btn-outline" data-en="Cancel">ยกเลิก</span>
+      <span class="btn btn-primary"><span class="mdi mdi-send-outline"></span><span data-en="Send to Yoda">ส่งเข้า Yoda</span></span>
+    </div>
+  </aside>
+</div>
+
+<script>
+// Thai is the default; each element keeps its Thai HTML and swaps in data-en. ?lang=en opens in English.
+(function () {
+  const els = [...document.querySelectorAll('[data-en]')]
+  els.forEach((el) => { el.dataset.th = el.innerHTML })
+  function set(lang) {
+    document.documentElement.lang = lang
+    els.forEach((el) => { el.innerHTML = lang === 'en' ? el.dataset.en : el.dataset.th })
+    document.querySelectorAll('.lang-toggle button').forEach((b) => b.classList.toggle('on', b.dataset.lang === lang))
+  }
+  document.querySelectorAll('.lang-toggle button').forEach((b) => b.addEventListener('click', () => set(b.dataset.lang)))
+  if (new URLSearchParams(location.search).get('lang') === 'en') set('en')
+})()
+</script>
+</body>
+</html>
