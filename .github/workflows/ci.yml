@@ -44,9 +44,30 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
 
+  # The Reporter extension end to end (plan B12): the unpacked e2e build in Playwright's Chromium, against a stub Yoda
+  # (apps/extension/e2e/stub-yoda.ts). Its unit tests run in the test job with the rest.
+  extension:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with: { node-version-file: .nvmrc, cache: pnpm }
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm --filter @yoda/extension exec playwright install --with-deps chromium
+      - run: pnpm --filter @yoda/extension build:e2e && pnpm --filter @yoda/extension e2e
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: extension-e2e
+          path: |
+            apps/extension/playwright-report/
+            apps/extension/test-results/
+          retention-days: 7
+
   build:
     if: github.event_name == 'push'
-    needs: [secrets, test]
+    needs: [secrets, test, extension]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

@@ -21,3 +21,5 @@ release.env.next
 # Yoda Reporter build output
 apps/extension/release/
 apps/extension/dist-e2e/
+apps/extension/test-results/
+apps/extension/playwright-report/

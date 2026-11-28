@@ -573,6 +573,19 @@ describe('.github/workflows/ci.yml', () => {
     for (const name of images) expect(runs).toMatch(new RegExp(`docker build( .*)? -t yoda/${name}( |$)`, 'm'))
     expect(runs).not.toMatch(/docker (push|login)/)
   })
+
+  it('has the extension job running the e2e in Playwright Chromium, keeping the report only on failure', () => {
+    const job = gh.jobs.extension as unknown as { steps: { run?: string; if?: string; uses?: string; with?: { path?: string } }[] }
+    const runs = job.steps.map((s) => s.run ?? '')
+    const install = runs.findIndex((r) => r.includes('playwright install --with-deps chromium'))
+    const e2e = runs.findIndex((r) => r.includes('build:e2e') && r.includes('@yoda/extension e2e'))
+    expect(install).toBeGreaterThan(-1)
+    expect(e2e).toBeGreaterThan(install)
+    const upload = job.steps.find((s) => s.uses?.startsWith('actions/upload-artifact'))
+    expect(upload?.if).toBe('failure()')
+    expect(upload?.with?.path).toContain('apps/extension/test-results/')
+    expect((gh.jobs.build as unknown as { needs: string[] }).needs).toContain('extension')
+  })
 })
 
 type Step = { id?: string; name?: string; uses?: string; if?: string; run?: string; with?: Record<string, unknown>; env?: Record<string, string> }
