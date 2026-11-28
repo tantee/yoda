@@ -179,6 +179,8 @@ export type Resolved = {
   production: boolean
   /** Video only where the page is known not to be production (productionVerdict `ok`). */
   videoAllowed: boolean
+  /** The replay buffer (D1): video allowed, the policy permits it, and a mapping rule covers the page. */
+  bufferAllowed: boolean
   profileId: string | null
   projectId: string | null
   via: 'rule' | 'repo' | null
@@ -194,23 +196,25 @@ export async function resolveUrl(url: string, opts: { refresh?: boolean; readBui
   const rules = await allRules({ refresh: opts.refresh })
   const verdict = await productionVerdict(url).catch(() => 'unknown' as const)
   const production = verdict === 'production'
-  const videoAllowed = verdict === 'ok' && (await readPolicy()).policy.allowVideo
+  const { policy } = await readPolicy()
+  const videoAllowed = verdict === 'ok' && policy.allowVideo
   const picked = pickRule(url, rules)
+  const bufferAllowed = videoAllowed && policy.allowBuffer && !!picked && !picked.rule.production
   const list = await profiles()
   if (picked) {
     const p = list.find((x) => x.id === picked.rule.profileId)
     const view = p ? await sessionView(p.id, p.isDefault) : null
     const r = view ? projectFor(url, null, [picked.rule], [view]) : null
-    return { production, videoAllowed, profileId: picked.rule.profileId, projectId: r?.projectId ?? null, via: r ? 'rule' : null, ruleId: picked.rule.id, why: picked.why }
+    return { production, videoAllowed, bufferAllowed, profileId: picked.rule.profileId, projectId: r?.projectId ?? null, via: r ? 'rule' : null, ruleId: picked.rule.id, why: picked.why }
   }
   const def = list.find((p) => p.isDefault && !p.needsReconnect)
   const build = def && opts.readBuild ? await opts.readBuild().catch(() => null) : null
   if (def && build?.repo) {
     const view = await sessionView(def.id, true)
     const r = view ? projectFor(url, build, [], [view]) : null
-    if (r) return { production, videoAllowed, profileId: r.profileId, projectId: r.projectId, via: 'repo', ruleId: null, why: [] }
+    if (r) return { production, videoAllowed, bufferAllowed, profileId: r.profileId, projectId: r.projectId, via: 'repo', ruleId: null, why: [] }
   }
-  return { production, videoAllowed, profileId: null, projectId: null, via: null, ruleId: null, why: [] }
+  return { production, videoAllowed, bufferAllowed, profileId: null, projectId: null, via: null, ruleId: null, why: [] }
 }
 
 /** The repo of the page's build, from what the page itself says (meta, well-known, headers). */

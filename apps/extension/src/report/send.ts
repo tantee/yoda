@@ -37,6 +37,14 @@ export async function sendReport(draftId: string, report: DefectReportCreate, fi
   // applied them (then this tab's video is the unmosaicked original).
   const video = files.find((f) => f.name === 'video.webm')
   if (video && (draft.videoRegions?.length || !draft.video || !(await sameBytes(video.data, draft.video)))) return { ok: false, error: 'mosaic_not_applied' }
+  // Each buffer segment likewise: no pending regions on the stored one, and the very bytes stored.
+  for (const f of files) {
+    const n = /^buffer-(\d+)\.webm$/.exec(f.name)
+    if (!n) continue
+    const i = Number(n[1]) - 1
+    const stored = draft.buffer?.[i]
+    if (draft.bufferRegions?.[i]?.length || !stored || !(await sameBytes(f.data, stored))) return { ok: false, error: 'mosaic_not_applied' }
+  }
   let t = await deps.token(false)
   if (!t.ok) return { ok: false, error: 'reconnect' }
   let renewed = false

@@ -54,6 +54,8 @@ const files = computed<ReviewFile[]>(() => {
   const img = props.draft.images[0]
   if (img) out.push({ key: 'screenshot', label: t('review.screenshot'), bytes: img.blob.size })
   if (!production.value && props.draft.video) out.push({ key: 'video', label: t('review.video'), bytes: props.draft.video.size })
+  if (!production.value && props.draft.buffer?.length)
+    out.push({ key: 'buffer', label: t('review.buffer'), bytes: props.draft.buffer.reduce((n, b) => n + b.size, 0), detail: t('review.parts', { n: props.draft.buffer.length }) })
   if (props.draft.console.length) out.push({ key: 'console', label: t('review.console'), bytes: JSON.stringify(props.draft.console).length, detail: t('review.entries', { n: props.draft.console.length }) })
   if (props.draft.network.length) out.push({ key: 'network', label: t('review.network'), bytes: JSON.stringify(props.draft.network).length, detail: t('review.entries', { n: props.draft.network.length }) })
   return out
@@ -89,7 +91,12 @@ function doReconnect() {
 }
 
 /** Mosaic regions on the video that no apply has burned in yet: the video cannot go until they are (decision 1). */
-const mosaicPending = computed(() => !production.value && form.value.attach.video && !!props.draft.video && !!props.draft.videoRegions?.length)
+const mosaicPending = computed(
+  () =>
+    !production.value &&
+    ((form.value.attach.video && !!props.draft.video && !!props.draft.videoRegions?.length) ||
+      (form.value.attach.buffer && !!props.draft.buffer?.length && !!props.draft.bufferRegions?.some((r) => r?.length))),
+)
 const canSend = computed(
   () => !!form.value.title.trim() && !!form.value.projectId && form.value.confirmedNoPatientData && !mosaicPending.value && !sending.value && !reconnect.value,
 )

@@ -88,7 +88,16 @@ function save(): Promise<void> {
   const d = draft.value
   if (!d || sent.value) return Promise.resolve()
   // IndexedDB cannot clone Vue's proxies: the raw draft (its blobs as they are) with plain copies of the rest.
-  return putDraft({ ...toRaw(d), editorDoc: plain(doc.value), form: plain(d.form), videoRegions: plain(d.videoRegions) })
+  return putDraft({
+    ...toRaw(d),
+    editorDoc: plain(doc.value),
+    form: plain(d.form),
+    videoRegions: plain(d.videoRegions),
+    bufferRegions: plain(d.bufferRegions),
+    bufferMosaicApplied: plain(d.bufferMosaicApplied),
+    // The segments as they are (a plain array of the raw blobs).
+    buffer: d.buffer ? toRaw(d.buffer).map((b) => toRaw(b)) : undefined,
+  })
 }
 
 /** Before sending: the stored draft must be this tab's (the send checks the video against it). */
@@ -118,7 +127,10 @@ function onSent() {
 
 watch(doc, scheduleSave, { deep: true })
 watch(() => draft.value?.form, scheduleSave, { deep: true })
-watch(() => [draft.value?.video, draft.value?.videoRegions], scheduleSave, { deep: true })
+watch(() => [draft.value?.video, draft.value?.videoRegions, draft.value?.buffer, draft.value?.bufferRegions], scheduleSave, { deep: true })
+
+/** The buffer segment shown (the parts are edited one at a time). */
+const segment = ref(0)
 
 /**
  * The fallback when the mosaic cannot be applied to the video: one frame becomes the screenshot, the regions
@@ -132,6 +144,9 @@ async function onStill({ bitmap, ops }: { bitmap: ImageBitmap; ops: Op[] }) {
   d.images = [{ role: 'screenshot', blob: await c.convertToBlob({ type: 'image/png' }) }]
   d.video = undefined
   d.videoRegions = []
+  // A still from one buffer part replaces the whole buffer.
+  d.buffer = undefined
+  d.bufferRegions = []
   base.value?.close()
   base.value = bitmap
   state.value = initState({ width: bitmap.width, height: bitmap.height, ops })
@@ -179,6 +194,16 @@ defineExpose({ doc, base, draft })
             <div class="editor__canvas">
               <Canvas v-if="base && doc" :base="base" :doc="doc" :tool="tool" :colour="colour" :block="block" @add="add" @text="(p) => (textAt = p)" />
               <VideoEditor v-else-if="draft.video" :draft="draft" @still="onStill" />
+              <div v-else-if="draft.buffer?.length" data-testid="editor-buffer">
+                <p class="text-caption text-medium-emphasis mb-2">{{ t('editor.bufferHint') }}</p>
+                <v-btn-toggle v-model="segment" mandatory density="compact" variant="outlined" color="primary" class="mb-2" data-testid="editor-buffer-parts">
+                  <v-btn v-for="(_, i) in draft.buffer" :key="i" :value="i" size="small" :data-testid="`editor-buffer-part-${i}`">
+                    {{ t('editor.bufferPart', { n: i + 1 }) }}
+                    <v-icon v-if="draft.bufferRegions?.[i]?.length" icon="mdi-alert-circle-outline" color="warning" size="14" class="ml-1" />
+                  </v-btn>
+                </v-btn-toggle>
+                <VideoEditor :key="segment" :draft="draft" :segment="Math.min(segment, draft.buffer.length - 1)" @still="onStill" />
+              </div>
               <p v-else class="text-medium-emphasis pa-4" data-testid="editor-no-image">{{ t('editor.noImage') }}</p>
             </div>
           </section>

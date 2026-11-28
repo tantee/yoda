@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { Attachment, ConsoleEntry, DefectReportView, NetworkEntry, Repo } from '@yoda/shared'
-import { buildLine, commitUrl, orderAttachments, parseLog, safeHttpUrl } from '~/utils/defectView'
+import { bufferPlaylist, buildLine, commitUrl, orderAttachments, parseLog, safeHttpUrl } from '~/utils/defectView'
 
 /**
  * A Yoda Reporter report on its work item (plan A12): the tester's text (the real text, also for a sensitive
@@ -27,6 +27,24 @@ const busy = ref(false)
 const removeError = ref('')
 
 const ordered = computed(() => orderAttachments(files.value))
+/** The replay buffer's parts, played back to back: when one ends, the next is fetched and plays. */
+const playlist = computed(() => bufferPlaylist(files.value))
+const players: Record<string, HTMLVideoElement> = {}
+function setPlayer(id: string, el: unknown) {
+  if (el instanceof HTMLVideoElement) players[id] = el
+  else delete players[id]
+}
+async function playNext(a: Attachment) {
+  const i = playlist.value.findIndex((x) => x.id === a.id)
+  const next = i >= 0 ? playlist.value[i + 1] : undefined
+  if (!next) return
+  await loadFile(next)
+  await nextTick()
+  const v = players[next.id]
+  if (!v) return
+  v.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  void v.play().catch(() => {})
+}
 const pageUrl = computed(() => safeHttpUrl(props.defect.page.url))
 const build = computed(() => buildLine(props.defect.build))
 const commit = computed(() => commitUrl(props.defect.build, repos.value))
@@ -190,7 +208,15 @@ onBeforeUnmount(() => {
         <p v-else-if="failed[a.id]" class="defect__removed text-body-2 text-medium-emphasis" data-testid="defect-file-failed">
           {{ t('defect.fileFailed') }} <v-btn variant="text" size="small" data-testid="defect-file-retry" @click="loadFile(a)">{{ t('defect.retry') }}</v-btn>
         </p>
-        <video v-else-if="isVideo(a) && urls[a.id]" :src="urls[a.id]" controls class="defect__video" />
+        <video
+          v-else-if="isVideo(a) && urls[a.id]"
+          :ref="(el) => setPlayer(a.id, el)"
+          :src="urls[a.id]"
+          controls
+          class="defect__video"
+          :data-testid="a.role === 'buffer' ? 'defect-buffer-video' : undefined"
+          @ended="a.role === 'buffer' && playNext(a)"
+        />
         <div v-else-if="isVideo(a)" class="defect__removed">
           <v-btn variant="tonal" prepend-icon="mdi-play-circle-outline" data-testid="defect-load-video" @click="loadFile(a)">{{ t('defect.loadVideo', { mb: sizeMb(a) }) }}</v-btn>
         </div>

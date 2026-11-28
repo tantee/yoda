@@ -23,7 +23,12 @@ export type Draft = {
   videoRegions?: VideoRegion[]
   /** A mosaic was burned into `video` (the original clip is gone). */
   videoMosaicApplied?: boolean
+  /** The replay buffer's segments (D1), oldest first: sent as buffer-1.webm, buffer-2.webm. */
   buffer?: Blob[]
+  /** Mosaic regions per buffer segment, not yet burned in: while any exist, the buffer cannot be sent. */
+  bufferRegions?: VideoRegion[][]
+  /** Per segment: a mosaic was burned into it. */
+  bufferMosaicApplied?: boolean[]
   /** The annotation document (B9). */
   editorDoc?: unknown
   /** The report form as typed (B10). */

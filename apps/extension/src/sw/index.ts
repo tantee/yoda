@@ -5,6 +5,7 @@ import { purgeOldDrafts } from '../drafts/db'
 import { TabChangedError } from '../capture/screenshot'
 import { deleteClip, getClip, purgeClips } from '../drafts/clips'
 import { clearStaleClip, endClip, jobs, onClipTabNavigated, startClip, stopClip } from './offscreen'
+import { armBuffer, bufferState, disarmBuffer, onBufferDisarmed, onBufferTabNavigated, onBufferTabRemoved, saveBuffer } from './buffer'
 import { injectCapture } from './inject'
 import { pageMetadata, startReport } from './report-start'
 import { allRules, deleteMineRule, repoOf, resolveUrl, saveMineRule } from './rules'
@@ -110,6 +111,19 @@ onMessage(async (m, { sender }) => {
       await deleteClip(m.clipId)
       return { ok: true, ...r }
     }
+    case 'buffer.arm':
+      // Shorter segments are for the e2e run only: a release build always records 30 s segments.
+      return armBuffer({ ...m, segmentMs: import.meta.env.VITE_TARGET === 'e2e' ? m.segmentMs : undefined })
+    case 'buffer.disarm':
+      await disarmBuffer('user')
+      return { ok: true }
+    case 'buffer.save':
+      return saveBuffer()
+    case 'buffer.state':
+      return { ok: true, buffer: await bufferState() }
+    case 'buffer.disarmed':
+      await onBufferDisarmed(m.reason)
+      return { ok: true }
     case 'mapping.resolve': {
       const tab = await chrome.tabs.get(m.tabId)
       const url = tab.url ?? ''
@@ -146,6 +160,13 @@ const countsOf = (e: Awaited<ReturnType<typeof entries>>) => ({ console: e.conso
 chrome.tabs.onUpdated.addListener((tabId, change, tab) => {
   void onTabUpdated(tabId, change, tab, injectCapture).catch(() => {})
   // A clip records across navigation: each new page is checked (onClipTabNavigated).
-  if (change.status === 'loading' || change.url) void onClipTabNavigated(tabId, change.url ?? tab.url).catch(() => {})
+  if (change.status === 'loading' || change.url) {
+    void onClipTabNavigated(tabId, change.url ?? tab.url).catch(() => {})
+    // The buffer too: it runs only on a mapped page known not to be production.
+    void onBufferTabNavigated(tabId, change.url ?? tab.url).catch(() => {})
+  }
 })
-chrome.tabs.onRemoved.addListener((tabId) => void onTabRemoved(tabId).catch(() => {}))
+chrome.tabs.onRemoved.addListener((tabId) => {
+  void onTabRemoved(tabId).catch(() => {})
+  void onBufferTabRemoved(tabId).catch(() => {})
+})

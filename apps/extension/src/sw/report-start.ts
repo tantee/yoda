@@ -29,11 +29,13 @@ export async function pageMetadata(tabId: number): Promise<PageMetadata | null> 
 export async function startReport(o: {
   tabId: number
   profileId: string
-  kind: 'screenshot' | 'fullPage' | 'textOnly' | 'video'
+  kind: 'screenshot' | 'fullPage' | 'textOnly' | 'video' | 'buffer'
   projectId?: string
   attach?: { console: boolean; network: boolean }
   video?: Blob
-  /** For a clip: the page it started on (the tab may be closed or its URL unreadable by now). */
+  /** For the replay buffer: its segments, oldest first. */
+  buffer?: Blob[]
+  /** For a clip or the buffer: the page it started on (the tab may be closed or its URL unreadable by now). */
   url?: string
   /** For a clip: the tab went to a page not known to be safe while recording. */
   tainted?: boolean
@@ -41,7 +43,7 @@ export async function startReport(o: {
   await purgeOldDrafts(Date.now())
   // A clip outlives its tab when the tester closes it: the report is still made, from what is known.
   const tab = await chrome.tabs.get(o.tabId).catch(() => null)
-  if (!tab && o.kind !== 'video') throw new Error('tab_closed')
+  if (!tab && o.kind !== 'video' && o.kind !== 'buffer') throw new Error('tab_closed')
   const draft = newDraft({ profileId: o.profileId, tabId: o.tabId, tabUrl: tab?.url || o.url || '' })
   // Decided here, from the worker's rules, not by the page that asks: the editor cannot unmark it.
   const verdict = await productionVerdict(draft.tabUrl).catch(() => 'unknown' as const)
@@ -57,6 +59,11 @@ export async function startReport(o: {
   // Video only from a page known not to be production, for the whole clip: otherwise it is discarded here.
   if (o.kind === 'video' && o.video) {
     if (verdict === 'ok' && !o.tainted) draft.video = o.video
+    else draft.notice = 'video_dropped'
+  }
+  // The buffer likewise: kept only when the page is known not to be production now.
+  if (o.kind === 'buffer' && o.buffer?.length) {
+    if (verdict === 'ok') draft.buffer = o.buffer
     else draft.notice = 'video_dropped'
   }
   if (tab) draft.metadata = (await pageMetadata(o.tabId)) ?? undefined

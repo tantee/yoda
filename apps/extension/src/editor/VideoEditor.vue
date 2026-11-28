@@ -11,22 +11,52 @@ import { defaultBlock, type Op } from './doc'
  * Mosaic on video (decision 1): drag on the frame to draw a region, set its time range with the handles, then
  * Apply burns the regions into the clip by re-encoding it here, with the preview visible. Until then the video
  * cannot be sent. When neither path works, the only choices are "send without video" or "use a still frame".
+ * It edits the clip (`draft.video`), or, with `segment`, one part of the replay buffer (`draft.buffer[segment]`,
+ * its regions in `draft.bufferRegions[segment]`).
  */
-const props = defineProps<{ draft: Draft }>()
+const props = defineProps<{ draft: Draft; segment?: number }>()
 const emit = defineEmits<{ still: [{ bitmap: ImageBitmap; ops: Op[] }] }>()
 const { t } = useI18n()
 
 const player = ref<HTMLVideoElement | null>(null)
 const preview = ref<HTMLCanvasElement | null>(null)
 const overlay = ref<HTMLElement | null>(null)
-const url = computed(() => (props.draft.video ? URL.createObjectURL(props.draft.video) : null))
+const isBuffer = computed(() => props.segment !== undefined)
+/** The video being edited: the clip, or one buffer segment. */
+const source = computed(() => (isBuffer.value ? props.draft.buffer?.[props.segment!] : props.draft.video))
+const url = computed(() => (source.value ? URL.createObjectURL(source.value) : null))
 watch(url, (_n, old) => old && URL.revokeObjectURL(old))
 
 const size = ref({ w: 0, h: 0 })
 const durationMs = ref(0)
 const nowMs = ref(0)
 const playing = ref(false)
-const regions = computed(() => props.draft.videoRegions ?? [])
+const regions = computed(() => (isBuffer.value ? (props.draft.bufferRegions?.[props.segment!] ?? []) : (props.draft.videoRegions ?? [])))
+const mosaicApplied = computed(() => (isBuffer.value ? !!props.draft.bufferMosaicApplied?.[props.segment!] : !!props.draft.videoMosaicApplied))
+
+/** Sets one per-segment list, padding the lists before it. */
+function atSegment<T>(list: T[] | undefined, value: T, empty: T): T[] {
+  const out = [...(list ?? [])]
+  while (out.length <= props.segment!) out.push(empty)
+  out[props.segment!] = value
+  return out
+}
+
+function setRegions(list: VideoRegion[]) {
+  if (isBuffer.value) props.draft.bufferRegions = atSegment(props.draft.bufferRegions, list, [])
+  else props.draft.videoRegions = list
+}
+
+/** The mosaicked video replaces the original (which is gone). */
+function setSource(blob: Blob) {
+  if (isBuffer.value) {
+    props.draft.buffer = props.draft.buffer!.map((b, k) => (k === props.segment ? blob : b))
+    props.draft.bufferMosaicApplied = atSegment(props.draft.bufferMosaicApplied, true, false)
+  } else {
+    props.draft.video = blob
+    props.draft.videoMosaicApplied = true
+  }
+}
 const active = computed(() => new Set(activeRegions(regions.value, nowMs.value).map((r) => r.id)))
 const drag = ref<{ x0: number; y0: number; x1: number; y1: number } | null>(null)
 
@@ -98,16 +128,16 @@ function up() {
   const toMs = Math.min(end, fromMs + 2000)
   if (toMs - fromMs < 100) fromMs = Math.max(0, toMs - 2000)
   const r: VideoRegion = { id: crypto.randomUUID(), rect, fromMs, toMs, block: defaultBlock(size.value.w, size.value.h) }
-  props.draft.videoRegions = [...regions.value, r]
+  setRegions([...regions.value, r])
 }
 
 function setRange(i: number, range: number[]) {
   const [fromMs, toMs] = range as [number, number]
-  props.draft.videoRegions = regions.value.map((r, k) => (k === i ? { ...r, fromMs, toMs: Math.max(toMs, fromMs + 100) } : r))
+  setRegions(regions.value.map((r, k) => (k === i ? { ...r, fromMs, toMs: Math.max(toMs, fromMs + 100) } : r)))
 }
 
 function remove(i: number) {
-  props.draft.videoRegions = regions.value.filter((_, k) => k !== i)
+  setRegions(regions.value.filter((_, k) => k !== i))
 }
 
 /** A rect in video pixels, as percentages of the frame, for the overlay. */
@@ -119,7 +149,7 @@ const box = (r: { x: number; y: number; w: number; h: number }) => ({
 })
 
 async function apply() {
-  const src = props.draft.video
+  const src = source.value
   if (!src || !regions.value.length || !preview.value) return
   player.value?.pause()
   applying.value = true
@@ -136,11 +166,10 @@ async function apply() {
       preview: preview.value,
     })
     if (r.ok) {
-      props.draft.video = r.blob
+      setSource(r.blob)
       // Only the regions burned in now; any added meanwhile still need an apply.
       const done = new Set(applied.map((x) => x.id))
-      props.draft.videoRegions = regions.value.filter((x) => !done.has(x.id))
-      props.draft.videoMosaicApplied = true
+      setRegions(regions.value.filter((x) => !done.has(x.id)))
       // A new video is a new report body: never let an earlier upload of the original answer for it.
       props.draft.idempotencyKey = crypto.randomUUID()
     } else if (!r.cancelled) failed.value = true
@@ -154,16 +183,22 @@ function cancel() {
   abort?.abort()
 }
 
+/** Without video: the clip, or the whole buffer (no part of it goes with regions unapplied). */
 function sendWithout() {
-  props.draft.video = undefined
-  props.draft.videoRegions = []
+  if (isBuffer.value) {
+    props.draft.buffer = undefined
+    props.draft.bufferRegions = []
+  } else {
+    props.draft.video = undefined
+    props.draft.videoRegions = []
+  }
   failed.value = false
 }
 
 const stilling = ref(false)
 
 async function useStill() {
-  const src = props.draft.video
+  const src = source.value
   if (!src || stilling.value) return
   stilling.value = true
   try {
@@ -250,7 +285,7 @@ onBeforeUnmount(() => {
     <div class="vid__panel">
       <h3 class="text-subtitle-2">{{ t('video.title') }}</h3>
       <p class="text-caption text-medium-emphasis mb-2">{{ t('video.hint') }}</p>
-      <v-alert v-if="draft.videoMosaicApplied && !regions.length" type="success" variant="tonal" density="compact" class="mb-2" data-testid="video-applied">{{ t('video.applied') }}</v-alert>
+      <v-alert v-if="mosaicApplied && !regions.length" type="success" variant="tonal" density="compact" class="mb-2" data-testid="video-applied">{{ t('video.applied') }}</v-alert>
       <p v-if="!regions.length" class="text-caption text-medium-emphasis" data-testid="video-no-regions">{{ t('video.noRegions') }}</p>
       <div v-for="(r, i) in regions" :key="r.id" class="vid__row" :data-testid="`video-region-${i}`">
         <span class="text-body-2 vid__name">{{ t('video.region', { n: i + 1 }) }}</span>

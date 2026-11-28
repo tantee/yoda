@@ -47,6 +47,8 @@ export function buildReport(
     // A video with mosaic regions is never sent with those regions unapplied (decision 1).
     if (form.attach.video && draft.video && draft.videoRegions?.length) throw new Error('mosaic_not_applied')
     if (form.attach.video && draft.video) add('video', 'video.webm', 'video/webm', draft.video)
+    // The same for each buffer segment: one with regions not burned in stops the send.
+    if (form.attach.buffer && draft.buffer?.length && draft.bufferRegions?.some((r) => r?.length)) throw new Error('mosaic_not_applied')
     if (form.attach.buffer) draft.buffer?.forEach((b, i) => add('buffer', `buffer-${i + 1}.webm`, 'video/webm', b))
   }
   // Without the query, it goes from the logs too: request URLs and URLs in console text often carry the same ids.

@@ -36,9 +36,19 @@ export function buildLine(build: DefectBuild | null | undefined): string {
 
 const ORDER: Record<string, number> = { screenshot: 0, screenshot_full: 1, video: 2, buffer: 3, console: 4, network: 5 }
 
-/** Screenshots, then video and buffer, then logs; files without a role last; by name within a role. */
+/** Screenshots, then video and buffer, then logs; files without a role last; by name within a role (buffer-2 before buffer-10). */
 export function orderAttachments<T extends Pick<Attachment, 'role' | 'fileName'>>(list: T[]): T[] {
-  return [...list].sort((a, b) => (ORDER[a.role ?? ''] ?? 9) - (ORDER[b.role ?? ''] ?? 9) || a.fileName.localeCompare(b.fileName))
+  return [...list].sort((a, b) => (ORDER[a.role ?? ''] ?? 9) - (ORDER[b.role ?? ''] ?? 9) || a.fileName.localeCompare(b.fileName, undefined, { numeric: true }))
+}
+
+const partNo = (fileName: string) => Number(/(\d+)/.exec(fileName)?.[1] ?? Number.MAX_SAFE_INTEGER)
+
+/**
+ * The replay buffer's parts, in playing order (buffer-1.webm, buffer-2.webm, …, by number, not by text), without
+ * the ones retention removed. The card plays them back to back.
+ */
+export function bufferPlaylist<T extends Pick<Attachment, 'role' | 'fileName'> & { purgedAt?: string | null }>(list: T[]): T[] {
+  return list.filter((a) => a.role === 'buffer' && !a.purgedAt).sort((a, b) => partNo(a.fileName) - partNo(b.fileName) || a.fileName.localeCompare(b.fileName))
 }
 
 /** The GitLab commit link for a build, when its repo is one of the project's linked repos. */

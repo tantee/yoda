@@ -22,13 +22,23 @@ export type ClipJob = {
   /** The tab navigated to a page not known to be safe: the video is discarded. */
   tainted: boolean
 }
-export type Jobs = { clip?: ClipJob; buffer?: { tabId: number; startedAt: number } }
+/** The replay buffer (D1, sw/buffer.ts): which tab, since when, and what the report starts from. Never any video. */
+export type BufferJob = {
+  tabId: number
+  profileId: string
+  projectId?: string
+  attach?: { console: boolean; network: boolean }
+  startedAt: number
+  /** The page it was armed on. */
+  url: string
+}
+export type Jobs = { clip?: ClipJob; buffer?: BufferJob }
 
 export async function jobs(): Promise<Jobs> {
   return ((await chrome.storage.session.get(JOBS))[JOBS] as Jobs | undefined) ?? {}
 }
 
-async function setJobs(j: Jobs): Promise<void> {
+export async function setJobs(j: Jobs): Promise<void> {
   await chrome.storage.session.set({ [JOBS]: j })
 }
 
@@ -67,9 +77,9 @@ export function clipSize(tab: { width?: number; height?: number }): { width?: nu
   return { width: even(tab.width), height: even(tab.height) }
 }
 
-/** Starts run one at a time: two clicks must not both pass the busy check. */
+/** Starts (of a clip or the buffer) run one at a time: two clicks must not both pass the busy check. */
 let lock: Promise<unknown> = Promise.resolve()
-function serial<T>(fn: () => Promise<T>): Promise<T> {
+export function serial<T>(fn: () => Promise<T>): Promise<T> {
   const next = lock.then(fn, fn)
   lock = next.catch(() => {})
   return next

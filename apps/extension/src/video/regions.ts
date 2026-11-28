@@ -23,6 +23,22 @@ export function activeRegions(regions: VideoRegion[], tMs: number): VideoRegion[
   return regions.filter((r) => tMs >= r.fromMs && tMs < r.toMs)
 }
 
+/**
+ * Regions drawn on the buffer's joined timeline (segment 1, then segment 2), as regions per segment with the
+ * segment's own times. A region over the boundary is split: one part in each segment, so nothing it hides shows.
+ */
+export function splitRegions(regions: VideoRegion[], segmentDurationsMs: number[]): VideoRegion[][] {
+  let offset = 0
+  return segmentDurationsMs.map((d) => {
+    const from = offset
+    const to = offset + d
+    offset = to
+    return regions
+      .filter((r) => r.fromMs < to && r.toMs > from)
+      .map((r) => ({ ...r, rect: { ...r.rect }, fromMs: Math.max(r.fromMs, from) - from, toMs: Math.min(r.toMs, to) - from }))
+  })
+}
+
 /** A re-encode that keeps under 90% of the source frames is refused: the next path is tried, or the fallback. */
 export function acceptReencode(r: { framesIn: number; framesOut: number }): 'ok' | 'too_lossy' {
   return r.framesIn > 0 && r.framesOut / r.framesIn >= 0.9 ? 'ok' : 'too_lossy'

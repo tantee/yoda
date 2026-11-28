@@ -24,11 +24,14 @@ const busy = ref('')
 const error = ref('')
 const reachable = ref(true)
 /** The mapping for this page (sw/rules.ts): the profile and project it picks, and whether it is production. */
-const resolved = ref<{ production: boolean; videoAllowed: boolean; profileId: string | null; projectId: string | null; via: 'rule' | 'repo' | null } | null>(null)
+const resolved = ref<{ production: boolean; videoAllowed: boolean; bufferAllowed?: boolean; profileId: string | null; projectId: string | null; via: 'rule' | 'repo' | null } | null>(null)
 const production = computed(() => resolved.value?.production === true)
 /** A clip in progress (the offscreen document records it; the worker keeps the job). */
 const clip = ref<{ tabId: number; startedAt: number } | null>(null)
 const now = ref(Date.now())
+/** The replay buffer (D1), when armed: on which tab (the offscreen document holds the video, in memory). */
+const buffer = ref<{ tabId: number; startedAt: number } | null>(null)
+const bufferHere = computed(() => !!buffer.value && buffer.value.tabId === tabId.value)
 const maxSeconds = computed(() => session.value?.limits.maxVideoSeconds ?? 30)
 
 const profile = computed(() => list.value.find((p) => p.id === profileId.value) ?? null)
@@ -55,7 +58,7 @@ async function load() {
     // On production, logs go only when the tester turns them on for this report.
     if (production.value) attach.value = { console: false, network: false }
   }
-  await Promise.all([loadSession(), refreshCapture(), refreshClip()])
+  await Promise.all([loadSession(), refreshCapture(), refreshClip(), refreshBuffer()])
 }
 
 async function refreshClip() {
@@ -63,6 +66,43 @@ async function refreshClip() {
   clip.value = r?.clip ?? null
   if (clip.value && !ticker) ticker = setInterval(() => (now.value = Date.now()), 500)
 }
+async function refreshBuffer() {
+  const r = (await chrome.runtime.sendMessage({ type: 'buffer.state' })) as { ok: boolean; buffer?: typeof buffer.value }
+  buffer.value = r?.buffer ?? null
+}
+
+const ARM_ERRORS = ['permission_needed', 'production', 'busy', 'unknown_page', 'policy', 'not_mapped']
+
+function armBuffer() {
+  if (tabId.value === null || !profile.value) return
+  const message = { type: 'buffer.arm', tabId: tabId.value, profileId: profile.value.id, projectId: projectId.value ?? undefined, attach: attach.value }
+  busy.value = 'buffer.arm'
+  error.value = ''
+  // No await before this call: the tabCapture request needs the click.
+  void onRecordClick(() => chrome.runtime.sendMessage(message) as Promise<{ ok: boolean; error?: string }>).then(async (r) => {
+    busy.value = ''
+    if (!r?.ok) error.value = t(`popup.error.${ARM_ERRORS.includes(r?.error ?? '') ? r!.error : 'capture_failed'}`)
+    await refreshBuffer()
+  })
+}
+
+async function saveBuffer() {
+  busy.value = 'buffer.save'
+  error.value = ''
+  const r = (await chrome.runtime.sendMessage({ type: 'buffer.save' })) as { ok: boolean; error?: string }
+  busy.value = ''
+  if (r?.ok) return window.close()
+  error.value = t('popup.error.save_failed')
+  await refreshBuffer()
+}
+
+async function stopBuffer() {
+  busy.value = 'buffer.stop'
+  await chrome.runtime.sendMessage({ type: 'buffer.disarm' })
+  busy.value = ''
+  await refreshBuffer()
+}
+
 let ticker: ReturnType<typeof setInterval> | null = null
 onBeforeUnmount(() => ticker && clearInterval(ticker))
 
@@ -206,6 +246,9 @@ onMounted(load)
           <div v-if="clip" class="popup__section text-caption" data-testid="popup-recording">
             <v-icon icon="mdi-record" color="error" size="14" /> {{ t('popup.recording', { s: Math.min(maxSeconds, Math.floor((now - clip.startedAt) / 1000)) }) }}
           </div>
+          <div v-if="buffer" class="popup__section text-caption" data-testid="popup-buffer">
+            <v-icon icon="mdi-history" color="error" size="14" /> {{ bufferHere ? t('popup.buffer.on') : t('popup.buffer.otherTab') }}
+          </div>
           <div class="popup__section text-caption" data-testid="popup-capture">
             <template v-if="!webPage">{{ t('popup.notWebPage') }}</template>
             <template v-else-if="capture?.state === 'armed'">
@@ -221,7 +264,12 @@ onMounted(load)
             <v-btn variant="tonal" prepend-icon="mdi-arrow-expand-vertical" :disabled="!webPage || !session" :loading="busy === 'capture.fullPage'" data-testid="action-fullpage" @click="start('capture.fullPage')">{{ t('popup.fullPage') }}</v-btn>
             <v-btn variant="tonal" prepend-icon="mdi-record-rec" :disabled="!webPage || capture?.state === 'armed'" :loading="busy === 'arm'" data-testid="action-arm" @click="arm">{{ t('popup.arm') }}</v-btn>
             <v-btn v-if="clip" color="error" prepend-icon="mdi-stop" :loading="busy === 'stop'" data-testid="action-stop" @click="stopRecording">{{ t('popup.stopRecording') }}</v-btn>
+            <template v-else-if="bufferHere">
+              <v-btn class="popup__wide" color="error" prepend-icon="mdi-content-save-outline" :loading="busy === 'buffer.save'" data-testid="action-buffer-save" @click="saveBuffer">{{ t('popup.buffer.save') }}</v-btn>
+              <v-btn class="popup__wide" variant="tonal" prepend-icon="mdi-stop" :loading="busy === 'buffer.stop'" data-testid="action-buffer-stop" @click="stopBuffer">{{ t('popup.buffer.stop') }}</v-btn>
+            </template>
             <v-btn v-else-if="resolved?.videoAllowed" variant="tonal" prepend-icon="mdi-video-outline" :disabled="!webPage || !session" :loading="busy === 'record'" data-testid="action-record" @click="record">{{ t('popup.record', { s: maxSeconds }) }}</v-btn>
+            <v-btn v-if="resolved?.bufferAllowed && !buffer && !clip" class="popup__wide" variant="tonal" prepend-icon="mdi-history" :disabled="!webPage || !session" :loading="busy === 'buffer.arm'" data-testid="action-buffer-arm" @click="armBuffer">{{ t('popup.buffer.arm') }}</v-btn>
             <v-btn variant="text" prepend-icon="mdi-text" :disabled="!session" :loading="busy === 'capture.textOnly'" data-testid="action-text" @click="start('capture.textOnly')">{{ t('popup.textOnly') }}</v-btn>
           </div>
 
@@ -247,5 +295,6 @@ onMounted(load)
 .popup__profile { display: flex; align-items: center; gap: 6px; }
 .popup__dot { width: 10px; height: 10px; border-radius: 50%; }
 .popup__actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 8px 12px; }
+.popup__wide { grid-column: 1 / -1; }
 .popup__foot { display: flex; justify-content: flex-end; padding: 4px 8px; border-top: 1px solid rgba(var(--v-border-color), var(--v-border-opacity)); }
 </style>

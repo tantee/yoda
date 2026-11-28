@@ -109,7 +109,9 @@ describe('managed policy', () => {
   it('allowVideo false: no Record in the popup, and the worker refuses a clip', async () => {
     setManaged({ allowVideo: false })
     expect(await startClip({ tabId: 1, profileId: 'p1', maxSeconds: 30 })).toEqual({ ok: false, error: 'policy' })
-    expect((await resolveUrl('https://uat.example.org/')).videoAllowed).toBe(false)
+    const r = await resolveUrl('https://uat.example.org/')
+    expect(r.videoAllowed).toBe(false)
+    expect(r.bufferAllowed).toBe(false)
   })
 
   it('a forced sessionOnly cannot be switched off by the tester', async () => {

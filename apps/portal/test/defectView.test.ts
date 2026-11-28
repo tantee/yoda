@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { buildLine, commitUrl, orderAttachments, parseLog, safeHttpUrl } from '../app/utils/defectView'
+import { bufferPlaylist, buildLine, commitUrl, orderAttachments, parseLog, safeHttpUrl } from '../app/utils/defectView'
 
 describe('parseLog', () => {
   it('drops invalid entries and counts them, and caps at 500', () => {
@@ -31,6 +31,20 @@ describe('orderAttachments', () => {
   it('screenshots, then video and buffer, then logs', () => {
     const list = ['network', 'console', 'video', null, 'screenshot_full', 'buffer', 'screenshot'].map((role, i) => ({ role: role as never, fileName: `f${i}` }))
     expect(orderAttachments(list).map((a) => a.role)).toEqual(['screenshot', 'screenshot_full', 'video', 'buffer', 'console', 'network', null])
+  })
+})
+
+describe('bufferPlaylist', () => {
+  it('the buffer parts in order (buffer-1, buffer-2, … buffer-10), skipping removed ones and other files', () => {
+    const a = (id: string, role: string, fileName: string, purgedAt: string | null = null) => ({ id, role: role as never, fileName, purgedAt })
+    const list = [a('v', 'video', 'video.webm'), a('b10', 'buffer', 'buffer-10.webm'), a('b2', 'buffer', 'buffer-2.webm'), a('b1', 'buffer', 'buffer-1.webm'), a('b3', 'buffer', 'buffer-3.webm', '2026-11-01T00:00:00Z')]
+    expect(bufferPlaylist(list).map((x) => x.id)).toEqual(['b1', 'b2', 'b10'])
+    expect(bufferPlaylist([a('v', 'video', 'video.webm')])).toEqual([])
+  })
+  it('the card plays the parts back to back', () => {
+    const card = readFileSync(new URL('../app/components/workItem/DefectCard.vue', import.meta.url), 'utf8')
+    expect(card).toContain('bufferPlaylist')
+    expect(card).toMatch(/@ended=/)
   })
 })
 

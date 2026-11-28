@@ -1,8 +1,13 @@
+/** The replay buffer's segment length and its disarm (D1); here so the worker can read them without the recorder. */
+export const BUFFER_SEGMENT_MS = 30_000
+export const BUFFER_MAX_MS = 15 * 60_000
+
 /** A message for the offscreen document (decision 16): one document, jobs `clip` (C1) and `buffer` (D1). */
 export type OffscreenMsg =
   | { target: 'offscreen'; job: 'clip'; type: 'start'; streamId: string; tabId: number; maxSeconds: number; width?: number; height?: number }
   | { target: 'offscreen'; job: 'clip'; type: 'stop' }
-  | { target: 'offscreen'; job: 'buffer'; type: string; [k: string]: unknown }
+  | { target: 'offscreen'; job: 'buffer'; type: 'start'; streamId: string; tabId: number; width?: number; height?: number; segmentMs?: number }
+  | { target: 'offscreen'; job: 'buffer'; type: 'stop' | 'save' }
 
 export type JobHandler = (m: OffscreenMsg) => Promise<unknown> | unknown
 
