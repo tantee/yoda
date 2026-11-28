@@ -17,6 +17,12 @@ as a GitHub Release, and the version without the `v` is the image tag a host run
   (logs) after the item closes. The work item page shows a defect card; a new **Help** page offers the
   extension. The built-in proxy allows 56 MiB on `/api/extension/defects` only (section 7a of the runbook has
   the setting for your own proxy).
+- **Yoda Reporter extension** (Chrome and Edge): connect once from its options page, arm capture on the page
+  under test, then take a screenshot (visible area or full page) or report without one. The editor draws arrows,
+  boxes, highlights, text and step numbers, and hides data with blur, a mosaic (rectangle or brush) or a black
+  box, all burned into the uploaded image. Reports carry the page, browser and build details, the console and
+  failed requests, and pass a check-before-sending step. The zip ships in the core image and the Help page
+  offers it; a release tag is now `v<x.y.z>` or `v<x.y.z>-rc.<N>` only.
 
 ## 1.2.0 — 2026-11-28
 

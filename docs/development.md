@@ -332,6 +332,38 @@ echo "http://localhost:3000/extension/connect?ext=$EXT&redirect_uri=https://$EXT
 
 Tokens are secrets even in dev: never paste them into issues, logs or commits.
 
+## Yoda Reporter extension
+
+The extension lives in `apps/extension` (Vue 3, Vuetify, Vite; Manifest V3). Builds:
+
+- `pnpm --filter @yoda/extension build` writes the release build to `apps/extension/dist/`;
+- `pnpm --filter @yoda/extension build:zip` makes a clean release build and zips it to
+  `apps/extension/release/yoda-reporter-<version>.zip` (reproducible: the same commit gives the same bytes), and
+  `check:dist` checks `dist/` and the zip (the manifest permissions of the proposal §5, no e2e-only code, no
+  `eval` or remote code, no private key, the version);
+- `pnpm --filter @yoda/extension build:e2e` (also `dev`) writes `apps/extension/dist-e2e/`, which adds
+  `<all_urls>` and a `?tab=<id>` popup target for Playwright. Never load it for real use: `check:dist` refuses it.
+
+**Load it unpacked.** `chrome://extensions` (or `edge://extensions`) → Developer mode → **Load unpacked** →
+`apps/extension/dist`. The build's manifest carries the public key `keys/yoda-reporter.pub`, so the unpacked
+extension has the official ID `hcnhkfonaflhcknbhcphbfgpdfmgmibm`, which Yoda always allows. A build without that
+key (for example with `YODA_EXTENSION_PUBLIC_KEY_FILE` pointing at a missing file) gets an ID derived from its
+folder; an admin adds that ID under Admin → Settings → `extension.allowedIds` before it can connect. Then open the
+extension's options, paste `http://localhost:3000` and press Connect.
+
+**Tests.** The unit tests run with the rest (`pnpm test`). The end-to-end test drives the e2e build in Chromium
+against a stub Yoda (`apps/extension/e2e/stub-yoda.ts`): connect, arm capture, reproduce, screenshot, mosaic, send.
+
+```bash
+pnpm --filter @yoda/extension exec playwright install chromium   # once
+pnpm --filter @yoda/extension build:e2e && pnpm --filter @yoda/extension e2e
+CHROME=/path/to/chromium pnpm --filter @yoda/extension e2e       # another Chromium build
+HEADED=1 pnpm --filter @yoda/extension e2e                       # watch it
+pnpm --filter @yoda/extension demo                               # the same flow, recorded under test-results/
+```
+
+The CI `extension` job runs the same e2e, then `build:zip`, `check:dist` and gitleaks over the release output.
+
 ## Hospital Keycloak requirements
 
 - Access tokens must include `preferred_username`.
@@ -353,6 +385,6 @@ on a `v*` tag it pushes the images to `ghcr.io/tantee/yoda/<name>` and creates t
 bundle; on a pull request that touches the release files it runs as a dry run ([docs/releasing.md](releasing.md)).
 
 **Versioning.** Releases follow [semantic versioning](https://semver.org) and are git tags `v<version>`
-(`v1.1.0`); the version without the `v` is the image tag and the `YODA_VERSION` a host runs. Bump `version` in the root and `apps/core` `package.json` with the
+(`v1.1.0`); the version without the `v` is the image tag and the `YODA_VERSION` a host runs. Bump `version` in the root, `apps/core` and `apps/extension` `package.json` with the
 release (core reports it on `/health`) and add a `CHANGELOG.md` entry. Upgrade and rollback steps are in the
 [runbook](operations.md#5-upgrade-and-rollback).

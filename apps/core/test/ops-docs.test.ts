@@ -325,7 +325,7 @@ describe('release docs (GitHub Releases + GHCR, D1)', () => {
     expect(read('CHANGELOG.md')).toMatch(/^## 1\.2\.0 — 2026-11-28$/m)
     expect(read('CHANGELOG.md')).not.toMatch(/^## 1\.0\.0\b/m)
     expect(read('CHANGELOG.md')).toContain('Version 1.0.0\nwas tagged but never published')
-    for (const f of ['package.json', 'apps/core/package.json', 'apps/portal/package.json', 'apps/runner/package.json', 'packages/shared/package.json'])
+    for (const f of ['package.json', 'apps/core/package.json', 'apps/portal/package.json', 'apps/runner/package.json', 'packages/shared/package.json', 'apps/extension/package.json'])
       expect(JSON.parse(read(f)).version, f).toBe('1.2.0')
     expect(read('apps/core/src/mcp/server.ts')).toContain("{ name: 'yoda-core', version: '1.2.0' }")
     // Work in progress sits under "## Unreleased", above the released sections; it is never a release's notes.

@@ -1,0 +1,156 @@
+{
+  "app": {
+    "name": "Yoda Reporter",
+    "language": "Language",
+    "loading": "Loading…"
+  },
+  "common": {
+    "cancel": "Cancel",
+    "close": "Close",
+    "retry": "Retry",
+    "save": "Save",
+    "remove": "Remove"
+  },
+  "connect": {
+    "title": "Connect to Yoda",
+    "intro": "Paste the Yoda address shown on Yoda's Help page and press Connect, then approve on the page that opens.",
+    "address": "Yoda address",
+    "willOpen": "You will connect to",
+    "submit": "Connect",
+    "reconnect": "Reconnect",
+    "error": {
+      "invalid": "Not a valid address",
+      "insecure": "It must be https (or http://localhost for testing)",
+      "permission_needed": "Allow the extension to reach this Yoda first",
+      "not_yoda": "This address is not a Yoda",
+      "extension_disabled": "The extension is turned off in this Yoda",
+      "cancelled": "Connection cancelled",
+      "state_mismatch": "The connection did not match the request; try again",
+      "exchange_failed": "Could not connect; try again",
+      "unreachable": "Cannot reach Yoda; check the address or the network"
+    }
+  },
+  "options": {
+    "profiles": "Connected Yodas",
+    "needsReconnect": "Reconnect needed"
+  },
+  "editor": {
+    "draftMissing": "This draft is gone: it was sent, or it is older than 24 hours.",
+    "tools": "Tools",
+    "undo": "Undo",
+    "redo": "Redo",
+    "block": "Mosaic size",
+    "burnedIn": "Blur, mosaic and redact are burned into the image; the original is never sent. Nothing is hidden automatically.",
+    "noImage": "This report has no image",
+    "tool": {
+      "select": "Select",
+      "arrow": "Arrow",
+      "box": "Box",
+      "highlight": "Highlight",
+      "text": "Text",
+      "step": "Step number",
+      "blur": "Blur",
+      "mosaic": "Mosaic (rectangle)",
+      "mosaic-brush": "Mosaic (brush)",
+      "redact": "Redact",
+      "crop": "Crop"
+    }
+  },
+  "review": {
+    "title": "Check before sending",
+    "hint": "Screenshots and logs from hospital systems may contain patient data. Send only what the fix needs.",
+    "production": "This is a production site: no video, and logs only when turned on.",
+    "screenshot": "Screenshot (annotated)",
+    "video": "Video",
+    "console": "Console log",
+    "network": "Network requests",
+    "entries": "{n} entries",
+    "confirm": "I checked the screenshot and video: there is no patient data, or it is hidden with mosaic or redact",
+    "sensitive": "The text may contain patient data (the text is not sent to AI)",
+    "aiNone": "Not sent to AI",
+    "aiText": "AI may read the text; screenshots, video and logs never"
+  },
+  "report": {
+    "project": "Project",
+    "kind": {
+      "defect": "Defect",
+      "bug_fix_request": "Bug-fix request"
+    },
+    "title": "Title",
+    "severity": "Severity",
+    "sev": {
+      "blocker": "Blocker",
+      "critical": "Critical",
+      "major": "Major",
+      "minor": "Minor",
+      "trivial": "Trivial"
+    },
+    "priority": {
+      "urgent": "urgent",
+      "high": "high",
+      "normal": "normal",
+      "low": "low"
+    },
+    "priorityHint": "Suggested priority \"{p}\"; the project manager can change it in Yoda",
+    "steps": "Steps to reproduce",
+    "addStep": "Add a step",
+    "expected": "Expected result",
+    "actual": "Actual result",
+    "description": "More details",
+    "environment": "Environment",
+    "build": "Build",
+    "buildSource": "Detected from {s}; you can edit it",
+    "buildNone": "No build found; you can type it",
+    "source": {
+      "meta": "the page meta tag",
+      "well-known": "/.well-known",
+      "header": "X-Yoda-Build",
+      "gitlab": "GitLab",
+      "manual": "the tester"
+    },
+    "includeQuery": "Include URL query strings (the page and the logs)",
+    "send": "Send to Yoda",
+    "sent": "Sent:",
+    "noProfile": "The Yoda this draft belongs to is not connected",
+    "sessionFailed": "Cannot reach Yoda; the draft is kept, try again later",
+    "reconnectText": "Reconnect to Yoda; your draft is kept",
+    "error": {
+      "tooLarge": "A file is too large; remove a file",
+      "type": "A file has a type Yoda does not take",
+      "videoOnProduction": "No video from production sites; remove the video",
+      "rateLimited": "Too many reports; wait {s} seconds",
+      "network": "Sending failed (network); the draft is kept, try again",
+      "other": "Sending failed; the draft is kept"
+    }
+  },
+  "popup": {
+    "notConnected": "Not connected to a Yoda yet",
+    "yoda": "Yoda",
+    "reconnectText": "Reconnect needed",
+    "unreachable": "Cannot reach Yoda; check the network",
+    "update": "A newer extension ({v}) is on Yoda's Help page",
+    "tooOld": "This extension is too old for this Yoda; please update",
+    "notWebPage": "This page cannot be reported",
+    "armed": "Capturing logs",
+    "counts": "{e} errors · {n} failed requests",
+    "stopped": "Log capture stopped ({reason})",
+    "stoppedReason": {
+      "navigated_away": "left the site",
+      "injection_failed": "the page does not allow it",
+      "tab_closed": "tab closed"
+    },
+    "notArmed": "Log capture not started",
+    "screenshot": "Screenshot",
+    "fullPage": "Full page (beta)",
+    "arm": "Start capturing logs",
+    "textOnly": "Text only",
+    "attachConsole": "Attach the console log",
+    "attachNetwork": "Attach failed requests",
+    "settings": "Settings",
+    "error": {
+      "arm": "Cannot capture logs on this page",
+      "capture": "Cannot take the screenshot",
+      "tabChanged": "The tab changed during the capture; stay on the page and try again"
+    }
+  }
+}

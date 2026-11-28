@@ -1,0 +1,5 @@
+{
+  "extName": { "message": "Yoda Reporter" },
+  "extShortName": { "message": "Yoda" },
+  "extDescription": { "message": "Report defects in the system you test to Yoda, with a screenshot, a short video and logs." }
+}

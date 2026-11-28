@@ -1,5 +1,14 @@
 # Build context: repository root (docker build -f apps/core/Dockerfile .)
 # Base images pinned by digest, the tag kept beside it for reading; bump both: docs/releasing.md, "Pinned build inputs".
+FROM node:22.23.5-alpine@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a AS extension
+# The Reporter extension zip the core serves at /api/extension/download (plan B13). Its manifest key comes from the
+# public key in keys/; the build never sees a private key.
+RUN corepack enable
+WORKDIR /repo
+COPY . .
+RUN pnpm install --frozen-lockfile --ignore-scripts --filter @yoda/extension...
+RUN pnpm --filter @yoda/extension build:zip && pnpm --filter @yoda/extension check:dist
+
 FROM node:22.23.5-alpine@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a AS build
 RUN corepack enable
 WORKDIR /repo
@@ -13,6 +22,7 @@ FROM node:22.23.5-alpine@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa5345499
 ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=build /out/ ./
+COPY --from=extension /repo/apps/extension/release/ /app/extension/
 # Host-side admin commands: docker compose exec core yoda-admin <command> (setup-token, create-break-glass,
 # reset-break-glass, status, rotate-master-key, recovery-kit, reset-master-key, recovery on|off; `yoda-admin` alone
 # lists them).

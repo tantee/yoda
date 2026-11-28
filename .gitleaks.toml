@@ -15,3 +15,9 @@ description = "The minisign release PUBLIC key (key id C73EF0AF404BAE84, keys/yo
 regexes = [
   '''RWSErktAr/A\+x5Gvgr0x29wiu41FmYEVlJYoXyB6oJk4kvwQLOZs9O9j''',
 ]
+
+[[allowlists]]
+description = "The Yoda Reporter extension PUBLIC key (keys/yoda-reporter.pub, extension ID hcnhkfonaflhcknbhcphbfgpdfmgmibm): the manifest `key` of every build, published on purpose"
+regexes = [
+  '''MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAruUVPB6hl5eTGHnjHoAj9o2gWLRwsvALHzjXkzZl\+9mH\+jrO\+9WeU3lnEzp\+b0NekgrbbBrbMKuwgT8k2buQqJwmp6V4o\+lJiwkBCcUGyEXAd8QgtzeMi0kBs78pAqhVIcB9zKDrUe8i62Cu143OHKTM\+AAMSZl7dGL3TPpyR06wpGLH\+rX2OqkNzr\+siMnb9Atdu7liYDLIT8HG\+6sCwd\+Ayl8B/XXZl3/oVGr3e\+iqxOt8h9xdS1TiQmbLLZ7m78JoSgVN08We/ylmcmviZI6wZfszZsvuhSQuyimUnb/dtT14TqFInuBs631ZveT\+\+rmru3gH6\+hEwAQJ5rV4rQIDAQAB''',
+]

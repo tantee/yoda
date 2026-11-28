@@ -32,6 +32,8 @@ on:
       - ops/backup/**
       - ops/proxy/**
       - apps/*/Dockerfile
+      - apps/extension/**
+      - keys/**
       - .dockerignore
       - docker-compose.yml
       - docker-compose.prod.yml
@@ -94,6 +96,13 @@ jobs:
             *) prerelease=false ;;
           esac
           if [ "$real" = true ]; then
+            # A release is a final x.y.z or a candidate x.y.z-rc.N (N 1-999); each part fits a Chrome version part,
+            # because the Reporter extension's manifest version is derived from it (packages/shared manifestVersion).
+            printf '%s\n' "$version" | grep -Eqx '(0|[1-9][0-9]{0,4})\.(0|[1-9][0-9]{0,4})\.(0|[1-9][0-9]{0,4})(-rc\.[1-9][0-9]{0,2})?' ||
+              { echo "::error::Not a release version: $version (tags are v<x.y.z> or v<x.y.z>-rc.<1-999>)."; exit 1; }
+            for part in $(printf '%s' "${version%%-*}" | tr . ' '); do
+              [ "$part" -le 65535 ] || { echo "::error::Version part $part is over 65535: $version."; exit 1; }
+            done
             git merge-base --is-ancestor "$GITHUB_SHA" origin/main ||
               { echo "::error::The tagged commit $GITHUB_SHA is not on main: tag a commit of origin/main (docs/releasing.md, Cut a release)."; exit 1; }
             sh ops/install/release-notes.sh "$version" > /dev/null ||
@@ -102,7 +111,7 @@ jobs:
             case "$heading" in
               *[Uu]nreleased*) echo "::error::CHANGELOG.md still says \"$heading\": put the release date in the heading in the tagged commit."; exit 1 ;;
             esac
-            for f in package.json apps/core/package.json; do
+            for f in package.json apps/core/package.json apps/extension/package.json; do
               pkg=$(sed -n 's/^  "version": "\(.*\)",$/\1/p' "$f")
               [ "$pkg" = "$version" ] ||
                 { echo "::error::$f says version $pkg, the tag says $version: bump it in the tagged commit (docs/releasing.md)."; exit 1; }

@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<title>นัดหมายผู้ป่วยนอก (UAT)</title>
+<meta name="yoda-build" content="repo=demo/app;branch=feature/x;commit=abc1234;env=uat">
+<style>
+body { margin: 0; font: 15px system-ui, sans-serif; background: #f4f6f9; color: #1a2433 }
+header { background: #0b2545; color: #fff; padding: 12px 20px; font-weight: 600 }
+main { padding: 20px }
+.card { background: #fff; border: 1px solid #d6dde6; border-radius: 10px; padding: 16px; margin-bottom: 16px }
+/* Fine stripes, so any unmasked patch has two colours and a mosaic block has one (the test checks the uploaded pixels). */
+.patient { height: 120px; background: repeating-linear-gradient(90deg, #ff5a5f 0 3px, #1f5fbf 3px 6px) }
+button { background: #1f5fbf; color: #fff; border: 0; border-radius: 8px; padding: 10px 16px; font-size: 15px }
+</style>
+</head>
+<body>
+<header>OPD Appointments · synthetic test data</header>
+<main>
+  <div class="card patient" id="patient">HN 00-000000 · ทดสอบ ระบบ</div>
+  <div class="card"><button id="fail">เลื่อนคิว</button></div>
+</main>
+<script>
+document.getElementById('fail').addEventListener('click', async () => {
+  console.error('boom')
+  await fetch('/api/fail').catch(() => {})
+})
+</script>
+</body>
+</html>
